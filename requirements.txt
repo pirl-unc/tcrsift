@@ -1,0 +1,5 @@
+numpy>=1.14.0,<2.0.0
+pandas>=2.1.4,<3.0.0
+pyensembl>=2.0.0,<3.0.0
+seaborn>=0.13,<1.0.0
+pdfkit  # needs wkhtmltopdf: brew install Caskroom/cask/wkhtmltopdf

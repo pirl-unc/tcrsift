@@ -1,0 +1,29 @@
+[project]
+name = "variform"
+requires-python = ">=3.7"
+authors = [ {name="Alex Rubinsteyn", email="alex.rubinsteyn@unc.edu" } ]
+description = "T-cell receptor selection for TCR-T studies from antigen specific culture and scRNA/VDJ sequencing"
+classifiers = [
+    "Programming Language :: Python :: Implementation :: CPython",
+    'Environment :: Console',
+    'Operating System :: OS Independent',
+    'Intended Audience :: Science/Research',
+    'License :: OSI Approved :: Apache Software License',
+    'Topic :: Scientific/Engineering :: Bio-Informatics',
+]
+readme = "README.md"
+dynamic = ["version", "dependencies"]
+
+[tool.setuptools.dynamic]
+version = {attr = "variform.version.__version__"}
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools]
+packages = ["variform"]
+
+[project.urls]
+"Homepage" = "https://github.com/pirl-unc/tcrsift"
+"Bug Tracker" = "https://github.com/pirl-unc/tcrsift/issues"
+
+[project.scripts]
+variform = "tcrsift.cli:main"
