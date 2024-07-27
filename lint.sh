@@ -14,6 +14,6 @@ find tcrsift/ -name '*.py' \
 && \
 echo 'Passes pylint check' \
 && \
-ruff check variform/ \
+ruff check tcrsift/ \
 && \
 echo "Passes ruff check" 
