@@ -16,12 +16,10 @@ Command-line interface for TCRsift.
 TCRsift: TCR selection from antigen-specific culture and scRNA/VDJ sequencing data.
 """
 
-import sys
-import logging
-from pathlib import Path
-from typing import Optional
-
 import argparse
+import logging
+import sys
+from pathlib import Path
 
 
 def setup_logging(verbose: bool = False):
@@ -73,7 +71,8 @@ def cmd_load(args):
 def cmd_phenotype(args):
     """Classify T cells as CD4/CD8."""
     import anndata as ad
-    from .phenotype import phenotype_cells, validate_phenotype_vs_expected, get_phenotype_summary
+
+    from .phenotype import get_phenotype_summary, phenotype_cells, validate_phenotype_vs_expected
     from .plots import plot_phenotype
 
     setup_logging(args.verbose)
@@ -115,7 +114,8 @@ def cmd_phenotype(args):
 def cmd_clonotype(args):
     """Aggregate cells into clonotypes."""
     import anndata as ad
-    from .clonotype import aggregate_clonotypes, get_clonotype_summary, export_clonotypes_airr
+
+    from .clonotype import aggregate_clonotypes, export_clonotypes_airr, get_clonotype_summary
     from .plots import plot_clonotypes
 
     setup_logging(args.verbose)
@@ -159,7 +159,8 @@ def cmd_clonotype(args):
 def cmd_filter(args):
     """Filter clonotypes with tiered confidence levels."""
     import pandas as pd
-    from .filter import filter_clonotypes, split_by_tier, get_filter_summary
+
+    from .filter import filter_clonotypes, get_filter_summary, split_by_tier
     from .plots import plot_filter
 
     setup_logging(args.verbose)
@@ -216,6 +217,7 @@ def cmd_filter(args):
 def cmd_annotate(args):
     """Annotate clonotypes with public database matches."""
     import pandas as pd
+
     from .annotate import annotate_clonotypes, get_annotation_summary
     from .plots import plot_annotations
 
@@ -257,10 +259,11 @@ def cmd_annotate(args):
 
 def cmd_match_til(args):
     """Match culture clonotypes against TIL data."""
-    import pandas as pd
     import anndata as ad
-    from .til import match_til, get_til_summary
+    import pandas as pd
+
     from .plots import plot_til
+    from .til import get_til_summary, match_til
 
     setup_logging(args.verbose)
 
@@ -301,7 +304,8 @@ def cmd_match_til(args):
 def cmd_assemble(args):
     """Assemble full-length TCR sequences."""
     import pandas as pd
-    from .assemble import assemble_full_sequences, validate_sequences, export_fasta
+
+    from .assemble import assemble_full_sequences, export_fasta, validate_sequences
     from .plots import plot_assembly
 
     setup_logging(args.verbose)
@@ -352,22 +356,27 @@ def cmd_assemble(args):
 
 def cmd_run(args):
     """Run the complete TCRsift pipeline."""
-    import anndata as ad
-    import pandas as pd
     from pathlib import Path
 
-    from .loader import load_samples
-    from .phenotype import phenotype_cells, filter_by_tcell_type
+    import anndata as ad
+
+    from .annotate import annotate_clonotypes
+    from .assemble import assemble_full_sequences
     from .clonotype import aggregate_clonotypes
     from .filter import filter_clonotypes, split_by_tier
-    from .annotate import annotate_clonotypes
-    from .til import match_til
-    from .assemble import assemble_full_sequences
+    from .loader import load_samples
+    from .phenotype import filter_by_tcell_type, phenotype_cells
     from .plots import (
-        plot_qc, plot_phenotype, plot_clonotypes,
-        plot_filter, plot_annotations, plot_til, plot_assembly,
         generate_report,
+        plot_annotations,
+        plot_assembly,
+        plot_clonotypes,
+        plot_filter,
+        plot_phenotype,
+        plot_qc,
+        plot_til,
     )
+    from .til import match_til
 
     setup_logging(args.verbose)
 
@@ -503,6 +512,7 @@ def cmd_run(args):
 def cmd_mnemonic(args):
     """Generate memorable names for TCR sequences."""
     import pandas as pd
+
     from .mnemonic import tcr_name
 
     setup_logging(args.verbose)

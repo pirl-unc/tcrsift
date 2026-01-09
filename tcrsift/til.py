@@ -16,12 +16,12 @@ TIL (Tumor-Infiltrating Lymphocyte) matching for TCRsift.
 Identifies culture-validated TCRs in TIL samples.
 """
 
-from typing import Optional
 import logging
+from typing import Optional
 
-import pandas as pd
-import numpy as np
 import anndata as ad
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +65,8 @@ def match_til(
             "_" +
             til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
         )
-        culture_key = "clone_id"
     else:
         til_df["clone_id"] = til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
-        culture_key = "CDR3_beta"
 
     # Count TIL cells per clone
     til_clone_counts = til_df["clone_id"].value_counts().to_dict()

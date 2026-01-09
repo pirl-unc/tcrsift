@@ -9,23 +9,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 Data loading functions for TCRsift.
 
 Handles loading CellRanger VDJ and GEX outputs into unified data structures.
 """
+from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
 import logging
+from pathlib import Path
 
-import pandas as pd
-import numpy as np
-import scanpy as sc
 import anndata as ad
+import pandas as pd
+import scanpy as sc
 
-from .sample_sheet import Sample, SampleSheet, load_sample_sheet
+from .sample_sheet import Sample, load_sample_sheet
 
 logger = logging.getLogger(__name__)
 

@@ -9,23 +9,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 Visualization functions for TCRsift.
 
 Generates plots for QC, phenotyping, clonotype analysis, and filtering.
 """
+from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
 import logging
+from pathlib import Path
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-import seaborn as sns
 import anndata as ad
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
 
 logger = logging.getLogger(__name__)
 
@@ -490,8 +488,8 @@ def generate_report(
     if format == "pdf":
         try:
             from reportlab.lib.pagesizes import letter
-            from reportlab.pdfgen import canvas
             from reportlab.lib.utils import ImageReader
+            from reportlab.pdfgen import canvas
 
             pdf_path = output_dir / "tcrsift_report.pdf"
             c = canvas.Canvas(str(pdf_path), pagesize=letter)

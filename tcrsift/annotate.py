@@ -9,19 +9,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 TCR annotation using public databases for TCRsift.
 
 Matches TCRs against VDJdb, IEDB, and CEDAR to identify known specificities.
 """
+from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
 import logging
+from pathlib import Path
 
 import pandas as pd
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -189,9 +187,9 @@ def _flag_viral(df: pd.DataFrame) -> pd.Series:
 
 
 def load_databases(
-    vdjdb_path: Optional[str | Path] = None,
-    iedb_path: Optional[str | Path] = None,
-    cedar_path: Optional[str | Path] = None,
+    vdjdb_path: str | Path | None = None,
+    iedb_path: str | Path | None = None,
+    cedar_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """
     Load and combine multiple TCR databases.
@@ -342,9 +340,9 @@ def _annotate_match(
 
 def annotate_clonotypes(
     clonotypes: pd.DataFrame,
-    vdjdb_path: Optional[str | Path] = None,
-    iedb_path: Optional[str | Path] = None,
-    cedar_path: Optional[str | Path] = None,
+    vdjdb_path: str | Path | None = None,
+    iedb_path: str | Path | None = None,
+    cedar_path: str | Path | None = None,
     match_by: str = "CDR3ab",
     exclude_viral: bool = False,
     flag_only: bool = False,

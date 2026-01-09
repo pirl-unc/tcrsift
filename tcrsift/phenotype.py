@@ -9,19 +9,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 T cell phenotyping for TCRsift.
 
 Classifies cells as CD4+ or CD8+ based on gene expression markers.
 """
+from __future__ import annotations
 
-from typing import Optional
 import logging
 
-import pandas as pd
-import numpy as np
 import anndata as ad
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 

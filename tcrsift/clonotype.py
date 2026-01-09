@@ -16,12 +16,11 @@ Clonotype aggregation for TCRsift.
 Groups cells by TCR CDR3 sequences to identify clonal populations.
 """
 
-from typing import Optional
 import logging
 
-import pandas as pd
-import numpy as np
 import anndata as ad
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 

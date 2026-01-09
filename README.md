@@ -108,14 +108,40 @@ TCRsift accepts sample sheets in CSV or YAML format.
 
 ```yaml
 samples:
+  # Single peptide culture
   - sample: "Patient1_Culture"
     vdj_dir: "/data/patient1/vdj"
     gex_dir: "/data/patient1/gex"
     antigen_type: "short_peptide"
     antigen_description: "CMV pp65"
+    epitope_sequence: "NLVPMVATV"
+    mhc_allele: "HLA-A*02:01"
     culture_days: 14
     source: "culture"
 
+  # Peptide pool stimulation
+  - sample: "Patient1_Pool"
+    vdj_dir: "/data/patient1_pool/vdj"
+    gex_dir: "/data/patient1_pool/gex"
+    antigen_type: "peptide_pool"
+    antigen_description: "Neoantigen pool"
+    antigen_sequences:
+      - "KRAS_G12D_9mer"
+      - "TP53_R175H_10mer"
+      - "PIK3CA_H1047R_9mer"
+    culture_days: 14
+    source: "culture"
+
+  # Single-chain trimer selection
+  - sample: "Patient1_SCT"
+    vdj_dir: "/data/patient1_sct/vdj"
+    antigen_type: "sct"
+    tetramer_antigen: "KRAS_G12D"
+    epitope_sequence: "GADGVGKSAL"
+    mhc_allele: "HLA-A*11:01"
+    source: "sct"
+
+  # TIL sample
   - sample: "Patient1_TIL"
     vdj_dir: "/data/patient1_til/vdj"
     source: "til"
@@ -144,6 +170,12 @@ Patient1_TIL,/data/patient1_til/vdj,,,til
 | `tcell_type_expected` | No | Expected T cell type: `CD4`, `CD8`, `mixed` |
 | `pre_sorted` | No | Pre-sorting: `CD4`, `CD8` |
 | `mhc_blocking` | No | MHC blocking: `MHC-I`, `MHC-II` |
+| `epitope_sequence` | No | Peptide sequence (for single-antigen types) |
+| `mhc_allele` | No | MHC restriction allele |
+| `tetramer_antigen` | No | Antigen name for tetramer/SCT selection |
+| `peptide_pool` | No | List of peptide sequences (for peptide_pool type) |
+| `antigen_sequences` | No | List of antigen sequences (for pools/libraries) |
+| `protein_names` | No | List of protein names (for mRNA, whole_protein) |
 
 *At least one of `vdj_dir` or `gex_dir` is required.
 
@@ -155,12 +187,14 @@ TCRsift uses antigen type to set biology-aware defaults:
 |--------------|-----------------|-------------|
 | `short_peptide` | CD8 | 8-11aa peptides, direct MHC-I binding |
 | `long_peptide` | mixed | 15-25+aa peptides, requires processing |
-| `minigene` | mixed | Minigene constructs |
+| `peptide_pool` | mixed | Pool of peptides for stimulation |
+| `minigene` | mixed | Single minigene construct |
+| `minigene_library` | mixed | Library of multiple minigene constructs |
 | `whole_protein` | mixed | Full protein antigens |
-| `tetramer_mhc1` | CD8 | MHC-I tetramer selection |
-| `tetramer_mhc2` | CD4 | MHC-II tetramer selection |
-| `sct_mhc1` | CD8 | Single-cell tetramer, MHC-I |
-| `sct_mhc2` | CD4 | Single-cell tetramer, MHC-II |
+| `mrna` | mixed | mRNA encoding one or more antigens |
+| `tetramer_mhc1` | CD8 | MHC-I tetramer selection (single antigen) |
+| `tetramer_mhc2` | CD4 | MHC-II tetramer selection (single antigen) |
+| `sct` | CD8 | Single-chain trimer (pMHC-I: alpha-B2M-peptide fusion) |
 
 ## Pipeline Steps
 

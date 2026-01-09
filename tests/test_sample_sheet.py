@@ -143,12 +143,15 @@ class TestSampleTypeChecks:
         assert sample.is_tetramer_or_sct() is True
 
     def test_is_tetramer_by_antigen_type(self):
-        """Tetramer antigen types should be detected."""
+        """Tetramer and SCT antigen types should be detected."""
         sample1 = Sample(sample="S1", vdj_dir="/path", antigen_type="tetramer_mhc1")
         assert sample1.is_tetramer_or_sct() is True
 
-        sample2 = Sample(sample="S2", vdj_dir="/path", antigen_type="sct_mhc2")
+        sample2 = Sample(sample="S2", vdj_dir="/path", antigen_type="tetramer_mhc2")
         assert sample2.is_tetramer_or_sct() is True
+
+        sample3 = Sample(sample="S3", vdj_dir="/path", antigen_type="sct")
+        assert sample3.is_tetramer_or_sct() is True
 
     def test_is_til(self):
         """TIL source should be detected."""

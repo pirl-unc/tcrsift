@@ -9,20 +9,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 Full-length TCR sequence assembly for TCRsift.
 
 Builds complete TCR sequences including leader peptides and constant regions.
 """
+from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
 import logging
 from collections import Counter
+from pathlib import Path
 
 import pandas as pd
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +229,7 @@ def get_constant_region_sequences() -> dict[str, str]:
 
 def assemble_full_sequences(
     clonotypes: pd.DataFrame,
-    contigs_dir: Optional[str | Path] = None,
+    contigs_dir: str | Path | None = None,
     include_leader: bool = True,
     include_constant: bool = True,
     constant_source: str = "ensembl",
@@ -347,7 +345,6 @@ def _extract_leader_from_contigs(
 ):
     """Extract leader peptide from contig sequences."""
     samples = str(row.get("samples", "")).split(";")
-    contigs = {}
 
     for chain, prefix in [("alpha", "TRA"), ("beta", "TRB")]:
         contig_col = f"{chain}_contig_ids"

@@ -39,7 +39,44 @@ Example usage::
 
 """
 
-from .version import __version__
+from .annotate import (
+    annotate_clonotypes,
+    get_annotation_summary,
+    load_cedar,
+    load_iedb,
+    load_vdjdb,
+)
+from .assemble import (
+    assemble_full_sequences,
+    export_fasta,
+    translate_dna,
+    validate_sequences,
+)
+from .clonotype import (
+    aggregate_clonotypes,
+    export_clonotypes_airr,
+    get_clonotype_summary,
+)
+from .filter import (
+    assign_tiers_threshold,
+    filter_clonotypes,
+    filter_clonotypes_threshold,
+    get_filter_summary,
+    split_by_tier,
+)
+from .loader import (
+    load_cellranger_gex,
+    load_cellranger_vdj,
+    load_sample,
+    load_samples,
+)
+from .mnemonic import tcr_name
+from .phenotype import (
+    classify_tcell_type,
+    filter_by_tcell_type,
+    get_phenotype_summary,
+    phenotype_cells,
+)
 
 # Core modules
 from .sample_sheet import (
@@ -48,57 +85,12 @@ from .sample_sheet import (
     load_sample_sheet,
     validate_sample_sheet,
 )
-
-from .loader import (
-    load_cellranger_vdj,
-    load_cellranger_gex,
-    load_sample,
-    load_samples,
-)
-
-from .phenotype import (
-    phenotype_cells,
-    classify_tcell_type,
-    filter_by_tcell_type,
-    get_phenotype_summary,
-)
-
-from .clonotype import (
-    aggregate_clonotypes,
-    get_clonotype_summary,
-    export_clonotypes_airr,
-)
-
-from .filter import (
-    filter_clonotypes,
-    filter_clonotypes_threshold,
-    assign_tiers_threshold,
-    split_by_tier,
-    get_filter_summary,
-)
-
-from .annotate import (
-    load_vdjdb,
-    load_iedb,
-    load_cedar,
-    annotate_clonotypes,
-    get_annotation_summary,
-)
-
 from .til import (
-    match_til,
     get_til_summary,
     identify_til_specific_clones,
+    match_til,
 )
-
-from .assemble import (
-    assemble_full_sequences,
-    translate_dna,
-    validate_sequences,
-    export_fasta,
-)
-
-from .mnemonic import tcr_name
+from .version import __version__
 
 __all__ = [
     # Version

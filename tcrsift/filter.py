@@ -16,11 +16,11 @@ Clonotype filtering for TCRsift.
 Implements tiered filtering to identify antigen-specific TCR clones.
 """
 
-from typing import Optional
 import logging
+from typing import Optional
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 

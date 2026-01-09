@@ -9,29 +9,30 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 Sample sheet parsing for TCRsift.
 
 Supports both CSV and YAML formats for specifying samples and their metadata.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
-import pandas as pd
 
+import pandas as pd
 
 # Antigen types and their expected T cell responses
 ANTIGEN_TYPE_TCELL_EXPECTATIONS = {
     "short_peptide": "CD8",      # 8-11aa, MHC-I direct binding
     "long_peptide": "mixed",     # 15-25+aa, requires processing, favors CD4
+    "peptide_pool": "mixed",     # pool of peptides, mixed responses
     "minigene": "mixed",         # requires processing, favors CD4
+    "minigene_library": "mixed", # library of minigenes, mixed responses
     "whole_protein": "mixed",    # requires processing, favors CD4
-    "tetramer_mhc1": "CD8",      # direct MHC-I tetramer selection
-    "tetramer_mhc2": "CD4",      # direct MHC-II tetramer selection
-    "sct_mhc1": "CD8",           # single-cell tetramer, MHC-I
-    "sct_mhc2": "CD4",           # single-cell tetramer, MHC-II
+    "mrna": "mixed",             # mRNA encoding antigen(s), requires processing
+    "tetramer_mhc1": "CD8",      # MHC-I tetramer selection (single antigen)
+    "tetramer_mhc2": "CD4",      # MHC-II tetramer selection (single antigen)
+    "sct": "CD8",                # single-chain trimer (pMHC-I alpha-B2M-peptide fusion)
 }
 
 VALID_ANTIGEN_TYPES = set(ANTIGEN_TYPE_TCELL_EXPECTATIONS.keys())
@@ -45,21 +46,26 @@ VALID_PRE_SORTED = {"CD4", "CD8", None}
 class Sample:
     """Represents a single sample with its metadata."""
     sample: str
-    gex_dir: Optional[str] = None
-    vdj_dir: Optional[str] = None
-    antigen_type: Optional[str] = None
-    antigen_description: Optional[str] = None
-    culture_days: Optional[int] = None
-    tcell_type_expected: Optional[str] = None
-    pre_sorted: Optional[str] = None
-    mhc_blocking: Optional[str] = None
+    gex_dir: str | None = None
+    vdj_dir: str | None = None
+    antigen_type: str | None = None
+    antigen_description: str | None = None
+    culture_days: int | None = None
+    tcell_type_expected: str | None = None
+    pre_sorted: str | None = None
+    mhc_blocking: str | None = None
     source: str = "culture"
-    tetramer_antigen: Optional[str] = None
-    mhc_allele: Optional[str] = None
-    epitope_sequence: Optional[str] = None
-    peptide_pool: Optional[list] = None
-    tissue: Optional[str] = None
-    patient_id: Optional[str] = None
+    # Single antigen fields (for tetramers, SCT)
+    tetramer_antigen: str | None = None
+    mhc_allele: str | None = None
+    epitope_sequence: str | None = None
+    # Pool/library fields (for peptide_pool, minigene_library, mrna)
+    peptide_pool: list | None = None  # list of peptide sequences
+    antigen_sequences: list | None = None  # list of antigen sequences (peptides, minigenes)
+    protein_names: list | None = None  # list of protein names (for mRNA, whole_protein)
+    # Other metadata
+    tissue: str | None = None
+    patient_id: str | None = None
 
     def __post_init__(self):
         # Validate at least one data source
@@ -101,7 +107,7 @@ class Sample:
                 f"Valid values: {VALID_MHC_BLOCKING}"
             )
 
-    def get_expected_tcell_type(self) -> Optional[str]:
+    def get_expected_tcell_type(self) -> str | None:
         """
         Determine expected T cell type based on antigen type, blocking, and sorting.
 
@@ -130,7 +136,9 @@ class Sample:
     def is_tetramer_or_sct(self) -> bool:
         """Check if this sample is from tetramer or SCT selection."""
         return self.source in {"tetramer", "sct"} or (
-            self.antigen_type is not None and self.antigen_type.startswith(("tetramer_", "sct_"))
+            self.antigen_type is not None and (
+                self.antigen_type.startswith("tetramer_") or self.antigen_type == "sct"
+            )
         )
 
     def is_til(self) -> bool:
@@ -152,7 +160,7 @@ class SampleSheet:
     def __getitem__(self, idx):
         return self.samples[idx]
 
-    def get_sample(self, name: str) -> Optional[Sample]:
+    def get_sample(self, name: str) -> Sample | None:
         """Get a sample by name."""
         for s in self.samples:
             if s.sample == name:

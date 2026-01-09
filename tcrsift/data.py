@@ -10,13 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from os import PathLike
 from os.path import join
-import sys
 
-import argh
-import scanpy as sc
 import pandas as pd
+import scanpy as sc
 
 
 def annotate_combined_df(
@@ -209,7 +209,6 @@ def run_from_sample_sheet_for_cellranger_count_and_vdj_outputs(
     sample_sheet = pd.read_csv(sample_sheet_csv_path)
     for _, row in sample_sheet.iterrows():
         print(row)
-        sample_name = row["sample"]
         (gene_expression_data, df_clonotypes, df_annotations) = (
             load_sample_cellranger_count_and_vdj_outputs(
                 row["gene_expression_matrix_dir"],
