@@ -10,25 +10,26 @@ Both YAML and CSV formats are supported.
 
 ```yaml title="samples.yaml"
 samples:
-  # Single peptide culture
+  # Minimal peptide culture (antigen == epitope)
   - sample: "Patient1_CMV"
     vdj_dir: "/data/patient1/vdj"
     gex_dir: "/data/patient1/gex"
     antigen_type: "short_peptide"
-    antigen_description: "CMV pp65 495-503"
-    epitope_sequence: "NLVPMVATV"
+    antigen_name: "CMV pp65 495-503"
+    epitope_sequence: "NLVPMVATV"  # same as antigen for minimal peptides
     mhc_allele: "HLA-A*02:01"
     culture_days: 14
     source: "culture"
     tcell_type_expected: "CD8"
 
-  # Long peptide culture
+  # Long peptide culture (epitope unknown until processing)
   - sample: "Patient1_KRAS"
     vdj_dir: "/data/patient1_kras/vdj"
     gex_dir: "/data/patient1_kras/gex"
     antigen_type: "long_peptide"
-    antigen_description: "KRAS G12D 25-mer"
-    epitope_sequence: "TEYKLVVVGADGVGKSALTIQLIQ"
+    antigen_name: "KRAS G12D 25-mer"
+    antigen_sequence: "TEYKLVVVGADGVGKSALTIQLIQ"  # full long peptide
+    # epitope_sequence unknown - depends on processing
     culture_days: 21
     source: "culture"
 
@@ -37,24 +38,27 @@ samples:
     vdj_dir: "/data/patient1_pool/vdj"
     gex_dir: "/data/patient1_pool/gex"
     antigen_type: "peptide_pool"
-    antigen_description: "Neoantigen pool"
-    antigen_sequences:
-      - "KRAS_G12D_9mer"
-      - "TP53_R175H_10mer"
-      - "PIK3CA_H1047R_9mer"
+    antigen_names:  # required when >1 antigen
+      - "KRAS_G12D"
+      - "TP53_R175H"
+      - "PIK3CA_H1047R"
+    antigen_sequences:  # optional
+      - "GADGVGKSAL"
+      - "HMTEVVRHC"
+      - "ARHGGWTTKM"
     culture_days: 14
     source: "culture"
 
-  # Single-chain trimer selection
+  # SCT selection (epitope is known from the construct)
   - sample: "Patient1_SCT"
     vdj_dir: "/data/patient1_sct/vdj"
     antigen_type: "sct"
-    tetramer_antigen: "KRAS_G12D"
-    epitope_sequence: "GADGVGKSAL"
-    mhc_allele: "HLA-A*11:01"
+    antigen_name: "PRAME"  # source protein
+    epitope_sequence: "SLLQHLIGL"  # what's in the SCT
+    mhc_allele: "HLA-A*02:01"
     source: "sct"
 
-  # TIL sample
+  # TIL sample (no antigen info needed)
   - sample: "Patient1_TIL"
     vdj_dir: "/data/patient1_til/vdj"
     source: "til"
@@ -92,12 +96,30 @@ Patient1_TIL,/data/patient1_til/vdj,,,til
 |-------|-------------|
 | `antigen_type` | Type of antigen (see below) |
 | `antigen_description` | Free-text description |
-| `epitope_sequence` | Peptide sequence (for single-antigen types) |
-| `mhc_allele` | MHC restriction if known |
-| `tetramer_antigen` | Antigen name for tetramer/SCT selection |
-| `peptide_pool` | List of peptide sequences (for peptide_pool type) |
-| `antigen_sequences` | List of antigen sequences (for pools/libraries) |
-| `protein_names` | List of protein names (for mRNA, whole_protein) |
+| `antigen_name` | Name of source antigen (e.g., "PRAME", "CMV pp65") |
+| `antigen_sequence` | Sequence of source antigen (may be long) |
+| `epitope_sequence` | Minimal peptide AA sequence that binds MHC |
+| `mhc_allele` | MHC restriction (e.g., "HLA-A*02:01") |
+| `antigen_names` | List of source antigen names (for pools/libraries) |
+| `antigen_sequences` | List of source antigen sequences (for pools/libraries) |
+| `epitope_sequences` | List of minimal epitope sequences (for pools, if known) |
+
+**Antigen vs Epitope:**
+
+- **Antigen** = what you gave to APCs (whole protein, long peptide, minigene, mRNA, etc.)
+- **Epitope** = the minimal peptide that sits in the MHC groove (8-11aa for MHC-I, 13-25aa for MHC-II)
+
+For minimal peptide stimulation, antigen == epitope. For whole proteins, the antigen is much larger than the processed epitope. Only the epitope can have an MHC restriction.
+
+**When to use each field:**
+
+- **Single antigen**: Use `antigen_name` and optionally `antigen_sequence`. If you know the minimal epitope, add `epitope_sequence` and `mhc_allele`.
+
+- **Tetramer/SCT**: The epitope is known. Provide `epitope_sequence`, `mhc_allele`, and `antigen_name` to describe the source.
+
+- **Pools/libraries**: Use `antigen_names` (required if >1 antigen) and optionally `antigen_sequences`.
+
+**Naming rules**: At least a name or sequence must be provided. If only a sequence is given, it becomes the name. If multiple sequences are given without names, that's ambiguous.
 
 ### Culture Conditions
 

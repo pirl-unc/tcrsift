@@ -55,14 +55,16 @@ class Sample:
     pre_sorted: str | None = None
     mhc_blocking: str | None = None
     source: str = "culture"
-    # Single antigen fields (for tetramers, SCT)
-    tetramer_antigen: str | None = None
-    mhc_allele: str | None = None
-    epitope_sequence: str | None = None
-    # Pool/library fields (for peptide_pool, minigene_library, mrna)
-    peptide_pool: list | None = None  # list of peptide sequences
-    antigen_sequences: list | None = None  # list of antigen sequences (peptides, minigenes)
-    protein_names: list | None = None  # list of protein names (for mRNA, whole_protein)
+    # Antigen fields - what was given to APCs (protein, long peptide, minigene, etc.)
+    antigen_name: str | None = None  # name of source antigen (e.g., "PRAME", "CMV pp65")
+    antigen_sequence: str | None = None  # sequence of source antigen (may be long)
+    # Epitope fields - minimal peptide that binds MHC
+    epitope_sequence: str | None = None  # minimal peptide AA sequence (e.g., "SLLQHLIGL")
+    mhc_allele: str | None = None  # MHC restriction (e.g., "HLA-A*02:01")
+    # Pool/library fields - lists for multiple antigens
+    antigen_names: list | None = None  # list of source antigen names
+    antigen_sequences: list | None = None  # list of source antigen sequences
+    epitope_sequences: list | None = None  # list of minimal epitope sequences (if known)
     # Other metadata
     tissue: str | None = None
     patient_id: str | None = None
@@ -189,12 +191,14 @@ class SampleSheet:
                 "vdj_dir": s.vdj_dir,
                 "antigen_type": s.antigen_type,
                 "antigen_description": s.antigen_description,
+                "antigen_name": s.antigen_name,
+                "epitope_sequence": s.epitope_sequence,
+                "mhc_allele": s.mhc_allele,
                 "culture_days": s.culture_days,
                 "tcell_type_expected": s.tcell_type_expected,
                 "pre_sorted": s.pre_sorted,
                 "mhc_blocking": s.mhc_blocking,
                 "source": s.source,
-                "tetramer_antigen": s.tetramer_antigen,
                 "expected_tcell_type": s.get_expected_tcell_type(),
             }
             records.append(record)

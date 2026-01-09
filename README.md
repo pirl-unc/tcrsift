@@ -108,15 +108,25 @@ TCRsift accepts sample sheets in CSV or YAML format.
 
 ```yaml
 samples:
-  # Single peptide culture
-  - sample: "Patient1_Culture"
+  # Minimal peptide culture (antigen == epitope)
+  - sample: "Patient1_CMV"
     vdj_dir: "/data/patient1/vdj"
     gex_dir: "/data/patient1/gex"
     antigen_type: "short_peptide"
-    antigen_description: "CMV pp65"
-    epitope_sequence: "NLVPMVATV"
+    antigen_name: "CMV pp65 495-503"
+    epitope_sequence: "NLVPMVATV"  # same as antigen for minimal peptides
     mhc_allele: "HLA-A*02:01"
     culture_days: 14
+    source: "culture"
+
+  # Whole protein culture (antigen >> epitope)
+  - sample: "Patient1_Protein"
+    vdj_dir: "/data/patient1_protein/vdj"
+    gex_dir: "/data/patient1_protein/gex"
+    antigen_type: "whole_protein"
+    antigen_name: "PRAME"
+    # epitope_sequence unknown - will be processed by APCs
+    culture_days: 21
     source: "culture"
 
   # Peptide pool stimulation
@@ -124,24 +134,27 @@ samples:
     vdj_dir: "/data/patient1_pool/vdj"
     gex_dir: "/data/patient1_pool/gex"
     antigen_type: "peptide_pool"
-    antigen_description: "Neoantigen pool"
-    antigen_sequences:
-      - "KRAS_G12D_9mer"
-      - "TP53_R175H_10mer"
-      - "PIK3CA_H1047R_9mer"
+    antigen_names:  # required when >1 antigen
+      - "KRAS_G12D"
+      - "TP53_R175H"
+      - "PIK3CA_H1047R"
+    antigen_sequences:  # optional but helpful
+      - "GADGVGKSAL"
+      - "HMTEVVRHC"
+      - "ARHGGWTTKM"
     culture_days: 14
     source: "culture"
 
-  # Single-chain trimer selection
+  # SCT selection (epitope is known from the construct)
   - sample: "Patient1_SCT"
     vdj_dir: "/data/patient1_sct/vdj"
     antigen_type: "sct"
-    tetramer_antigen: "KRAS_G12D"
-    epitope_sequence: "GADGVGKSAL"
-    mhc_allele: "HLA-A*11:01"
+    antigen_name: "PRAME"  # source protein
+    epitope_sequence: "SLLQHLIGL"  # what's in the SCT
+    mhc_allele: "HLA-A*02:01"
     source: "sct"
 
-  # TIL sample
+  # TIL sample (no antigen info needed)
   - sample: "Patient1_TIL"
     vdj_dir: "/data/patient1_til/vdj"
     source: "til"
@@ -170,14 +183,32 @@ Patient1_TIL,/data/patient1_til/vdj,,,til
 | `tcell_type_expected` | No | Expected T cell type: `CD4`, `CD8`, `mixed` |
 | `pre_sorted` | No | Pre-sorting: `CD4`, `CD8` |
 | `mhc_blocking` | No | MHC blocking: `MHC-I`, `MHC-II` |
-| `epitope_sequence` | No | Peptide sequence (for single-antigen types) |
-| `mhc_allele` | No | MHC restriction allele |
-| `tetramer_antigen` | No | Antigen name for tetramer/SCT selection |
-| `peptide_pool` | No | List of peptide sequences (for peptide_pool type) |
-| `antigen_sequences` | No | List of antigen sequences (for pools/libraries) |
-| `protein_names` | No | List of protein names (for mRNA, whole_protein) |
+| `antigen_name` | No | Name of source antigen (e.g., "PRAME", "CMV pp65") |
+| `antigen_sequence` | No | Sequence of source antigen (may be long) |
+| `epitope_sequence` | No | Minimal peptide AA sequence that binds MHC |
+| `mhc_allele` | No | MHC restriction (e.g., "HLA-A*02:01") |
+| `antigen_names` | No | List of source antigen names (for pools/libraries) |
+| `antigen_sequences` | No | List of source antigen sequences (for pools/libraries) |
+| `epitope_sequences` | No | List of minimal epitope sequences (for pools, if known) |
 
 *At least one of `vdj_dir` or `gex_dir` is required.
+
+**Antigen vs Epitope:**
+
+- **Antigen** = what you gave to APCs (whole protein, long peptide, minigene, mRNA, etc.)
+- **Epitope** = the minimal peptide that sits in the MHC groove (8-11aa for MHC-I, 13-25aa for MHC-II)
+
+For minimal peptide stimulation, antigen == epitope. For whole proteins, the antigen is much larger than the processed epitope. Only the epitope can have an MHC restriction.
+
+**Field usage:**
+
+- **Single antigen**: Use `antigen_name` and optionally `antigen_sequence`. If you know the minimal epitope, add `epitope_sequence` and `mhc_allele`.
+
+- **Tetramer/SCT**: The epitope is known (it's in the tetramer). Provide `epitope_sequence`, `mhc_allele`, and `antigen_name` to describe the source (e.g., "HLA-A*02:01/SLLQHLIGL from PRAME").
+
+- **Pools/libraries**: Use `antigen_names` (required if >1 antigen) and optionally `antigen_sequences`. Add `epitope_sequences` if you know the minimal epitopes.
+
+**Naming rules**: At least a name or sequence must be provided. If only a sequence is given, it becomes the name. If multiple sequences are given without names, that's ambiguous.
 
 ### Antigen Types
 
