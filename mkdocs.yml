@@ -1,0 +1,81 @@
+site_name: TCRsift
+site_description: T-cell receptor selection for TCR-T studies from antigen-specific culture and scRNA/VDJ sequencing
+site_url: https://pirl-unc.github.io/tcrsift/
+repo_url: https://github.com/pirl-unc/tcrsift
+repo_name: pirl-unc/tcrsift
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: numpy
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 2
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Sample Sheets: getting-started/sample-sheets.md
+  - User Guide:
+    - Pipeline Overview: user-guide/pipeline.md
+    - CLI Reference: user-guide/cli.md
+    - Filtering Strategies: user-guide/filtering.md
+  - API Reference:
+    - Sample Sheet: api/sample_sheet.md
+    - Loading: api/loader.md
+    - Phenotyping: api/phenotype.md
+    - Clonotyping: api/clonotype.md
+    - Filtering: api/filter.md
+    - Annotation: api/annotate.md
+    - TIL Matching: api/til.md
+    - Assembly: api/assemble.md
+  - Contributing: contributing.md

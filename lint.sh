@@ -1,19 +1,12 @@
 #!/bin/bash
-set -o errexit
+set -e
 
+echo "Running ruff..."
+ruff check tcrsift/
+echo "Ruff check passed!"
 
-# disabling several categories of errors due to false positives in pylint,
-# see these issues:
-# - https://bitbucket.org/logilab/pylint/issues/701/false-positives-with-not-an-iterable-and
-# - https://bitbucket.org/logilab/pylint/issues/58
-
-find tcrsift/ -name '*.py' \
-  | xargs pylint \
+echo "Running pylint..."
+pylint tcrsift/ \
   --errors-only \
-  --disable=unsubscriptable-object,not-an-iterable,no-member,invalid-unary-operand-type \
-&& \
-echo 'Passes pylint check' \
-&& \
-ruff check tcrsift/ \
-&& \
-echo "Passes ruff check" 
+  --disable=unsubscriptable-object,not-an-iterable,no-member,invalid-unary-operand-type
+echo "Pylint check passed!"

@@ -1,18 +1,37 @@
 [project]
 name = "tcrsift"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 authors = [ {name="Alex Rubinsteyn", email="alex.rubinsteyn@unc.edu" } ]
 description = "T-cell receptor selection for TCR-T studies from antigen specific culture and scRNA/VDJ sequencing"
 classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: Implementation :: CPython",
-    'Environment :: Console',
-    'Operating System :: OS Independent',
-    'Intended Audience :: Science/Research',
-    'License :: OSI Approved :: Apache Software License',
-    'Topic :: Scientific/Engineering :: Bio-Informatics',
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 readme = "README.md"
 dynamic = ["version", "dependencies"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "pylint>=3.0.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+    "mkdocstrings[python]>=0.24.0",
+    "pymdown-extensions>=10.0.0",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "tcrsift.version.__version__"}
@@ -23,7 +42,22 @@ packages = ["tcrsift"]
 
 [project.urls]
 "Homepage" = "https://github.com/pirl-unc/tcrsift"
+"Documentation" = "https://pirl-unc.github.io/tcrsift/"
 "Bug Tracker" = "https://github.com/pirl-unc/tcrsift/issues"
 
 [project.scripts]
 tcrsift = "tcrsift.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]
