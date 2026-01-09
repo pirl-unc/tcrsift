@@ -77,6 +77,14 @@ from .phenotype import (
     get_phenotype_summary,
     phenotype_cells,
 )
+from .qc import (
+    QCReport,
+    QCResult,
+    find_repeated_kmers,
+    get_qc_summary,
+    validate_clonotypes,
+    validate_sequence,
+)
 
 # Core modules
 from .sample_sheet import (
@@ -135,6 +143,13 @@ __all__ = [
     "translate_dna",
     "validate_sequences",
     "export_fasta",
+    # QC
+    "QCReport",
+    "QCResult",
+    "find_repeated_kmers",
+    "validate_sequence",
+    "validate_clonotypes",
+    "get_qc_summary",
     # Utilities
     "tcr_name",
 ]
