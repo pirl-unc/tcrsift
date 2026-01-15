@@ -9,6 +9,7 @@ import anndata as ad
 
 from tcrsift.clonotype import (
     aggregate_clonotypes,
+    calculate_clone_frequencies,
     get_clonotype_summary,
     export_clonotypes_airr,
 )
@@ -196,3 +197,262 @@ class TestExportClonotypesAirr:
         # Check that CDR3 sequences are mapped correctly
         if "junction_aa_trb" in airr_df.columns:
             assert airr_df["junction_aa_trb"].iloc[0] == "CASSLGQAYEQYF"
+
+
+class TestCalculateCloneFrequencies:
+    """Tests for calculate_clone_frequencies function."""
+
+    @pytest.fixture
+    def adata_with_clone_info(self, sample_adata):
+        """Create AnnData with clone information."""
+        adata = sample_adata.copy()
+        adata.obs["sample"] = ["S1"] * 50 + ["S2"] * 50
+        adata.obs["CDR3_alpha"] = ["CASSL"] * 30 + ["CAVSD"] * 70
+        adata.obs["CDR3_beta"] = ["CASSF"] * 30 + ["CASRG"] * 70
+        adata.obs["clone_id"] = adata.obs["CDR3_alpha"] + "_" + adata.obs["CDR3_beta"]
+        adata.obs["is_complete_clone"] = True
+        return adata
+
+    def test_calculate_frequencies_basic(self, adata_with_clone_info, sample_clonotypes_df):
+        """Test basic frequency calculation."""
+        result = calculate_clone_frequencies(sample_clonotypes_df, adata_with_clone_info)
+
+        assert "sample_frequencies" in result.columns
+        assert "n_conditions_present" in result.columns
+
+    def test_frequency_values(self, adata_with_clone_info):
+        """Test frequency values are calculated correctly."""
+        # Create clonotypes from this adata
+        clonotypes = aggregate_clonotypes(adata_with_clone_info, group_by="CDR3ab")
+
+        result = calculate_clone_frequencies(clonotypes, adata_with_clone_info)
+
+        # All frequencies should be between 0 and 1
+        if "max_frequency" in result.columns:
+            assert all(result["max_frequency"] >= 0)
+            assert all(result["max_frequency"] <= 1)
+
+
+class TestAggregateClonotypesExtended:
+    """Extended tests for aggregate_clonotypes edge cases."""
+
+    @pytest.fixture
+    def adata_with_vdj_genes(self, sample_adata):
+        """Create AnnData with VDJ gene columns."""
+        adata = sample_adata.copy()
+        adata.obs["sample"] = "S1"
+        adata.obs["CDR3_alpha"] = "CASSL"
+        adata.obs["CDR3_beta"] = "CASSF"
+        adata.obs["TRA_1_v_gene"] = "TRAV1"
+        adata.obs["TRA_1_j_gene"] = "TRAJ1"
+        adata.obs["TRA_1_c_gene"] = "TRAC"
+        adata.obs["TRB_1_v_gene"] = "TRBV2"
+        adata.obs["TRB_1_j_gene"] = "TRBJ2"
+        adata.obs["TRB_1_c_gene"] = "TRBC1"
+        adata.obs["TRA_1_vdj_aa"] = "MRLVTSGF"
+        adata.obs["TRA_1_vdj_nt"] = "ATGCGT"
+        adata.obs["TRB_1_vdj_aa"] = "MGVTSGHD"
+        adata.obs["TRB_1_vdj_nt"] = "ATGGGT"
+        adata.obs["TRA_1_umis"] = 100
+        adata.obs["TRB_1_umis"] = 200
+        adata.obs["TRA_1_reads"] = 1000
+        adata.obs["TRB_1_reads"] = 2000
+        adata.obs["TRA_1_contig_id"] = "contig_1"
+        adata.obs["TRB_1_contig_id"] = "contig_2"
+        adata.obs["antigen_description"] = "TestAntigen"
+        adata.obs["source"] = "culture"
+        return adata
+
+    def test_aggregate_with_vdj_genes(self, adata_with_vdj_genes):
+        """Test aggregation includes VDJ gene information."""
+        clonotypes = aggregate_clonotypes(adata_with_vdj_genes, group_by="CDR3ab")
+
+        assert len(clonotypes) > 0
+        assert "alpha_v_gene" in clonotypes.columns
+        assert "beta_v_gene" in clonotypes.columns
+        assert clonotypes["alpha_v_gene"].iloc[0] == "TRAV1"
+
+    def test_aggregate_with_vdj_sequences(self, adata_with_vdj_genes):
+        """Test aggregation includes VDJ sequences."""
+        clonotypes = aggregate_clonotypes(adata_with_vdj_genes, group_by="CDR3ab")
+
+        assert "VDJ_alpha_aa" in clonotypes.columns
+        assert "VDJ_beta_aa" in clonotypes.columns
+        assert clonotypes["VDJ_alpha_aa"].iloc[0] == "MRLVTSGF"
+
+    def test_aggregate_with_umi_metrics(self, adata_with_vdj_genes):
+        """Test aggregation includes UMI metrics."""
+        clonotypes = aggregate_clonotypes(adata_with_vdj_genes, group_by="CDR3ab")
+
+        assert "alpha_umis_mean" in clonotypes.columns
+        assert "beta_reads_sum" in clonotypes.columns
+
+    def test_aggregate_with_contig_ids(self, adata_with_vdj_genes):
+        """Test aggregation includes contig IDs."""
+        clonotypes = aggregate_clonotypes(adata_with_vdj_genes, group_by="CDR3ab")
+
+        assert "alpha_contig_ids" in clonotypes.columns
+        assert "beta_contig_ids" in clonotypes.columns
+
+    def test_aggregate_with_antigen_info(self, adata_with_vdj_genes):
+        """Test aggregation includes antigen information."""
+        clonotypes = aggregate_clonotypes(adata_with_vdj_genes, group_by="CDR3ab")
+
+        assert "antigens" in clonotypes.columns
+        assert "n_antigens" in clonotypes.columns
+        assert "TestAntigen" in clonotypes["antigens"].iloc[0]
+
+    def test_aggregate_with_source_info(self, adata_with_vdj_genes):
+        """Test aggregation includes source information."""
+        clonotypes = aggregate_clonotypes(adata_with_vdj_genes, group_by="CDR3ab")
+
+        assert "sources" in clonotypes.columns
+        assert clonotypes["sources"].iloc[0] == "culture"
+
+    def test_aggregate_cdr3b_only_with_alpha(self, adata_with_vdj_genes):
+        """Test CDR3b_only mode still captures alpha when available."""
+        clonotypes = aggregate_clonotypes(adata_with_vdj_genes, group_by="CDR3b_only")
+
+        assert len(clonotypes) > 0
+        assert "CDR3_beta" in clonotypes.columns
+        # CDR3_alpha should also be captured when available
+        assert "CDR3_alpha" in clonotypes.columns
+
+
+class TestGetClonotypeSummaryExtended:
+    """Extended tests for get_clonotype_summary edge cases."""
+
+    def test_summary_without_n_samples(self):
+        """Test summary when n_samples column is missing."""
+        df = pd.DataFrame({
+            "clone_id": ["A", "B"],
+            "cell_count": [5, 3],
+            # No n_samples column
+        })
+
+        summary = get_clonotype_summary(df)
+
+        assert "n_multi_sample" in summary
+        assert summary["n_multi_sample"] == 0  # Default when column missing
+
+
+class TestRealisticClonotyping:
+    """Tests using realistic clonotype data matching real CellRanger outputs."""
+
+    def test_clonotype_cdr3_format(self, sample_clonotypes_df):
+        """Test that clonotype CDR3 sequences follow IMGT conventions."""
+        df = sample_clonotypes_df
+
+        # All alpha CDR3s should start with CA (conserved cysteine + alanine)
+        for cdr3 in df["CDR3_alpha"]:
+            assert cdr3.startswith("CA"), f"Alpha CDR3 {cdr3} doesn't start with CA"
+
+        # All beta CDR3s should start with CAS (conserved cysteine + alanine + serine)
+        for cdr3 in df["CDR3_beta"]:
+            assert cdr3.startswith("CAS"), f"Beta CDR3 {cdr3} doesn't start with CAS"
+
+    def test_clonotype_gene_naming(self, sample_clonotypes_df):
+        """Test that V/J/C gene names follow IMGT nomenclature."""
+        df = sample_clonotypes_df
+
+        # V genes should be TRAV/TRBV with numeric suffix
+        for v_gene in df["alpha_v_gene"]:
+            assert v_gene.startswith("TRAV"), f"Alpha V gene {v_gene} doesn't start with TRAV"
+        for v_gene in df["beta_v_gene"]:
+            assert v_gene.startswith("TRBV"), f"Beta V gene {v_gene} doesn't start with TRBV"
+
+        # J genes should be TRAJ/TRBJ
+        for j_gene in df["alpha_j_gene"]:
+            assert j_gene.startswith("TRAJ"), f"Alpha J gene {j_gene} doesn't start with TRAJ"
+
+        # C genes should be TRAC/TRBC
+        for c_gene in df["alpha_c_gene"]:
+            assert c_gene == "TRAC", f"Alpha C gene {c_gene} should be TRAC"
+        for c_gene in df["beta_c_gene"]:
+            assert c_gene.startswith("TRBC"), f"Beta C gene {c_gene} doesn't start with TRBC"
+
+    def test_realistic_cell_counts(self, sample_clonotypes_df):
+        """Test that cell counts represent typical clonal expansion patterns."""
+        df = sample_clonotypes_df
+
+        # Most clones should be small (1-10 cells)
+        small_clones = df[df["cell_count"] <= 10]
+        assert len(small_clones) > 0, "Should have small clones"
+
+        # Some clones can be expanded
+        expanded = df[df["cell_count"] > 1]
+        assert len(expanded) > 0, "Should have expanded clones"
+
+        # Cell counts should be positive integers
+        assert all(df["cell_count"] > 0)
+        assert all(df["cell_count"] == df["cell_count"].astype(int))
+
+    def test_frequency_range(self, sample_clonotypes_df):
+        """Test that clone frequencies are in valid range."""
+        df = sample_clonotypes_df
+
+        # All frequencies should be between 0 and 1
+        assert all(df["max_frequency"] >= 0)
+        assert all(df["max_frequency"] <= 1)
+
+        # Larger clones should have higher frequencies
+        sorted_by_count = df.sort_values("cell_count", ascending=False)
+        sorted_by_freq = df.sort_values("max_frequency", ascending=False)
+
+        # Top clone by count should also be among top by frequency
+        top_by_count = sorted_by_count.iloc[0]["clone_id"]
+        top_3_by_freq = sorted_by_freq.head(3)["clone_id"].tolist()
+        assert top_by_count in top_3_by_freq
+
+    def test_tcell_type_annotations(self, sample_clonotypes_df):
+        """Test T cell type consensus annotations."""
+        df = sample_clonotypes_df
+
+        # Valid T cell types
+        valid_types = [
+            "Confident CD4+", "Confident CD8+",
+            "Likely CD4+", "Likely CD8+",
+            "Unknown", "Mixed"
+        ]
+
+        for tcell_type in df["Tcell_type_consensus"]:
+            assert tcell_type in valid_types, f"Unknown T cell type: {tcell_type}"
+
+    def test_clone_id_format(self, sample_clonotypes_df):
+        """Test that clone IDs are formatted as CDR3a_CDR3b."""
+        df = sample_clonotypes_df
+
+        for idx, row in df.iterrows():
+            expected_id = f"{row['CDR3_alpha']}_{row['CDR3_beta']}"
+            assert row["clone_id"] == expected_id, \
+                f"Clone ID {row['clone_id']} doesn't match expected {expected_id}"
+
+
+class TestClonotypeSummaryRealistic:
+    """Tests for clonotype summary with realistic data."""
+
+    def test_summary_statistics_realistic(self, sample_clonotypes_df):
+        """Test summary statistics with realistic clonotype data."""
+        summary = get_clonotype_summary(sample_clonotypes_df)
+
+        # Number of clonotypes
+        assert summary["n_clonotypes"] == len(sample_clonotypes_df)
+
+        # Total cells should be sum of cell_count
+        assert summary["n_cells"] == sample_clonotypes_df["cell_count"].sum()
+
+        # Singletons are clones with count == 1
+        expected_singletons = (sample_clonotypes_df["cell_count"] == 1).sum()
+        assert summary["n_singletons"] == expected_singletons
+
+        # Expanded are clones with count > 1
+        expected_expanded = (sample_clonotypes_df["cell_count"] > 1).sum()
+        assert summary["n_expanded"] == expected_expanded
+
+    def test_multi_sample_detection(self, sample_clonotypes_df):
+        """Test detection of clones present in multiple samples."""
+        summary = get_clonotype_summary(sample_clonotypes_df)
+
+        # Count clones with n_samples > 1
+        expected_multi = (sample_clonotypes_df["n_samples"] > 1).sum()
+        assert summary["n_multi_sample"] == expected_multi

@@ -260,3 +260,87 @@ class TestVdjSegmentConstants:
         """Test VDJ_SEGMENT_NT_COLS list."""
         expected = ["fwr1_nt", "cdr1_nt", "fwr2_nt", "cdr2_nt", "fwr3_nt", "cdr3_nt", "fwr4_nt"]
         assert VDJ_SEGMENT_NT_COLS == expected
+
+
+class TestRealisticVdjPivot:
+    """Tests using realistic CellRanger-like VDJ data."""
+
+    def test_pivot_with_full_segments(self, sample_vdj_df_with_segments):
+        """Test pivoting VDJ data with full IMGT segment columns."""
+        result = _pivot_vdj_by_barcode(sample_vdj_df_with_segments)
+
+        assert len(result) == 1
+        barcode = "AAACCTGAGAACTCGG-1"
+        assert barcode in result.index
+
+        # Check CDR3 sequences are preserved
+        assert result.loc[barcode, "CDR3_alpha"] == "CAVSDGGSQGNLIF"
+        assert result.loc[barcode, "CDR3_beta"] == "CASSLGQAYEQYF"
+
+        # Check segment columns are pivoted
+        assert "TRA_1_fwr1" in result.columns
+        assert "TRB_1_fwr1" in result.columns
+        assert result.loc[barcode, "TRA_1_fwr1"] == "MSLGLLCCVALSLLNAGTS"
+        assert result.loc[barcode, "TRB_1_cdr1"] == "SGHATL"
+
+    def test_realistic_umi_counts(self, sample_vdj_df):
+        """Test that realistic UMI counts are handled correctly."""
+        result = _pivot_vdj_by_barcode(sample_vdj_df)
+
+        # Check UMI values are preserved in pivoted form
+        assert "TRA_1_umis" in result.columns
+        assert "TRB_1_umis" in result.columns
+
+        # UMI values should be in realistic range (10-200 based on fixture)
+        for col in result.columns:
+            if col.endswith("_umis"):
+                non_null_values = result[col].dropna()
+                if len(non_null_values) > 0:
+                    assert all(non_null_values >= 10)
+                    assert all(non_null_values <= 200)
+
+    def test_imgt_gene_naming(self, sample_vdj_df):
+        """Test that IMGT gene names are preserved correctly."""
+        result = _pivot_vdj_by_barcode(sample_vdj_df)
+
+        # V genes should follow TRAV/TRBV naming
+        assert "TRA_1_v_gene" in result.columns
+        v_genes = result["TRA_1_v_gene"].dropna()
+        assert all(vg.startswith("TRAV") for vg in v_genes)
+
+        # J genes should follow TRAJ/TRBJ naming
+        assert "TRB_1_j_gene" in result.columns
+        j_genes = result["TRB_1_j_gene"].dropna()
+        assert all(jg.startswith("TRBJ") for jg in j_genes)
+
+    def test_cdr3_sequence_format(self, sample_vdj_df):
+        """Test CDR3 sequences follow IMGT conventions."""
+        result = _pivot_vdj_by_barcode(sample_vdj_df)
+
+        # Alpha CDR3 typically starts with CAV or CAA
+        alpha_cdr3 = result["CDR3_alpha"].dropna()
+        assert all(cdr3.startswith("CA") for cdr3 in alpha_cdr3)
+
+        # Beta CDR3 typically starts with CASS or CAS
+        beta_cdr3 = result["CDR3_beta"].dropna()
+        assert all(cdr3.startswith("CAS") for cdr3 in beta_cdr3)
+
+    def test_productive_contigs_only(self, sample_vdj_df):
+        """Test that all contigs in fixture are productive."""
+        # Verify fixture has productive column
+        assert "productive" in sample_vdj_df.columns
+        assert all(sample_vdj_df["productive"])
+
+        result = _pivot_vdj_by_barcode(sample_vdj_df)
+        # All pivoted entries should come from productive contigs
+        assert len(result) > 0
+
+    def test_clonotype_grouping(self, sample_vdj_df):
+        """Test that cells with same clonotype have same CDR3."""
+        result = _pivot_vdj_by_barcode(sample_vdj_df)
+
+        # AAAA and BBBB should have same clone (clonotype1)
+        assert result.loc["AAAA", "CDR3ab"] == result.loc["BBBB", "CDR3ab"]
+
+        # CCCC should have different clone
+        assert result.loc["AAAA", "CDR3ab"] != result.loc["CCCC", "CDR3ab"]

@@ -326,11 +326,12 @@ def _pivot_vdj_by_barcode(vdj_df: pd.DataFrame) -> pd.DataFrame:
     pivot_cols = ["cdr3", "v_gene", "d_gene", "j_gene", "c_gene", "umis", "reads", "contig_id"]
 
     # Add VDJ segment columns (fwr1, cdr1, fwr2, cdr2, fwr3, cdr3, fwr4)
+    # Skip columns already in pivot_cols to avoid duplicates
     for seg_col in VDJ_SEGMENT_COLS:
-        if seg_col in vdj_df.columns:
+        if seg_col in vdj_df.columns and seg_col not in pivot_cols:
             pivot_cols.append(seg_col)
     for seg_col in VDJ_SEGMENT_NT_COLS:
-        if seg_col in vdj_df.columns:
+        if seg_col in vdj_df.columns and seg_col not in pivot_cols:
             pivot_cols.append(seg_col)
 
     # Add combined VDJ sequences
