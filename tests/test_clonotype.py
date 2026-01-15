@@ -131,13 +131,15 @@ class TestAggregateClonotypes:
         assert total_cells < 100
 
     def test_empty_result_no_complete_clones(self, sample_adata):
-        """Empty DataFrame when no complete clones."""
+        """Raises error when no complete clones."""
+        from tcrsift.validation import TCRsiftValidationError
+
         sample_adata.obs["sample"] = "S1"
         sample_adata.obs["CDR3_alpha"] = None
         sample_adata.obs["CDR3_beta"] = None
 
-        clonotypes = aggregate_clonotypes(sample_adata, group_by="CDR3ab")
-        assert len(clonotypes) == 0
+        with pytest.raises(TCRsiftValidationError, match="No complete clones found"):
+            aggregate_clonotypes(sample_adata, group_by="CDR3ab")
 
 
 class TestGetClonotypeSummary:

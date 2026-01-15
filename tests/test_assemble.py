@@ -332,6 +332,8 @@ ATGCCCGGGAAATTT
         """Test assembly when contigs_dir is None."""
         df = pd.DataFrame({
             "clone_id": ["clone1"],
+            "CDR3_alpha": ["CAVMKGFF"],
+            "CDR3_beta": ["CASSMPGKF"],
             "VDJ_alpha_aa": ["MKGFF"],
             "VDJ_beta_aa": ["MPGKF"],
             "alpha_c_gene": ["TRAC"],
@@ -356,6 +358,8 @@ class TestBuildFullSequences:
         """Assembly with only VDJ sequences."""
         df = pd.DataFrame({
             "clone_id": ["clone1"],
+            "CDR3_alpha": ["CAVALPHASEQUENCE"],
+            "CDR3_beta": ["CASSBETASEQUENCE"],
             "VDJ_alpha_aa": ["VDJALPHASEQUENCE"],
             "VDJ_alpha_nt": ["ATGATGATGATGATGATG"],
             "VDJ_beta_aa": ["VDJBETASEQUENCE"],
@@ -381,6 +385,8 @@ class TestAddSingleChain:
         """Test single-chain with nucleotide sequences."""
         df = pd.DataFrame({
             "clone_id": ["clone1"],
+            "CDR3_alpha": ["CAVALPHA"],
+            "CDR3_beta": ["CASSBETA"],
             "full_alpha_aa": ["ALPHASEQUENCE"],
             "full_beta_aa": ["BETASEQUENCE*"],  # With stop codon
             "full_alpha_nt": ["GCACTGGCAAGCCAGAACACC"],
@@ -403,6 +409,8 @@ class TestAddSingleChain:
         """Test single-chain with custom linker."""
         df = pd.DataFrame({
             "clone_id": ["clone1"],
+            "CDR3_alpha": ["CAVALPHA"],
+            "CDR3_beta": ["CASSBETA"],
             "full_alpha_aa": ["ALPHASEQUENCE"],
             "full_beta_aa": ["BETASEQUENCE"],
         })

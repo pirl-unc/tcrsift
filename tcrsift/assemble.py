@@ -21,6 +21,14 @@ from collections import Counter
 from pathlib import Path
 
 import pandas as pd
+from tqdm.auto import tqdm
+
+from .validation import (
+    TCRsiftValidationError,
+    validate_clonotype_df,
+    validate_dataframe,
+    validate_directory_exists,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +242,8 @@ def assemble_full_sequences(
     include_constant: bool = True,
     constant_source: str = "ensembl",
     linker: str = "T2A",
+    verbose: bool = True,
+    show_progress: bool = True,
 ) -> pd.DataFrame:
     """
     Assemble full-length TCR sequences.
@@ -252,31 +262,70 @@ def assemble_full_sequences(
         Source for constant regions: "ensembl" or "from-data"
     linker : str
         Linker sequence for single-chain constructs
+    verbose : bool
+        Print progress information
+    show_progress : bool
+        Show progress bar
 
     Returns
     -------
     pd.DataFrame
         Clonotypes with full sequences added
     """
-    logger.info(f"Assembling full sequences for {len(clonotypes)} clonotypes")
+    # Validate inputs
+    clonotypes = validate_clonotype_df(clonotypes, for_assembly=True)
+
+    valid_constant_sources = ["ensembl", "from-data"]
+    if constant_source not in valid_constant_sources:
+        raise TCRsiftValidationError(
+            f"Invalid constant_source: '{constant_source}'",
+            hint=f"Valid options are: {valid_constant_sources}",
+        )
+
+    if verbose:
+        logger.info(f"Assembling full sequences for {len(clonotypes):,} clonotypes")
+        logger.info(f"  Options: include_leader={include_leader}, include_constant={include_constant}, linker={linker}")
 
     df = clonotypes.copy()
 
     # Load constant regions if needed
     constant_seqs = {}
     if include_constant and constant_source == "ensembl":
+        if verbose:
+            logger.info("  Loading constant regions from Ensembl...")
         constant_seqs = get_constant_region_sequences()
         if not constant_seqs:
-            logger.warning("Could not load constant regions, will use sequences from data")
+            logger.warning("  Could not load constant regions from Ensembl, will use sequences from data")
+        elif verbose:
+            logger.info(f"    Loaded {len(constant_seqs)} constant region sequences")
 
     # Load contigs if provided
     sample_contigs = {}
     if contigs_dir:
+        contigs_dir = validate_directory_exists(Path(contigs_dir), "contigs directory")
+        if verbose:
+            logger.info(f"  Loading contigs from {contigs_dir}...")
         sample_contigs = load_contigs(contigs_dir)
+        if verbose:
+            total_contigs = sum(len(c) for c in sample_contigs.values())
+            logger.info(f"    Loaded {total_contigs:,} contigs from {len(sample_contigs)} samples")
 
     # Process each clonotype
+    if verbose:
+        logger.info("  Assembling sequences...")
+
     assembly_results = []
-    for idx, row in df.iterrows():
+
+    # Create iterator with optional progress bar
+    row_iter = df.iterrows()
+    if show_progress:
+        row_iter = tqdm(
+            list(df.iterrows()),
+            desc="Assembling sequences",
+            unit="clone",
+        )
+
+    for idx, row in row_iter:
         result = _assemble_clone(
             row,
             sample_contigs,
@@ -293,9 +342,20 @@ def assemble_full_sequences(
 
     # Add single-chain construct if requested
     if linker and "full_beta_aa" in df.columns and "full_alpha_aa" in df.columns:
+        if verbose:
+            logger.info(f"  Creating single-chain constructs with {linker} linker...")
         df = _add_single_chain(df, linker)
 
-    logger.info(f"Assembled full sequences for {len(df)} clonotypes")
+    # Summary
+    if verbose:
+        n_with_alpha = df["full_alpha_aa"].notna().sum() if "full_alpha_aa" in df.columns else 0
+        n_with_beta = df["full_beta_aa"].notna().sum() if "full_beta_aa" in df.columns else 0
+        n_single_chain = df["single_chain_aa"].notna().sum() if "single_chain_aa" in df.columns else 0
+        logger.info(f"  Assembly complete:")
+        logger.info(f"    With full alpha: {n_with_alpha:,}")
+        logger.info(f"    With full beta: {n_with_beta:,}")
+        logger.info(f"    Single-chain constructs: {n_single_chain:,}")
+
     return df
 
 

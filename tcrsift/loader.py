@@ -22,8 +22,16 @@ from pathlib import Path
 import anndata as ad
 import pandas as pd
 import scanpy as sc
+from tqdm.auto import tqdm
 
 from .sample_sheet import Sample, load_sample_sheet
+from .validation import (
+    TCRsiftValidationError,
+    validate_cellranger_gex_dir,
+    validate_cellranger_vdj_dir,
+    validate_file_exists,
+    validate_numeric_param,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +63,7 @@ def load_cellranger_vdj(
     sample_name: str,
     annotations_filename: str = "filtered_contig_annotations.csv",
     clonotypes_filename: str = "clonotypes.csv",
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """
     Load CellRanger VDJ output files.
@@ -69,6 +78,8 @@ def load_cellranger_vdj(
         Name of the contig annotations CSV file
     clonotypes_filename : str
         Name of the clonotypes CSV file
+    verbose : bool
+        Print progress information
 
     Returns
     -------
@@ -77,8 +88,16 @@ def load_cellranger_vdj(
     """
     vdj_dir = Path(vdj_dir)
 
-    if not vdj_dir.exists():
-        raise FileNotFoundError(f"VDJ directory not found: {vdj_dir}")
+    # Validate directory exists and has expected files
+    try:
+        vdj_dir = validate_cellranger_vdj_dir(vdj_dir)
+    except TCRsiftValidationError:
+        # Re-raise with more context
+        raise TCRsiftValidationError(
+            f"Invalid CellRanger VDJ directory for sample '{sample_name}': {vdj_dir}",
+            hint="Make sure this is the 'outs' directory from 'cellranger vdj'. "
+            "It should contain 'filtered_contig_annotations.csv' or 'all_contig_annotations.csv'.",
+        )
 
     annotations_path = vdj_dir / annotations_filename
     clonotypes_path = vdj_dir / clonotypes_filename
@@ -88,11 +107,47 @@ def load_cellranger_vdj(
         alt_path = vdj_dir / "all_contig_annotations.csv"
         if alt_path.exists():
             annotations_path = alt_path
+            if verbose:
+                logger.info(f"  Using all_contig_annotations.csv (filtered not found)")
         else:
-            raise FileNotFoundError(f"VDJ annotations not found: {annotations_path}")
+            raise TCRsiftValidationError(
+                f"VDJ annotations file not found: {annotations_path}",
+                hint=f"Expected one of: {annotations_filename}, all_contig_annotations.csv "
+                f"in directory: {vdj_dir}",
+            )
 
     logger.info(f"Loading VDJ annotations from {annotations_path}")
     df = pd.read_csv(annotations_path)
+
+    # Validate the VDJ data
+    if len(df) == 0:
+        raise TCRsiftValidationError(
+            f"VDJ annotations file is empty: {annotations_path}",
+            hint="Check that CellRanger VDJ ran successfully. "
+            "The file should contain contig annotations.",
+        )
+
+    required_cols = ["barcode", "chain"]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        raise TCRsiftValidationError(
+            f"VDJ annotations missing required columns: {missing_cols}",
+            hint=f"Available columns: {list(df.columns)[:15]}. "
+            "This doesn't look like a CellRanger VDJ output file.",
+        )
+
+    # Log summary statistics
+    n_contigs = len(df)
+    n_cells = df["barcode"].nunique()
+    n_productive = df["productive"].sum() if "productive" in df.columns else "unknown"
+    if verbose:
+        logger.info(f"  Loaded {n_contigs:,} contigs from {n_cells:,} cells ({n_productive} productive)")
+
+    # Validate chain types
+    valid_chains = {"TRA", "TRB", "TRD", "TRG", "IGH", "IGK", "IGL", "Multi"}
+    invalid_chains = set(df["chain"].unique()) - valid_chains
+    if invalid_chains:
+        logger.warning(f"  Unexpected chain types found: {invalid_chains}")
 
     # Add sample information
     df["sample"] = sample_name
@@ -132,6 +187,7 @@ def load_cellranger_gex(
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
     min_mito_pct: float = 2.0,
+    verbose: bool = True,
 ) -> ad.AnnData:
     """
     Load CellRanger gene expression output.
@@ -154,16 +210,49 @@ def load_cellranger_gex(
         Maximum mitochondrial percentage
     min_mito_pct : float
         Minimum mitochondrial percentage
+    verbose : bool
+        Print progress information
 
     Returns
     -------
     ad.AnnData
         AnnData object with gene expression data
     """
+    # Validate numeric parameters
+    validate_numeric_param(min_genes, "min_genes", min_value=0)
+    validate_numeric_param(max_genes, "max_genes", min_value=1)
+    validate_numeric_param(min_counts, "min_counts", min_value=0)
+    validate_numeric_param(max_counts, "max_counts", min_value=1)
+    validate_numeric_param(min_mito_pct, "min_mito_pct", min_value=0, max_value=100)
+    validate_numeric_param(max_mito_pct, "max_mito_pct", min_value=0, max_value=100)
+
+    if min_genes > max_genes:
+        raise TCRsiftValidationError(
+            f"min_genes ({min_genes}) cannot be greater than max_genes ({max_genes})",
+            hint="Check your QC filter parameters.",
+        )
+    if min_counts > max_counts:
+        raise TCRsiftValidationError(
+            f"min_counts ({min_counts}) cannot be greater than max_counts ({max_counts})",
+            hint="Check your QC filter parameters.",
+        )
+    if min_mito_pct > max_mito_pct:
+        raise TCRsiftValidationError(
+            f"min_mito_pct ({min_mito_pct}) cannot be greater than max_mito_pct ({max_mito_pct})",
+            hint="Check your QC filter parameters.",
+        )
+
     gex_dir = Path(gex_dir)
 
-    if not gex_dir.exists():
-        raise FileNotFoundError(f"GEX directory not found: {gex_dir}")
+    # Validate directory
+    try:
+        gex_dir = validate_cellranger_gex_dir(gex_dir)
+    except TCRsiftValidationError:
+        raise TCRsiftValidationError(
+            f"Invalid CellRanger GEX directory for sample '{sample_name}': {gex_dir}",
+            hint="Make sure this is the 'outs' directory from 'cellranger count'. "
+            "It should contain 'filtered_feature_bc_matrix' or 'filtered_feature_bc_matrix.h5'.",
+        )
 
     # Try standard CellRanger output locations
     matrix_dir = gex_dir / "filtered_feature_bc_matrix"
@@ -178,10 +267,25 @@ def load_cellranger_gex(
             logger.info(f"Loading GEX from h5 file: {h5_path}")
             adata = sc.read_10x_h5(str(h5_path))
         else:
-            raise FileNotFoundError(f"GEX matrix not found in: {gex_dir}")
+            available = [f.name for f in gex_dir.iterdir()][:15]
+            raise TCRsiftValidationError(
+                f"Gene expression matrix not found in: {gex_dir}",
+                hint=f"Expected 'filtered_feature_bc_matrix' directory or 'filtered_feature_bc_matrix.h5'. "
+                f"Available files/directories: {available}",
+            )
     else:
         logger.info(f"Loading GEX from matrix directory: {matrix_dir}")
         adata = sc.read_10x_mtx(str(matrix_dir), var_names="gene_ids")
+
+    # Validate loaded data
+    if adata.n_obs == 0:
+        raise TCRsiftValidationError(
+            f"Gene expression matrix contains no cells: {gex_dir}",
+            hint="Check that CellRanger count ran successfully.",
+        )
+
+    if verbose:
+        logger.info(f"  Loaded {adata.n_obs:,} cells x {adata.n_vars:,} genes")
 
     # Add sample information
     adata.obs["sample"] = sample_name
@@ -443,6 +547,8 @@ def load_samples(
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
     min_mito_pct: float = 2.0,
+    verbose: bool = True,
+    show_progress: bool = True,
 ) -> ad.AnnData:
     """
     Load all samples from a sample sheet into a single AnnData object.
@@ -453,19 +559,64 @@ def load_samples(
         Path to sample sheet (CSV or YAML)
     min_genes, max_genes, min_counts, max_counts, max_mito_pct, min_mito_pct
         QC filter parameters
+    verbose : bool
+        Print detailed progress information
+    show_progress : bool
+        Show progress bar
 
     Returns
     -------
     ad.AnnData
         Combined AnnData with all samples
     """
+    # Validate sample sheet path
+    sample_sheet_path = validate_file_exists(sample_sheet_path, "sample sheet")
+
     sample_sheet = load_sample_sheet(sample_sheet_path)
+
+    if len(sample_sheet) == 0:
+        raise TCRsiftValidationError(
+            f"Sample sheet is empty: {sample_sheet_path}",
+            hint="Add sample entries to the sample sheet.",
+        )
 
     logger.info(f"Loading {len(sample_sheet)} samples from {sample_sheet_path}")
 
+    # Pre-validate all sample paths to fail fast
+    validation_errors = []
+    for i, sample in enumerate(sample_sheet):
+        if sample.vdj_dir and not Path(sample.vdj_dir).exists():
+            validation_errors.append(f"Sample '{sample.sample}': VDJ directory not found: {sample.vdj_dir}")
+        if sample.gex_dir and not Path(sample.gex_dir).exists():
+            validation_errors.append(f"Sample '{sample.sample}': GEX directory not found: {sample.gex_dir}")
+
+    if validation_errors:
+        raise TCRsiftValidationError(
+            f"Sample sheet validation failed with {len(validation_errors)} error(s):\n" +
+            "\n".join(f"  - {e}" for e in validation_errors[:5]),
+            hint="Check that all paths in the sample sheet are correct and accessible.",
+        )
+
     adatas = []
-    for sample in sample_sheet:
-        logger.info(f"Loading sample: {sample.sample}")
+    total_cells = 0
+
+    # Create progress bar iterator
+    sample_iter = sample_sheet
+    if show_progress:
+        sample_iter = tqdm(
+            sample_sheet,
+            desc="Loading samples",
+            unit="sample",
+            disable=not show_progress,
+        )
+
+    for sample in sample_iter:
+        if show_progress:
+            sample_iter.set_postfix(sample=sample.sample[:20])
+
+        if verbose:
+            logger.info(f"Loading sample: {sample.sample}")
+
         try:
             adata = load_sample(
                 sample,
@@ -478,18 +629,48 @@ def load_samples(
             )
             if adata is not None:
                 adatas.append(adata)
-        except Exception as e:
-            logger.error(f"Failed to load sample {sample.sample}: {e}")
+                total_cells += adata.n_obs
+                if verbose:
+                    logger.info(f"  Sample {sample.sample}: {adata.n_obs:,} cells")
+        except TCRsiftValidationError:
             raise
+        except Exception as e:
+            raise TCRsiftValidationError(
+                f"Failed to load sample '{sample.sample}': {e}",
+                hint="Check that the CellRanger output directories are valid and complete. "
+                f"VDJ: {sample.vdj_dir}, GEX: {sample.gex_dir}",
+            ) from e
 
     if not adatas:
-        raise ValueError("No samples loaded successfully")
+        raise TCRsiftValidationError(
+            "No samples loaded successfully",
+            hint="Check that at least one sample has valid VDJ or GEX data.",
+        )
 
     # Concatenate all samples
-    logger.info(f"Concatenating {len(adatas)} samples")
-    combined = ad.concat(adatas, join="outer", label="sample", keys=[a.obs["sample"].iloc[0] for a in adatas])
+    logger.info(f"Concatenating {len(adatas)} samples ({total_cells:,} total cells)")
+
+    if show_progress:
+        # Show progress for concatenation (can be slow for large datasets)
+        with tqdm(total=1, desc="Concatenating samples", unit="step") as pbar:
+            combined = ad.concat(
+                adatas,
+                join="outer",
+                label="sample",
+                keys=[a.obs["sample"].iloc[0] for a in adatas],
+            )
+            pbar.update(1)
+    else:
+        combined = ad.concat(
+            adatas,
+            join="outer",
+            label="sample",
+            keys=[a.obs["sample"].iloc[0] for a in adatas],
+        )
 
     # Store sample sheet as uns
     combined.uns["sample_sheet"] = sample_sheet.to_dataframe().to_dict()
+
+    logger.info(f"Successfully loaded {combined.n_obs:,} cells from {len(adatas)} samples")
 
     return combined

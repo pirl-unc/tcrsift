@@ -21,6 +21,14 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
+
+from .validation import (
+    TCRsiftValidationError,
+    validate_clonotype_df,
+    validate_dataframe,
+    validate_numeric_param,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +74,7 @@ def filter_clonotypes_threshold(
     require_complete: bool = True,
     tcell_type: Optional[str] = None,
     exclude_viral: bool = False,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """
     Filter clonotypes using simple threshold criteria.
@@ -86,51 +95,92 @@ def filter_clonotypes_threshold(
         Filter to specific T cell type ("cd8" or "cd4")
     exclude_viral : bool
         Exclude clones flagged as viral
+    verbose : bool
+        Print progress information
 
     Returns
     -------
     pd.DataFrame
         Filtered clonotypes
     """
+    # Validate inputs
+    clonotypes = validate_clonotype_df(clonotypes, for_filtering=True)
+    validate_numeric_param(min_cells, "min_cells", min_value=0)
+    validate_numeric_param(min_frequency, "min_frequency", min_value=0, max_value=1)
+    validate_numeric_param(max_conditions, "max_conditions", min_value=1)
+
+    if tcell_type is not None:
+        valid_types = ["cd8", "cd4"]
+        if tcell_type.lower() not in valid_types:
+            raise TCRsiftValidationError(
+                f"Invalid tcell_type: '{tcell_type}'",
+                hint=f"Valid options are: {valid_types}, or None for no filtering",
+            )
+
     df = clonotypes.copy()
     initial_count = len(df)
 
+    if verbose:
+        logger.info(f"Filtering {initial_count:,} clonotypes with threshold method")
+
     # Cell count filter
     if min_cells > 0:
+        before = len(df)
         df = df[df["cell_count"] >= min_cells]
-        logger.debug(f"After min_cells filter: {len(df)} of {initial_count}")
+        if verbose:
+            logger.info(f"  min_cells >= {min_cells}: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
 
     # Frequency filter
     if min_frequency > 0 and "max_frequency" in df.columns:
+        before = len(df)
         df = df[df["max_frequency"] >= min_frequency]
-        logger.debug(f"After min_frequency filter: {len(df)}")
+        if verbose:
+            logger.info(f"  min_frequency >= {min_frequency}: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
 
     # Condition specificity filter
     if max_conditions < 999 and "n_samples" in df.columns:
+        before = len(df)
         df = df[df["n_samples"] <= max_conditions]
-        logger.debug(f"After max_conditions filter: {len(df)}")
+        if verbose:
+            logger.info(f"  max_conditions <= {max_conditions}: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
 
     # Complete TCR filter
     if require_complete:
+        before = len(df)
         has_alpha = df["CDR3_alpha"].notna() & (df["CDR3_alpha"] != "")
         has_beta = df["CDR3_beta"].notna() & (df["CDR3_beta"] != "")
         df = df[has_alpha & has_beta]
-        logger.debug(f"After complete TCR filter: {len(df)}")
+        if verbose:
+            logger.info(f"  require_complete TCR: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
 
     # T cell type filter
     if tcell_type and "Tcell_type_consensus" in df.columns:
+        before = len(df)
         if tcell_type.lower() == "cd8":
             df = df[df["Tcell_type_consensus"].str.contains("CD8", na=False)]
         elif tcell_type.lower() == "cd4":
             df = df[df["Tcell_type_consensus"].str.contains("CD4", na=False)]
-        logger.debug(f"After T cell type filter: {len(df)}")
+        if verbose:
+            logger.info(f"  tcell_type={tcell_type}: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
 
     # Viral exclusion
     if exclude_viral and "is_viral" in df.columns:
+        before = len(df)
+        n_viral = df["is_viral"].sum()
         df = df[~df["is_viral"]]
-        logger.debug(f"After viral exclusion: {len(df)}")
+        if verbose:
+            logger.info(f"  exclude_viral: {before:,} -> {len(df):,} ({n_viral:,} viral clones removed)")
 
-    logger.info(f"Filtered {initial_count} to {len(df)} clonotypes")
+    if verbose:
+        logger.info(f"  Final: {initial_count:,} -> {len(df):,} clonotypes ({len(df)/initial_count*100:.1f}% retained)")
+
+    if len(df) == 0:
+        raise TCRsiftValidationError(
+            "No clonotypes remain after filtering",
+            hint=f"Try relaxing filter criteria. Current: min_cells={min_cells}, "
+            f"min_frequency={min_frequency}, tcell_type={tcell_type}",
+        )
+
     return df
 
 
@@ -319,6 +369,8 @@ def filter_clonotypes(
     exclude_viral: bool = False,
     fdr_tiers: Optional[list] = None,
     tier_definitions: Optional[dict] = None,
+    verbose: bool = True,
+    show_progress: bool = True,
 ) -> pd.DataFrame:
     """
     Main filtering function that dispatches to appropriate method.
@@ -343,12 +395,32 @@ def filter_clonotypes(
         FDR tiers for logistic method
     tier_definitions : dict, optional
         Tier definitions for threshold method
+    verbose : bool
+        Print progress information
+    show_progress : bool
+        Show progress bar
 
     Returns
     -------
     pd.DataFrame
         Filtered and tiered clonotypes
     """
+    # Validate method
+    valid_methods = ["threshold", "logistic"]
+    if method not in valid_methods:
+        raise TCRsiftValidationError(
+            f"Invalid filtering method: '{method}'",
+            hint=f"Valid options are: {valid_methods}",
+        )
+
+    # Validate tcell_type
+    valid_tcell_types = ["cd8", "cd4", "both"]
+    if tcell_type.lower() not in valid_tcell_types:
+        raise TCRsiftValidationError(
+            f"Invalid tcell_type: '{tcell_type}'",
+            hint=f"Valid options are: {valid_tcell_types}",
+        )
+
     logger.info(f"Filtering clonotypes using {method} method")
 
     # Basic filtering first
@@ -359,9 +431,13 @@ def filter_clonotypes(
         require_complete=require_complete,
         tcell_type=tcell_type if tcell_type != "both" else None,
         exclude_viral=exclude_viral,
+        verbose=verbose,
     )
 
     # Assign tiers
+    if verbose:
+        logger.info(f"Assigning confidence tiers...")
+
     if method == "logistic":
         df = filter_clonotypes_logistic(df, fdr_tiers=fdr_tiers)
     else:
@@ -371,6 +447,15 @@ def filter_clonotypes(
             tcell_type=tcell_type if tcell_type != "both" else None,
             exclude_viral=exclude_viral,
         )
+
+    # Log tier distribution
+    if verbose and "tier" in df.columns:
+        tier_counts = df["tier"].value_counts().sort_index()
+        logger.info("  Tier distribution:")
+        for tier, count in tier_counts.items():
+            if tier is not None:
+                pct = count / len(df) * 100
+                logger.info(f"    {tier}: {count:,} ({pct:.1f}%)")
 
     return df
 

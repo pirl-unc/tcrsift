@@ -85,6 +85,7 @@ from .qc import (
     validate_clonotypes,
     validate_sequence,
 )
+from .validation import TCRsiftValidationError
 
 # Core modules
 from .sample_sheet import (
@@ -152,4 +153,6 @@ __all__ = [
     "get_qc_summary",
     # Utilities
     "tcr_name",
+    # Exceptions
+    "TCRsiftValidationError",
 ]

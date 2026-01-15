@@ -19,7 +19,15 @@ from __future__ import annotations
 import logging
 
 import anndata as ad
+import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
+
+from .validation import (
+    TCRsiftValidationError,
+    validate_anndata,
+    validate_numeric_param,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +87,8 @@ def phenotype_cells(
     adata: ad.AnnData,
     cd4_cd8_ratio: float = 3.0,
     min_cd3_reads: int = 10,
+    verbose: bool = True,
+    show_progress: bool = True,
 ) -> ad.AnnData:
     """
     Add T cell phenotype classification to AnnData object.
@@ -91,13 +101,22 @@ def phenotype_cells(
         Ratio threshold for confident CD4/CD8 classification
     min_cd3_reads : int
         Minimum CD3 reads to consider a valid T cell
+    verbose : bool
+        Print detailed progress information
+    show_progress : bool
+        Show progress bar
 
     Returns
     -------
     ad.AnnData
         AnnData with Tcell_type column added to obs
     """
-    logger.info(f"Phenotyping {len(adata)} cells with CD4/CD8 ratio threshold {cd4_cd8_ratio}")
+    # Validate inputs
+    adata = validate_anndata(adata, "input AnnData", min_cells=1)
+    validate_numeric_param(cd4_cd8_ratio, "cd4_cd8_ratio", min_value=1.0)
+    validate_numeric_param(min_cd3_reads, "min_cd3_reads", min_value=0)
+
+    logger.info(f"Phenotyping {len(adata):,} cells with CD4/CD8 ratio threshold {cd4_cd8_ratio}")
 
     # Check for required columns
     required_cols = ["CD4", "CD8"]
@@ -107,16 +126,50 @@ def phenotype_cells(
         if "CD8" in missing and "CD8A" in adata.obs.columns and "CD8B" in adata.obs.columns:
             adata.obs["CD8"] = adata.obs["CD8A"] + adata.obs["CD8B"]
             missing.remove("CD8")
+            if verbose:
+                logger.info("  Computed CD8 = CD8A + CD8B")
         if missing:
-            raise ValueError(f"Missing required columns for phenotyping: {missing}")
+            available = list(adata.obs.columns)[:20]
+            raise TCRsiftValidationError(
+                f"Missing required columns for phenotyping: {missing}",
+                hint=f"Available columns: {available}. "
+                "Make sure the data was loaded with load_samples() or has CD4/CD8 expression columns.",
+            )
 
-    # Classify each cell
-    tcell_types = []
-    for _, row in adata.obs.iterrows():
-        cd4_expr = row.get("CD4", 0) or 0
-        cd8_expr = row.get("CD8", 0) or 0
-        tcell_type = classify_tcell_type(cd4_expr, cd8_expr, cd4_cd8_ratio)
-        tcell_types.append(tcell_type)
+    # Validate marker columns have valid values
+    for col in ["CD4", "CD8"]:
+        if col in adata.obs.columns:
+            if adata.obs[col].isna().all():
+                raise TCRsiftValidationError(
+                    f"Column '{col}' contains only missing values",
+                    hint="Check that gene expression data was loaded correctly.",
+                )
+
+    if verbose:
+        logger.info("  Classifying cells by CD4/CD8 expression...")
+
+    # Vectorized classification (much faster than row-by-row iteration)
+    cd4_expr = adata.obs["CD4"].fillna(0).values
+    cd8_expr = adata.obs["CD8"].fillna(0).values
+
+    # Compute ratios with +1 to avoid division by zero
+    cd4_safe = cd4_expr + 1
+    cd8_safe = cd8_expr + 1
+    ratio_cd8_over_cd4 = cd8_safe / cd4_safe
+    ratio_cd4_over_cd8 = cd4_safe / cd8_safe
+
+    # Initialize with "Unknown"
+    tcell_types = np.array(["Unknown"] * len(adata), dtype=object)
+
+    # Apply classification rules (order matters - more specific rules last)
+    # Likely CD4+ (CD4 > 0, CD8 == 0, but ratio not high enough)
+    tcell_types[(cd4_expr > 0) & (cd8_expr == 0)] = "Likely CD4+"
+    # Likely CD8+ (CD8 > 0, CD4 == 0, but ratio not high enough)
+    tcell_types[(cd8_expr > 0) & (cd4_expr == 0)] = "Likely CD8+"
+    # Confident CD4+ (ratio exceeds threshold)
+    tcell_types[ratio_cd4_over_cd8 > cd4_cd8_ratio] = "Confident CD4+"
+    # Confident CD8+ (ratio exceeds threshold)
+    tcell_types[ratio_cd8_over_cd4 > cd4_cd8_ratio] = "Confident CD8+"
 
     adata.obs["Tcell_type"] = pd.Categorical(tcell_types, categories=TCELL_TYPE_CATEGORIES)
 
@@ -128,8 +181,13 @@ def phenotype_cells(
     # CD3 filter
     if "CD3" in adata.obs.columns:
         adata.obs["filter:min_cd3"] = adata.obs["CD3"] >= min_cd3_reads
+        n_pass_cd3 = adata.obs["filter:min_cd3"].sum()
+        if verbose:
+            logger.info(f"  CD3 filter (>={min_cd3_reads} reads): {n_pass_cd3:,}/{len(adata):,} cells pass")
     else:
         adata.obs["filter:min_cd3"] = True
+        if verbose:
+            logger.info("  CD3 column not found, skipping CD3 filter")
 
     # Combined filter for confident T cells with complete TCR
     has_tcr = adata.obs.get("has_both_chains", pd.Series(True, index=adata.obs_names))
@@ -141,7 +199,15 @@ def phenotype_cells(
 
     # Log summary
     type_counts = adata.obs["Tcell_type"].value_counts()
-    logger.info(f"Phenotyping results:\n{type_counts.to_string()}")
+    if verbose:
+        logger.info("  Phenotyping results:")
+        for tcell_type in TCELL_TYPE_CATEGORIES:
+            count = type_counts.get(tcell_type, 0)
+            pct = count / len(adata) * 100
+            logger.info(f"    {tcell_type}: {count:,} ({pct:.1f}%)")
+
+        n_confident_complete = adata.obs["confident_and_complete"].sum()
+        logger.info(f"  Confident cells with complete TCR: {n_confident_complete:,}")
 
     return adata
 
@@ -195,6 +261,7 @@ def validate_phenotype_vs_expected(
 def filter_by_tcell_type(
     adata: ad.AnnData,
     tcell_type: str = "cd8",
+    verbose: bool = True,
 ) -> ad.AnnData:
     """
     Filter AnnData to only include cells of specified T cell type.
@@ -205,26 +272,48 @@ def filter_by_tcell_type(
         AnnData with Tcell_type column
     tcell_type : str
         Type to keep: "cd8", "cd4", or "both"
+    verbose : bool
+        Print progress information
 
     Returns
     -------
     ad.AnnData
         Filtered AnnData
     """
+    # Validate inputs
+    adata = validate_anndata(adata, "input AnnData")
+
     if "Tcell_type" not in adata.obs.columns:
-        raise ValueError("AnnData must have Tcell_type column. Run phenotype_cells first.")
+        raise TCRsiftValidationError(
+            "AnnData must have 'Tcell_type' column for T cell type filtering",
+            hint="Run phenotype_cells() first to classify cells by CD4/CD8 expression.",
+        )
+
+    valid_types = ["cd8", "cd4", "both"]
+    if tcell_type.lower() not in valid_types:
+        raise TCRsiftValidationError(
+            f"Invalid tcell_type: '{tcell_type}'",
+            hint=f"Valid options are: {valid_types}",
+        )
 
     if tcell_type.lower() == "cd8":
         mask = adata.obs["is_CD8"]
-        logger.info(f"Filtering to CD8+ cells: {mask.sum()} of {len(adata)}")
+        if verbose:
+            logger.info(f"Filtering to CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum()/len(adata)*100:.1f}%)")
     elif tcell_type.lower() == "cd4":
         mask = adata.obs["is_CD4"]
-        logger.info(f"Filtering to CD4+ cells: {mask.sum()} of {len(adata)}")
-    elif tcell_type.lower() == "both":
+        if verbose:
+            logger.info(f"Filtering to CD4+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum()/len(adata)*100:.1f}%)")
+    else:  # both
         mask = adata.obs["is_CD8"] | adata.obs["is_CD4"]
-        logger.info(f"Keeping both CD4+ and CD8+ cells: {mask.sum()} of {len(adata)}")
-    else:
-        raise ValueError(f"Invalid tcell_type: {tcell_type}. Use 'cd8', 'cd4', or 'both'")
+        if verbose:
+            logger.info(f"Keeping both CD4+ and CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum()/len(adata)*100:.1f}%)")
+
+    if mask.sum() == 0:
+        raise TCRsiftValidationError(
+            f"No cells remain after filtering to {tcell_type.upper()}+ cells",
+            hint="Check your phenotyping results. The data may not contain cells of this type.",
+        )
 
     return adata[mask].copy()
 

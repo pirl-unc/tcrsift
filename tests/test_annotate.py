@@ -218,17 +218,17 @@ class TestMatchClonotypes:
 
     def test_no_match_annotation(self, sample_clonotypes_df):
         """Clonotypes without matches should have empty annotations."""
-        # Empty database
-        empty_db = pd.DataFrame({
-            "cdr3_beta": [],
-            "cdr3_alpha": [],
-            "epitope": [],
-            "species": [],
-            "database": [],
-            "is_viral": [],
+        # Database with non-matching sequences
+        non_matching_db = pd.DataFrame({
+            "cdr3_beta": ["CASSNOMATCH"],
+            "cdr3_alpha": ["CAVNOMATCH"],
+            "epitope": ["NOTFOUND"],
+            "species": ["Unknown"],
+            "database": ["TestDB"],
+            "is_viral": [False],
         })
 
-        result = match_clonotypes(sample_clonotypes_df, empty_db, match_by="CDR3ab")
+        result = match_clonotypes(sample_clonotypes_df, non_matching_db, match_by="CDR3ab")
 
         assert result["db_match"].sum() == 0
         assert all(result["is_viral"] == False)

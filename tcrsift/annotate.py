@@ -20,6 +20,14 @@ import logging
 from pathlib import Path
 
 import pandas as pd
+from tqdm.auto import tqdm
+
+from .validation import (
+    TCRsiftValidationError,
+    validate_clonotype_df,
+    validate_dataframe,
+    validate_file_exists,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +47,7 @@ VIRAL_SPECIES_PATTERNS = [
 ]
 
 
-def load_vdjdb(path: str | Path) -> pd.DataFrame:
+def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     """
     Load VDJdb database.
 
@@ -47,6 +55,8 @@ def load_vdjdb(path: str | Path) -> pd.DataFrame:
     ----------
     path : str or Path
         Path to VDJdb directory or file
+    verbose : bool
+        Print progress information
 
     Returns
     -------
@@ -59,13 +69,32 @@ def load_vdjdb(path: str | Path) -> pd.DataFrame:
         # Look for the main database file
         candidates = list(path.glob("vdjdb*.txt")) + list(path.glob("vdjdb*.tsv"))
         if not candidates:
-            raise FileNotFoundError(f"No VDJdb files found in {path}")
+            available = [f.name for f in path.iterdir()][:15]
+            raise TCRsiftValidationError(
+                f"No VDJdb files found in directory: {path}",
+                hint=f"Expected files matching 'vdjdb*.txt' or 'vdjdb*.tsv'. "
+                f"Available files: {available}",
+            )
         db_file = candidates[0]
     else:
-        db_file = path
+        db_file = validate_file_exists(path, "VDJdb database file")
 
-    logger.info(f"Loading VDJdb from {db_file}")
-    df = pd.read_csv(db_file, sep="\t", low_memory=False)
+    if verbose:
+        logger.info(f"Loading VDJdb from {db_file}")
+
+    try:
+        df = pd.read_csv(db_file, sep="\t", low_memory=False)
+    except Exception as e:
+        raise TCRsiftValidationError(
+            f"Failed to read VDJdb file: {db_file}",
+            hint=f"Error: {e}. Make sure the file is a valid TSV file.",
+        )
+
+    if len(df) == 0:
+        raise TCRsiftValidationError(
+            f"VDJdb file is empty: {db_file}",
+            hint="Download a fresh copy from https://vdjdb.cdr3.net/",
+        )
 
     # Standardize columns
     column_mapping = {
@@ -88,7 +117,8 @@ def load_vdjdb(path: str | Path) -> pd.DataFrame:
     # Flag viral entries
     df["is_viral"] = _flag_viral(df)
 
-    logger.info(f"Loaded {len(df)} VDJdb entries ({df['is_viral'].sum()} viral)")
+    if verbose:
+        logger.info(f"  Loaded {len(df):,} VDJdb entries ({df['is_viral'].sum():,} viral)")
     return df
 
 
@@ -234,6 +264,8 @@ def match_clonotypes(
     clonotypes: pd.DataFrame,
     database: pd.DataFrame,
     match_by: str = "CDR3ab",
+    verbose: bool = True,
+    show_progress: bool = True,
 ) -> pd.DataFrame:
     """
     Match clonotypes against public database.
@@ -246,13 +278,29 @@ def match_clonotypes(
         Combined database from load_databases
     match_by : str
         Matching strategy: "CDR3ab" (both chains) or "CDR3b_only" (beta only)
+    verbose : bool
+        Print progress information
+    show_progress : bool
+        Show progress bar
 
     Returns
     -------
     pd.DataFrame
         Clonotypes with match annotations added
     """
-    logger.info(f"Matching {len(clonotypes)} clonotypes against database by {match_by}")
+    # Validate inputs
+    clonotypes = validate_clonotype_df(clonotypes, for_annotation=True)
+    database = validate_dataframe(database, "database", min_rows=1)
+
+    valid_match_by = ["CDR3ab", "CDR3b_only"]
+    if match_by not in valid_match_by:
+        raise TCRsiftValidationError(
+            f"Invalid match_by: '{match_by}'",
+            hint=f"Valid options are: {valid_match_by}",
+        )
+
+    if verbose:
+        logger.info(f"Matching {len(clonotypes):,} clonotypes against {len(database):,} database entries by {match_by}")
 
     df = clonotypes.copy()
 
@@ -273,7 +321,16 @@ def match_clonotypes(
             )
         )
 
-        for idx, row in df.iterrows():
+        # Create iterator with optional progress bar
+        row_iter = df.iterrows()
+        if show_progress:
+            row_iter = tqdm(
+                list(df.iterrows()),
+                desc="Matching clonotypes",
+                unit="clone",
+            )
+
+        for idx, row in row_iter:
             alpha = row.get("CDR3_alpha", "") or ""
             beta = row.get("CDR3_beta", "") or ""
 
@@ -292,7 +349,16 @@ def match_clonotypes(
     else:  # CDR3b_only
         db_beta_set = set(database["cdr3_beta"].dropna())
 
-        for idx, row in df.iterrows():
+        # Create iterator with optional progress bar
+        row_iter = df.iterrows()
+        if show_progress:
+            row_iter = tqdm(
+                list(df.iterrows()),
+                desc="Matching clonotypes",
+                unit="clone",
+            )
+
+        for idx, row in row_iter:
             beta = row.get("CDR3_beta", "") or ""
             if beta in db_beta_set:
                 matches = database[database["cdr3_beta"] == beta]
@@ -300,7 +366,8 @@ def match_clonotypes(
 
     n_matches = df["db_match"].sum()
     n_viral = df["is_viral"].sum()
-    logger.info(f"Found {n_matches} matches ({n_viral} viral)")
+    if verbose:
+        logger.info(f"  Found {n_matches:,} matches ({n_viral:,} viral)")
 
     return df
 

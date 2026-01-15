@@ -144,12 +144,16 @@ class TestFilterByTcellType:
 
     def test_filter_invalid_type_raises(self, phenotyped_adata):
         """Invalid tcell_type should raise."""
-        with pytest.raises(ValueError, match="Invalid tcell_type"):
+        from tcrsift.validation import TCRsiftValidationError
+
+        with pytest.raises(TCRsiftValidationError, match="Invalid tcell_type"):
             filter_by_tcell_type(phenotyped_adata, tcell_type="invalid")
 
     def test_filter_without_phenotype_raises(self, sample_adata):
         """Should raise if Tcell_type column missing."""
-        with pytest.raises(ValueError, match="must have Tcell_type column"):
+        from tcrsift.validation import TCRsiftValidationError
+
+        with pytest.raises(TCRsiftValidationError, match="Tcell_type"):
             filter_by_tcell_type(sample_adata, tcell_type="cd8")
 
 

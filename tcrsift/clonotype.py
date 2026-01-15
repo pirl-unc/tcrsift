@@ -21,6 +21,14 @@ import logging
 import anndata as ad
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
+
+from .validation import (
+    TCRsiftValidationError,
+    validate_anndata,
+    validate_dataframe,
+    validate_numeric_param,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +38,8 @@ def aggregate_clonotypes(
     group_by: str = "CDR3ab",
     min_umi: int = 2,
     handle_doublets: str = "flag",
+    verbose: bool = True,
+    show_progress: bool = True,
 ) -> pd.DataFrame:
     """
     Aggregate cells into clonotypes based on CDR3 sequences.
@@ -44,13 +54,50 @@ def aggregate_clonotypes(
         Minimum UMI count for a chain to be considered
     handle_doublets : str
         How to handle cells with multiple chains: "flag", "remove", "keep-primary"
+    verbose : bool
+        Print detailed progress information
+    show_progress : bool
+        Show progress bar
 
     Returns
     -------
     pd.DataFrame
         DataFrame with one row per unique clonotype
     """
-    logger.info(f"Aggregating clonotypes by {group_by} from {len(adata)} cells")
+    # Validate inputs
+    adata = validate_anndata(adata, "input AnnData", min_cells=1)
+    validate_numeric_param(min_umi, "min_umi", min_value=0)
+
+    valid_group_by = ["CDR3ab", "CDR3b_only"]
+    if group_by not in valid_group_by:
+        raise TCRsiftValidationError(
+            f"Invalid group_by: '{group_by}'",
+            hint=f"Valid options are: {valid_group_by}",
+        )
+
+    valid_doublet_handling = ["flag", "remove", "keep-primary"]
+    if handle_doublets not in valid_doublet_handling:
+        raise TCRsiftValidationError(
+            f"Invalid handle_doublets: '{handle_doublets}'",
+            hint=f"Valid options are: {valid_doublet_handling}",
+        )
+
+    # Check for required columns
+    if group_by == "CDR3ab":
+        required = ["CDR3_alpha", "CDR3_beta"]
+    else:
+        required = ["CDR3_beta"]
+
+    missing = [c for c in required if c not in adata.obs.columns]
+    if missing:
+        available = [c for c in adata.obs.columns if "CDR3" in c or "cdr3" in c.lower()]
+        raise TCRsiftValidationError(
+            f"Missing required CDR3 columns for {group_by} grouping: {missing}",
+            hint=f"Available CDR3-related columns: {available}. "
+            "Make sure VDJ data was loaded correctly.",
+        )
+
+    logger.info(f"Aggregating clonotypes by {group_by} from {len(adata):,} cells")
 
     df = adata.obs.copy()
 
@@ -58,15 +105,21 @@ def aggregate_clonotypes(
     if "multi_chain" in df.columns:
         n_doublets = df["multi_chain"].sum()
         if n_doublets > 0:
-            logger.info(f"Found {n_doublets} cells with multiple chains ({n_doublets/len(df)*100:.1f}%)")
+            if verbose:
+                logger.info(f"  Found {n_doublets:,} cells with multiple chains ({n_doublets/len(df)*100:.1f}%)")
 
             if handle_doublets == "remove":
                 df = df[~df["multi_chain"]]
-                logger.info(f"Removed doublets, {len(df)} cells remaining")
+                if verbose:
+                    logger.info(f"  Removed doublets, {len(df):,} cells remaining")
             elif handle_doublets == "flag":
                 # Keep but flag
                 df["is_doublet"] = df["multi_chain"]
+                if verbose:
+                    logger.info(f"  Flagging doublets (keeping all cells)")
             # keep-primary: use primary chain (already sorted by UMI)
+            elif verbose:
+                logger.info(f"  Using primary chain for doublets")
 
     # Apply UMI filter
     if "TRA_1_umis" in df.columns and min_umi > 0:
@@ -100,26 +153,53 @@ def aggregate_clonotypes(
 
     # Filter to complete clones
     df_complete = df[df["is_complete_clone"]].copy()
-    logger.info(f"Found {len(df_complete)} cells with complete TCR ({len(df_complete)/len(df)*100:.1f}%)")
+    if verbose:
+        logger.info(f"  Found {len(df_complete):,} cells with complete TCR ({len(df_complete)/len(df)*100:.1f}%)")
 
     if len(df_complete) == 0:
-        logger.warning("No complete clones found!")
-        return pd.DataFrame()
+        raise TCRsiftValidationError(
+            "No complete clones found after filtering",
+            hint=f"Check that cells have valid CDR3 sequences. "
+            f"Grouping by: {group_by}, min_umi: {min_umi}. "
+            f"Total cells: {len(df)}, cells with CDR3_beta: {df['CDR3_beta'].notna().sum() if 'CDR3_beta' in df.columns else 'N/A'}",
+        )
+
+    # Count unique clones for progress bar
+    n_unique_clones = df_complete["clone_id"].nunique()
+    if verbose:
+        logger.info(f"  Aggregating {n_unique_clones:,} unique clone IDs...")
 
     # Aggregate by clone
-    clonotypes = _aggregate_clone_data(df_complete, group_by)
+    clonotypes = _aggregate_clone_data(df_complete, group_by, show_progress=show_progress)
 
-    logger.info(f"Found {len(clonotypes)} unique clonotypes")
+    if verbose:
+        logger.info(f"  Found {len(clonotypes):,} unique clonotypes")
+        # Log clone size distribution
+        if len(clonotypes) > 0:
+            n_singletons = (clonotypes["cell_count"] == 1).sum()
+            n_expanded = (clonotypes["cell_count"] > 1).sum()
+            max_size = clonotypes["cell_count"].max()
+            logger.info(f"    Singletons: {n_singletons:,}, Expanded clones: {n_expanded:,}, Max clone size: {max_size:,}")
 
     return clonotypes
 
 
-def _aggregate_clone_data(df: pd.DataFrame, group_by: str) -> pd.DataFrame:
+def _aggregate_clone_data(df: pd.DataFrame, group_by: str, show_progress: bool = True) -> pd.DataFrame:
     """Aggregate cell-level data to clone-level."""
 
     clone_data = []
 
-    for clone_id, clone_df in df.groupby("clone_id"):
+    # Create iterator with optional progress bar
+    grouped = df.groupby("clone_id")
+    if show_progress:
+        grouped = tqdm(
+            grouped,
+            desc="Aggregating clones",
+            unit="clone",
+            total=df["clone_id"].nunique(),
+        )
+
+    for clone_id, clone_df in grouped:
         if clone_id == "_" or clone_id == "":
             continue
 
