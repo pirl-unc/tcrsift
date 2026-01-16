@@ -94,7 +94,7 @@ class TILConfig:
 class AssembleConfig:
     """Configuration for the assemble step."""
 
-    include_leader: bool = True
+    include_leader: bool = False  # Requires contigs_dir with FASTA files
     include_constant: bool = True
     constant_source: str = "ensembl"
     linker: str = "T2A"

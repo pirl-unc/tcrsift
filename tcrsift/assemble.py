@@ -277,13 +277,15 @@ def assemble_full_sequences(
     Parameters
     ----------
     clonotypes : pd.DataFrame
-        Clonotype DataFrame
+        Clonotype DataFrame with VDJ sequences (from fwr1/cdr1/fwr2/cdr2/fwr3/cdr3/fwr4)
     contigs_dir : str or Path, optional
-        Directory with CellRanger contig FASTA files
+        Directory with CellRanger contig FASTA files. Required if include_leader=True.
+        If not provided, sequences are assembled from structured VDJ data only.
     include_leader : bool
-        Include leader peptide sequences
+        Include leader peptide sequences. Requires contigs_dir to be provided,
+        as leader sequences must be extracted from raw contig FASTA files.
     include_constant : bool
-        Include constant region sequences
+        Include constant region sequences (fetched from Ensembl or data)
     constant_source : str
         Source for constant regions: "ensembl" or "from-data"
     linker : str
@@ -325,7 +327,7 @@ def assemble_full_sequences(
         elif verbose:
             logger.info(f"    Loaded {len(constant_seqs)} constant region sequences")
 
-    # Load contigs if provided
+    # Load contigs if provided (required for leader sequences)
     sample_contigs = {}
     if contigs_dir:
         contigs_dir = validate_directory_exists(Path(contigs_dir), "contigs directory")
@@ -335,6 +337,13 @@ def assemble_full_sequences(
         if verbose:
             total_contigs = sum(len(c) for c in sample_contigs.values())
             logger.info(f"    Loaded {total_contigs:,} contigs from {len(sample_contigs)} samples")
+    elif include_leader:
+        logger.warning(
+            "include_leader=True but no contigs_dir provided. "
+            "Leader sequences require contig FASTA files from CellRanger. "
+            "Sequences will be assembled WITHOUT leader peptides."
+        )
+        include_leader = False  # Disable since we can't extract leaders
 
     # Process each clonotype
     if verbose:
