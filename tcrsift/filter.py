@@ -21,12 +21,10 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from tqdm.auto import tqdm
 
 from .validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
-    validate_dataframe,
     validate_numeric_param,
 )
 
@@ -436,7 +434,7 @@ def filter_clonotypes(
 
     # Assign tiers
     if verbose:
-        logger.info(f"Assigning confidence tiers...")
+        logger.info("Assigning confidence tiers...")
 
     if method == "logistic":
         df = filter_clonotypes_logistic(df, fdr_tiers=fdr_tiers)

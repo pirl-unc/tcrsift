@@ -108,7 +108,7 @@ def load_cellranger_vdj(
         if alt_path.exists():
             annotations_path = alt_path
             if verbose:
-                logger.info(f"  Using all_contig_annotations.csv (filtered not found)")
+                logger.info("  Using all_contig_annotations.csv (filtered not found)")
         else:
             raise TCRsiftValidationError(
                 f"VDJ annotations file not found: {annotations_path}",

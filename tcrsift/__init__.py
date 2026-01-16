@@ -85,7 +85,6 @@ from .qc import (
     validate_clonotypes,
     validate_sequence,
 )
-from .validation import TCRsiftValidationError
 
 # Core modules
 from .sample_sheet import (
@@ -99,6 +98,7 @@ from .til import (
     identify_til_specific_clones,
     match_til,
 )
+from .validation import TCRsiftValidationError
 from .version import __version__
 
 __all__ = [

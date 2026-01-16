@@ -26,7 +26,6 @@ from tqdm.auto import tqdm
 from .validation import (
     TCRsiftValidationError,
     validate_anndata,
-    validate_dataframe,
     validate_numeric_param,
 )
 
@@ -116,10 +115,10 @@ def aggregate_clonotypes(
                 # Keep but flag
                 df["is_doublet"] = df["multi_chain"]
                 if verbose:
-                    logger.info(f"  Flagging doublets (keeping all cells)")
+                    logger.info("  Flagging doublets (keeping all cells)")
             # keep-primary: use primary chain (already sorted by UMI)
             elif verbose:
-                logger.info(f"  Using primary chain for doublets")
+                logger.info("  Using primary chain for doublets")
 
     # Apply UMI filter
     if "TRA_1_umis" in df.columns and min_umi > 0:

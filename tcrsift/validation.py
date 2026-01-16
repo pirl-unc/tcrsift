@@ -18,9 +18,12 @@ Provides clear, actionable error messages when inputs don't meet requirements.
 
 import logging
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    import anndata as ad
 
 logger = logging.getLogger(__name__)
 

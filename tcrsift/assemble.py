@@ -26,7 +26,6 @@ from tqdm.auto import tqdm
 from .validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
-    validate_dataframe,
     validate_directory_exists,
 )
 
@@ -351,7 +350,7 @@ def assemble_full_sequences(
         n_with_alpha = df["full_alpha_aa"].notna().sum() if "full_alpha_aa" in df.columns else 0
         n_with_beta = df["full_beta_aa"].notna().sum() if "full_beta_aa" in df.columns else 0
         n_single_chain = df["single_chain_aa"].notna().sum() if "single_chain_aa" in df.columns else 0
-        logger.info(f"  Assembly complete:")
+        logger.info("  Assembly complete:")
         logger.info(f"    With full alpha: {n_with_alpha:,}")
         logger.info(f"    With full beta: {n_with_beta:,}")
         logger.info(f"    Single-chain constructs: {n_single_chain:,}")
