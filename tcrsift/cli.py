@@ -21,6 +21,8 @@ import logging
 import sys
 from pathlib import Path
 
+from .config import add_config_args, load_config_with_args
+
 
 def setup_logging(verbose: bool = False):
     """Configure logging."""
@@ -367,6 +369,8 @@ def cmd_run(args):
     from .loader import load_samples
     from .phenotype import filter_by_tcell_type, phenotype_cells
     from .plots import (
+        create_pipeline_funnel,
+        create_tcr_sequence_pdf,
         generate_report,
         plot_annotations,
         plot_assembly,
@@ -378,7 +382,9 @@ def cmd_run(args):
     )
     from .til import match_til
 
-    setup_logging(args.verbose)
+    # Load config with CLI overrides
+    config = load_config_with_args(args)
+    setup_logging(config.verbose)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -387,91 +393,140 @@ def cmd_run(args):
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(exist_ok=True)
 
+    # Save config for reproducibility
+    config.to_yaml(output_dir / "config.yaml")
+
     print("=" * 60)
     print("TCRsift Pipeline")
     print("=" * 60)
 
+    # Track counts for funnel plot
+    funnel_counts = {}
+
     # Step 1: Load
     print("\n[1/7] Loading samples...")
-    adata = load_samples(args.sample_sheet)
+    adata = load_samples(
+        args.sample_sheet,
+        min_genes=config.load.min_genes,
+        max_genes=config.load.max_genes,
+        min_counts=config.load.min_counts,
+        max_counts=config.load.max_counts,
+        min_mito_pct=config.load.min_mito_pct,
+        max_mito_pct=config.load.max_mito_pct,
+    )
     adata.write_h5ad(data_dir / "loaded.h5ad")
+    funnel_counts["Raw Cells"] = len(adata)
     print(f"  Loaded {len(adata)} cells")
-    if not args.skip_plots:
+
+    # Count cells with VDJ
+    if "CDR3_beta" in adata.obs.columns:
+        n_with_vdj = adata.obs["CDR3_beta"].notna().sum()
+        funnel_counts["With VDJ"] = n_with_vdj
+        print(f"  With VDJ data: {n_with_vdj} cells")
+
+    if config.output.generate_plots:
         plot_qc(adata, plots_dir)
 
     # Step 2: Phenotype
     print("\n[2/7] Phenotyping T cells...")
-    adata = phenotype_cells(adata)
+    adata = phenotype_cells(
+        adata,
+        cd4_cd8_ratio=config.phenotype.cd4_cd8_ratio,
+        min_cd3_reads=config.phenotype.min_cd3_reads,
+    )
     adata.write_h5ad(data_dir / "phenotyped.h5ad")
-    if not args.skip_plots:
+    if config.output.generate_plots:
         plot_phenotype(adata, plots_dir)
 
     # Filter by T cell type if specified
-    if args.tcell_type != "both":
-        adata = filter_by_tcell_type(adata, args.tcell_type)
-        print(f"  Filtered to {args.tcell_type.upper()}+: {len(adata)} cells")
+    tcell_type = config.filter.tcell_type
+    if tcell_type != "both":
+        adata = filter_by_tcell_type(adata, tcell_type)
+        print(f"  Filtered to {tcell_type.upper()}+: {len(adata)} cells")
+
+    funnel_counts["Phenotyped"] = len(adata)
 
     # Step 3: Clonotype
     print("\n[3/7] Aggregating clonotypes...")
-    clonotypes = aggregate_clonotypes(adata)
+    clonotypes = aggregate_clonotypes(
+        adata,
+        group_by=config.clonotype.group_by,
+        min_umi=config.clonotype.min_umi,
+        handle_doublets=config.clonotype.handle_doublets,
+    )
     clonotypes.to_csv(data_dir / "clonotypes.csv", index=False)
+    funnel_counts["Clonotypes"] = len(clonotypes)
     print(f"  Found {len(clonotypes)} clonotypes")
-    if not args.skip_plots:
+    if config.output.generate_plots:
         plot_clonotypes(clonotypes, plots_dir)
 
     # Step 4: Filter
     print("\n[4/7] Filtering clonotypes...")
-    fdr_tiers = [float(x) for x in args.fdr_tiers.split(",")] if args.fdr_tiers else None
     filtered = filter_clonotypes(
         clonotypes,
-        method=args.method,
-        min_cells=args.min_cells,
-        fdr_tiers=fdr_tiers,
+        method=config.filter.method,
+        tcell_type=tcell_type,
+        min_cells=config.filter.min_cells,
+        min_frequency=config.filter.min_frequency,
+        require_complete=config.filter.require_complete,
+        fdr_tiers=config.filter.fdr_tiers,
     )
 
     # Save by tier
     tier_dfs = split_by_tier(filtered)
+    tier_counts = {}
     for tier, tier_df in tier_dfs.items():
         tier_df.to_csv(data_dir / f"filtered_{tier}.csv", index=False)
+        tier_counts[tier] = len(tier_df)
         print(f"  {tier}: {len(tier_df)} clonotypes")
 
-    if not args.skip_plots:
+    funnel_counts["Filtered"] = len(filtered)
+
+    if config.output.generate_plots:
         plot_filter(filtered, plots_dir)
 
     # Step 5: Annotate (if databases provided)
     annotated = filtered
-    if args.vdjdb or args.iedb or args.cedar:
+    has_annotation = config.annotate.vdjdb_path or config.annotate.iedb_path or config.annotate.cedar_path
+    if has_annotation:
         print("\n[5/7] Annotating with public databases...")
         annotated = annotate_clonotypes(
             filtered,
-            vdjdb_path=args.vdjdb,
-            iedb_path=args.iedb,
-            cedar_path=args.cedar,
-            exclude_viral=args.exclude_viral,
+            vdjdb_path=config.annotate.vdjdb_path,
+            iedb_path=config.annotate.iedb_path,
+            cedar_path=config.annotate.cedar_path,
+            match_by=config.annotate.match_by,
+            exclude_viral=config.annotate.exclude_viral,
+            flag_only=config.annotate.flag_only,
         )
         annotated.to_csv(data_dir / "annotated.csv", index=False)
         n_viral = annotated["is_viral"].sum() if "is_viral" in annotated.columns else 0
         print(f"  Flagged {n_viral} viral clonotypes")
-        if not args.skip_plots:
+        if config.output.generate_plots:
             plot_annotations(annotated, plots_dir)
     else:
         print("\n[5/7] Skipping annotation (no databases provided)")
 
     # Step 6: TIL matching (if TIL samples specified)
     til_matched = annotated
-    if args.til_samples:
+    if config.til.til_samples:
         print("\n[6/7] Matching against TIL samples...")
         # Load TIL data from the loaded h5ad
         til_adata = ad.read_h5ad(data_dir / "phenotyped.h5ad")
-        til_samples = args.til_samples.split(",")
+        til_samples = config.til.til_samples
         til_adata = til_adata[til_adata.obs["sample"].isin(til_samples)]
 
         if len(til_adata) > 0:
-            til_matched = match_til(annotated, til_adata)
+            til_matched = match_til(
+                annotated,
+                til_adata,
+                match_by=config.til.match_by,
+                min_til_cells=config.til.min_til_cells,
+            )
             til_matched.to_csv(data_dir / "til_matched.csv", index=False)
             n_til = til_matched["til_match"].sum() if "til_match" in til_matched.columns else 0
             print(f"  Found {n_til} clonotypes in TILs")
-            if not args.skip_plots:
+            if config.output.generate_plots:
                 plot_til(til_matched, plots_dir)
         else:
             print("  No TIL samples found")
@@ -479,22 +534,42 @@ def cmd_run(args):
         print("\n[6/7] Skipping TIL matching (no TIL samples specified)")
 
     # Step 7: Assemble (if requested)
-    if args.assemble:
+    assembled = None
+    if config.assemble.single_chain or config.assemble.include_leader or config.assemble.include_constant:
         print("\n[7/7] Assembling full-length sequences...")
         assembled = assemble_full_sequences(
             til_matched,
-            include_leader=args.include_leader,
-            include_constant=args.include_constant,
+            contigs_dir=config.assemble.contigs_dir,
+            include_leader=config.assemble.include_leader,
+            include_constant=config.assemble.include_constant,
+            constant_source=config.assemble.constant_source,
+            linker=config.assemble.linker if config.assemble.single_chain else None,
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
-        if not args.skip_plots:
+        if config.output.generate_plots:
             plot_assembly(assembled, plots_dir)
+
+        # Generate sequence PDF
+        if config.output.generate_report:
+            create_tcr_sequence_pdf(assembled, output_dir / "tcr_sequences.pdf")
     else:
         print("\n[7/7] Skipping assembly")
 
+    # Generate funnel plot
+    if config.output.generate_plots:
+        create_pipeline_funnel(
+            raw_cells=funnel_counts.get("Raw Cells", 0),
+            with_vdj=funnel_counts.get("With VDJ", funnel_counts.get("Raw Cells", 0)),
+            phenotyped=funnel_counts.get("Phenotyped", 0),
+            clonotypes=funnel_counts.get("Clonotypes", 0),
+            filtered=funnel_counts.get("Filtered", 0),
+            tier_counts=tier_counts,
+            output_dir=plots_dir,
+        )
+
     # Generate report
-    if args.report:
+    if config.output.generate_report:
         print("\nGenerating report...")
         generate_report(plots_dir, format="html")
         generate_report(plots_dir, format="pdf")
@@ -673,21 +748,71 @@ def create_parser():
     p_run = subparsers.add_parser("run", help="Run complete pipeline")
     p_run.add_argument("--sample-sheet", "-s", required=True, help="Sample sheet (CSV or YAML)")
     p_run.add_argument("--output-dir", "-o", required=True, help="Output directory")
-    p_run.add_argument("--tcell-type", choices=["cd8", "cd4", "both"], default="cd8")
-    p_run.add_argument("--method", choices=["threshold", "logistic"], default="threshold")
-    p_run.add_argument("--min-cells", type=int, default=2)
-    p_run.add_argument("--fdr-tiers", default="0.15,0.1,0.01,0.001,0.0001")
-    p_run.add_argument("--vdjdb", help="Path to VDJdb")
-    p_run.add_argument("--iedb", help="Path to IEDB")
-    p_run.add_argument("--cedar", help="Path to CEDAR")
-    p_run.add_argument("--exclude-viral", action="store_true")
-    p_run.add_argument("--til-samples", help="Comma-separated TIL sample names")
-    p_run.add_argument("--assemble", action="store_true", help="Run assembly step")
-    p_run.add_argument("--include-leader", action="store_true")
-    p_run.add_argument("--include-constant", action="store_true")
-    p_run.add_argument("--report", action="store_true", help="Generate combined report")
-    p_run.add_argument("--skip-plots", action="store_true", help="Skip plot generation")
-    p_run.add_argument("--verbose", "-v", action="store_true")
+    add_config_args(p_run)  # Add --config option
+
+    # Load step parameters
+    load_group = p_run.add_argument_group("Load options")
+    load_group.add_argument("--min-genes", type=int, help="Min genes per cell (default: 250)")
+    load_group.add_argument("--max-genes", type=int, help="Max genes per cell (default: 15000)")
+    load_group.add_argument("--min-counts", type=int, help="Min UMI counts (default: 500)")
+    load_group.add_argument("--max-counts", type=int, help="Max UMI counts (default: 100000)")
+    load_group.add_argument("--min-mito", type=float, dest="min_mito_pct", help="Min mito %% (default: 2)")
+    load_group.add_argument("--max-mito", type=float, dest="max_mito_pct", help="Max mito %% (default: 8)")
+
+    # Phenotype step parameters
+    pheno_group = p_run.add_argument_group("Phenotype options")
+    pheno_group.add_argument("--cd4-cd8-ratio", type=float, help="Ratio for confident calls (default: 3.0)")
+    pheno_group.add_argument("--min-cd3-reads", type=int, help="Min CD3 reads (default: 10)")
+
+    # Clonotype step parameters
+    clone_group = p_run.add_argument_group("Clonotype options")
+    clone_group.add_argument("--group-by", choices=["CDR3ab", "CDR3b_only"], help="Grouping strategy (default: CDR3ab)")
+    clone_group.add_argument("--handle-doublets", choices=["flag", "remove", "keep-primary"], help="Doublet handling (default: flag)")
+    clone_group.add_argument("--min-umi", type=int, help="Min UMIs per chain (default: 2)")
+
+    # Filter step parameters
+    filter_group = p_run.add_argument_group("Filter options")
+    filter_group.add_argument("--tcell-type", choices=["cd8", "cd4", "both"], help="T cell type filter (default: cd8)")
+    filter_group.add_argument("--method", choices=["threshold", "logistic"], help="Filtering method (default: threshold)")
+    filter_group.add_argument("--min-cells", type=int, help="Min cells per clone (default: 2)")
+    filter_group.add_argument("--min-frequency", type=float, help="Min frequency (default: 0.0)")
+    filter_group.add_argument("--require-complete", action="store_true", default=None, help="Require complete TCR")
+    filter_group.add_argument("--no-require-complete", dest="require_complete", action="store_false")
+    filter_group.add_argument("--fdr-tiers", help="FDR tiers comma-separated (default: 0.15,0.1,0.01,0.001,0.0001)")
+
+    # Annotate step parameters
+    annot_group = p_run.add_argument_group("Annotation options")
+    annot_group.add_argument("--vdjdb", dest="vdjdb_path", help="Path to VDJdb")
+    annot_group.add_argument("--iedb", dest="iedb_path", help="Path to IEDB")
+    annot_group.add_argument("--cedar", dest="cedar_path", help="Path to CEDAR")
+    annot_group.add_argument("--match-by", choices=["CDR3ab", "CDR3b_only"], help="Matching strategy (default: CDR3ab)")
+    annot_group.add_argument("--exclude-viral", action="store_true", default=None, help="Remove viral clones")
+    annot_group.add_argument("--flag-only", action="store_true", default=None, help="Flag but don't remove viral")
+
+    # TIL step parameters
+    til_group = p_run.add_argument_group("TIL matching options")
+    til_group.add_argument("--til-samples", help="Comma-separated TIL sample names")
+    til_group.add_argument("--til-match-by", choices=["CDR3ab", "CDR3b_only"], help="TIL matching strategy")
+    til_group.add_argument("--min-til-cells", type=int, help="Min TIL cells to count (default: 1)")
+
+    # Assemble step parameters
+    asm_group = p_run.add_argument_group("Assembly options")
+    asm_group.add_argument("--include-leader", action="store_true", default=None, help="Include leader peptide (default: True)")
+    asm_group.add_argument("--no-include-leader", dest="include_leader", action="store_false")
+    asm_group.add_argument("--include-constant", action="store_true", default=None, help="Include constant region (default: True)")
+    asm_group.add_argument("--no-include-constant", dest="include_constant", action="store_false")
+    asm_group.add_argument("--constant-source", choices=["ensembl", "from-data"], help="Constant region source (default: ensembl)")
+    asm_group.add_argument("--linker", choices=["T2A", "P2A", "E2A", "F2A"], help="Linker peptide (default: T2A)")
+    asm_group.add_argument("--contigs-dir", help="Directory with CellRanger contig FASTAs")
+    asm_group.add_argument("--single-chain", action="store_true", default=None, help="Generate single-chain constructs (default: True)")
+    asm_group.add_argument("--no-single-chain", dest="single_chain", action="store_false")
+
+    # Output options
+    out_group = p_run.add_argument_group("Output options")
+    out_group.add_argument("--skip-plots", dest="generate_plots", action="store_false", default=None, help="Skip plot generation")
+    out_group.add_argument("--no-report", dest="generate_report", action="store_false", default=None, help="Skip report generation")
+    out_group.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+
     p_run.set_defaults(func=cmd_run)
 
     # -------------------------------------------------------------------------
@@ -701,7 +826,23 @@ def create_parser():
     p_mnem.add_argument("--verbose", "-v", action="store_true")
     p_mnem.set_defaults(func=cmd_mnemonic)
 
+    # -------------------------------------------------------------------------
+    # Generate config command
+    # -------------------------------------------------------------------------
+    p_config = subparsers.add_parser("generate-config", help="Generate example config file")
+    p_config.add_argument("--output", "-o", default="tcrsift_config.yaml", help="Output YAML file")
+    p_config.set_defaults(func=cmd_generate_config)
+
     return parser
+
+
+def cmd_generate_config(args):
+    """Generate an example configuration file."""
+    from .config import generate_example_config
+    generate_example_config(args.output)
+    print(f"Generated example config: {args.output}")
+    print("\nYou can customize this file and use it with:")
+    print(f"  tcrsift run --config {args.output} --sample-sheet samples.csv -o output/")
 
 
 def main(args=None):

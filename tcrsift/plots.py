@@ -466,6 +466,364 @@ def plot_assembly(clonotypes: pd.DataFrame, output_dir: str | Path):
 
 
 # =============================================================================
+# Funnel Plot
+# =============================================================================
+
+def plot_funnel(
+    stage_counts: dict[str, int],
+    output_dir: str | Path,
+    title: str = "TCR Selection Funnel",
+):
+    """
+    Generate a funnel plot showing TCR counts at each filtering stage.
+
+    Parameters
+    ----------
+    stage_counts : dict
+        Ordered dictionary mapping stage names to counts.
+        Example: {"Raw Cells": 10000, "With VDJ": 8000, "Phenotyped": 7500, ...}
+    output_dir : str or Path
+        Directory to save the plot
+    title : str
+        Plot title
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stages = list(stage_counts.keys())
+    counts = list(stage_counts.values())
+    max_count = max(counts) if counts else 1
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Create funnel bars
+    colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(stages)))
+
+    for i, (stage, count, color) in enumerate(zip(stages, counts, colors)):
+        # Calculate bar width proportional to count
+        width = count / max_count * 0.8
+        left = (1 - width) / 2
+
+        # Draw bar
+        ax.barh(
+            len(stages) - i - 1,
+            width,
+            left=left,
+            height=0.7,
+            color=color,
+            edgecolor="white",
+            linewidth=2,
+        )
+
+        # Add count label
+        ax.text(
+            0.5,
+            len(stages) - i - 1,
+            f"{stage}\n{count:,}",
+            ha="center",
+            va="center",
+            fontsize=11,
+            fontweight="bold",
+            color="white" if count / max_count > 0.3 else "black",
+        )
+
+        # Add percentage from previous stage
+        if i > 0 and counts[i - 1] > 0:
+            pct = count / counts[i - 1] * 100
+            ax.text(
+                0.92,
+                len(stages) - i - 1,
+                f"{pct:.0f}%",
+                ha="left",
+                va="center",
+                fontsize=10,
+                color="gray",
+            )
+
+    ax.set_xlim(0, 1.1)
+    ax.set_ylim(-0.5, len(stages) - 0.5)
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=20)
+    ax.axis("off")
+
+    # Add overall retention
+    if len(counts) >= 2 and counts[0] > 0:
+        overall_pct = counts[-1] / counts[0] * 100
+        ax.text(
+            0.5,
+            -0.3,
+            f"Overall retention: {overall_pct:.1f}%",
+            ha="center",
+            va="top",
+            fontsize=12,
+            style="italic",
+        )
+
+    save_figure(fig, output_dir / "funnel_plot.png")
+
+
+def create_pipeline_funnel(
+    raw_cells: int,
+    with_vdj: int,
+    phenotyped: int,
+    clonotypes: int,
+    filtered: int,
+    tier_counts: dict[str, int] | None = None,
+    output_dir: str | Path = ".",
+):
+    """
+    Create a funnel plot for the TCRsift pipeline stages.
+
+    Parameters
+    ----------
+    raw_cells : int
+        Number of cells after loading
+    with_vdj : int
+        Number of cells with VDJ data
+    phenotyped : int
+        Number of cells after phenotyping
+    clonotypes : int
+        Number of unique clonotypes
+    filtered : int
+        Number of clonotypes passing filters
+    tier_counts : dict, optional
+        Counts per confidence tier
+    output_dir : str or Path
+        Output directory for the plot
+    """
+    stage_counts = {
+        "Raw Cells": raw_cells,
+        "With VDJ": with_vdj,
+        "Phenotyped (CD4/CD8)": phenotyped,
+        "Unique Clonotypes": clonotypes,
+        "Passing Filters": filtered,
+    }
+
+    if tier_counts:
+        for tier, count in tier_counts.items():
+            stage_counts[f"Tier: {tier}"] = count
+
+    plot_funnel(stage_counts, output_dir)
+
+
+# =============================================================================
+# Color-Coded TCR Sequence PDF
+# =============================================================================
+
+def create_tcr_sequence_pdf(
+    df: pd.DataFrame,
+    output_path: str | Path,
+    sequence_columns: dict[str, str] | None = None,
+    title_column: str | None = None,
+    sequence_font_size: int = 14,
+    label_font_size: int = 11,
+    title_font_size: int = 12,
+    chars_per_line: int = 60,
+):
+    """
+    Create a PDF with color-coded TCR sequences.
+
+    Each TCR is displayed on a separate page with:
+    - TCR identifier and metadata
+    - Color-coded sequence showing different regions
+    - Color legend
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with TCR sequence data
+    output_path : str or Path
+        Path for output PDF
+    sequence_columns : dict, optional
+        Mapping of column names to display labels for sequence parts.
+        Default: beta_leader, beta_VDJ, beta_constant, linker, alpha_leader, alpha_VDJ, alpha_constant
+    title_column : str, optional
+        Column to use for TCR title (default: auto-detect)
+    sequence_font_size : int
+        Font size for sequences
+    label_font_size : int
+        Font size for labels
+    title_font_size : int
+        Font size for titles
+    chars_per_line : int
+        Characters per line before wrapping
+    """
+    try:
+        from itertools import cycle
+
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfgen import canvas
+    except ImportError:
+        logger.warning("reportlab not installed, cannot generate sequence PDF")
+        return
+
+    # Default sequence columns
+    if sequence_columns is None:
+        sequence_columns = {}
+        # Try to find sequence columns in order
+        column_candidates = [
+            ("beta_leader_aa", "Beta Leader"),
+            ("alpha_leader_aa", "Alpha Leader"),
+            ("vdj_beta_aa", "Beta VDJ"),
+            ("VDJ_beta_aa", "Beta VDJ"),
+            ("full_beta_aa", "Beta Full"),
+            ("beta_constant_aa", "Beta Constant"),
+            ("linker", "Linker"),
+            ("vdj_alpha_aa", "Alpha VDJ"),
+            ("VDJ_alpha_aa", "Alpha VDJ"),
+            ("full_alpha_aa", "Alpha Full"),
+            ("alpha_constant_aa", "Alpha Constant"),
+        ]
+        for col, label in column_candidates:
+            if col in df.columns:
+                sequence_columns[col] = label
+
+        # If we have single_chain_aa, use that instead
+        if "single_chain_aa" in df.columns and not sequence_columns:
+            sequence_columns = {"single_chain_aa": "Single Chain"}
+
+    if not sequence_columns:
+        logger.warning("No sequence columns found in DataFrame")
+        return
+
+    # Color palette for different regions
+    color_list = [
+        colors.HexColor("#1f77b4"),  # blue - beta leader
+        colors.HexColor("#2ca02c"),  # green - beta VDJ
+        colors.HexColor("#17becf"),  # cyan - beta constant
+        colors.HexColor("#ff7f0e"),  # orange - linker
+        colors.HexColor("#9467bd"),  # purple - alpha leader
+        colors.HexColor("#d62728"),  # red - alpha VDJ
+        colors.HexColor("#e377c2"),  # pink - alpha constant
+        colors.HexColor("#7f7f7f"),  # gray
+        colors.HexColor("#bcbd22"),  # olive
+        colors.HexColor("#8c564b"),  # brown
+    ]
+
+    color_cycle = cycle(color_list)
+    color_map = {}
+    for col in sequence_columns.keys():
+        color_map[col] = next(color_cycle)
+
+    # Create PDF
+    output_path = Path(output_path)
+    c = canvas.Canvas(str(output_path), pagesize=letter)
+    width, height = letter
+
+    # Ensure Courier is available
+    pdfmetrics.getFont("Courier")
+
+    char_width = sequence_font_size * 0.6  # Monospace character width
+
+    for idx, row in df.iterrows():
+        y_position = height - 50
+
+        def write_text(text, x=30, y_offset=18, font="Helvetica", size=None, color="black"):
+            nonlocal y_position
+            c.setFont(font, size or title_font_size)
+            c.setFillColor(color)
+            c.drawString(x, y_position, str(text))
+            y_position -= y_offset
+
+        def blank(space=25):
+            nonlocal y_position
+            y_position -= space
+
+        # Title
+        c.setFont("Helvetica-Bold", title_font_size + 2)
+        c.setFillColor(colors.HexColor("#333333"))
+
+        # Find a good title
+        title = None
+        if title_column and title_column in row:
+            title = f"TCR: {row[title_column]}"
+        elif "tcr_name" in row:
+            title = f"TCR: {row['tcr_name']}"
+        elif "clone_id" in row:
+            title = f"Clone: {row['clone_id']}"
+        else:
+            title = f"TCR #{idx}"
+
+        c.drawString(30, y_position, title)
+        y_position -= 25
+
+        # Metadata
+        c.setFont("Helvetica", label_font_size)
+        c.setFillColor("black")
+
+        # CDR3 sequences
+        if "CDR3_alpha" in row and pd.notna(row.get("CDR3_alpha")):
+            write_text(f"CDR3 Alpha: {row['CDR3_alpha']}")
+        if "CDR3_beta" in row and pd.notna(row.get("CDR3_beta")):
+            write_text(f"CDR3 Beta: {row['CDR3_beta']}")
+
+        # Gene information
+        gene_cols = [c for c in row.index if c.endswith("_gene") or c.endswith("_v_gene") or c.endswith("_j_gene")]
+        for col in gene_cols[:6]:  # Limit to 6 genes
+            if pd.notna(row.get(col)):
+                write_text(f"{col}: {row[col]}", x=40)
+
+        # Sequence length
+        total_len = sum(len(str(row.get(col, ""))) for col in sequence_columns.keys() if pd.notna(row.get(col)))
+        write_text(f"Total Length: {total_len} aa", x=40)
+
+        blank(20)
+
+        # Color legend
+        legend_x = width - 180
+        legend_y = height - 50
+        c.setFont("Helvetica-Bold", label_font_size)
+        c.setFillColor("black")
+        c.drawString(legend_x, legend_y, "Legend:")
+        legend_y -= 18
+
+        c.setFont("Helvetica", label_font_size - 1)
+        for col, label in sequence_columns.items():
+            if col in color_map:
+                c.setFillColor(color_map[col])
+                c.drawString(legend_x, legend_y, f"  {label}")
+                legend_y -= 15
+
+        # Write sequence with color coding
+        x_position = 30
+        current_line_width = 0
+
+        for col in sequence_columns.keys():
+            sequence = row.get(col, "")
+            if pd.isna(sequence) or not sequence:
+                continue
+
+            sequence = str(sequence)
+            color = color_map.get(col, colors.black)
+
+            for char in sequence:
+                # Check for page break
+                if y_position < 80:
+                    c.showPage()
+                    y_position = height - 50
+                    x_position = 30
+                    current_line_width = 0
+
+                # Check for line wrap
+                if current_line_width >= chars_per_line:
+                    y_position -= sequence_font_size * 1.4
+                    x_position = 30
+                    current_line_width = 0
+
+                c.setFont("Courier", sequence_font_size)
+                c.setFillColor(color)
+                c.drawString(x_position, y_position, char)
+                x_position += char_width
+                current_line_width += 1
+
+        c.showPage()
+
+    c.save()
+    logger.info(f"Generated TCR sequence PDF: {output_path}")
+
+
+# =============================================================================
 # Combined Report Generation
 # =============================================================================
 

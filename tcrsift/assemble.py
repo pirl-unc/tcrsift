@@ -52,9 +52,36 @@ CODON_TABLE = {
     'TGC': 'C', 'TGT': 'C', 'TGA': '*', 'TGG': 'W',
 }
 
-# T2A self-cleaving peptide linker
-T2A_LINKER_DNA = "AGAGCCGAGGGCAGGGGAAGTCTTCTAACATGCGGGGACGTGGAGGAAAATCCCGGGCCG"
-T2A_LINKER_AA = "RAEGRGSLLTCGDVEENPGP"
+# Self-cleaving 2A peptide linkers
+# These are viral 2A sequences that cause ribosomal skipping during translation
+LINKERS = {
+    "T2A": {
+        "dna": "GAGGGCAGAGGAAGTCTGCTAACATGCGGTGACGTCGAGGAGAATCCTGGCCCG",
+        "aa": "EGRGSLLTCGDVEENPGP",
+        "source": "Thosea asigna virus",
+    },
+    "P2A": {
+        "dna": "GGAAGCGGAGCTACTAACTTCAGCCTGCTGAAGCAGGCTGGAGACGTGGAGGAGAACCCTGGACCT",
+        "aa": "GSGATNFSLLKQAGDVEENPGP",
+        "source": "Porcine teschovirus-1",
+    },
+    "E2A": {
+        "dna": "CAGTGTACTAATTATGCTCTCTTGAAATTGGCTGGAGATGTTGAGAGCAACCCAGGTCCC",
+        "aa": "QCTNYALLKLAGDVESNPGP",
+        "source": "Equine rhinitis A virus",
+    },
+    "F2A": {
+        "dna": "GTGAAACAGACTTTGAATTTTGACCTTCTCAAGTTGGCGGGAGACGTGGAGTCCAACCCAGGGCCC",
+        "aa": "VKQTLNFDLLKLAGDVESNPGP",
+        "source": "Foot-and-mouth disease virus",
+    },
+}
+
+# Backwards compatibility aliases
+T2A_LINKER_DNA = LINKERS["T2A"]["dna"]
+T2A_LINKER_AA = LINKERS["T2A"]["aa"]
+P2A_LINKER_DNA = LINKERS["P2A"]["dna"]
+P2A_LINKER_AA = LINKERS["P2A"]["aa"]
 
 # Standard constant region endings for QC
 CONSTANT_REGION_ENDINGS = {
@@ -486,10 +513,13 @@ def _build_full_sequences(result: dict, include_leader: bool, include_constant: 
 
 def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     """Add single-chain construct (beta-linker-alpha)."""
-    if linker == "T2A":
-        linker_aa = T2A_LINKER_AA
-        linker_nt = T2A_LINKER_DNA
+    # Check if linker is a known 2A peptide
+    if linker.upper() in LINKERS:
+        linker_info = LINKERS[linker.upper()]
+        linker_aa = linker_info["aa"]
+        linker_nt = linker_info["dna"]
     else:
+        # Custom linker sequence provided as amino acids
         linker_aa = linker
         linker_nt = ""
 

@@ -47,6 +47,7 @@ from .annotate import (
     load_vdjdb,
 )
 from .assemble import (
+    LINKERS,
     assemble_full_sequences,
     export_fasta,
     translate_dna,
@@ -56,6 +57,11 @@ from .clonotype import (
     aggregate_clonotypes,
     export_clonotypes_airr,
     get_clonotype_summary,
+)
+from .config import (
+    AssembleConfig,
+    LoadConfig,
+    TCRsiftConfig,
 )
 from .filter import (
     assign_tiers_threshold,
@@ -76,6 +82,11 @@ from .phenotype import (
     filter_by_tcell_type,
     get_phenotype_summary,
     phenotype_cells,
+)
+from .plots import (
+    create_pipeline_funnel,
+    create_tcr_sequence_pdf,
+    plot_funnel,
 )
 from .qc import (
     QCReport,
@@ -104,6 +115,10 @@ from .version import __version__
 __all__ = [
     # Version
     "__version__",
+    # Configuration
+    "TCRsiftConfig",
+    "LoadConfig",
+    "AssembleConfig",
     # Sample sheet
     "Sample",
     "SampleSheet",
@@ -140,10 +155,15 @@ __all__ = [
     "get_til_summary",
     "identify_til_specific_clones",
     # Assembly
+    "LINKERS",
     "assemble_full_sequences",
     "translate_dna",
     "validate_sequences",
     "export_fasta",
+    # Plots
+    "plot_funnel",
+    "create_pipeline_funnel",
+    "create_tcr_sequence_pdf",
     # QC
     "QCReport",
     "QCResult",
