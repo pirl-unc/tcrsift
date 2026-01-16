@@ -94,10 +94,11 @@ class TILConfig:
 class AssembleConfig:
     """Configuration for the assemble step."""
 
-    include_leader: bool = False  # Requires contigs_dir with FASTA files
+    include_leader: bool = False  # Requires contigs_dir or default_leader
     include_constant: bool = True
     constant_source: str = "ensembl"
     linker: str = "T2A"
+    default_leader: str | None = None  # e.g., "CD8A", "CD28", "IgK"
     contigs_dir: str | None = None
     single_chain: bool = True
 

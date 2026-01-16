@@ -83,6 +83,42 @@ T2A_LINKER_AA = LINKERS["T2A"]["aa"]
 P2A_LINKER_DNA = LINKERS["P2A"]["dna"]
 P2A_LINKER_AA = LINKERS["P2A"]["aa"]
 
+# Default leader/signal peptide sequences for TCR expression
+# These can be used when contig FASTA files are not available
+# NOTE: These are human sequences
+DEFAULT_LEADERS = {
+    "CD8A": {
+        "aa": "MALPVTALLLPLALLLHAARP",
+        "dna": "ATGGCCCTGCCTGTGACAGCCCTGCTGCTGCCTCTGGCTCTGCTGCTGCATGCCGCTAGACCC",
+        "source": "Human CD8A signal peptide",
+        "species": "human",
+    },
+    "CD28": {
+        "aa": "MLRLLLALNLFPSIQVTG",
+        "dna": "ATGCTCCGCCTGCTGCTGGCCCTGAACCTGTTCCCCAGCATCCAGGTGACCGGC",
+        "source": "Human CD28 signal peptide",
+        "species": "human",
+    },
+    "IgK": {
+        "aa": "METDTLLLWVLLLWVPGSTG",
+        "dna": "ATGGAGACAGACACACTCCTGCTATGGGTACTGCTGCTCTGGGTTCCAGGTTCCACTGGTGAC",
+        "source": "Human Ig kappa light chain signal peptide",
+        "species": "human",
+    },
+    "TRAC": {
+        "aa": "MAGTWLLLLLALGCPALPTG",
+        "dna": "ATGGCTGGCACCTGGCTGCTGCTGCTGCTGGCCCTGGGATGCCCAGCACTGCCCACAGGC",
+        "source": "Human TRAC native signal peptide",
+        "species": "human",
+    },
+    "TRBC": {
+        "aa": "MGTSLLCWMALCLLGADHADG",
+        "dna": "ATGGGCACCAGCCTGCTGTGCTGGATGGCCCTGTGCCTGCTGGGAGCAGACCACGCCGATGGC",
+        "source": "Human TRBC native signal peptide",
+        "species": "human",
+    },
+}
+
 # Standard constant region endings for QC
 CONSTANT_REGION_ENDINGS = {
     "TRAC": "LLMTLRLWSS",
@@ -268,6 +304,7 @@ def assemble_full_sequences(
     include_constant: bool = True,
     constant_source: str = "ensembl",
     linker: str = "T2A",
+    default_leader: str | None = None,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -279,13 +316,17 @@ def assemble_full_sequences(
     clonotypes : pd.DataFrame
         Clonotype DataFrame with VDJ sequences (from fwr1/cdr1/fwr2/cdr2/fwr3/cdr3/fwr4)
     contigs_dir : str or Path, optional
-        Directory with CellRanger contig FASTA files. Required if include_leader=True.
-        If not provided, sequences are assembled from structured VDJ data only.
+        Directory with CellRanger contig FASTA files. Required if include_leader=True
+        and default_leader is not specified.
     include_leader : bool
-        Include leader peptide sequences. Requires contigs_dir to be provided,
-        as leader sequences must be extracted from raw contig FASTA files.
+        Include leader peptide sequences. Requires either contigs_dir (to extract
+        native leaders) or default_leader (to use a standard signal peptide).
     include_constant : bool
         Include constant region sequences (fetched from Ensembl or data)
+    default_leader : str, optional
+        Use a default leader sequence instead of extracting from contigs.
+        Options: "CD8A", "CD28", "IgK", "TRAC", "TRBC" (see DEFAULT_LEADERS).
+        If specified, this leader will be used for all TCRs.
     constant_source : str
         Source for constant regions: "ensembl" or "from-data"
     linker : str
@@ -327,7 +368,19 @@ def assemble_full_sequences(
         elif verbose:
             logger.info(f"    Loaded {len(constant_seqs)} constant region sequences")
 
-    # Load contigs if provided (required for leader sequences)
+    # Validate default_leader if specified
+    leader_info = None
+    if default_leader:
+        if default_leader.upper() not in DEFAULT_LEADERS:
+            raise TCRsiftValidationError(
+                f"Unknown default_leader: '{default_leader}'",
+                hint=f"Valid options are: {list(DEFAULT_LEADERS.keys())}",
+            )
+        leader_info = DEFAULT_LEADERS[default_leader.upper()]
+        if verbose:
+            logger.info(f"  Using default leader: {default_leader} ({leader_info['source']})")
+
+    # Load contigs if provided (required for native leader sequences)
     sample_contigs = {}
     if contigs_dir:
         contigs_dir = validate_directory_exists(Path(contigs_dir), "contigs directory")
@@ -337,13 +390,14 @@ def assemble_full_sequences(
         if verbose:
             total_contigs = sum(len(c) for c in sample_contigs.values())
             logger.info(f"    Loaded {total_contigs:,} contigs from {len(sample_contigs)} samples")
-    elif include_leader:
+    elif include_leader and not default_leader:
         logger.warning(
-            "include_leader=True but no contigs_dir provided. "
-            "Leader sequences require contig FASTA files from CellRanger. "
-            "Sequences will be assembled WITHOUT leader peptides."
+            "include_leader=True but no contigs_dir or default_leader provided. "
+            "Leader sequences require either contig FASTA files or a default_leader. "
+            "Sequences will be assembled WITHOUT leader peptides. "
+            "Hint: Use default_leader='CD8A' or 'CD28' for standard signal peptides."
         )
-        include_leader = False  # Disable since we can't extract leaders
+        include_leader = False  # Disable since we can't get leaders
 
     # Process each clonotype
     if verbose:
@@ -367,6 +421,7 @@ def assemble_full_sequences(
             constant_seqs,
             include_leader,
             include_constant,
+            leader_info,
         )
         assembly_results.append(result)
 
@@ -400,6 +455,7 @@ def _assemble_clone(
     constant_seqs: dict,
     include_leader: bool,
     include_constant: bool,
+    leader_info: dict | None = None,
 ) -> dict:
     """Assemble full sequence for a single clone."""
     result = {}
@@ -419,9 +475,16 @@ def _assemble_clone(
         if c_gene_col in row:
             result[f"{chain}_c_gene"] = row[c_gene_col]
 
-    # If we have contigs, try to extract leader and constant
-    if sample_contigs and include_leader:
-        _extract_leader_from_contigs(row, sample_contigs, result)
+    # Add leader sequences
+    if include_leader:
+        if leader_info:
+            # Use default leader for both chains
+            for chain in ["alpha", "beta"]:
+                result[f"{chain}_leader_aa"] = leader_info["aa"]
+                result[f"{chain}_leader_nt"] = leader_info["dna"]
+        elif sample_contigs:
+            # Extract native leaders from contigs
+            _extract_leader_from_contigs(row, sample_contigs, result)
 
     # Add constant regions
     if include_constant:

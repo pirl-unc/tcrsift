@@ -47,8 +47,17 @@ Run the complete pipeline:
 tcrsift run \
     --sample-sheet samples.yaml \
     --output-dir results/ \
-    --vdjdb /path/to/vdjdb \
-    --report
+    --vdjdb /path/to/vdjdb
+```
+
+With a configuration file (recommended for reproducibility):
+
+```bash
+# Generate example config
+tcrsift generate-config -o my_config.yaml
+
+# Edit config, then run
+tcrsift run --config my_config.yaml --sample-sheet samples.yaml -o results/
 ```
 
 Or run individual steps:
@@ -330,10 +339,24 @@ tcrsift assemble -i annotated.csv -o full_sequences.csv \
 ```
 
 Options:
-- `--include-constant`: Add constant regions from Ensembl
-- `--include-leader`: Extract leader peptides from contigs
-- `--linker T2A`: Add T2A linker for single-chain constructs
-- `--export-fasta sequences.fasta`: Export to FASTA format
+- `--include-constant`: Add constant regions from Ensembl (TRAC, TRBC1, TRBC2)
+- `--include-leader`: Extract native leader peptides from contigs
+- `--default-leader CD8A`: Use standard signal peptide (CD8A, CD28, IgK, TRAC, TRBC)
+- `--linker T2A`: Linker for single-chain constructs (T2A, P2A, E2A, F2A)
+- `--fasta sequences.fasta`: Export to FASTA format
+
+**Leader Sequences:**
+
+If you have CellRanger contig FASTA files, use `--contigs-dir` to extract native leader sequences.
+Otherwise, use `--default-leader` with a standard signal peptide:
+
+| Leader | Source | Use Case |
+|--------|--------|----------|
+| CD8A | Human CD8A signal peptide | Common choice for TCR expression |
+| CD28 | Human CD28 signal peptide | Alternative signal peptide |
+| IgK | Human Ig kappa light chain | High secretion efficiency |
+| TRAC | Native TCR alpha constant | Native-like expression |
+| TRBC | Native TCR beta constant | Native-like expression |
 
 ## API Reference
 

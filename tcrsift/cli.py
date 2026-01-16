@@ -544,6 +544,7 @@ def cmd_run(args):
             include_constant=config.assemble.include_constant,
             constant_source=config.assemble.constant_source,
             linker=config.assemble.linker if config.assemble.single_chain else None,
+            default_leader=config.assemble.default_leader,
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -797,13 +798,15 @@ def create_parser():
 
     # Assemble step parameters
     asm_group = p_run.add_argument_group("Assembly options")
-    asm_group.add_argument("--include-leader", action="store_true", default=None, help="Include leader peptide (default: True)")
+    asm_group.add_argument("--include-leader", action="store_true", default=None, help="Include leader peptide")
     asm_group.add_argument("--no-include-leader", dest="include_leader", action="store_false")
+    asm_group.add_argument("--default-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC"],
+                          help="Use standard signal peptide (when contigs not available)")
     asm_group.add_argument("--include-constant", action="store_true", default=None, help="Include constant region (default: True)")
     asm_group.add_argument("--no-include-constant", dest="include_constant", action="store_false")
     asm_group.add_argument("--constant-source", choices=["ensembl", "from-data"], help="Constant region source (default: ensembl)")
     asm_group.add_argument("--linker", choices=["T2A", "P2A", "E2A", "F2A"], help="Linker peptide (default: T2A)")
-    asm_group.add_argument("--contigs-dir", help="Directory with CellRanger contig FASTAs")
+    asm_group.add_argument("--contigs-dir", help="Directory with CellRanger contig FASTAs (for native leaders)")
     asm_group.add_argument("--single-chain", action="store_true", default=None, help="Generate single-chain constructs (default: True)")
     asm_group.add_argument("--no-single-chain", dest="single_chain", action="store_false")
 

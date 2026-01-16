@@ -47,6 +47,7 @@ from .annotate import (
     load_vdjdb,
 )
 from .assemble import (
+    DEFAULT_LEADERS,
     LINKERS,
     assemble_full_sequences,
     export_fasta,
@@ -155,6 +156,7 @@ __all__ = [
     "get_til_summary",
     "identify_til_specific_clones",
     # Assembly
+    "DEFAULT_LEADERS",
     "LINKERS",
     "assemble_full_sequences",
     "translate_dna",
