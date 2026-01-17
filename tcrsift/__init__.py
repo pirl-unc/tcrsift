@@ -39,6 +39,11 @@ Example usage::
 
 """
 
+from .amplify import (
+    aggregate_amplify,
+    get_amplify_specificities,
+    load_amplify,
+)
 from .annotate import (
     annotate_clonotypes,
     get_annotation_summary,
@@ -60,9 +65,12 @@ from .clonotype import (
     get_clonotype_summary,
 )
 from .config import (
+    AmplifyConfig,
     AssembleConfig,
+    GEXConfig,
     LoadConfig,
     TCRsiftConfig,
+    UnifyConfig,
 )
 from .filter import (
     assign_tiers_threshold,
@@ -70,6 +78,13 @@ from .filter import (
     filter_clonotypes_threshold,
     get_filter_summary,
     split_by_tier,
+)
+from .gex import (
+    DEFAULT_GENE_GROUPS,
+    DEFAULT_GENE_LIST,
+    aggregate_gex_by_clonotype,
+    augment_with_gex,
+    compute_cd4_cd8_counts,
 )
 from .loader import (
     load_cellranger_gex,
@@ -110,6 +125,13 @@ from .til import (
     identify_til_specific_clones,
     match_til,
 )
+from .unify import (
+    add_phenotype_confidence,
+    compute_condition_statistics,
+    find_top_condition,
+    get_unify_summary,
+    merge_experiments,
+)
 from .validation import TCRsiftValidationError
 from .version import __version__
 
@@ -120,6 +142,9 @@ __all__ = [
     "TCRsiftConfig",
     "LoadConfig",
     "AssembleConfig",
+    "AmplifyConfig",
+    "GEXConfig",
+    "UnifyConfig",
     # Sample sheet
     "Sample",
     "SampleSheet",
@@ -130,6 +155,16 @@ __all__ = [
     "load_cellranger_gex",
     "load_sample",
     "load_samples",
+    # Amplify
+    "load_amplify",
+    "aggregate_amplify",
+    "get_amplify_specificities",
+    # GEX
+    "augment_with_gex",
+    "aggregate_gex_by_clonotype",
+    "compute_cd4_cd8_counts",
+    "DEFAULT_GENE_LIST",
+    "DEFAULT_GENE_GROUPS",
     # Phenotyping
     "phenotype_cells",
     "classify_tcell_type",
@@ -155,6 +190,12 @@ __all__ = [
     "match_til",
     "get_til_summary",
     "identify_til_specific_clones",
+    # Unify
+    "merge_experiments",
+    "add_phenotype_confidence",
+    "compute_condition_statistics",
+    "find_top_condition",
+    "get_unify_summary",
     # Assembly
     "DEFAULT_LEADERS",
     "LINKERS",

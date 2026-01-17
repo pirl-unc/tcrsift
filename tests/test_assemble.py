@@ -193,7 +193,8 @@ class TestAssembleFullSequences:
         """Basic assembly without contigs or constant regions."""
         result = assemble_full_sequences(
             clonotypes_with_vdj,
-            include_leader=False,
+            alpha_leader=None,
+            beta_leader=None,
             include_constant=False,
         )
 
@@ -208,7 +209,8 @@ class TestAssembleFullSequences:
 
         result = assemble_full_sequences(
             clonotypes_with_vdj,
-            include_leader=False,
+            alpha_leader=None,
+            beta_leader=None,
             include_constant=False,
             linker="T2A",
         )
@@ -302,7 +304,7 @@ class TestT2ALinker:
 
     def test_t2a_aa_length(self):
         """T2A amino acid sequence should be correct length."""
-        assert len(T2A_LINKER_AA) == 20
+        assert len(T2A_LINKER_AA) == 18  # EGRGSLLTCGDVEENPGP
 
     def test_t2a_dna_translates_to_aa(self):
         """T2A DNA should translate to T2A AA."""
@@ -343,7 +345,8 @@ ATGCCCGGGAAATTT
         result = assemble_full_sequences(
             df,
             contigs_dir=None,
-            include_leader=False,
+            alpha_leader=None,
+            beta_leader=None,
             include_constant=False,
         )
 
@@ -370,7 +373,8 @@ class TestBuildFullSequences:
 
         result = assemble_full_sequences(
             df,
-            include_leader=False,
+            alpha_leader=None,
+            beta_leader=None,
             include_constant=False,
         )
 
@@ -395,7 +399,8 @@ class TestAddSingleChain:
 
         result = assemble_full_sequences(
             df,
-            include_leader=False,
+            alpha_leader=None,
+            beta_leader=None,
             include_constant=False,
             linker="T2A",
         )
@@ -417,7 +422,8 @@ class TestAddSingleChain:
 
         result = assemble_full_sequences(
             df,
-            include_leader=False,
+            alpha_leader=None,
+            beta_leader=None,
             include_constant=False,
             linker="CUSTOMLINK",
         )
@@ -600,7 +606,8 @@ class TestRealisticFullLengthAssembly:
         """Test assembly using VDJ columns from clonotypes."""
         result = assemble_full_sequences(
             sample_full_length_clonotypes,
-            include_leader=False,
+            alpha_leader=None,
+            beta_leader=None,
             include_constant=False,
         )
 
@@ -618,7 +625,8 @@ class TestRealisticFullLengthAssembly:
         """Test single-chain TCR construct assembly."""
         result = assemble_full_sequences(
             sample_full_length_clonotypes,
-            include_leader=False,
+            alpha_leader=None,
+            beta_leader=None,
             include_constant=False,
             linker="T2A",
         )

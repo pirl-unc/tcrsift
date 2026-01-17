@@ -36,7 +36,7 @@ ANTIGEN_TYPE_TCELL_EXPECTATIONS = {
 }
 
 VALID_ANTIGEN_TYPES = set(ANTIGEN_TYPE_TCELL_EXPECTATIONS.keys())
-VALID_SOURCES = {"culture", "tetramer", "sct", "til"}
+VALID_SOURCES = {"culture", "tetramer", "sct", "til", "amplify"}
 VALID_TCELL_TYPES = {"CD4", "CD8", "mixed", None}
 VALID_MHC_BLOCKING = {"MHC-I", "MHC-II", None}
 VALID_PRE_SORTED = {"CD4", "CD8", None}
@@ -68,11 +68,22 @@ class Sample:
     # Other metadata
     tissue: str | None = None
     patient_id: str | None = None
+    # Experiment grouping for multi-source unification
+    experiment: str | None = None  # experiment name for unification (e.g., "TIL", "Culture", "Amplify")
+    # Amplify-specific fields
+    amplify_path: str | None = None  # path to Amplify Excel file
+    amplify_sheet: str = "Cell"  # sheet name in Amplify Excel file
+    # Standalone GEX file (for augmentation without full CellRanger output)
+    gex_path: str | None = None  # path to 10x filtered_feature_bc_matrix.h5 file
 
     def __post_init__(self):
         # Validate at least one data source
-        if not self.gex_dir and not self.vdj_dir:
-            raise ValueError(f"Sample '{self.sample}' must have at least gex_dir or vdj_dir")
+        has_cellranger = self.gex_dir or self.vdj_dir
+        has_amplify = self.amplify_path is not None
+        if not has_cellranger and not has_amplify:
+            raise ValueError(
+                f"Sample '{self.sample}' must have at least gex_dir, vdj_dir, or amplify_path"
+            )
 
         # Validate antigen type
         if self.antigen_type and self.antigen_type not in VALID_ANTIGEN_TYPES:
@@ -147,6 +158,10 @@ class Sample:
         """Check if this sample is TIL data."""
         return self.source == "til"
 
+    def is_amplify(self) -> bool:
+        """Check if this sample is Amplify data."""
+        return self.source == "amplify" or self.amplify_path is not None
+
 
 @dataclass
 class SampleSheet:
@@ -181,6 +196,36 @@ class SampleSheet:
         """Get all tetramer/SCT samples."""
         return [s for s in self.samples if s.is_tetramer_or_sct()]
 
+    def get_amplify_samples(self) -> list[Sample]:
+        """Get all Amplify samples."""
+        return [s for s in self.samples if s.is_amplify()]
+
+    def get_samples_by_experiment(self) -> dict[str, list[Sample]]:
+        """
+        Group samples by experiment name.
+
+        Returns a dictionary mapping experiment names to lists of samples.
+        Samples without an experiment field are grouped under 'default'.
+        """
+        groups: dict[str, list[Sample]] = {}
+        for s in self.samples:
+            exp_name = s.experiment or "default"
+            if exp_name not in groups:
+                groups[exp_name] = []
+            groups[exp_name].append(s)
+        return groups
+
+    def get_experiment_names(self) -> list[str]:
+        """Get unique experiment names, preserving order."""
+        seen = set()
+        names = []
+        for s in self.samples:
+            exp_name = s.experiment or "default"
+            if exp_name not in seen:
+                seen.add(exp_name)
+                names.append(exp_name)
+        return names
+
     def to_dataframe(self) -> pd.DataFrame:
         """Convert sample sheet to a pandas DataFrame."""
         records = []
@@ -189,6 +234,10 @@ class SampleSheet:
                 "sample": s.sample,
                 "gex_dir": s.gex_dir,
                 "vdj_dir": s.vdj_dir,
+                "gex_path": s.gex_path,
+                "amplify_path": s.amplify_path,
+                "amplify_sheet": s.amplify_sheet,
+                "experiment": s.experiment,
                 "antigen_type": s.antigen_type,
                 "antigen_description": s.antigen_description,
                 "antigen_name": s.antigen_name,
@@ -340,5 +389,11 @@ def validate_sample_sheet(sample_sheet: SampleSheet) -> list[str]:
 
         if sample.vdj_dir and not Path(sample.vdj_dir).exists():
             warnings.append(f"Sample '{sample.sample}': vdj_dir does not exist: {sample.vdj_dir}")
+
+        if sample.amplify_path and not Path(sample.amplify_path).exists():
+            warnings.append(f"Sample '{sample.sample}': amplify_path does not exist: {sample.amplify_path}")
+
+        if sample.gex_path and not Path(sample.gex_path).exists():
+            warnings.append(f"Sample '{sample.sample}': gex_path does not exist: {sample.gex_path}")
 
     return warnings

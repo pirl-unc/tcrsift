@@ -91,6 +91,36 @@ class TILConfig:
 
 
 @dataclass
+class AmplifyConfig:
+    """Configuration for Amplify data loading."""
+
+    min_snr: float = 2.0
+    min_reads_per_chain: int = 10
+    require_mutation_match: bool = True
+    require_compact_match: bool = False
+
+
+@dataclass
+class GEXConfig:
+    """Configuration for gene expression augmentation."""
+
+    gene_list: list[str] | None = None  # None = use default T cell markers
+    gene_groups: dict[str, list[str]] | None = None  # None = use default groups
+    include_qc: bool = True
+    aggregation_ops: list[str] = field(default_factory=lambda: ["sum", "mean"])
+
+
+@dataclass
+class UnifyConfig:
+    """Configuration for multi-experiment unification."""
+
+    add_occurrence_flags: bool = True
+    add_combined_stats: bool = True
+    add_phenotype_confidence: bool = True
+    phenotype_ratio_threshold: float = 10.0
+
+
+@dataclass
 class AssembleConfig:
     """Configuration for the assemble step."""
 
@@ -145,6 +175,9 @@ class TCRsiftConfig:
     filter: FilterConfig = field(default_factory=FilterConfig)
     annotate: AnnotateConfig = field(default_factory=AnnotateConfig)
     til: TILConfig = field(default_factory=TILConfig)
+    amplify: AmplifyConfig = field(default_factory=AmplifyConfig)
+    gex: GEXConfig = field(default_factory=GEXConfig)
+    unify: UnifyConfig = field(default_factory=UnifyConfig)
     assemble: AssembleConfig = field(default_factory=AssembleConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
@@ -217,6 +250,21 @@ class TCRsiftConfig:
             "til_match_by": ("til", "match_by"),
             "min_til_cells": ("til", "min_til_cells"),
             "til_samples": ("til", "til_samples"),
+            # Amplify
+            "min_snr": ("amplify", "min_snr"),
+            "min_reads_per_chain": ("amplify", "min_reads_per_chain"),
+            "require_mutation_match": ("amplify", "require_mutation_match"),
+            "require_compact_match": ("amplify", "require_compact_match"),
+            # GEX
+            "gene_list": ("gex", "gene_list"),
+            "gene_groups": ("gex", "gene_groups"),
+            "include_qc": ("gex", "include_qc"),
+            "aggregation_ops": ("gex", "aggregation_ops"),
+            # Unify
+            "add_occurrence_flags": ("unify", "add_occurrence_flags"),
+            "add_combined_stats": ("unify", "add_combined_stats"),
+            "add_phenotype_confidence": ("unify", "add_phenotype_confidence"),
+            "phenotype_ratio_threshold": ("unify", "phenotype_ratio_threshold"),
             # Assemble
             "alpha_leader": ("assemble", "alpha_leader"),
             "beta_leader": ("assemble", "beta_leader"),
@@ -242,6 +290,9 @@ class TCRsiftConfig:
             "filter": {},
             "annotate": {},
             "til": {},
+            "amplify": {},
+            "gex": {},
+            "unify": {},
             "assemble": {},
             "output": {},
         }
@@ -269,6 +320,9 @@ class TCRsiftConfig:
             filter=FilterConfig(**nested["filter"]),
             annotate=AnnotateConfig(**nested["annotate"]),
             til=TILConfig(**nested["til"]),
+            amplify=AmplifyConfig(**nested["amplify"]),
+            gex=GEXConfig(**nested["gex"]),
+            unify=UnifyConfig(**nested["unify"]),
             assemble=AssembleConfig(**nested["assemble"]),
             output=OutputConfig(**nested["output"]),
             **global_opts,
@@ -296,6 +350,9 @@ class TCRsiftConfig:
             "filter": dataclasses.asdict(self.filter),
             "annotate": dataclasses.asdict(self.annotate),
             "til": dataclasses.asdict(self.til),
+            "amplify": dataclasses.asdict(self.amplify),
+            "gex": dataclasses.asdict(self.gex),
+            "unify": dataclasses.asdict(self.unify),
             "assemble": dataclasses.asdict(self.assemble),
             "output": dataclasses.asdict(self.output),
             "verbose": self.verbose,

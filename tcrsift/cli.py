@@ -601,6 +601,93 @@ def cmd_run(args):
 
 
 # =============================================================================
+# Load-Amplify Command
+# =============================================================================
+
+def cmd_load_amplify(args):
+    """Load TCR data from Amplify platform."""
+    from .amplify import aggregate_amplify, load_amplify
+
+    setup_logging(args.verbose)
+
+    df = load_amplify(
+        args.input,
+        sheet_name=args.sheet_name,
+        min_snr=args.min_snr,
+        min_reads_per_chain=args.min_reads,
+        require_mutation_match=args.require_mutation_match,
+        require_compact_match=args.require_compact_match,
+        verbose=True,
+    )
+
+    # Aggregate if requested
+    if args.aggregate:
+        df = aggregate_amplify(df, verbose=True)
+
+    # Save
+    df.to_csv(args.output, index=False)
+    print(f"\nSaved {len(df)} {'clonotypes' if args.aggregate else 'cells'} to {args.output}")
+
+
+# =============================================================================
+# Unify Command
+# =============================================================================
+
+def cmd_unify(args):
+    """Unify clonotype data from multiple experiments."""
+    import pandas as pd
+
+    from .unify import (
+        add_phenotype_confidence,
+        find_top_condition,
+        get_unify_summary,
+        merge_experiments,
+    )
+
+    setup_logging(args.verbose)
+
+    # Load input files
+    experiments = []
+    for path in args.inputs:
+        df = pd.read_csv(path)
+        # Extract name from filename if not specified
+        name = Path(path).stem
+        experiments.append((df, name))
+        print(f"Loaded {len(df):,} clonotypes from {path}")
+
+    # Merge experiments
+    merged = merge_experiments(
+        experiments,
+        add_occurrence_flags=args.add_occurrence_flags,
+        add_combined_stats=args.add_combined_stats,
+        verbose=True,
+    )
+
+    # Add phenotype confidence
+    if args.add_phenotype_confidence:
+        merged = add_phenotype_confidence(
+            merged,
+            ratio_threshold=args.phenotype_ratio_threshold,
+            verbose=True,
+        )
+
+    # Find top condition if specified
+    if args.conditions:
+        conditions = [c.strip() for c in args.conditions.split(",")]
+        merged = find_top_condition(merged, conditions, verbose=True)
+
+    # Print summary
+    summary = get_unify_summary(merged)
+    print("\nUnify Summary:")
+    for key, value in summary.items():
+        print(f"  {key}: {value:,}" if isinstance(value, (int, float)) else f"  {key}: {value}")
+
+    # Save
+    merged.to_csv(args.output, index=False)
+    print(f"\nSaved {len(merged):,} unified clonotypes to {args.output}")
+
+
+# =============================================================================
 # Mnemonic Command
 # =============================================================================
 
@@ -845,6 +932,44 @@ def create_parser():
     out_group.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     p_run.set_defaults(func=cmd_run)
+
+    # -------------------------------------------------------------------------
+    # Load-Amplify command
+    # -------------------------------------------------------------------------
+    p_amplify = subparsers.add_parser("load-amplify", help="Load Amplify platform data")
+    p_amplify.add_argument("--input", "-i", required=True, help="Input Amplify Excel file")
+    p_amplify.add_argument("--output", "-o", required=True, help="Output CSV")
+    p_amplify.add_argument("--sheet-name", default="Cell", help="Excel sheet name (default: Cell)")
+    p_amplify.add_argument("--min-snr", type=float, default=2.0, help="Min signal-to-noise ratio (default: 2.0)")
+    p_amplify.add_argument("--min-reads", type=int, default=10, help="Min reads per chain (default: 10)")
+    p_amplify.add_argument("--require-mutation-match", action="store_true", default=True,
+                          help="Require PE/APC mutation match")
+    p_amplify.add_argument("--no-require-mutation-match", dest="require_mutation_match", action="store_false")
+    p_amplify.add_argument("--require-compact-match", action="store_true", help="Require comPACT ID match")
+    p_amplify.add_argument("--aggregate", action="store_true", help="Aggregate to unique clonotypes")
+    p_amplify.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_amplify.set_defaults(func=cmd_load_amplify)
+
+    # -------------------------------------------------------------------------
+    # Unify command
+    # -------------------------------------------------------------------------
+    p_unify = subparsers.add_parser("unify", help="Unify clonotypes from multiple experiments")
+    p_unify.add_argument("--inputs", "-i", nargs="+", required=True, help="Input CSV files to merge")
+    p_unify.add_argument("--output", "-o", required=True, help="Output unified CSV")
+    p_unify.add_argument("--add-occurrence-flags", action="store_true", default=True,
+                        help="Add 'occurs_in_*' columns")
+    p_unify.add_argument("--no-occurrence-flags", dest="add_occurrence_flags", action="store_false")
+    p_unify.add_argument("--add-combined-stats", action="store_true", default=True,
+                        help="Add combined statistics")
+    p_unify.add_argument("--no-combined-stats", dest="add_combined_stats", action="store_false")
+    p_unify.add_argument("--add-phenotype-confidence", action="store_true", default=True,
+                        help="Add phenotype confidence columns")
+    p_unify.add_argument("--no-phenotype-confidence", dest="add_phenotype_confidence", action="store_false")
+    p_unify.add_argument("--phenotype-ratio-threshold", type=float, default=10.0,
+                        help="CD4/CD8 ratio for confident classification (default: 10.0)")
+    p_unify.add_argument("--conditions", help="Comma-separated condition names for top-condition analysis")
+    p_unify.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_unify.set_defaults(func=cmd_unify)
 
     # -------------------------------------------------------------------------
     # Mnemonic command
