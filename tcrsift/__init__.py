@@ -39,10 +39,10 @@ Example usage::
 
 """
 
-from .amplify import (
-    aggregate_amplify,
-    get_amplify_specificities,
-    load_amplify,
+from .sct import (
+    aggregate_sct,
+    get_sct_specificities,
+    load_sct,
 )
 from .annotate import (
     annotate_clonotypes,
@@ -65,10 +65,10 @@ from .clonotype import (
     get_clonotype_summary,
 )
 from .config import (
-    AmplifyConfig,
     AssembleConfig,
     GEXConfig,
     LoadConfig,
+    SCTConfig,
     TCRsiftConfig,
     UnifyConfig,
 )
@@ -142,7 +142,7 @@ __all__ = [
     "TCRsiftConfig",
     "LoadConfig",
     "AssembleConfig",
-    "AmplifyConfig",
+    "SCTConfig",
     "GEXConfig",
     "UnifyConfig",
     # Sample sheet
@@ -155,10 +155,10 @@ __all__ = [
     "load_cellranger_gex",
     "load_sample",
     "load_samples",
-    # Amplify
-    "load_amplify",
-    "aggregate_amplify",
-    "get_amplify_specificities",
+    # SCT (single-cell TCR platform)
+    "load_sct",
+    "aggregate_sct",
+    "get_sct_specificities",
     # GEX
     "augment_with_gex",
     "aggregate_gex_by_clonotype",

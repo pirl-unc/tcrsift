@@ -601,16 +601,16 @@ def cmd_run(args):
 
 
 # =============================================================================
-# Load-Amplify Command
+# Load-SCT Command
 # =============================================================================
 
-def cmd_load_amplify(args):
-    """Load TCR data from Amplify platform."""
-    from .amplify import aggregate_amplify, load_amplify
+def cmd_load_sct(args):
+    """Load TCR data from SCT platform."""
+    from .sct import aggregate_sct, load_sct
 
     setup_logging(args.verbose)
 
-    df = load_amplify(
+    df = load_sct(
         args.input,
         sheet_name=args.sheet_name,
         min_snr=args.min_snr,
@@ -622,7 +622,7 @@ def cmd_load_amplify(args):
 
     # Aggregate if requested
     if args.aggregate:
-        df = aggregate_amplify(df, verbose=True)
+        df = aggregate_sct(df, verbose=True)
 
     # Save
     df.to_csv(args.output, index=False)
@@ -934,21 +934,21 @@ def create_parser():
     p_run.set_defaults(func=cmd_run)
 
     # -------------------------------------------------------------------------
-    # Load-Amplify command
+    # Load-SCT command
     # -------------------------------------------------------------------------
-    p_amplify = subparsers.add_parser("load-amplify", help="Load Amplify platform data")
-    p_amplify.add_argument("--input", "-i", required=True, help="Input Amplify Excel file")
-    p_amplify.add_argument("--output", "-o", required=True, help="Output CSV")
-    p_amplify.add_argument("--sheet-name", default="Cell", help="Excel sheet name (default: Cell)")
-    p_amplify.add_argument("--min-snr", type=float, default=2.0, help="Min signal-to-noise ratio (default: 2.0)")
-    p_amplify.add_argument("--min-reads", type=int, default=10, help="Min reads per chain (default: 10)")
-    p_amplify.add_argument("--require-mutation-match", action="store_true", default=True,
+    p_sct = subparsers.add_parser("load-sct", help="Load SCT platform data")
+    p_sct.add_argument("--input", "-i", required=True, help="Input SCT Excel file")
+    p_sct.add_argument("--output", "-o", required=True, help="Output CSV")
+    p_sct.add_argument("--sheet-name", default="Cell", help="Excel sheet name (default: Cell)")
+    p_sct.add_argument("--min-snr", type=float, default=2.0, help="Min signal-to-noise ratio (default: 2.0)")
+    p_sct.add_argument("--min-reads", type=int, default=10, help="Min reads per chain (default: 10)")
+    p_sct.add_argument("--require-mutation-match", action="store_true", default=True,
                           help="Require PE/APC mutation match")
-    p_amplify.add_argument("--no-require-mutation-match", dest="require_mutation_match", action="store_false")
-    p_amplify.add_argument("--require-compact-match", action="store_true", help="Require comPACT ID match")
-    p_amplify.add_argument("--aggregate", action="store_true", help="Aggregate to unique clonotypes")
-    p_amplify.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    p_amplify.set_defaults(func=cmd_load_amplify)
+    p_sct.add_argument("--no-require-mutation-match", dest="require_mutation_match", action="store_false")
+    p_sct.add_argument("--require-compact-match", action="store_true", help="Require comPACT ID match")
+    p_sct.add_argument("--aggregate", action="store_true", help="Aggregate to unique clonotypes")
+    p_sct.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_sct.set_defaults(func=cmd_load_sct)
 
     # -------------------------------------------------------------------------
     # Unify command

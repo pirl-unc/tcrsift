@@ -420,17 +420,17 @@ tcrsift match-til -i annotated.csv --til-data til_clonotypes.csv -o til_matched.
 
 3. **Enrichment Analysis**: Calculates whether culture-enriched clones are over-represented in TIL vs. expected by chance.
 
-### 7. Load Amplify Data (`tcrsift load-amplify`)
+### 7. Load SCT Data (`tcrsift load-sct`)
 
-Loads TCR data from the Amplify single-cell platform (Excel format).
+Loads TCR data from the SCT single-cell platform (Excel format).
 
 ```bash
-tcrsift load-amplify -i amplify_data.xlsx -o amplify_clonotypes.csv --aggregate
+tcrsift load-sct -i sct_data.xlsx -o sct_clonotypes.csv --aggregate
 ```
 
 **How it works:**
 
-1. **Excel Parsing**: Reads the "Cell" sheet from Amplify output containing:
+1. **Excel Parsing**: Reads the "Cell" sheet from SCT output containing:
    - CDR3α/β sequences
    - Signal-to-noise ratio (SNR)
    - Read counts per chain
@@ -452,7 +452,7 @@ tcrsift load-amplify -i amplify_data.xlsx -o amplify_clonotypes.csv --aggregate
 Merges clonotype data from multiple experiments into a unified table.
 
 ```bash
-tcrsift unify -i til_clonotypes.csv culture_clonotypes.csv amplify_clonotypes.csv \
+tcrsift unify -i til_clonotypes.csv culture_clonotypes.csv sct_clonotypes.csv \
     -o unified.csv
 ```
 
@@ -464,7 +464,7 @@ tcrsift unify -i til_clonotypes.csv culture_clonotypes.csv amplify_clonotypes.cs
 
 3. **Occurrence Flags**: Boolean columns `occurs_in_*` indicate which experiments contain each clonotype:
    ```
-   occurs_in_TIL, occurs_in_Culture, occurs_in_Amplify
+   occurs_in_TIL, occurs_in_Culture, occurs_in_SCT
    ```
 
 4. **Combined Statistics**: Aggregates metrics across experiments:
@@ -595,17 +595,17 @@ This runs the full pipeline: load → phenotype → clonotype → filter → ann
 
 ### Multi-Experiment Unification
 
-For combining data from multiple sources (TIL, culture, Amplify):
+For combining data from multiple sources (TIL, culture, SCT):
 
 ```bash
 # Step 1: Process each experiment separately
 tcrsift run --sample-sheet til_samples.yaml -o til_results/
 tcrsift run --sample-sheet culture_samples.yaml -o culture_results/
-tcrsift load-amplify -i amplify.xlsx -o amplify_clonotypes.csv --aggregate
+tcrsift load-sct -i sct_data.xlsx -o sct_clonotypes.csv --aggregate
 
 # Step 2: Unify all experiments
 tcrsift unify \
-    -i til_results/clonotypes.csv culture_results/clonotypes.csv amplify_clonotypes.csv \
+    -i til_results/clonotypes.csv culture_results/clonotypes.csv sct_clonotypes.csv \
     -o unified_clonotypes.csv
 ```
 
@@ -754,22 +754,22 @@ summary = get_til_summary(matched)
 til_specific = identify_til_specific_clones(matched)
 ```
 
-### Amplify Data
+### SCT Data
 
 ```python
-from tcrsift import load_amplify, aggregate_amplify, get_amplify_specificities
+from tcrsift import load_sct, aggregate_sct, get_sct_specificities
 
-# Load Amplify data
-df = load_amplify("amplify_data.xlsx", min_snr=2.0, min_reads_per_chain=10)
+# Load SCT data
+df = load_sct("sct_data.xlsx", min_snr=2.0, min_reads_per_chain=10)
 
 # Filter to high-quality cells
 hq = df[df.high_quality]
 
 # Aggregate to clonotypes
-clonotypes = aggregate_amplify(df)
+clonotypes = aggregate_sct(df)
 
 # Get specificity mapping
-specificities = get_amplify_specificities(clonotypes)
+specificities = get_sct_specificities(clonotypes)
 # Returns: {"CAVXXX/CASSYYY": "KRAS_G12D", ...}
 ```
 
@@ -802,7 +802,7 @@ from tcrsift import merge_experiments, add_phenotype_confidence, get_unify_summa
 experiments = [
     (til_clonotypes, "TIL"),
     (culture_clonotypes, "Culture"),
-    (amplify_clonotypes, "Amplify"),
+    (sct_clonotypes, "SCT"),
 ]
 
 # Merge with prefixed columns

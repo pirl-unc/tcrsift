@@ -91,8 +91,8 @@ class TILConfig:
 
 
 @dataclass
-class AmplifyConfig:
-    """Configuration for Amplify data loading."""
+class SCTConfig:
+    """Configuration for SCT (single-cell TCR) data loading."""
 
     min_snr: float = 2.0
     min_reads_per_chain: int = 10
@@ -175,7 +175,7 @@ class TCRsiftConfig:
     filter: FilterConfig = field(default_factory=FilterConfig)
     annotate: AnnotateConfig = field(default_factory=AnnotateConfig)
     til: TILConfig = field(default_factory=TILConfig)
-    amplify: AmplifyConfig = field(default_factory=AmplifyConfig)
+    sct: SCTConfig = field(default_factory=SCTConfig)
     gex: GEXConfig = field(default_factory=GEXConfig)
     unify: UnifyConfig = field(default_factory=UnifyConfig)
     assemble: AssembleConfig = field(default_factory=AssembleConfig)
@@ -290,7 +290,7 @@ class TCRsiftConfig:
             "filter": {},
             "annotate": {},
             "til": {},
-            "amplify": {},
+            "sct": {},
             "gex": {},
             "unify": {},
             "assemble": {},
@@ -320,7 +320,7 @@ class TCRsiftConfig:
             filter=FilterConfig(**nested["filter"]),
             annotate=AnnotateConfig(**nested["annotate"]),
             til=TILConfig(**nested["til"]),
-            amplify=AmplifyConfig(**nested["amplify"]),
+            sct=SCTConfig(**nested["sct"]),
             gex=GEXConfig(**nested["gex"]),
             unify=UnifyConfig(**nested["unify"]),
             assemble=AssembleConfig(**nested["assemble"]),
@@ -350,7 +350,7 @@ class TCRsiftConfig:
             "filter": dataclasses.asdict(self.filter),
             "annotate": dataclasses.asdict(self.annotate),
             "til": dataclasses.asdict(self.til),
-            "amplify": dataclasses.asdict(self.amplify),
+            "sct": dataclasses.asdict(self.sct),
             "gex": dataclasses.asdict(self.gex),
             "unify": dataclasses.asdict(self.unify),
             "assemble": dataclasses.asdict(self.assemble),

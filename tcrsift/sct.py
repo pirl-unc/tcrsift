@@ -11,10 +11,11 @@
 # limitations under the License.
 
 """
-Amplify platform data loading and processing.
+SCT (single-cell TCR) platform data loading and processing.
 
-Functions for loading TCR data from the Amplify single-cell platform,
-which provides paired TCR sequencing with antigen specificity information.
+Functions for loading TCR data from PACT-style single-cell platforms,
+which provide paired TCR sequencing with antigen specificity information
+via pMHC tetramer staining.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def load_amplify(
+def load_sct(
     path: str | Path,
     *,
     sheet_name: str = "Cell",
@@ -45,15 +46,15 @@ def load_amplify(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
-    Load TCR data from Amplify platform Excel file.
+    Load TCR data from SCT platform Excel file.
 
-    The Amplify platform provides single-cell TCR sequencing with antigen
-    specificity information from pMHC tetramer staining.
+    The SCT (single-cell TCR) platform provides paired TCR sequencing with
+    antigen specificity information from pMHC tetramer staining.
 
     Parameters
     ----------
     path : str or Path
-        Path to Amplify Excel file
+        Path to SCT Excel file
     sheet_name : str
         Sheet name to read (default: "Cell")
     min_snr : float
@@ -72,19 +73,19 @@ def load_amplify(
     Returns
     -------
     pd.DataFrame
-        Amplify data with quality flags and standardized columns
+        SCT data with quality flags and standardized columns
     """
-    path = validate_file_exists(Path(path), "Amplify file")
+    path = validate_file_exists(Path(path), "SCT file")
 
     if verbose:
-        logger.info(f"Loading Amplify data from {path}")
+        logger.info(f"Loading SCT data from {path}")
 
     # Load Excel file
     try:
         df = pd.read_excel(path, sheet_name=sheet_name)
     except Exception as e:
         raise TCRsiftValidationError(
-            f"Failed to read Amplify Excel file: {e}",
+            f"Failed to read SCT Excel file: {e}",
             hint="Ensure the file is a valid Excel file with the expected sheet name",
         )
 
@@ -100,7 +101,7 @@ def load_amplify(
 
     if not tra_cdr3_col or not trb_cdr3_col:
         raise TCRsiftValidationError(
-            "Could not find CDR3 columns in Amplify file",
+            "Could not find CDR3 columns in SCT file",
             hint="Expected columns like 'tra.CDR3'/'trb.CDR3' or 'CDR3_alpha'/'CDR3_beta'",
         )
 
@@ -150,7 +151,7 @@ def load_amplify(
 
     df["high_quality"] = quality_mask
 
-    # Stricter "chosen" criteria (Amplify SOP: SNR >= 3.4, reads >= 50)
+    # Stricter "chosen" criteria (SNR >= 3.4, reads >= 50)
     chosen_mask = quality_mask.copy()
     if snr_col:
         chosen_mask &= df[snr_col].fillna(0) >= 3.4
@@ -184,7 +185,7 @@ def load_amplify(
     return df
 
 
-def aggregate_amplify(
+def aggregate_sct(
     df: pd.DataFrame,
     *,
     group_cols: list[str] | None = None,
@@ -193,12 +194,12 @@ def aggregate_amplify(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
-    Aggregate Amplify data by CDR3 pair, computing statistics.
+    Aggregate SCT data by CDR3 pair, computing statistics.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Amplify data (from load_amplify)
+        SCT data (from load_sct)
     group_cols : list of str, optional
         Columns to group by (default: CDR3_pair, CDR3_alpha, CDR3_beta)
     numeric_cols : list of str, optional
@@ -223,7 +224,7 @@ def aggregate_amplify(
             and df[c].dtype in ["int64", "float64"]
             and not c.endswith("_bool")
         ]
-        # Filter to likely Amplify columns
+        # Filter to likely SCT columns
         numeric_cols = [
             c for c in numeric_cols
             if any(x in c.lower() for x in ["snr", "readcount", "count", "ratio"])
@@ -313,14 +314,14 @@ def _find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
-def get_amplify_specificities(df: pd.DataFrame) -> dict[str, str]:
+def get_sct_specificities(df: pd.DataFrame) -> dict[str, str]:
     """
-    Extract CDR3 pair to specificity mapping from Amplify data.
+    Extract CDR3 pair to specificity mapping from SCT data.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Amplify data (from load_amplify or aggregate_amplify)
+        SCT data (from load_sct or aggregate_sct)
 
     Returns
     -------

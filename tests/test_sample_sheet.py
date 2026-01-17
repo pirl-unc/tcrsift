@@ -41,8 +41,8 @@ class TestSample:
         assert sample.vdj_dir == "/path/to/vdj"
 
     def test_sample_requires_data_dir(self):
-        """Sample without gex_dir, vdj_dir, or amplify_path should raise error."""
-        with pytest.raises(ValueError, match="must have at least gex_dir, vdj_dir, or amplify_path"):
+        """Sample without gex_dir, vdj_dir, or sct_path should raise error."""
+        with pytest.raises(ValueError, match="must have at least gex_dir, vdj_dir, or sct_path"):
             Sample(sample="S1")
 
     def test_invalid_antigen_type_raises(self):
