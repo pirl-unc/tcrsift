@@ -375,7 +375,7 @@ tcrsift load-sct -i sct_data.xlsx -o sct_clonotypes.csv --aggregate
 
 ### Match TIL (Post-hoc)
 
-Matches culture clonotypes against separately-processed TIL data.
+Checks which culture-enriched clones are also present in tumor-infiltrating lymphocytes.
 
 ```bash
 tcrsift match-til \
@@ -384,14 +384,68 @@ tcrsift match-til \
     -o matched.csv
 ```
 
-**When to use:** You already processed TIL samples separately and want to check which culture clones appear in TILs.
+**What it does:**
+1. Loads culture clonotypes (CSV) and TIL data (h5ad from a separate pipeline run)
+2. Builds a lookup of all CDR3 sequences in TIL cells
+3. For each culture clonotype, checks if it exists in TIL
+4. Adds columns: `til_match` (bool), `til_cell_count`, `til_frequency`
 
-**Note:** If your TIL samples are in the same sample sheet as culture samples, you can use `tcrsift run` with `--til-samples` instead:
+**Output interpretation:**
+- Clones with `til_match=True` were found in both culture AND tumor
+- High `til_frequency` suggests the clone is expanded in the tumor microenvironment
+- This provides orthogonal evidence that the clone may be tumor-reactive
+
+**When to use:**
+- TIL samples were processed in a **separate** pipeline run (different h5ad file)
+- You want to retrospectively check culture results against existing TIL data
+- Cross-patient or cross-experiment TIL comparison
+
+**Alternative - TIL in same run:** If TIL samples are in the same sample sheet as culture samples, use `--til-samples` with `tcrsift run` instead:
 
 ```bash
-tcrsift run --sample-sheet samples.yaml -o results/ \
-    --til-samples Patient1_TIL,Patient2_TIL
+tcrsift run --sample-sheet samples.yaml -o results/ --til-samples Patient1_TIL
 ```
+
+This processes everything together and automatically adds TIL matching.
+
+### GEX Augmentation (Python API)
+
+Adds gene expression data to TCR DataFrames when GEX wasn't available at load time.
+
+**When to use:**
+- You loaded VDJ-only data (no `gex_dir` in sample sheet)
+- You have a separate 10x HDF5 file with expression data
+- You want genes beyond the default CD3/CD4/CD8 markers
+
+```python
+from tcrsift import augment_with_gex, aggregate_gex_by_clonotype, compute_cd4_cd8_counts
+
+# Add per-cell expression to a DataFrame with barcodes
+cells_df = augment_with_gex(
+    cells_df,                              # DataFrame with 'barcode' column
+    "filtered_feature_bc_matrix.h5",       # 10x HDF5 file
+    gene_list=["CD3D", "CD4", "CD8A", "GZMA", "PRF1", "IFNG"],  # Custom genes
+    gene_groups={"cytotoxic": ["GZMA", "GZMB", "PRF1"]},        # Custom groups
+)
+
+# Aggregate expression by clonotype
+clonotype_gex = aggregate_gex_by_clonotype(
+    cells_df,
+    group_col="CDR3_pair",
+    operations=["sum", "mean"],  # Sum and mean per clonotype
+)
+
+# Compute CD4-only and CD8-only cell counts per clonotype
+cd4_cd8 = compute_cd4_cd8_counts(cells_df, group_col="CDR3_pair")
+```
+
+**Output columns:**
+- `gex.{GENE}`: Expression per cell (from augment_with_gex)
+- `gex.{GENE}.sum`, `gex.{GENE}.mean`: Aggregated per clonotype
+- `gex.n_reads`, `gex.n_genes`, `gex.pct_mito`: QC metrics per cell
+- `CD4_only.count`, `CD8_only.count`: Cells with exclusive expression
+
+**Note:** This is Python API only. For most workflows, use `gex_dir` in your sample sheet and the standard pipeline will handle GEX automatically during loading.
 
 ### Unify Multiple Experiments
 
