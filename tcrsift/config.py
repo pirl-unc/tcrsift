@@ -94,11 +94,11 @@ class TILConfig:
 class AssembleConfig:
     """Configuration for the assemble step."""
 
-    include_leader: bool = False  # Requires contigs_dir or default_leader
+    alpha_leader: str | None = "CD28"  # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
+    beta_leader: str | None = "CD8A"   # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
     include_constant: bool = True
     constant_source: str = "ensembl"
     linker: str = "T2A"
-    default_leader: str | None = None  # e.g., "CD8A", "CD28", "IgK"
     contigs_dir: str | None = None
     single_chain: bool = True
 
@@ -218,7 +218,8 @@ class TCRsiftConfig:
             "min_til_cells": ("til", "min_til_cells"),
             "til_samples": ("til", "til_samples"),
             # Assemble
-            "include_leader": ("assemble", "include_leader"),
+            "alpha_leader": ("assemble", "alpha_leader"),
+            "beta_leader": ("assemble", "beta_leader"),
             "include_constant": ("assemble", "include_constant"),
             "constant_source": ("assemble", "constant_source"),
             "linker": ("assemble", "linker"),
@@ -331,16 +332,28 @@ class TCRsiftConfig:
             else:
                 flat_config[section] = params
 
+        # Handle leader shortcut flags first
+        if args_dict.get("no_leaders"):
+            flat_config["alpha_leader"] = None
+            flat_config["beta_leader"] = None
+        elif args_dict.get("leaders_from_contigs"):
+            flat_config["alpha_leader"] = "from_contig"
+            flat_config["beta_leader"] = "from_contig"
+
         # Apply CLI overrides
         for key, value in args_dict.items():
-            # Skip non-config args
-            if key in ("func", "command", "config", "sample_sheet", "input", "output", "output_dir"):
+            # Skip non-config args and shortcut flags
+            if key in ("func", "command", "config", "sample_sheet", "input", "output", "output_dir",
+                      "no_leaders", "leaders_from_contigs"):
                 continue
             # Handle special cases
             if key == "fdr_tiers" and isinstance(value, str):
                 value = [float(x) for x in value.split(",")]
             if key == "til_samples" and isinstance(value, str):
                 value = [x.strip() for x in value.split(",")]
+            # Convert "none" string to None for leader options
+            if key in ("alpha_leader", "beta_leader") and value == "none":
+                value = None
             flat_config[key] = value
 
         return TCRsiftConfig._from_dict(flat_config)

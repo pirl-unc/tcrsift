@@ -312,13 +312,31 @@ def cmd_assemble(args):
 
     setup_logging(args.verbose)
 
+    # Handle leader shortcuts
+    alpha_leader = args.alpha_leader
+    beta_leader = args.beta_leader
+
+    if getattr(args, 'no_leaders', False):
+        alpha_leader = None
+        beta_leader = None
+    elif getattr(args, 'leaders_from_contigs', False):
+        alpha_leader = "from_contig"
+        beta_leader = "from_contig"
+    else:
+        # Convert "none" string to None
+        if alpha_leader == "none":
+            alpha_leader = None
+        if beta_leader == "none":
+            beta_leader = None
+
     clonotypes = pd.read_csv(args.input)
     print(f"Loaded {len(clonotypes)} clonotypes from {args.input}")
 
     assembled = assemble_full_sequences(
         clonotypes,
         contigs_dir=args.contigs_dir,
-        include_leader=args.include_leader,
+        alpha_leader=alpha_leader,
+        beta_leader=beta_leader,
         include_constant=args.include_constant,
         constant_source=args.constant_source,
         linker=args.linker if args.single_chain else None,
@@ -535,16 +553,17 @@ def cmd_run(args):
 
     # Step 7: Assemble (if requested)
     assembled = None
-    if config.assemble.single_chain or config.assemble.include_leader or config.assemble.include_constant:
+    has_leaders = config.assemble.alpha_leader is not None or config.assemble.beta_leader is not None
+    if config.assemble.single_chain or has_leaders or config.assemble.include_constant:
         print("\n[7/7] Assembling full-length sequences...")
         assembled = assemble_full_sequences(
             til_matched,
             contigs_dir=config.assemble.contigs_dir,
-            include_leader=config.assemble.include_leader,
+            alpha_leader=config.assemble.alpha_leader,
+            beta_leader=config.assemble.beta_leader,
             include_constant=config.assemble.include_constant,
             constant_source=config.assemble.constant_source,
             linker=config.assemble.linker if config.assemble.single_chain else None,
-            default_leader=config.assemble.default_leader,
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -731,7 +750,13 @@ def create_parser():
     p_asm.add_argument("--input", "-i", required=True, help="Input clonotypes CSV")
     p_asm.add_argument("--output", "-o", required=True, help="Output CSV with sequences")
     p_asm.add_argument("--contigs-dir", help="Directory with CellRanger contig FASTAs")
-    p_asm.add_argument("--include-leader", action="store_true", help="Include leader peptide")
+    p_asm.add_argument("--alpha-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+                      default="CD28", help="Alpha chain leader (default: CD28)")
+    p_asm.add_argument("--beta-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+                      default="CD8A", help="Beta chain leader (default: CD8A)")
+    p_asm.add_argument("--no-leaders", action="store_true", help="Disable leaders on both chains")
+    p_asm.add_argument("--leaders-from-contigs", action="store_true",
+                      help="Extract native leaders from contig FASTAs (requires --contigs-dir)")
     p_asm.add_argument("--include-constant", action="store_true", help="Include constant region")
     p_asm.add_argument("--constant-source", choices=["ensembl", "from-data"], default="ensembl")
     p_asm.add_argument("--single-chain", action="store_true", help="Generate single-chain constructs")
@@ -798,10 +823,13 @@ def create_parser():
 
     # Assemble step parameters
     asm_group = p_run.add_argument_group("Assembly options")
-    asm_group.add_argument("--include-leader", action="store_true", default=None, help="Include leader peptide")
-    asm_group.add_argument("--no-include-leader", dest="include_leader", action="store_false")
-    asm_group.add_argument("--default-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC"],
-                          help="Use standard signal peptide (when contigs not available)")
+    asm_group.add_argument("--alpha-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+                          help="Alpha chain leader (default: CD28). Use 'none' for no leader.")
+    asm_group.add_argument("--beta-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+                          help="Beta chain leader (default: CD8A). Use 'none' for no leader.")
+    asm_group.add_argument("--no-leaders", action="store_true", help="Disable leaders on both chains")
+    asm_group.add_argument("--leaders-from-contigs", action="store_true",
+                          help="Extract native leaders from contig FASTAs (requires --contigs-dir)")
     asm_group.add_argument("--include-constant", action="store_true", default=None, help="Include constant region (default: True)")
     asm_group.add_argument("--no-include-constant", dest="include_constant", action="store_false")
     asm_group.add_argument("--constant-source", choices=["ensembl", "from-data"], help="Constant region source (default: ensembl)")

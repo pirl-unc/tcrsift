@@ -6,10 +6,32 @@ Module for full-length TCR sequence assembly.
 
 The assembly module builds full-length TCR sequences from CDR3 and V/J gene information. It supports:
 
-- **Leader sequences**: Extract from contig FASTAs or use standard signal peptides (CD8A, CD28, IgK, TRAC, TRBC)
+- **Leader sequences**: Per-chain configuration - extract from contig FASTAs or use standard signal peptides
 - **Constant regions**: Fetch from Ensembl (TRAC, TRBC1, TRBC2) or use built-in sequences
 - **2A linkers**: Join alpha and beta chains with self-cleaving peptides (T2A, P2A, E2A, F2A)
 - **Single-chain constructs**: Generate β-linker-α format for expression
+
+## Leader Sequence Options
+
+Each chain (alpha and beta) can have its own leader configuration:
+
+| Option | Description |
+|--------|-------------|
+| `None` | No leader sequence |
+| `"from_contig"` | Extract native leader from CellRanger FASTA |
+| `"CD8A"`, `"CD28"`, etc. | Use a standard signal peptide |
+
+**Default configuration**: CD28 on alpha chain, CD8A on beta chain (distinct leaders for identification).
+
+## Available Leader Sequences
+
+| Leader | Source | Species | Sequence |
+|--------|--------|---------|----------|
+| CD8A | CD8A signal peptide (UniProt P01732) | Human | MALPVTALLLPLALLLHAARP |
+| CD28 | CD28 signal peptide (UniProt P10747) | Human | MLRLLLALNLFPSIQVTG |
+| IgK | IgGκ light chain signal peptide | Mouse | METDTLLLWVLLLWVPGSTG |
+| TRAC | TCR alpha constant signal peptide | Human | MAGTWLLLLLALGCPALPTG |
+| TRBC | TCR beta constant signal peptide | Human | MGTSLLCWMALCLLGADHADG |
 
 ## Available Linkers
 
@@ -20,17 +42,43 @@ The assembly module builds full-length TCR sequences from CDR3 and V/J gene info
 | E2A | Equine rhinitis A virus | QCTNYALLKLAGDVESNPGP |
 | F2A | Foot-and-mouth disease virus | VKQTLNFDLLKLAGDVESNPGP |
 
-## Default Leader Sequences
+## Usage Examples
 
-When contig FASTAs are not available, use `--default-leader` with one of:
+```python
+from tcrsift import assemble_full_sequences
 
-| Leader | Source | Use Case |
-|--------|--------|----------|
-| CD8A | Human CD8A signal peptide | Common choice for TCR expression |
-| CD28 | Human CD28 signal peptide | Alternative signal peptide |
-| IgK | Human Ig kappa light chain | High secretion efficiency |
-| TRAC | Native TCR alpha constant | Native-like expression |
-| TRBC | Native TCR beta constant | Native-like expression |
+# Default: CD28 on alpha, CD8A on beta
+assembled = assemble_full_sequences(clonotypes)
+
+# Custom leaders
+assembled = assemble_full_sequences(
+    clonotypes,
+    alpha_leader="CD8A",
+    beta_leader="CD28",
+)
+
+# Leader only on beta chain (first in 2A construct)
+assembled = assemble_full_sequences(
+    clonotypes,
+    alpha_leader=None,
+    beta_leader="CD8A",
+)
+
+# Extract native leaders from contigs
+assembled = assemble_full_sequences(
+    clonotypes,
+    contigs_dir="/path/to/contigs",
+    alpha_leader="from_contig",
+    beta_leader="from_contig",
+)
+
+# No leaders at all
+assembled = assemble_full_sequences(
+    clonotypes,
+    alpha_leader=None,
+    beta_leader=None,
+)
+```
 
 ## API Reference
 

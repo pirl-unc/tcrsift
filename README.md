@@ -332,31 +332,41 @@ tcrsift match-til -i annotated.csv --til-data til_clonotypes.csv -o til_matched.
 Builds full-length TCR sequences with leader peptides and constant regions.
 
 ```bash
+# Default: CD28 on alpha, CD8A on beta (distinct leaders)
+tcrsift assemble -i annotated.csv -o full_sequences.csv --include-constant
+
+# Custom leaders
 tcrsift assemble -i annotated.csv -o full_sequences.csv \
-    --include-constant \
-    --contigs-dir /path/to/contigs \
-    --linker T2A
+    --alpha-leader CD8A --beta-leader CD28 --linker P2A
+
+# No leaders
+tcrsift assemble -i annotated.csv -o full_sequences.csv --no-leaders
+
+# Extract native leaders from contig FASTAs
+tcrsift assemble -i annotated.csv -o full_sequences.csv \
+    --leaders-from-contigs --contigs-dir /path/to/contigs
 ```
 
 Options:
+- `--alpha-leader`: Leader for alpha chain (default: CD28)
+- `--beta-leader`: Leader for beta chain (default: CD8A)
+- `--no-leaders`: Disable leaders on both chains
+- `--leaders-from-contigs`: Extract native leaders from FASTA (requires `--contigs-dir`)
 - `--include-constant`: Add constant regions from Ensembl (TRAC, TRBC1, TRBC2)
-- `--include-leader`: Extract native leader peptides from contigs
-- `--default-leader CD8A`: Use standard signal peptide (CD8A, CD28, IgK, TRAC, TRBC)
 - `--linker T2A`: Linker for single-chain constructs (T2A, P2A, E2A, F2A)
 - `--fasta sequences.fasta`: Export to FASTA format
 
-**Leader Sequences:**
+**Available Leader Sequences:**
 
-If you have CellRanger contig FASTA files, use `--contigs-dir` to extract native leader sequences.
-Otherwise, use `--default-leader` with a standard signal peptide:
+| Leader | Source | Species | Use Case |
+|--------|--------|---------|----------|
+| CD8A | CD8A signal peptide | Human | Common choice for TCR expression |
+| CD28 | CD28 signal peptide | Human | Alternative signal peptide |
+| IgK | IgGκ light chain | Mouse | High secretion efficiency |
+| TRAC | TCR alpha constant | Human | Native-like expression |
+| TRBC | TCR beta constant | Human | Native-like expression |
 
-| Leader | Source | Use Case |
-|--------|--------|----------|
-| CD8A | Human CD8A signal peptide | Common choice for TCR expression |
-| CD28 | Human CD28 signal peptide | Alternative signal peptide |
-| IgK | Human Ig kappa light chain | High secretion efficiency |
-| TRAC | Native TCR alpha constant | Native-like expression |
-| TRBC | Native TCR beta constant | Native-like expression |
+By default, TCRsift uses **distinct leaders** on each chain (CD28 on alpha, CD8A on beta) to facilitate identification in downstream applications.
 
 ## API Reference
 
@@ -490,13 +500,31 @@ til_specific = identify_til_specific_clones(matched)
 ```python
 from tcrsift import assemble_full_sequences, translate_dna, validate_sequences, export_fasta
 
-# Assemble full sequences
+# Assemble with default leaders (CD28 on alpha, CD8A on beta)
+assembled = assemble_full_sequences(clonotypes, include_constant=True)
+
+# Custom leaders
+assembled = assemble_full_sequences(
+    clonotypes,
+    alpha_leader="CD8A",    # or None, "from_contig"
+    beta_leader="CD28",     # or None, "from_contig"
+    include_constant=True,
+    linker="P2A",
+)
+
+# Extract native leaders from contigs
 assembled = assemble_full_sequences(
     clonotypes,
     contigs_dir="/path/to/contigs",
-    include_leader=True,
-    include_constant=True,
-    linker="T2A",
+    alpha_leader="from_contig",
+    beta_leader="from_contig",
+)
+
+# No leaders
+assembled = assemble_full_sequences(
+    clonotypes,
+    alpha_leader=None,
+    beta_leader=None,
 )
 
 # Validate sequences
