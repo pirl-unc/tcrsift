@@ -5,81 +5,33 @@
 [![Coverage Status](https://coveralls.io/repos/github/pirl-unc/tcrsift/badge.svg)](https://coveralls.io/github/pirl-unc/tcrsift)
 [![PyPI version](https://badge.fury.io/py/tcrsift.svg)](https://pypi.org/project/tcrsift/)
 
-T-cell receptor selection for TCR-T studies from antigen-specific culture and scRNA/VDJ sequencing.
+Select antigen-specific TCRs from single-cell sequencing data.
 
-TCRsift identifies antigen-specific T cell receptor clones from single-cell sequencing data. It supports loading CellRanger outputs, CD4/CD8 phenotyping, clonotype aggregation, tiered filtering, annotation with public TCR databases, TIL matching, and full-length TCR sequence assembly.
+```bash
+pip install tcrsift
+tcrsift run --sample-sheet samples.yaml -o results/
+```
+
+## Contents
+
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Sample Sheet Format](#sample-sheet-format)
+- [Core Pipeline Steps](#core-pipeline-steps)
+- [Supplementary Tools](#supplementary-tools)
+- [Workflows](#workflows)
+- [API Reference](#api-reference)
+- [Output Files](#output-files)
 
 ## Architecture
 
-### Data Flow
-
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           CORE PIPELINE (tcrsift run)                       │
-│                                                                             │
-│  CellRanger VDJ    CellRanger GEX                                          │
-│       │                 │                                                   │
-│       ▼                 ▼                                                   │
-│  ┌─────────────────────────────────┐                                       │
-│  │     1. LOAD (AnnData)           │  Load VDJ contigs + GEX matrix        │
-│  │        - filtered_contig_annotations.csv                                │
-│  │        - filtered_feature_bc_matrix.h5                                  │
-│  └─────────────────────────────────┘                                       │
-│                 │                                                           │
-│                 ▼                                                           │
-│  ┌─────────────────────────────────┐                                       │
-│  │     2. PHENOTYPE                │  CD4/CD8 classification per cell      │
-│  │        - CD8/CD4 ratio > 3.0 → Confident                                │
-│  │        - CD8>0, CD4=0 → Likely CD8+                                     │
-│  └─────────────────────────────────┘                                       │
-│                 │                                                           │
-│                 ▼                                                           │
-│  ┌─────────────────────────────────┐                                       │
-│  │     3. CLONOTYPE (DataFrame)    │  Aggregate cells by CDR3α/β pair      │
-│  │        - cell_count, frequency                                          │
-│  │        - Tcell_type consensus                                           │
-│  └─────────────────────────────────┘                                       │
-│                 │                                                           │
-│                 ▼                                                           │
-│  ┌─────────────────────────────────┐                                       │
-│  │     4. FILTER                   │  Tiered filtering by expansion        │
-│  │        - Tier 1: ≥10 cells, ≥1% freq                                   │
-│  │        - Tier 2-5: progressively relaxed                                │
-│  └─────────────────────────────────┘                                       │
-│                 │                                                           │
-│                 ▼                                                           │
-│  ┌─────────────────────────────────┐                                       │
-│  │     5. ANNOTATE (optional)      │  Match against VDJdb/IEDB/CEDAR       │
-│  │        - Flag viral specificities                                       │
-│  └─────────────────────────────────┘                                       │
-│                 │                                                           │
-│                 ▼                                                           │
-│  ┌─────────────────────────────────┐                                       │
-│  │     6. ASSEMBLE (optional)      │  Full-length TCR sequences            │
-│  │        - Leader + V(D)J + Constant                                      │
-│  │        - Single-chain with 2A linker                                    │
-│  └─────────────────────────────────┘                                       │
-│                 │                                                           │
-│                 ▼                                                           │
-│           clonotypes.csv, full_sequences.csv                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+CellRanger VDJ + GEX  -->  tcrsift run  -->  clonotypes.csv
+                              |
+        load -> phenotype -> clonotype -> filter -> annotate -> assemble
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      SUPPLEMENTARY TOOLS                                    │
-│                                                                             │
-│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐      │
-│  │   load-sct       │    │   annotate-gex    │    │   unify          │      │
-│  │   ───────────    │    │   ───────────    │    │   ─────          │      │
-│  │   SCT platform   │    │   Add GEX to     │    │   Merge multiple │      │
-│  │   Excel → CSV    │    │   VDJ-only data  │    │   experiments    │      │
-│  └──────────────────┘    └──────────────────┘    └──────────────────┘      │
-│                                                                             │
-│  ┌──────────────────┐                                                       │
-│  │   match-til      │    TIL matching is automatic when source: til        │
-│  │   ─────────      │    is in sample sheet. Use match-til only for        │
-│  │   Cross-run TIL  │    matching against separately-processed TIL data.   │
-│  └──────────────────┘                                                       │
-└─────────────────────────────────────────────────────────────────────────────┘
+Supplementary: load-sct, annotate-gex, match-til, unify
 ```
 
 ### Key Data Structures
