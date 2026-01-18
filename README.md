@@ -68,14 +68,17 @@ TCRsift identifies antigen-specific T cell receptor clones from single-cell sequ
 │                      SUPPLEMENTARY TOOLS                                    │
 │                                                                             │
 │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐      │
-│  │   load-sct       │    │   match-til      │    │   unify          │      │
-│  │   ───────────    │    │   ─────────      │    │   ─────          │      │
-│  │   SCT platform   │    │   TIL matching   │    │   Merge multiple │      │
-│  │   Excel → CSV    │    │   post-hoc       │    │   experiments    │      │
+│  │   load-sct       │    │   annotate-gex    │    │   unify          │      │
+│  │   ───────────    │    │   ───────────    │    │   ─────          │      │
+│  │   SCT platform   │    │   Add GEX to     │    │   Merge multiple │      │
+│  │   Excel → CSV    │    │   VDJ-only data  │    │   experiments    │      │
 │  └──────────────────┘    └──────────────────┘    └──────────────────┘      │
 │                                                                             │
-│  Use these when you have data from non-CellRanger sources or need to       │
-│  combine results from multiple pipeline runs.                              │
+│  ┌──────────────────┐                                                       │
+│  │   match-til      │    TIL matching is automatic when source: til        │
+│  │   ─────────      │    is in sample sheet. Use match-til only for        │
+│  │   Cross-run TIL  │    matching against separately-processed TIL data.   │
+│  └──────────────────┘                                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -373,9 +376,39 @@ tcrsift load-sct -i sct_data.xlsx -o sct_clonotypes.csv --aggregate
 - `high_quality`: SNR ≥ 2.0, reads ≥ 10 per chain, mutation match
 - `chosen`: Stricter criteria (SNR ≥ 3.4, reads ≥ 50, comPACT match)
 
-### Match TIL (Post-hoc)
+### TIL Matching (Automatic)
 
-Checks which culture-enriched clones are also present in tumor-infiltrating lymphocytes.
+When you include TIL samples in your sample sheet with `source: til`, the `run` command **automatically** detects them and adds TIL matching columns to culture clonotypes.
+
+```yaml
+# samples.yaml - TIL samples are auto-detected
+samples:
+  - sample: "Culture_Pool1"
+    vdj_dir: "/data/culture/vdj"
+    source: "culture"
+  - sample: "Patient1_TIL"
+    vdj_dir: "/data/til/vdj"
+    source: "til"  # This sample will be used for TIL matching
+```
+
+```bash
+tcrsift run --sample-sheet samples.yaml -o results/
+# TIL matching happens automatically - no extra flags needed!
+
+# You can also explicitly specify TIL samples (overrides auto-detection):
+tcrsift run --sample-sheet samples.yaml -o results/ --til-samples Patient1_TIL
+```
+
+**Output columns added:**
+- `til_match` (bool): Clone found in TIL
+- `til_cell_count`: Number of TIL cells with this TCR
+- `til_frequency`: Frequency in TIL repertoire
+
+**Why TIL matching matters:** Clones that appear in both antigen-stimulated culture AND tumor tissue provide orthogonal evidence of tumor-reactivity.
+
+### Match TIL (Cross-Run)
+
+Use `match-til` only when TIL data was processed in a **separate** pipeline run.
 
 ```bash
 tcrsift match-til \
@@ -384,72 +417,74 @@ tcrsift match-til \
     -o matched.csv
 ```
 
-**What it does:**
-1. Loads culture clonotypes (CSV) and TIL data (h5ad from a separate pipeline run)
-2. Builds a lookup of all CDR3 sequences in TIL cells
-3. For each culture clonotype, checks if it exists in TIL
-4. Adds columns: `til_match` (bool), `til_cell_count`, `til_frequency`
-
-**Output interpretation:**
-- Clones with `til_match=True` were found in both culture AND tumor
-- High `til_frequency` suggests the clone is expanded in the tumor microenvironment
-- This provides orthogonal evidence that the clone may be tumor-reactive
-
 **When to use:**
-- TIL samples were processed in a **separate** pipeline run (different h5ad file)
-- You want to retrospectively check culture results against existing TIL data
-- Cross-patient or cross-experiment TIL comparison
+- TIL from a different patient or experiment
+- Retrospective matching against archived TIL data
+- TIL processed with different parameters
 
-**Alternative - TIL in same run:** If TIL samples are in the same sample sheet as culture samples, use `--til-samples` with `tcrsift run` instead:
+### Annotate with Gene Expression (`annotate-gex`)
 
-```bash
-tcrsift run --sample-sheet samples.yaml -o results/ --til-samples Patient1_TIL
-```
+Adds gene expression data from a 10x HDF5 file to TCR DataFrames.
 
-This processes everything together and automatically adds TIL matching.
+**`annotate` vs `annotate-gex`:**
+| Command | Data Source | Purpose |
+|---------|-------------|---------|
+| `annotate` | Public databases (VDJdb, IEDB) | Label clonotypes with known epitope specificities |
+| `annotate-gex` | 10x HDF5 expression file | Add per-cell gene expression values |
 
-### GEX Augmentation (Python API)
+**When GEX data is available:**
+- **Standard pipeline**: If `gex_dir` is in your sample sheet, GEX is loaded automatically at the `load` step and used for CD4/CD8 phenotyping
+- **VDJ-only workflows**: Use `annotate-gex` to add expression from a separate HDF5 file
 
-Adds gene expression data to TCR DataFrames when GEX wasn't available at load time.
-
-**When to use:**
+**When to use `annotate-gex`:**
 - You loaded VDJ-only data (no `gex_dir` in sample sheet)
 - You have a separate 10x HDF5 file with expression data
 - You want genes beyond the default CD3/CD4/CD8 markers
 
-```python
-from tcrsift import augment_with_gex, aggregate_gex_by_clonotype, compute_cd4_cd8_counts
+```bash
+# Add per-cell expression from HDF5 file
+tcrsift annotate-gex \
+    -i cells.csv \
+    --gex-file filtered_feature_bc_matrix.h5 \
+    -o cells_with_gex.csv
 
-# Add per-cell expression to a DataFrame with barcodes
-cells_df = augment_with_gex(
-    cells_df,                              # DataFrame with 'barcode' column
-    "filtered_feature_bc_matrix.h5",       # 10x HDF5 file
-    gene_list=["CD3D", "CD4", "CD8A", "GZMA", "PRF1", "IFNG"],  # Custom genes
-    gene_groups={"cytotoxic": ["GZMA", "GZMB", "PRF1"]},        # Custom groups
-)
+# Add GEX and aggregate to clonotype level
+tcrsift annotate-gex \
+    -i cells.csv \
+    --gex-file filtered_feature_bc_matrix.h5 \
+    --aggregate \
+    --cd4-cd8-counts \
+    -o clonotype_gex.csv
 
-# Aggregate expression by clonotype
-clonotype_gex = aggregate_gex_by_clonotype(
-    cells_df,
-    group_col="CDR3_pair",
-    operations=["sum", "mean"],  # Sum and mean per clonotype
-)
-
-# Compute CD4-only and CD8-only cell counts per clonotype
-cd4_cd8 = compute_cd4_cd8_counts(cells_df, group_col="CDR3_pair")
+# Custom gene list
+tcrsift annotate-gex \
+    -i cells.csv \
+    --gex-file matrix.h5 \
+    --genes "GZMA,GZMB,PRF1,IFNG,TNF" \
+    -o cytotoxicity_markers.csv
 ```
 
 **Output columns:**
-- `gex.{GENE}`: Expression per cell (from augment_with_gex)
-- `gex.{GENE}.sum`, `gex.{GENE}.mean`: Aggregated per clonotype
+- `gex.{GENE}`: Expression per cell
+- `gex.{GENE}.sum`, `gex.{GENE}.mean`: Aggregated per clonotype (with `--aggregate`)
 - `gex.n_reads`, `gex.n_genes`, `gex.pct_mito`: QC metrics per cell
-- `CD4_only.count`, `CD8_only.count`: Cells with exclusive expression
+- `CD4_only.count`, `CD8_only.count`: Cells with exclusive expression (with `--cd4-cd8-counts`)
 
-**Note:** This is Python API only. For most workflows, use `gex_dir` in your sample sheet and the standard pipeline will handle GEX automatically during loading.
+**Note:** For most workflows, use `gex_dir` in your sample sheet and the standard pipeline will handle GEX automatically during loading.
+
+**Python API:**
+
+```python
+from tcrsift import augment_with_gex, aggregate_gex_by_clonotype, compute_cd4_cd8_counts
+
+cells_df = augment_with_gex(cells_df, "filtered_feature_bc_matrix.h5")
+clonotype_gex = aggregate_gex_by_clonotype(cells_df, group_col="CDR3_pair")
+cd4_cd8 = compute_cd4_cd8_counts(cells_df, group_col="CDR3_pair")
+```
 
 ### Unify Multiple Experiments
 
-Merges clonotype data from multiple pipeline runs into a unified table.
+Merges clonotype data from multiple **independent** pipeline runs into a unified table.
 
 ```bash
 tcrsift unify \
@@ -457,7 +492,15 @@ tcrsift unify \
     -o unified.csv
 ```
 
-**When to use:** You have results from multiple independent runs (different patients, different data sources) and want to compare or combine them.
+**When to use:** You have results from multiple independent runs and want to compare or combine them.
+
+**`run` vs `unify`:**
+| Scenario | Use |
+|----------|-----|
+| One patient, culture + TIL in same sample sheet | `run` (TIL auto-detected) |
+| One patient, culture + TIL processed separately | `match-til` |
+| Multiple patients or experiments | `unify` |
+| Comparing results across different data sources | `unify` |
 
 **Output includes:**
 - Prefixed columns from each source (e.g., `TIL.cell_count`, `Culture.cell_count`)
@@ -475,7 +518,7 @@ tcrsift run --sample-sheet samples.yaml -o results/ --vdjdb /path/to/vdjdb
 
 ### Culture + TIL Together
 
-When TIL and culture samples are processed together:
+When TIL and culture samples are in the same sample sheet, TIL matching happens automatically:
 
 ```yaml
 # samples.yaml
@@ -486,14 +529,15 @@ samples:
     source: "culture"
   - sample: "TIL"
     vdj_dir: "/data/til/vdj"
-    source: "til"
+    source: "til"  # Auto-detected for TIL matching
 ```
 
 ```bash
-tcrsift run --sample-sheet samples.yaml -o results/ --til-samples TIL
+tcrsift run --sample-sheet samples.yaml -o results/
+# No --til-samples flag needed - auto-detected from source: til
 ```
 
-This automatically matches culture clones against TIL and adds `til_match`, `til_frequency` columns.
+This automatically matches culture clones against TIL samples and adds `til_match`, `til_cell_count`, `til_frequency` columns.
 
 ### Multi-Source Unification
 

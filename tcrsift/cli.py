@@ -398,10 +398,20 @@ def cmd_run(args):
         plot_qc,
         plot_til,
     )
+    from .sample_sheet import load_sample_sheet
     from .til import match_til
 
     # Load config with CLI overrides
     config = load_config_with_args(args)
+
+    # Auto-detect TIL samples from sample sheet if not explicitly specified
+    if not config.til.til_samples:
+        sample_sheet = load_sample_sheet(args.sample_sheet)
+        til_samples = sample_sheet.get_til_samples()
+        if til_samples:
+            til_sample_names = [s.sample for s in til_samples]
+            config.til.til_samples = til_sample_names
+            print(f"Auto-detected TIL samples from sample sheet: {til_sample_names}")
     setup_logging(config.verbose)
 
     output_dir = Path(args.output_dir)
@@ -627,6 +637,95 @@ def cmd_load_sct(args):
     # Save
     df.to_csv(args.output, index=False)
     print(f"\nSaved {len(df)} {'clonotypes' if args.aggregate else 'cells'} to {args.output}")
+
+
+# =============================================================================
+# Annotate-GEX Command
+# =============================================================================
+
+def cmd_annotate_gex(args):
+    """Annotate TCR data with gene expression from a 10x HDF5 file."""
+    import pandas as pd
+
+    from .gex import (
+        DEFAULT_GENE_LIST,
+        aggregate_gex_by_clonotype,
+        augment_with_gex,
+        compute_cd4_cd8_counts,
+    )
+
+    setup_logging(args.verbose)
+
+    df = pd.read_csv(args.input)
+    print(f"Loaded {len(df):,} rows from {args.input}")
+
+    # Parse custom gene list if provided
+    gene_list = None
+    if args.genes:
+        gene_list = [g.strip() for g in args.genes.split(",")]
+        print(f"Using custom gene list: {gene_list}")
+    else:
+        print(f"Using default T cell gene list ({len(DEFAULT_GENE_LIST)} genes)")
+
+    # Step 1: Augment with GEX if barcode column exists
+    augmented_df = None
+    if args.barcode_col in df.columns:
+        print(f"\nAugmenting with gene expression from {args.gex_file}...")
+        df = augment_with_gex(
+            df,
+            args.gex_file,
+            barcode_col=args.barcode_col,
+            gene_list=gene_list,
+            col_prefix=args.prefix,
+            include_qc=not args.no_qc,
+            verbose=args.verbose,
+        )
+        # Save augmented per-cell data for CD4/CD8 counts
+        augmented_df = df.copy()
+    else:
+        print(f"Warning: Barcode column '{args.barcode_col}' not found - skipping per-cell augmentation")
+
+    # Step 2: Aggregate by clonotype if requested
+    if args.aggregate:
+        print(f"\nAggregating by {args.group_col}...")
+        df = aggregate_gex_by_clonotype(
+            df,
+            group_col=args.group_col,
+            gex_prefix=args.prefix,
+            operations=["sum", "mean"],
+            verbose=args.verbose,
+        )
+
+    # Step 3: Compute CD4/CD8 counts if requested
+    if args.cd4_cd8_counts:
+        if augmented_df is None:
+            print("Warning: Cannot compute CD4/CD8 counts without GEX augmentation - skipping")
+        else:
+            print("\nComputing CD4/CD8 cell counts...")
+            cd4_cd8_df = compute_cd4_cd8_counts(
+                augmented_df,  # Use augmented per-cell data (has gex.CD4, gex.CD8)
+                group_col=args.group_col,
+                gex_prefix=args.prefix,
+                verbose=args.verbose,
+            )
+            # Merge CD4/CD8 counts into result
+            if args.aggregate:
+                df = df.merge(
+                    cd4_cd8_df[[args.group_col, "CD4_only.count", "CD8_only.count"]],
+                    on=args.group_col,
+                    how="left",
+                )
+            else:
+                # For non-aggregated output, add per-clonotype counts as additional columns
+                df = df.merge(
+                    cd4_cd8_df[[args.group_col, "CD4_only.count", "CD8_only.count"]],
+                    on=args.group_col,
+                    how="left",
+                )
+
+    # Save
+    df.to_csv(args.output, index=False)
+    print(f"\nSaved {len(df):,} rows to {args.output}")
 
 
 # =============================================================================
@@ -949,6 +1048,30 @@ def create_parser():
     p_sct.add_argument("--aggregate", action="store_true", help="Aggregate to unique clonotypes")
     p_sct.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     p_sct.set_defaults(func=cmd_load_sct)
+
+    # -------------------------------------------------------------------------
+    # Annotate-GEX command
+    # -------------------------------------------------------------------------
+    p_gex = subparsers.add_parser("annotate-gex", help="Annotate TCR data with gene expression")
+    p_gex.add_argument("--input", "-i", required=True, help="Input CSV (cells or clonotypes)")
+    p_gex.add_argument("--output", "-o", required=True, help="Output CSV with GEX columns")
+    p_gex.add_argument("--gex-file", required=True,
+                       help="Path to 10x filtered_feature_bc_matrix.h5 file")
+    p_gex.add_argument("--barcode-col", default="barcode",
+                       help="Column containing cell barcodes (default: barcode)")
+    p_gex.add_argument("--genes", help="Comma-separated list of genes to extract (default: T cell markers)")
+    p_gex.add_argument("--prefix", default="gex",
+                       help="Prefix for GEX columns (default: gex)")
+    p_gex.add_argument("--no-qc", action="store_true",
+                       help="Skip QC metrics (n_reads, n_genes, pct_mito)")
+    p_gex.add_argument("--aggregate", action="store_true",
+                       help="Aggregate expression by clonotype (sum, mean)")
+    p_gex.add_argument("--group-col", default="CDR3_pair",
+                       help="Column to group by when aggregating (default: CDR3_pair)")
+    p_gex.add_argument("--cd4-cd8-counts", action="store_true",
+                       help="Compute CD4-only and CD8-only cell counts per clonotype")
+    p_gex.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_gex.set_defaults(func=cmd_annotate_gex)
 
     # -------------------------------------------------------------------------
     # Unify command
