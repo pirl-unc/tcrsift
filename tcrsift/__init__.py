@@ -39,11 +39,6 @@ Example usage::
 
 """
 
-from .sct import (
-    aggregate_sct,
-    get_sct_specificities,
-    load_sct,
-)
 from .annotate import (
     annotate_clonotypes,
     get_annotation_summary,
@@ -119,6 +114,11 @@ from .sample_sheet import (
     SampleSheet,
     load_sample_sheet,
     validate_sample_sheet,
+)
+from .sct import (
+    aggregate_sct,
+    get_sct_specificities,
+    load_sct,
 )
 from .til import (
     get_til_summary,
