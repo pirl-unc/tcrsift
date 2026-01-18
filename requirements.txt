@@ -21,5 +21,8 @@ pdfkit  # needs wkhtmltopdf: brew install Caskroom/cask/wkhtmltopdf
 # YAML support (optional, for YAML sample sheets)
 pyyaml>=6.0,<7.0
 
+# Excel file support (for SCT data loading)
+openpyxl>=3.0.0,<4.0.0
+
 # Progress bars
 tqdm>=4.60.0,<5.0.0
