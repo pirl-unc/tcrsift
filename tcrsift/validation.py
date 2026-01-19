@@ -759,3 +759,49 @@ def validate_run_args(args) -> None:
     # Validate contigs-dir exists if provided
     if getattr(args, "contigs_dir", None):
         validate_directory_exists(args.contigs_dir, "contigs directory (--contigs-dir)")
+
+
+def validate_match_til_args(args) -> None:
+    """
+    Validate arguments for the match-til command.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI arguments for match-til command
+
+    Raises
+    ------
+    TCRsiftValidationError
+        If required arguments are missing or invalid
+    """
+    # Check that at least one TIL data source is provided
+    til_sources = ["sample_sheet", "til_h5ad", "til_csv", "til_vdj_dir"]
+    provided_sources = [src for src in til_sources if getattr(args, src, None)]
+
+    if not provided_sources:
+        raise TCRsiftValidationError(
+            "No TIL data source specified",
+            hint="Provide one of: --sample-sheet, --til-h5ad, --til-csv, or --til-vdj-dir",
+        )
+
+    # Validate that only one source is provided (to avoid confusion)
+    if len(provided_sources) > 1:
+        flags = [f"--{src.replace('_', '-')}" for src in provided_sources]
+        raise TCRsiftValidationError(
+            f"Multiple TIL data sources specified: {', '.join(flags)}",
+            hint="Provide only one TIL data source. Use --sample-sheet for multiple TIL samples.",
+        )
+
+    # Validate the provided source exists
+    source = provided_sources[0]
+    source_path = getattr(args, source)
+
+    if source == "sample_sheet":
+        validate_file_exists(source_path, "TIL sample sheet (--sample-sheet)")
+    elif source == "til_h5ad":
+        validate_file_exists(source_path, "TIL h5ad file (--til-h5ad)")
+    elif source == "til_csv":
+        validate_file_exists(source_path, "TIL CSV file (--til-csv)")
+    elif source == "til_vdj_dir":
+        validate_directory_exists(source_path, "TIL VDJ directory (--til-vdj-dir)")

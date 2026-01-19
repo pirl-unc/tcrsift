@@ -759,3 +759,169 @@ class TestCliEarlyValidation:
             args.func(args)
 
         assert "does not exist" in str(exc_info.value)
+
+
+class TestMatchTilParser:
+    """Tests for match-til CLI parser configuration."""
+
+    def test_parser_has_match_til_command(self):
+        """Parser should include match-til command."""
+        parser = create_parser()
+        # Parse valid match-til command to verify it exists
+        args = parser.parse_args([
+            "match-til",
+            "-i", "clonotypes.csv",
+            "-o", "matched.csv",
+            "--til-csv", "til.csv",
+        ])
+        assert args.command == "match-til"
+        assert hasattr(args, 'func')
+
+    def test_match_til_required_args(self):
+        """Test that required arguments are enforced."""
+        parser = create_parser()
+
+        # Should fail without -i and -o
+        with pytest.raises(SystemExit):
+            parser.parse_args(["match-til"])
+
+    def test_match_til_all_til_source_options(self):
+        """Test that all TIL source options parse correctly."""
+        parser = create_parser()
+
+        # Test --til-h5ad
+        args1 = parser.parse_args([
+            "match-til",
+            "-i", "clonotypes.csv",
+            "-o", "matched.csv",
+            "--til-h5ad", "til.h5ad",
+        ])
+        assert args1.til_h5ad == "til.h5ad"
+        assert args1.til_csv is None
+
+        # Test --til-csv
+        args2 = parser.parse_args([
+            "match-til",
+            "-i", "clonotypes.csv",
+            "-o", "matched.csv",
+            "--til-csv", "til.csv",
+        ])
+        assert args2.til_csv == "til.csv"
+        assert args2.til_h5ad is None
+
+        # Test --til-vdj-dir
+        args3 = parser.parse_args([
+            "match-til",
+            "-i", "clonotypes.csv",
+            "-o", "matched.csv",
+            "--til-vdj-dir", "/path/to/vdj",
+        ])
+        assert args3.til_vdj_dir == "/path/to/vdj"
+
+        # Test --sample-sheet
+        args4 = parser.parse_args([
+            "match-til",
+            "-i", "clonotypes.csv",
+            "-o", "matched.csv",
+            "-s", "samples.yaml",
+        ])
+        assert args4.sample_sheet == "samples.yaml"
+
+    def test_match_til_matching_options(self):
+        """Test matching options parse correctly."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "match-til",
+            "-i", "clonotypes.csv",
+            "-o", "matched.csv",
+            "--til-csv", "til.csv",
+            "--match-by", "CDR3b_only",
+            "--min-til-cells", "5",
+        ])
+        assert args.match_by == "CDR3b_only"
+        assert args.min_til_cells == 5
+
+
+class TestValidateMatchTilArgs:
+    """Tests for match-til argument validation."""
+
+    def test_no_til_source_raises(self, tmp_path):
+        """Should raise when no TIL source is provided."""
+        from tcrsift.validation import validate_match_til_args
+
+        # Create an args-like object with no TIL sources
+        args = argparse.Namespace(
+            sample_sheet=None,
+            til_h5ad=None,
+            til_csv=None,
+            til_vdj_dir=None,
+        )
+
+        with pytest.raises(TCRsiftValidationError, match="No TIL data source specified"):
+            validate_match_til_args(args)
+
+    def test_multiple_til_sources_raises(self, tmp_path):
+        """Should raise when multiple TIL sources are provided."""
+        from tcrsift.validation import validate_match_til_args
+
+        # Create temp files so they "exist" for validation
+        til_csv = tmp_path / "til.csv"
+        til_csv.write_text("CDR3_alpha,CDR3_beta\nCAV,CAS\n")
+
+        til_h5ad = tmp_path / "til.h5ad"
+        til_h5ad.write_text("dummy")  # Not a real h5ad but just for path existence
+
+        args = argparse.Namespace(
+            sample_sheet=None,
+            til_h5ad=str(til_h5ad),
+            til_csv=str(til_csv),
+            til_vdj_dir=None,
+        )
+
+        with pytest.raises(TCRsiftValidationError, match="Multiple TIL data sources"):
+            validate_match_til_args(args)
+
+    def test_single_til_csv_valid(self, tmp_path):
+        """Single til_csv source should be valid."""
+        from tcrsift.validation import validate_match_til_args
+
+        til_csv = tmp_path / "til.csv"
+        til_csv.write_text("CDR3_alpha,CDR3_beta\nCAV,CAS\n")
+
+        args = argparse.Namespace(
+            sample_sheet=None,
+            til_h5ad=None,
+            til_csv=str(til_csv),
+            til_vdj_dir=None,
+        )
+
+        # Should not raise
+        validate_match_til_args(args)
+
+    def test_nonexistent_til_csv_raises(self, tmp_path):
+        """Should raise when til_csv file doesn't exist."""
+        from tcrsift.validation import validate_match_til_args
+
+        args = argparse.Namespace(
+            sample_sheet=None,
+            til_h5ad=None,
+            til_csv=str(tmp_path / "nonexistent.csv"),
+            til_vdj_dir=None,
+        )
+
+        with pytest.raises(TCRsiftValidationError, match="does not exist"):
+            validate_match_til_args(args)
+
+    def test_nonexistent_til_vdj_dir_raises(self, tmp_path):
+        """Should raise when til_vdj_dir doesn't exist."""
+        from tcrsift.validation import validate_match_til_args
+
+        args = argparse.Namespace(
+            sample_sheet=None,
+            til_h5ad=None,
+            til_csv=None,
+            til_vdj_dir=str(tmp_path / "nonexistent_dir"),
+        )
+
+        with pytest.raises(TCRsiftValidationError, match="does not exist"):
+            validate_match_til_args(args)

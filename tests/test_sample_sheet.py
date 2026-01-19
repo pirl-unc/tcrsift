@@ -40,10 +40,20 @@ class TestSample:
         assert sample.gex_dir == "/path/to/gex"
         assert sample.vdj_dir == "/path/to/vdj"
 
-    def test_sample_requires_data_dir(self):
-        """Sample without gex_dir, vdj_dir, or sct_path should raise error."""
-        with pytest.raises(ValueError, match="must have at least gex_dir, vdj_dir, or sct_path"):
+    def test_sample_requires_data_source(self):
+        """Sample without any data source should raise error."""
+        with pytest.raises(ValueError, match="must have at least"):
             Sample(sample="S1")
+
+    def test_sample_with_til_csv(self):
+        """Sample with til_csv should be valid."""
+        sample = Sample(sample="S1", til_csv="/path/to/til.csv", source="til")
+        assert sample.til_csv == "/path/to/til.csv"
+
+    def test_sample_with_til_h5ad(self):
+        """Sample with til_h5ad should be valid."""
+        sample = Sample(sample="S1", til_h5ad="/path/to/til.h5ad", source="til")
+        assert sample.til_h5ad == "/path/to/til.h5ad"
 
     def test_invalid_antigen_type_raises(self):
         """Invalid antigen type should raise error."""
@@ -164,6 +174,56 @@ class TestSampleTypeChecks:
         sample = Sample(sample="S1", vdj_dir="/path", source="culture")
         assert sample.is_tetramer_or_sct() is False
         assert sample.is_til() is False
+
+
+class TestSampleGetTilDataSource:
+    """Tests for get_til_data_source method."""
+
+    def test_til_sample_with_vdj_dir(self):
+        """TIL sample with vdj_dir returns vdj_dir source."""
+        sample = Sample(sample="S1", vdj_dir="/path/to/vdj", source="til")
+        result = sample.get_til_data_source()
+        assert result == ("vdj_dir", "/path/to/vdj")
+
+    def test_til_sample_with_h5ad(self):
+        """TIL sample with til_h5ad returns h5ad source."""
+        sample = Sample(sample="S1", til_h5ad="/path/to/til.h5ad", source="til")
+        result = sample.get_til_data_source()
+        assert result == ("h5ad", "/path/to/til.h5ad")
+
+    def test_til_sample_with_csv(self):
+        """TIL sample with til_csv returns csv source."""
+        sample = Sample(sample="S1", til_csv="/path/to/til.csv", source="til")
+        result = sample.get_til_data_source()
+        assert result == ("csv", "/path/to/til.csv")
+
+    def test_til_h5ad_takes_priority_over_vdj_dir(self):
+        """When both til_h5ad and vdj_dir are set, h5ad takes priority."""
+        sample = Sample(
+            sample="S1",
+            til_h5ad="/path/to/til.h5ad",
+            vdj_dir="/path/to/vdj",
+            source="til",
+        )
+        result = sample.get_til_data_source()
+        assert result == ("h5ad", "/path/to/til.h5ad")
+
+    def test_til_csv_takes_priority_over_vdj_dir(self):
+        """When both til_csv and vdj_dir are set, csv takes priority."""
+        sample = Sample(
+            sample="S1",
+            til_csv="/path/to/til.csv",
+            vdj_dir="/path/to/vdj",
+            source="til",
+        )
+        result = sample.get_til_data_source()
+        assert result == ("csv", "/path/to/til.csv")
+
+    def test_non_til_sample_returns_none(self):
+        """Non-TIL sample returns None."""
+        sample = Sample(sample="S1", vdj_dir="/path/to/vdj", source="culture")
+        result = sample.get_til_data_source()
+        assert result is None
 
 
 class TestSampleSheet:

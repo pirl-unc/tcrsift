@@ -151,18 +151,72 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
 
 ### `tcrsift match-til`
 
-Match against TIL data.
+Match against TIL data. Supports multiple input formats and multi-sample matching.
+
+**Basic usage (single TIL source):**
 
 ```bash
-tcrsift match-til -i annotated.csv --til-data til.h5ad -o matched.csv
+# From h5ad file
+tcrsift match-til -i clonotypes.csv --til-h5ad til.h5ad -o matched.csv
+
+# From CSV file
+tcrsift match-til -i clonotypes.csv --til-csv til.csv -o matched.csv
+
+# From CellRanger VDJ directory
+tcrsift match-til -i clonotypes.csv --til-vdj-dir /path/to/vdj -o matched.csv
 ```
+
+**Multi-sample TIL matching (via sample sheet):**
+
+```bash
+tcrsift match-til -i clonotypes.csv -s til_samples.yaml -o matched.csv
+```
+
+Sample sheet format for multiple TIL samples:
+```yaml
+samples:
+  - sample: "TIL_Sample1"
+    source: til
+    vdj_dir: "/path/to/vdj"
+  - sample: "TIL_Sample2"
+    source: til
+    til_csv: "/path/to/til.csv"
+```
+
+**Required inputs:**
 
 | Option | Description |
 |--------|-------------|
 | `-i`, `--input` | Culture clonotypes CSV (required) |
-| `--til-data` | TIL data h5ad file (required) |
 | `-o`, `--output` | Output CSV file (required) |
-| `--match-by` | `CDR3ab` or `CDR3b_only` |
+
+**TIL data source (provide one):**
+
+| Option | Description |
+|--------|-------------|
+| `-s`, `--sample-sheet` | Sample sheet with TIL samples (YAML or CSV) |
+| `--til-h5ad` | Single TIL h5ad file |
+| `--til-csv` | Single TIL CSV file (must have CDR3_alpha/CDR3_beta) |
+| `--til-vdj-dir` | Single CellRanger VDJ output directory |
+
+**Matching options:**
+
+| Option | Description |
+|--------|-------------|
+| `--match-by` | `CDR3ab` (default) or `CDR3b_only` |
+| `--min-til-cells` | Min TIL cells to count as match (default: 1) |
+
+**Output columns:**
+
+For all inputs:
+- `til_match`: Boolean indicating if clone was found in TIL
+- `til_samples`: Comma-separated list of matching TIL samples
+- `til_cell_count`: Total cells across all TIL samples
+- `til_frequency`: Combined frequency
+
+For multi-sample inputs, per-sample columns are added:
+- `til_cell_count.{sample}`: Cells in specific TIL sample
+- `til_frequency.{sample}`: Frequency in specific TIL sample
 
 ---
 

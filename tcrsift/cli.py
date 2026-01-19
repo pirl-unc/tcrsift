@@ -267,19 +267,54 @@ def cmd_annotate(args):
 
 def cmd_match_til(args):
     """Match culture clonotypes against TIL data."""
-    import anndata as ad
     import pandas as pd
 
     from .plots import plot_til
-    from .til import get_til_summary, match_til
+    from .sample_sheet import load_sample_sheet
+    from .til import get_til_summary, load_til_data, load_til_samples, match_til
+    from .validation import TCRsiftValidationError
 
     setup_logging(args.verbose)
 
     clonotypes = pd.read_csv(args.input)
     print(f"Loaded {len(clonotypes)} culture clonotypes from {args.input}")
 
-    til_data = ad.read_h5ad(args.til_data)
-    print(f"Loaded {len(til_data)} TIL cells from {args.til_data}")
+    # Determine TIL data source - multiple options supported
+    til_data = None
+
+    if args.sample_sheet:
+        # Load TIL samples from sample sheet
+        sample_sheet = load_sample_sheet(args.sample_sheet)
+        til_samples = sample_sheet.get_til_samples()
+        if not til_samples:
+            raise TCRsiftValidationError(
+                "No TIL samples found in sample sheet",
+                hint="Make sure your sample sheet has samples with source='til'",
+            )
+        til_data = load_til_samples(til_samples)
+        total_cells = sum(len(df) for df in til_data.values())
+        print(f"Loaded {total_cells} TIL cells from {len(til_data)} sample(s): {list(til_data.keys())}")
+
+    elif args.til_h5ad:
+        # Single h5ad file
+        til_data = load_til_data("h5ad", args.til_h5ad)
+        print(f"Loaded {len(til_data)} TIL cells from h5ad: {args.til_h5ad}")
+
+    elif args.til_csv:
+        # Single CSV file
+        til_data = load_til_data("csv", args.til_csv)
+        print(f"Loaded {len(til_data)} TIL cells from CSV: {args.til_csv}")
+
+    elif args.til_vdj_dir:
+        # Single VDJ directory
+        til_data = load_til_data("vdj_dir", args.til_vdj_dir)
+        print(f"Loaded {len(til_data)} TIL cells from VDJ directory: {args.til_vdj_dir}")
+
+    else:
+        raise TCRsiftValidationError(
+            "No TIL data source specified",
+            hint="Provide one of: --sample-sheet, --til-h5ad, --til-csv, or --til-vdj-dir",
+        )
 
     matched = match_til(
         clonotypes,
@@ -292,7 +327,12 @@ def cmd_match_til(args):
     summary = get_til_summary(matched)
     print("\nTIL Matching Summary:")
     for key, value in summary.items():
-        print(f"  {key}: {value}")
+        if isinstance(value, dict):
+            print(f"  {key}:")
+            for k, v in value.items():
+                print(f"    {k}: {v}")
+        else:
+            print(f"  {key}: {value}")
 
     # Save
     matched.to_csv(args.output, index=False)
@@ -387,8 +427,6 @@ def cmd_assemble(args):
 def cmd_run(args):
     """Run the complete TCRsift pipeline."""
     from pathlib import Path
-
-    import anndata as ad
 
     from .annotate import annotate_clonotypes
     from .assemble import assemble_full_sequences
@@ -552,25 +590,38 @@ def cmd_run(args):
     til_matched = annotated
     if config.til.til_samples:
         print("\n[6/7] Matching against TIL samples...")
-        # Load TIL data from the loaded h5ad
-        til_adata = ad.read_h5ad(data_dir / "phenotyped.h5ad")
-        til_samples = config.til.til_samples
-        til_adata = til_adata[til_adata.obs["sample"].isin(til_samples)]
+        from .til import load_til_samples as _load_til_samples
 
-        if len(til_adata) > 0:
-            til_matched = match_til(
-                annotated,
-                til_adata,
-                match_by=config.til.match_by,
-                min_til_cells=config.til.min_til_cells,
-            )
-            til_matched.to_csv(data_dir / "til_matched.csv", index=False)
-            n_til = til_matched["til_match"].sum() if "til_match" in til_matched.columns else 0
-            print(f"  Found {n_til} clonotypes in TILs")
-            if config.output.generate_plots:
-                plot_til(til_matched, plots_dir)
+        # Get TIL samples from sample sheet
+        til_sample_objs = sample_sheet.get_til_samples()
+        til_sample_names = [s.sample for s in til_sample_objs]
+
+        # Filter to only requested samples if config specifies specific names
+        if config.til.til_samples != til_sample_names:
+            til_sample_objs = [s for s in til_sample_objs if s.sample in config.til.til_samples]
+
+        if til_sample_objs:
+            # Use new flexible TIL loading (supports h5ad, CSV, VDJ directory)
+            til_data = _load_til_samples(til_sample_objs)
+            total_cells = sum(len(df) for df in til_data.values())
+            print(f"  Loaded {total_cells} TIL cells from {len(til_data)} sample(s)")
+
+            if total_cells > 0:
+                til_matched = match_til(
+                    annotated,
+                    til_data,
+                    match_by=config.til.match_by,
+                    min_til_cells=config.til.min_til_cells,
+                )
+                til_matched.to_csv(data_dir / "til_matched.csv", index=False)
+                n_til = til_matched["til_match"].sum() if "til_match" in til_matched.columns else 0
+                print(f"  Found {n_til} clonotypes in TILs")
+                if config.output.generate_plots:
+                    plot_til(til_matched, plots_dir)
+            else:
+                print("  No TIL cells loaded")
         else:
-            print("  No TIL samples found")
+            print("  No TIL samples found matching configuration")
     else:
         print("\n[6/7] Skipping TIL matching (no TIL samples specified)")
 
@@ -944,7 +995,30 @@ Match culture-expanded clonotypes against TIL (tumor-infiltrating lymphocyte) da
 REQUIRED INPUTS:
   --input/-i     Clonotypes CSV from culture expansion
   --output/-o    Output CSV path
-  --til-data     TIL h5ad file (always required for this command)
+
+TIL DATA SOURCE (provide ONE of the following):
+  --sample-sheet   YAML/CSV sample sheet with TIL samples (source='til')
+                   Supports multiple TIL samples with different input types
+  --til-h5ad       Single TIL AnnData h5ad file
+  --til-csv        Single TIL CSV file (must have CDR3_alpha/CDR3_beta columns)
+  --til-vdj-dir    Single CellRanger VDJ output directory
+
+SAMPLE SHEET FORMAT (for multiple TIL samples):
+  samples:
+    - sample: "TIL_Sample1"
+      source: til
+      vdj_dir: "/path/to/vdj"         # CellRanger VDJ directory
+    - sample: "TIL_Sample2"
+      source: til
+      til_csv: "/path/to/til.csv"     # CSV file
+    - sample: "TIL_Sample3"
+      source: til
+      til_h5ad: "/path/to/til.h5ad"   # Pre-processed h5ad
+
+OUTPUT:
+  For multiple TIL samples, per-sample columns are added:
+    til_cell_count.{sample}   - Cell count in specific TIL sample
+    til_frequency.{sample}    - Frequency in specific TIL sample
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -954,8 +1028,19 @@ REQUIRED INPUTS:
                               help="Input culture clonotypes CSV")
     til_required.add_argument("--output", "-o", required=True,
                               help="Output CSV with TIL match annotations")
-    til_required.add_argument("--til-data", required=True,
-                              help="TIL data h5ad file (REQUIRED)")
+
+    til_source = p_til.add_argument_group(
+        "TIL data source (provide one)",
+        "Multiple input formats supported. For multi-sample TIL matching, use --sample-sheet."
+    )
+    til_source.add_argument("--sample-sheet", "-s", metavar="PATH",
+                            help="Sample sheet with TIL samples (YAML or CSV)")
+    til_source.add_argument("--til-h5ad", metavar="PATH",
+                            help="Single TIL h5ad file (AnnData with CDR3 columns in .obs)")
+    til_source.add_argument("--til-csv", metavar="PATH",
+                            help="Single TIL CSV file (must have CDR3_alpha/CDR3_beta)")
+    til_source.add_argument("--til-vdj-dir", metavar="PATH",
+                            help="Single CellRanger VDJ output directory")
 
     til_opts = p_til.add_argument_group("matching options")
     til_opts.add_argument("--match-by", choices=["CDR3ab", "CDR3b_only"], default="CDR3ab",

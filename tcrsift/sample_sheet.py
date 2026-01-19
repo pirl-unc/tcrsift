@@ -75,14 +75,18 @@ class Sample:
     sct_sheet: str = "Cell"  # sheet name in SCT Excel file
     # Standalone GEX file (for augmentation without full CellRanger output)
     gex_path: str | None = None  # path to 10x filtered_feature_bc_matrix.h5 file
+    # TIL-specific input fields (alternative to vdj_dir for TIL samples)
+    til_csv: str | None = None  # path to CSV with CDR3_alpha, CDR3_beta columns
+    til_h5ad: str | None = None  # path to pre-processed h5ad file
 
     def __post_init__(self):
         # Validate at least one data source
         has_cellranger = self.gex_dir or self.vdj_dir
         has_sct = self.sct_path is not None
-        if not has_cellranger and not has_sct:
+        has_til_data = self.til_csv is not None or self.til_h5ad is not None
+        if not has_cellranger and not has_sct and not has_til_data:
             raise ValueError(
-                f"Sample '{self.sample}' must have at least gex_dir, vdj_dir, or sct_path"
+                f"Sample '{self.sample}' must have at least gex_dir, vdj_dir, sct_path, til_csv, or til_h5ad"
             )
 
         # Validate antigen type
@@ -161,6 +165,30 @@ class Sample:
     def is_sct_data(self) -> bool:
         """Check if this sample is SCT platform data."""
         return self.source == "sct" or self.sct_path is not None
+
+    def get_til_data_source(self) -> tuple[str, str] | None:
+        """
+        Get the TIL data source type and path.
+
+        Returns
+        -------
+        tuple[str, str] | None
+            Tuple of (source_type, path) where source_type is one of:
+            - "h5ad": Pre-processed AnnData file
+            - "csv": CSV file with CDR3_alpha, CDR3_beta columns
+            - "vdj_dir": CellRanger VDJ directory
+            Returns None if this is not a TIL sample or has no data source.
+        """
+        if not self.is_til():
+            return None
+
+        if self.til_h5ad:
+            return ("h5ad", self.til_h5ad)
+        elif self.til_csv:
+            return ("csv", self.til_csv)
+        elif self.vdj_dir:
+            return ("vdj_dir", self.vdj_dir)
+        return None
 
 
 @dataclass
@@ -395,5 +423,11 @@ def validate_sample_sheet(sample_sheet: SampleSheet) -> list[str]:
 
         if sample.gex_path and not Path(sample.gex_path).exists():
             warnings.append(f"Sample '{sample.sample}': gex_path does not exist: {sample.gex_path}")
+
+        if sample.til_csv and not Path(sample.til_csv).exists():
+            warnings.append(f"Sample '{sample.sample}': til_csv does not exist: {sample.til_csv}")
+
+        if sample.til_h5ad and not Path(sample.til_h5ad).exists():
+            warnings.append(f"Sample '{sample.sample}': til_h5ad does not exist: {sample.til_h5ad}")
 
     return warnings

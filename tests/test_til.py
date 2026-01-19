@@ -12,6 +12,7 @@
 
 """Tests for TIL matching module."""
 
+
 import anndata as ad
 import pandas as pd
 import pytest
@@ -20,8 +21,10 @@ from tcrsift.til import (
     get_til_enrichment,
     get_til_summary,
     identify_til_specific_clones,
+    load_til_data,
     match_til,
 )
+from tcrsift.validation import TCRsiftValidationError
 
 
 @pytest.fixture
@@ -286,3 +289,167 @@ class TestIdentifyTilSpecificClones:
         result = identify_til_specific_clones(empty_til)
 
         assert len(result) == 0
+
+
+class TestLoadTilData:
+    """Tests for load_til_data function."""
+
+    def test_load_csv_standard_columns(self, tmp_path):
+        """Test loading TIL data from CSV with standard column names."""
+        csv_path = tmp_path / "til.csv"
+        csv_path.write_text(
+            "CDR3_alpha,CDR3_beta,sample\n"
+            "CAVSD,CASRG,TIL1\n"
+            "CASSL,CASSF,TIL1\n"
+        )
+
+        result = load_til_data("csv", csv_path, "TestSample")
+
+        assert len(result) == 2
+        assert "CDR3_alpha" in result.columns
+        assert "CDR3_beta" in result.columns
+        assert "sample" in result.columns
+
+    def test_load_csv_alternate_columns(self, tmp_path):
+        """Test loading TIL data from CSV with alternate column names."""
+        csv_path = tmp_path / "til.csv"
+        csv_path.write_text(
+            "cdr3_alpha,cdr3_beta\n"
+            "CAVSD,CASRG\n"
+            "CASSL,CASSF\n"
+        )
+
+        result = load_til_data("csv", csv_path, "TestSample")
+
+        assert len(result) == 2
+        # Should be renamed to standard names
+        assert "CDR3_alpha" in result.columns
+        assert "CDR3_beta" in result.columns
+        # Sample should be added
+        assert result["sample"].iloc[0] == "TestSample"
+
+    def test_load_csv_with_CDR3a_CDR3b_columns(self, tmp_path):
+        """Test loading CSV with CDR3a/CDR3b naming convention."""
+        csv_path = tmp_path / "til.csv"
+        csv_path.write_text(
+            "CDR3a,CDR3b\n"
+            "CAVSD,CASRG\n"
+        )
+
+        result = load_til_data("csv", csv_path, "TestSample")
+
+        assert "CDR3_alpha" in result.columns
+        assert "CDR3_beta" in result.columns
+
+    def test_load_csv_missing_columns_raises(self, tmp_path):
+        """Test that CSV without CDR3 columns raises error."""
+        csv_path = tmp_path / "til.csv"
+        csv_path.write_text("other_col,another_col\nval1,val2\n")
+
+        with pytest.raises(TCRsiftValidationError, match="missing CDR3 columns"):
+            load_til_data("csv", csv_path)
+
+    def test_load_csv_file_not_found_raises(self, tmp_path):
+        """Test that missing CSV file raises error."""
+        fake_path = tmp_path / "nonexistent.csv"
+
+        with pytest.raises(TCRsiftValidationError, match="not found"):
+            load_til_data("csv", fake_path)
+
+    def test_load_h5ad(self, tmp_path):
+        """Test loading TIL data from h5ad file."""
+        h5ad_path = tmp_path / "til.h5ad"
+
+        # Create a simple AnnData and save it
+        obs = pd.DataFrame({
+            "CDR3_alpha": ["CAVSD", "CASSL"],
+            "CDR3_beta": ["CASRG", "CASSF"],
+        }, index=["cell1", "cell2"])
+        adata = ad.AnnData(obs=obs)
+        adata.write_h5ad(h5ad_path)
+
+        result = load_til_data("h5ad", h5ad_path, "TestSample")
+
+        assert len(result) == 2
+        assert "CDR3_alpha" in result.columns
+        assert "sample" in result.columns
+        assert result["sample"].iloc[0] == "TestSample"
+
+    def test_load_h5ad_missing_cdr3_raises(self, tmp_path):
+        """Test that h5ad without CDR3 columns raises error."""
+        h5ad_path = tmp_path / "til.h5ad"
+
+        obs = pd.DataFrame({"other_col": ["val1", "val2"]}, index=["cell1", "cell2"])
+        adata = ad.AnnData(obs=obs)
+        adata.write_h5ad(h5ad_path)
+
+        with pytest.raises(TCRsiftValidationError, match="missing CDR3 columns"):
+            load_til_data("h5ad", h5ad_path)
+
+    def test_load_unknown_type_raises(self, tmp_path):
+        """Test that unknown source type raises error."""
+        with pytest.raises(TCRsiftValidationError, match="Unknown TIL source type"):
+            load_til_data("unknown", tmp_path / "file.txt")
+
+
+class TestMultiSampleTilMatching:
+    """Tests for multi-sample TIL matching."""
+
+    def test_match_til_dict_input(self, sample_culture_clonotypes):
+        """Test matching against multiple TIL samples via dict."""
+        til_dict = {
+            "TIL_Sample1": pd.DataFrame({
+                "CDR3_alpha": ["CASSL", "CASSL", "CAVSD"],
+                "CDR3_beta": ["CASSF", "CASSF", "CASRG"],
+            }),
+            "TIL_Sample2": pd.DataFrame({
+                "CDR3_alpha": ["CASSL", "OTHER"],
+                "CDR3_beta": ["CASSF", "OTHER"],
+            }),
+        }
+
+        result = match_til(sample_culture_clonotypes, til_dict)
+
+        # Should have per-sample columns
+        assert "til_cell_count.TIL_Sample1" in result.columns
+        assert "til_cell_count.TIL_Sample2" in result.columns
+        assert "til_frequency.TIL_Sample1" in result.columns
+        assert "til_frequency.TIL_Sample2" in result.columns
+
+        # Combined columns
+        assert "til_match" in result.columns
+        assert "til_samples" in result.columns
+        assert "til_cell_count" in result.columns
+
+        # First clone should match both samples
+        first_row = result.iloc[0]
+        assert first_row["til_match"]
+        assert first_row["til_cell_count.TIL_Sample1"] == 2
+        assert first_row["til_cell_count.TIL_Sample2"] == 1
+        assert first_row["til_cell_count"] == 3  # Total
+        # Check til_samples contains both
+        assert "TIL_Sample1" in first_row["til_samples"]
+        assert "TIL_Sample2" in first_row["til_samples"]
+
+    def test_match_til_single_sample_no_per_sample_columns(self, sample_til_data, sample_culture_clonotypes):
+        """Test that single sample doesn't add per-sample columns."""
+        result = match_til(sample_culture_clonotypes, sample_til_data)
+
+        # Should NOT have per-sample columns for single sample
+        assert "til_cell_count.TIL" not in result.columns
+
+        # Should have combined columns
+        assert "til_cell_count" in result.columns
+
+    def test_match_til_dataframe_input(self, sample_culture_clonotypes):
+        """Test matching against single TIL DataFrame."""
+        til_df = pd.DataFrame({
+            "CDR3_alpha": ["CASSL", "CASSL"],
+            "CDR3_beta": ["CASSF", "CASSF"],
+        })
+
+        result = match_til(sample_culture_clonotypes, til_df)
+
+        # Should work like single sample
+        assert result.iloc[0]["til_match"]
+        assert result.iloc[0]["til_cell_count"] == 2
