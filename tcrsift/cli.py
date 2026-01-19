@@ -22,6 +22,12 @@ import sys
 from pathlib import Path
 
 from .config import add_config_args, load_config_with_args
+from .validation import (
+    validate_annotate_gex_args,
+    validate_assemble_args,
+    validate_file_exists,
+    validate_run_args,
+)
 
 
 def setup_logging(verbose: bool = False):
@@ -312,6 +318,10 @@ def cmd_assemble(args):
 
     setup_logging(args.verbose)
 
+    # Early validation of conditional requirements
+    validate_assemble_args(args)
+    validate_file_exists(args.input, "input clonotypes CSV")
+
     # Handle leader shortcuts
     alpha_leader = args.alpha_leader
     beta_leader = args.beta_leader
@@ -400,6 +410,9 @@ def cmd_run(args):
     )
     from .sample_sheet import load_sample_sheet
     from .til import match_til
+
+    # Early validation of arguments
+    validate_run_args(args)
 
     # Load config with CLI overrides
     config = load_config_with_args(args)
@@ -655,6 +668,10 @@ def cmd_annotate_gex(args):
     )
 
     setup_logging(args.verbose)
+
+    # Early validation
+    validate_annotate_gex_args(args)
+    validate_file_exists(args.input, "input CSV")
 
     df = pd.read_csv(args.input)
     print(f"Loaded {len(df):,} rows from {args.input}")
@@ -918,40 +935,119 @@ def create_parser():
     # -------------------------------------------------------------------------
     # Match-TIL command
     # -------------------------------------------------------------------------
-    p_til = subparsers.add_parser("match-til", help="Match against TIL data")
-    p_til.add_argument("--input", "-i", required=True, help="Input culture clonotypes CSV")
-    p_til.add_argument("--output", "-o", required=True, help="Output CSV with TIL matches")
-    p_til.add_argument("--til-data", required=True, help="TIL data h5ad")
-    p_til.add_argument("--match-by", choices=["CDR3ab", "CDR3b_only"], default="CDR3ab")
-    p_til.add_argument("--min-til-cells", type=int, default=1, help="Min TIL cells to count")
-    p_til.add_argument("--plot-til", action="store_true", help="Generate TIL plots")
-    p_til.add_argument("--output-dir", help="Output directory for plots")
-    p_til.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_til = subparsers.add_parser(
+        "match-til",
+        help="Match against TIL data",
+        description="""
+Match culture-expanded clonotypes against TIL (tumor-infiltrating lymphocyte) data.
+
+REQUIRED INPUTS:
+  --input/-i     Clonotypes CSV from culture expansion
+  --output/-o    Output CSV path
+  --til-data     TIL h5ad file (always required for this command)
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    til_required = p_til.add_argument_group("required arguments")
+    til_required.add_argument("--input", "-i", required=True,
+                              help="Input culture clonotypes CSV")
+    til_required.add_argument("--output", "-o", required=True,
+                              help="Output CSV with TIL match annotations")
+    til_required.add_argument("--til-data", required=True,
+                              help="TIL data h5ad file (REQUIRED)")
+
+    til_opts = p_til.add_argument_group("matching options")
+    til_opts.add_argument("--match-by", choices=["CDR3ab", "CDR3b_only"], default="CDR3ab",
+                          help="Match by both chains or beta only (default: CDR3ab)")
+    til_opts.add_argument("--min-til-cells", type=int, default=1,
+                          help="Min TIL cells to count as match (default: 1)")
+
+    til_out = p_til.add_argument_group("output options")
+    til_out.add_argument("--plot-til", action="store_true",
+                         help="Generate TIL matching plots")
+    til_out.add_argument("--output-dir", metavar="DIR",
+                         help="Output directory for plots (default: next to output)")
+    til_out.add_argument("--verbose", "-v", action="store_true",
+                         help="Verbose output")
     p_til.set_defaults(func=cmd_match_til)
 
     # -------------------------------------------------------------------------
     # Assemble command
     # -------------------------------------------------------------------------
-    p_asm = subparsers.add_parser("assemble", help="Assemble full-length sequences")
-    p_asm.add_argument("--input", "-i", required=True, help="Input clonotypes CSV")
-    p_asm.add_argument("--output", "-o", required=True, help="Output CSV with sequences")
-    p_asm.add_argument("--contigs-dir", help="Directory with CellRanger contig FASTAs")
-    p_asm.add_argument("--alpha-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
-                      default="CD28", help="Alpha chain leader (default: CD28)")
-    p_asm.add_argument("--beta-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
-                      default="CD8A", help="Beta chain leader (default: CD8A)")
-    p_asm.add_argument("--no-leaders", action="store_true", help="Disable leaders on both chains")
-    p_asm.add_argument("--leaders-from-contigs", action="store_true",
-                      help="Extract native leaders from contig FASTAs (requires --contigs-dir)")
-    p_asm.add_argument("--include-constant", action="store_true", help="Include constant region")
-    p_asm.add_argument("--constant-source", choices=["ensembl", "from-data"], default="ensembl")
-    p_asm.add_argument("--single-chain", action="store_true", help="Generate single-chain constructs")
-    p_asm.add_argument("--linker", default="T2A", help="Linker for single-chain (default: T2A)")
-    p_asm.add_argument("--airr", help="Also output AIRR format")
-    p_asm.add_argument("--fasta", help="Also output FASTA format")
-    p_asm.add_argument("--plot-assembly", action="store_true", help="Generate assembly plots")
-    p_asm.add_argument("--output-dir", help="Output directory for plots")
-    p_asm.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_asm = subparsers.add_parser(
+        "assemble",
+        help="Assemble full-length sequences",
+        description="""
+Assemble full-length TCR sequences from clonotypes.
+
+REQUIRED INPUTS:
+  --input/-i     Clonotypes CSV (must have CDR3_alpha and CDR3_beta columns)
+  --output/-o    Output CSV path
+
+CONDITIONALLY REQUIRED:
+  --contigs-dir  Required ONLY when using --leaders-from-contigs or
+                 --alpha-leader=from_contig or --beta-leader=from_contig
+                 (for extracting native leader peptides from CellRanger FASTAs)
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    # Required inputs group
+    asm_required = p_asm.add_argument_group("required arguments")
+    asm_required.add_argument("--input", "-i", required=True,
+                              help="Input clonotypes CSV (must have CDR3_alpha and CDR3_beta)")
+    asm_required.add_argument("--output", "-o", required=True,
+                              help="Output CSV with assembled sequences")
+
+    # Leader options group
+    asm_leaders = p_asm.add_argument_group(
+        "leader peptide options",
+        "Leader peptides are added to the N-terminus. Use default leaders (CD8A/CD28) "
+        "or extract native leaders from CellRanger contigs."
+    )
+    asm_leaders.add_argument("--alpha-leader",
+                             choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+                             default="CD28",
+                             help="Alpha chain leader (default: CD28)")
+    asm_leaders.add_argument("--beta-leader",
+                             choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+                             default="CD8A",
+                             help="Beta chain leader (default: CD8A)")
+    asm_leaders.add_argument("--no-leaders", action="store_true",
+                             help="Disable leaders on both chains")
+    asm_leaders.add_argument("--leaders-from-contigs", action="store_true",
+                             help="Extract native leaders from CellRanger FASTAs "
+                                  "(REQUIRES --contigs-dir)")
+    asm_leaders.add_argument("--contigs-dir", metavar="DIR",
+                             help="Directory with CellRanger contig FASTAs. "
+                                  "REQUIRED when using --leaders-from-contigs or "
+                                  "--alpha/beta-leader=from_contig")
+
+    # Sequence options group
+    asm_seq = p_asm.add_argument_group("sequence options")
+    asm_seq.add_argument("--include-constant", action="store_true",
+                         help="Include constant region in assembled sequences")
+    asm_seq.add_argument("--constant-source", choices=["ensembl", "from-data"],
+                         default="ensembl",
+                         help="Source for constant regions (default: ensembl)")
+    asm_seq.add_argument("--single-chain", action="store_true",
+                         help="Generate single-chain constructs (alpha-linker-beta)")
+    asm_seq.add_argument("--linker", default="T2A",
+                         help="Linker peptide for single-chain (default: T2A)")
+
+    # Output options group
+    asm_out = p_asm.add_argument_group("additional output options")
+    asm_out.add_argument("--airr", metavar="PATH",
+                         help="Also output in AIRR format to this path")
+    asm_out.add_argument("--fasta", metavar="PATH",
+                         help="Also output in FASTA format to this path")
+    asm_out.add_argument("--plot-assembly", action="store_true",
+                         help="Generate assembly QC plots")
+    asm_out.add_argument("--output-dir", metavar="DIR",
+                         help="Output directory for plots (default: next to output)")
+    asm_out.add_argument("--verbose", "-v", action="store_true",
+                         help="Verbose output")
     p_asm.set_defaults(func=cmd_assemble)
 
     # -------------------------------------------------------------------------
@@ -1008,19 +1104,25 @@ def create_parser():
     til_group.add_argument("--min-til-cells", type=int, help="Min TIL cells to count (default: 1)")
 
     # Assemble step parameters
-    asm_group = p_run.add_argument_group("Assembly options")
+    asm_group = p_run.add_argument_group(
+        "Assembly options",
+        "Options for assembling full-length TCR sequences. "
+        "NOTE: --contigs-dir is REQUIRED when using --leaders-from-contigs or leader=from_contig."
+    )
     asm_group.add_argument("--alpha-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
                           help="Alpha chain leader (default: CD28). Use 'none' for no leader.")
     asm_group.add_argument("--beta-leader", choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
                           help="Beta chain leader (default: CD8A). Use 'none' for no leader.")
     asm_group.add_argument("--no-leaders", action="store_true", help="Disable leaders on both chains")
     asm_group.add_argument("--leaders-from-contigs", action="store_true",
-                          help="Extract native leaders from contig FASTAs (requires --contigs-dir)")
+                          help="Extract native leaders from CellRanger FASTAs (REQUIRES --contigs-dir)")
     asm_group.add_argument("--include-constant", action="store_true", default=None, help="Include constant region (default: True)")
     asm_group.add_argument("--no-include-constant", dest="include_constant", action="store_false")
     asm_group.add_argument("--constant-source", choices=["ensembl", "from-data"], help="Constant region source (default: ensembl)")
     asm_group.add_argument("--linker", choices=["T2A", "P2A", "E2A", "F2A"], help="Linker peptide (default: T2A)")
-    asm_group.add_argument("--contigs-dir", help="Directory with CellRanger contig FASTAs (for native leaders)")
+    asm_group.add_argument("--contigs-dir", metavar="DIR",
+                          help="Directory with CellRanger contig FASTAs. "
+                               "REQUIRED when using --leaders-from-contigs or leader=from_contig")
     asm_group.add_argument("--single-chain", action="store_true", default=None, help="Generate single-chain constructs (default: True)")
     asm_group.add_argument("--no-single-chain", dest="single_chain", action="store_false")
 
@@ -1052,25 +1154,50 @@ def create_parser():
     # -------------------------------------------------------------------------
     # Annotate-GEX command
     # -------------------------------------------------------------------------
-    p_gex = subparsers.add_parser("annotate-gex", help="Annotate TCR data with gene expression")
-    p_gex.add_argument("--input", "-i", required=True, help="Input CSV (cells or clonotypes)")
-    p_gex.add_argument("--output", "-o", required=True, help="Output CSV with GEX columns")
-    p_gex.add_argument("--gex-file", required=True,
-                       help="Path to 10x filtered_feature_bc_matrix.h5 file")
-    p_gex.add_argument("--barcode-col", default="barcode",
-                       help="Column containing cell barcodes (default: barcode)")
-    p_gex.add_argument("--genes", help="Comma-separated list of genes to extract (default: T cell markers)")
-    p_gex.add_argument("--prefix", default="gex",
-                       help="Prefix for GEX columns (default: gex)")
-    p_gex.add_argument("--no-qc", action="store_true",
-                       help="Skip QC metrics (n_reads, n_genes, pct_mito)")
-    p_gex.add_argument("--aggregate", action="store_true",
-                       help="Aggregate expression by clonotype (sum, mean)")
-    p_gex.add_argument("--group-col", default="CDR3_pair",
-                       help="Column to group by when aggregating (default: CDR3_pair)")
-    p_gex.add_argument("--cd4-cd8-counts", action="store_true",
-                       help="Compute CD4-only and CD8-only cell counts per clonotype")
-    p_gex.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_gex = subparsers.add_parser(
+        "annotate-gex",
+        help="Annotate TCR data with gene expression",
+        description="""
+Annotate TCR data with gene expression values from 10x Genomics data.
+
+REQUIRED INPUTS:
+  --input/-i     CSV file with cell barcodes (or clonotypes with barcodes)
+  --output/-o    Output CSV path
+  --gex-file     10x filtered_feature_bc_matrix.h5 file (always required)
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    # Required inputs group
+    gex_required = p_gex.add_argument_group("required arguments")
+    gex_required.add_argument("--input", "-i", required=True,
+                              help="Input CSV (cells or clonotypes with barcode column)")
+    gex_required.add_argument("--output", "-o", required=True,
+                              help="Output CSV with added GEX columns")
+    gex_required.add_argument("--gex-file", required=True,
+                              help="10x filtered_feature_bc_matrix.h5 file (REQUIRED)")
+
+    # GEX options group
+    gex_opts = p_gex.add_argument_group("gene expression options")
+    gex_opts.add_argument("--barcode-col", default="barcode",
+                          help="Column containing cell barcodes (default: barcode)")
+    gex_opts.add_argument("--genes", metavar="GENE1,GENE2,...",
+                          help="Comma-separated genes to extract (default: T cell markers)")
+    gex_opts.add_argument("--prefix", default="gex",
+                          help="Prefix for GEX columns (default: gex)")
+    gex_opts.add_argument("--no-qc", action="store_true",
+                          help="Skip QC metrics (n_reads, n_genes, pct_mito)")
+
+    # Aggregation options group
+    gex_agg = p_gex.add_argument_group("aggregation options")
+    gex_agg.add_argument("--aggregate", action="store_true",
+                         help="Aggregate expression by clonotype (sum, mean)")
+    gex_agg.add_argument("--group-col", default="CDR3_pair",
+                         help="Column to group by when aggregating (default: CDR3_pair)")
+    gex_agg.add_argument("--cd4-cd8-counts", action="store_true",
+                         help="Compute CD4-only and CD8-only cell counts per clonotype")
+    gex_agg.add_argument("--verbose", "-v", action="store_true",
+                         help="Verbose output")
     p_gex.set_defaults(func=cmd_annotate_gex)
 
     # -------------------------------------------------------------------------

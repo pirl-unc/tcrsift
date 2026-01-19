@@ -12,7 +12,6 @@
 
 """Tests for data annotation module."""
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -75,17 +74,17 @@ class TestAnnotateCombinedDf:
         result = annotate_combined_df(sample_combined_df)
 
         # First row has both chains
-        assert result.iloc[0]["TCR_complete"] == True
-        assert result.iloc[0]["filter:has_alpha"] == True
-        assert result.iloc[0]["filter:has_beta"] == True
+        assert result.iloc[0]["TCR_complete"]
+        assert result.iloc[0]["filter:has_alpha"]
+        assert result.iloc[0]["filter:has_beta"]
 
         # Third row missing alpha
-        assert result.iloc[2]["filter:has_alpha"] == False
-        assert result.iloc[2]["TCR_complete"] == False
+        assert not result.iloc[2]["filter:has_alpha"]
+        assert not result.iloc[2]["TCR_complete"]
 
         # Fourth row missing beta
-        assert result.iloc[3]["filter:has_beta"] == False
-        assert result.iloc[3]["TCR_complete"] == False
+        assert not result.iloc[3]["filter:has_beta"]
+        assert not result.iloc[3]["TCR_complete"]
 
     def test_ctaa_identifier(self, sample_combined_df):
         """Test CTaa clone identifier creation."""
@@ -127,8 +126,8 @@ class TestAnnotateCombinedDf:
         )
 
         # Check percent.mt filter
-        assert result.iloc[0]["filter:percent.mt"] == True  # 3.0 in range
-        assert result.iloc[4]["filter:percent.mt"] == False  # 7.0 > 6.0
+        assert result.iloc[0]["filter:percent.mt"]  # 3.0 in range
+        assert not result.iloc[4]["filter:percent.mt"]  # 7.0 > 6.0
 
     def test_cell_id_creation(self, sample_combined_df):
         """Test Cell_ID is created correctly."""
@@ -165,7 +164,7 @@ class TestAnnotateCombinedDf:
 
         assert "Both_CD4_and_CD8" in result.columns
         # Row 4: CD4=50, CD8=90 -> Both > 1
-        assert result.iloc[4]["Both_CD4_and_CD8"] == True
+        assert result.iloc[4]["Both_CD4_and_CD8"]
 
     def test_confident_and_complete(self, sample_combined_df):
         """Test confident_and_complete flag."""
@@ -173,9 +172,9 @@ class TestAnnotateCombinedDf:
 
         assert "confident_and_complete" in result.columns
         # Row 0: Confident CD4+ and complete TCR
-        assert result.iloc[0]["confident_and_complete"] == True
+        assert result.iloc[0]["confident_and_complete"]
         # Row 2: Missing alpha chain
-        assert result.iloc[2]["confident_and_complete"] == False
+        assert not result.iloc[2]["confident_and_complete"]
 
     def test_filtered_confident_and_complete(self, sample_combined_df):
         """Test filtered_confident_and_complete flag."""

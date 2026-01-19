@@ -13,7 +13,6 @@
 """Tests for TIL matching module."""
 
 import anndata as ad
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -59,11 +58,11 @@ class TestMatchTil:
         assert "til_frequency" in result.columns
 
         # First clone should match (2 cells)
-        assert result.iloc[0]["til_match"] == True
+        assert result.iloc[0]["til_match"]
         assert result.iloc[0]["til_cell_count"] == 2
 
         # Second clone should not match
-        assert result.iloc[1]["til_match"] == False
+        assert not result.iloc[1]["til_match"]
         assert result.iloc[1]["til_cell_count"] == 0
 
     def test_cdr3b_only_matching(self, sample_til_data, sample_culture_clonotypes):
@@ -75,7 +74,7 @@ class TestMatchTil:
         )
 
         # Should match by beta chain only
-        assert result.iloc[0]["til_match"] == True
+        assert result.iloc[0]["til_match"]
 
     def test_min_til_cells_filter(self, sample_til_data, sample_culture_clonotypes):
         """Test minimum TIL cells filter."""
@@ -86,7 +85,7 @@ class TestMatchTil:
         )
 
         # First clone only has 2 TIL cells, so should not match
-        assert result.iloc[0]["til_match"] == False
+        assert not result.iloc[0]["til_match"]
 
     def test_til_frequency_calculation(self, sample_til_data, sample_culture_clonotypes):
         """Test TIL frequency is calculated correctly."""
@@ -108,7 +107,7 @@ class TestMatchTil:
 
         result = match_til(sample_culture_clonotypes, empty_til)
 
-        assert all(result["til_match"] == False)
+        assert (~result["til_match"]).all()
         assert all(result["til_cell_count"] == 0)
 
 

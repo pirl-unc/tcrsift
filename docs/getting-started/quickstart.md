@@ -30,8 +30,7 @@ Run the complete pipeline with a single command:
 tcrsift run \
     --sample-sheet samples.yaml \
     --output-dir results/ \
-    --vdjdb /path/to/vdjdb \
-    --report
+    --vdjdb /path/to/vdjdb
 ```
 
 This will:

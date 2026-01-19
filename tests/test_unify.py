@@ -2,7 +2,6 @@
 Tests for multi-experiment unification module.
 """
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -69,18 +68,18 @@ class TestMergeExperiments:
 
         # A/B is in both
         ab_row = result[result["CDR3_pair"] == "A/B"].iloc[0]
-        assert ab_row["occurs_in_TIL"] == True
-        assert ab_row["occurs_in_Culture"] == True
+        assert ab_row["occurs_in_TIL"]
+        assert ab_row["occurs_in_Culture"]
 
         # E/F is only in TIL
         ef_row = result[result["CDR3_pair"] == "E/F"].iloc[0]
-        assert ef_row["occurs_in_TIL"] == True
-        assert ef_row["occurs_in_Culture"] == False
+        assert ef_row["occurs_in_TIL"]
+        assert not ef_row["occurs_in_Culture"]
 
         # G/H is only in Culture
         gh_row = result[result["CDR3_pair"] == "G/H"].iloc[0]
-        assert gh_row["occurs_in_TIL"] == False
-        assert gh_row["occurs_in_Culture"] == True
+        assert not gh_row["occurs_in_TIL"]
+        assert gh_row["occurs_in_Culture"]
 
     def test_merge_combined_stats(self, til_clonotypes, culture_clonotypes):
         """Test combined statistics are computed."""
@@ -132,23 +131,23 @@ class TestAddPhenotypeConfidence:
         """Test confident CD8 classification when only CD8 expression."""
         result = add_phenotype_confidence(unified_df, verbose=False)
         ab_row = result[result["CDR3_pair"] == "A/B"].iloc[0]
-        assert ab_row["Confident_CD8"] == True
-        assert ab_row["Confident_CD4"] == False
+        assert ab_row["Confident_CD8"]
+        assert not ab_row["Confident_CD4"]
 
     def test_confident_cd4_when_only_cd4(self, unified_df):
         """Test confident CD4 classification when only CD4 expression."""
         result = add_phenotype_confidence(unified_df, verbose=False)
         cd_row = result[result["CDR3_pair"] == "C/D"].iloc[0]
-        assert cd_row["Confident_CD4"] == True
-        assert cd_row["Confident_CD8"] == False
+        assert cd_row["Confident_CD4"]
+        assert not cd_row["Confident_CD8"]
 
     def test_not_confident_when_similar_expression(self, unified_df):
         """Test no confident call when similar CD4/CD8 expression."""
         result = add_phenotype_confidence(unified_df, verbose=False)
         ef_row = result[result["CDR3_pair"] == "E/F"].iloc[0]
         # Equal expression should not be confident either way
-        assert ef_row["Confident_CD4"] == False
-        assert ef_row["Confident_CD8"] == False
+        assert not ef_row["Confident_CD4"]
+        assert not ef_row["Confident_CD8"]
 
     def test_ratio_threshold_affects_confidence(self):
         """Test that ratio threshold parameter affects classification."""
@@ -159,11 +158,11 @@ class TestAddPhenotypeConfidence:
         })
         # With ratio_threshold=10, 50 > 10*(1+10) = 110 is False
         result1 = add_phenotype_confidence(df.copy(), ratio_threshold=10.0, verbose=False)
-        assert result1["Confident_CD8"].iloc[0] == False
+        assert not result1["Confident_CD8"].iloc[0]
 
         # With ratio_threshold=3, 50 > 3*(1+10) = 33 is True
         result2 = add_phenotype_confidence(df.copy(), ratio_threshold=3.0, verbose=False)
-        assert result2["Confident_CD8"].iloc[0] == True
+        assert result2["Confident_CD8"].iloc[0]
 
     def test_likely_columns_added(self, unified_df):
         """Test that Likely_CD4 and Likely_CD8 columns are added."""

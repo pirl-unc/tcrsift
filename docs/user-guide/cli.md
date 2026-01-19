@@ -23,20 +23,21 @@ tcrsift run \
     --iedb /path/to/iedb \
     --cedar /path/to/cedar \
     --tcell-type cd8 \
-    --method threshold \
-    --report
+    --method threshold
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--sample-sheet` | Path to sample sheet (required) |
+| `--sample-sheet`, `-s` | Path to sample sheet (required) |
 | `--output-dir`, `-o` | Output directory (required) |
+| `--config`, `-c` | YAML configuration file |
 | `--vdjdb` | Path to VDJdb |
 | `--iedb` | Path to IEDB |
 | `--cedar` | Path to CEDAR |
 | `--tcell-type` | Filter type: `cd8`, `cd4`, `both` |
 | `--method` | Filter method: `threshold`, `logistic` |
-| `--report` | Generate summary report |
+| `--no-report` | Skip generating summary report |
+| `--skip-plots` | Skip generating plots |
 
 ---
 
@@ -50,7 +51,7 @@ tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
 
 | Option | Description |
 |--------|-------------|
-| `--sample-sheet` | Path to sample sheet (required) |
+| `--sample-sheet`, `-s` | Path to sample sheet (required) |
 | `-o`, `--output` | Output .h5ad file (required) |
 
 ---
@@ -60,16 +61,16 @@ tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
 Classify cells as CD4+ or CD8+.
 
 ```bash
-tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --ratio 3.0 --min-cd3 10
+tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --cd4-cd8-ratio 3.0 --min-cd3-reads 10
 ```
 
 | Option | Description |
 |--------|-------------|
 | `-i`, `--input` | Input .h5ad file (required) |
 | `-o`, `--output` | Output .h5ad file (required) |
-| `--ratio` | CD4/CD8 ratio threshold (default: 3.0) |
-| `--min-cd3` | Minimum CD3 reads (default: 10) |
-| `--plot` | Save phenotype plot |
+| `--cd4-cd8-ratio` | CD4/CD8 ratio threshold (default: 3.0) |
+| `--min-cd3-reads` | Minimum CD3 reads (default: 10) |
+| `--plot-phenotype` | Save phenotype plot |
 
 ---
 
@@ -92,7 +93,7 @@ tcrsift clonotype -i phenotyped.h5ad -o clonotypes.csv \
 | `--min-umi` | Minimum UMI count (default: 2) |
 | `--handle-doublets` | `flag`, `remove`, `keep-primary` |
 | `--airr` | Export AIRR format to this path |
-| `--plot` | Save clonotype plot |
+| `--plot-clonotypes` | Save clonotype plot |
 
 ---
 
@@ -118,7 +119,7 @@ tcrsift filter -i clonotypes.csv -o filtered/ \
 | `--min-frequency` | Minimum frequency |
 | `--exclude-viral` | Exclude viral clones |
 | `--fdr-tiers` | FDR values for logistic method |
-| `--plot` | Save filter plot |
+| `--plot-filter` | Save filter plot |
 
 ---
 
@@ -153,13 +154,13 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
 Match against TIL data.
 
 ```bash
-tcrsift match-til -i annotated.csv --til-data til.csv -o matched.csv
+tcrsift match-til -i annotated.csv --til-data til.h5ad -o matched.csv
 ```
 
 | Option | Description |
 |--------|-------------|
-| `-i`, `--input` | Culture clonotypes (required) |
-| `--til-data` | TIL clonotypes (required) |
+| `-i`, `--input` | Culture clonotypes CSV (required) |
+| `--til-data` | TIL data h5ad file (required) |
 | `-o`, `--output` | Output CSV file (required) |
 | `--match-by` | `CDR3ab` or `CDR3b_only` |
 
@@ -171,23 +172,75 @@ Assemble full-length sequences.
 
 ```bash
 tcrsift assemble -i annotated.csv -o sequences.csv \
-    --contigs-dir /path/to/contigs \
-    --include-leader \
+    --alpha-leader CD28 \
+    --beta-leader CD8A \
     --include-constant \
     --linker T2A \
-    --export-fasta sequences.fasta
+    --fasta sequences.fasta
+```
+
+**Required inputs:**
+
+| Option | Description |
+|--------|-------------|
+| `-i`, `--input` | Input CSV file (required) |
+| `-o`, `--output` | Output CSV file (required) |
+
+**Conditionally required:**
+
+| Option | Description |
+|--------|-------------|
+| `--contigs-dir` | Directory with CellRanger contig FASTAs. Required when using `--leaders-from-contigs` or `--alpha/beta-leader=from_contig` |
+
+**Leader peptide options:**
+
+| Option | Description |
+|--------|-------------|
+| `--alpha-leader` | Alpha chain leader: `CD8A`, `CD28`, `IgK`, `TRAC`, `TRBC`, `from_contig`, `none` (default: CD28) |
+| `--beta-leader` | Beta chain leader (default: CD8A) |
+| `--no-leaders` | Disable leaders on both chains |
+| `--leaders-from-contigs` | Extract native leaders from CellRanger FASTAs (requires `--contigs-dir`) |
+
+**Sequence options:**
+
+| Option | Description |
+|--------|-------------|
+| `--include-constant` | Add constant regions |
+| `--constant-source` | `ensembl` or `from-data` |
+| `--single-chain` | Generate single-chain constructs |
+| `--linker` | Linker for single-chain (default: T2A) |
+
+**Output options:**
+
+| Option | Description |
+|--------|-------------|
+| `--fasta` | Export to FASTA file |
+| `--airr` | Export to AIRR format |
+
+---
+
+### `tcrsift annotate-gex`
+
+Annotate TCR data with gene expression.
+
+```bash
+tcrsift annotate-gex \
+    -i cells.csv \
+    --gex-file filtered_feature_bc_matrix.h5 \
+    -o cells_with_gex.csv \
+    --aggregate \
+    --cd4-cd8-counts
 ```
 
 | Option | Description |
 |--------|-------------|
 | `-i`, `--input` | Input CSV file (required) |
 | `-o`, `--output` | Output CSV file (required) |
-| `--contigs-dir` | Directory with contig FASTAs |
-| `--include-leader` | Extract leader peptides |
-| `--include-constant` | Add constant regions |
-| `--constant-source` | `ensembl` or `from-data` |
-| `--linker` | Linker for single-chain (default: T2A) |
-| `--export-fasta` | Export to FASTA file |
+| `--gex-file` | 10x filtered_feature_bc_matrix.h5 file (required) |
+| `--barcode-col` | Column with cell barcodes (default: barcode) |
+| `--genes` | Comma-separated list of genes |
+| `--aggregate` | Aggregate expression by clonotype |
+| `--cd4-cd8-counts` | Compute CD4/CD8 cell counts per clonotype |
 
 ---
 
@@ -196,10 +249,61 @@ tcrsift assemble -i annotated.csv -o sequences.csv \
 Generate mnemonic names for TCRs.
 
 ```bash
-tcrsift mnemonic --cdr3b CASSLGQAYEQYF --cdr3a CAVSDGGSQGNLIF
+tcrsift mnemonic -i clonotypes.csv -o clonotypes_with_names.csv
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--cdr3b` | Beta chain CDR3 sequence |
-| `--cdr3a` | Alpha chain CDR3 sequence |
+| `-i`, `--input` | Input CSV file (required) |
+| `-o`, `--output` | Output CSV file (required) |
+| `--cdr3-col` | Column with CDR3 sequences (auto-detected) |
+| `--name-col` | Output column name for mnemonics |
+
+---
+
+### `tcrsift load-sct`
+
+Load TCR data from SCT platform Excel files.
+
+```bash
+tcrsift load-sct -i sct_data.xlsx -o sct_clonotypes.csv --aggregate
+```
+
+| Option | Description |
+|--------|-------------|
+| `-i`, `--input` | Input Excel file (required) |
+| `-o`, `--output` | Output CSV file (required) |
+| `--aggregate` | Aggregate to clonotype level |
+| `--min-snr` | Minimum SNR (default: 2.0) |
+| `--min-reads` | Minimum reads per chain (default: 10) |
+
+---
+
+### `tcrsift unify`
+
+Merge clonotype data from multiple experiments.
+
+```bash
+tcrsift unify \
+    -i til_results/clonotypes.csv culture_results/clonotypes.csv \
+    -o unified.csv
+```
+
+| Option | Description |
+|--------|-------------|
+| `-i`, `--input` | Input CSV files (multiple, required) |
+| `-o`, `--output` | Output CSV file (required) |
+
+---
+
+### `tcrsift generate-config`
+
+Generate an example configuration file.
+
+```bash
+tcrsift generate-config -o my_config.yaml
+```
+
+| Option | Description |
+|--------|-------------|
+| `-o`, `--output` | Output YAML file (required) |

@@ -2,18 +2,16 @@
 Tests for T cell phenotyping.
 """
 
-import pytest
 import pandas as pd
-import numpy as np
-import anndata as ad
+import pytest
 
 from tcrsift.phenotype import (
+    TCELL_TYPE_CATEGORIES,
     classify_tcell_type,
-    phenotype_cells,
     filter_by_tcell_type,
     get_phenotype_summary,
+    phenotype_cells,
     validate_phenotype_vs_expected,
-    TCELL_TYPE_CATEGORIES,
 )
 
 

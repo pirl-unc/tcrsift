@@ -12,7 +12,6 @@
 
 """Tests for mnemonic TCR naming module."""
 
-import pytest
 
 from tcrsift.mnemonic import tcr_name
 

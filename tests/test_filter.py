@@ -2,19 +2,17 @@
 Tests for clonotype filtering.
 """
 
-import pytest
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pytest
 
 from tcrsift.filter import (
-    filter_clonotypes_threshold,
     assign_tiers_threshold,
-    filter_clonotypes_logistic,
     filter_clonotypes,
-    split_by_tier,
+    filter_clonotypes_logistic,
+    filter_clonotypes_threshold,
     get_filter_summary,
-    DEFAULT_THRESHOLD_TIERS,
-    DEFAULT_FDR_TIERS,
+    split_by_tier,
 )
 
 

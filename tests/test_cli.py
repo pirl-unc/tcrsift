@@ -2,17 +2,25 @@
 Tests for CLI commands.
 """
 
+import argparse
+from unittest.mock import patch
+
 import pandas as pd
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-import argparse
 
 from tcrsift.cli import (
     cmd_annotate_gex,
     create_parser,
 )
 from tcrsift.sample_sheet import Sample, SampleSheet, load_sample_sheet
+from tcrsift.validation import (
+    TCRsiftValidationError,
+    validate_annotate_gex_args,
+    validate_assemble_args,
+    validate_cli_conditional_requirement,
+    validate_cli_mutually_exclusive,
+    validate_run_args,
+)
 
 
 class TestAnnotateGexParser:
@@ -98,7 +106,14 @@ class TestAnnotateGexCommand:
         df.to_csv(path, index=False)
         return path
 
-    def test_annotate_gex_missing_barcode_col_warning(self, temp_dir, capsys):
+    @pytest.fixture
+    def fake_gex_file(self, temp_dir):
+        """Create a fake GEX file that passes validation."""
+        path = temp_dir / "fake_matrix.h5"
+        path.write_bytes(b"fake h5 content")
+        return path
+
+    def test_annotate_gex_missing_barcode_col_warning(self, temp_dir, fake_gex_file, capsys):
         """Test warning when barcode column is missing."""
         # Create CSV without barcode column
         df = pd.DataFrame({
@@ -112,7 +127,7 @@ class TestAnnotateGexCommand:
         args = argparse.Namespace(
             input=str(input_path),
             output=str(output_path),
-            gex_file="fake.h5",
+            gex_file=str(fake_gex_file),
             barcode_col="barcode",
             genes=None,
             prefix="gex",
@@ -128,14 +143,14 @@ class TestAnnotateGexCommand:
         captured = capsys.readouterr()
         assert "Warning: Barcode column 'barcode' not found" in captured.out
 
-    def test_annotate_gex_aggregate_only(self, cells_with_gex_csv, temp_dir):
+    def test_annotate_gex_aggregate_only(self, cells_with_gex_csv, temp_dir, fake_gex_file):
         """Test aggregation without GEX augmentation."""
         output_path = temp_dir / "aggregated.csv"
 
         args = argparse.Namespace(
             input=str(cells_with_gex_csv),
             output=str(output_path),
-            gex_file="fake.h5",
+            gex_file=str(fake_gex_file),
             barcode_col="nonexistent",  # Will skip augmentation
             genes=None,
             prefix="gex",
@@ -154,7 +169,7 @@ class TestAnnotateGexCommand:
         assert "total_cells.count" in result.columns
         assert result[result["CDR3_pair"] == "A/B"]["total_cells.count"].iloc[0] == 3
 
-    def test_annotate_gex_cd4_cd8_counts_without_augmentation(self, temp_dir, capsys):
+    def test_annotate_gex_cd4_cd8_counts_without_augmentation(self, temp_dir, fake_gex_file, capsys):
         """Test CD4/CD8 counts warning when no augmentation."""
         # Create CSV without GEX columns
         df = pd.DataFrame({
@@ -168,7 +183,7 @@ class TestAnnotateGexCommand:
         args = argparse.Namespace(
             input=str(input_path),
             output=str(output_path),
-            gex_file="fake.h5",
+            gex_file=str(fake_gex_file),
             barcode_col="barcode",  # Missing
             genes=None,
             prefix="gex",
@@ -184,7 +199,7 @@ class TestAnnotateGexCommand:
         captured = capsys.readouterr()
         assert "Cannot compute CD4/CD8 counts without GEX augmentation" in captured.out
 
-    def test_annotate_gex_custom_genes_parsing(self, capsys, temp_dir):
+    def test_annotate_gex_custom_genes_parsing(self, capsys, temp_dir, fake_gex_file):
         """Test custom gene list parsing."""
         df = pd.DataFrame({
             "CDR3_pair": ["A/B"],
@@ -197,7 +212,7 @@ class TestAnnotateGexCommand:
         args = argparse.Namespace(
             input=str(input_path),
             output=str(output_path),
-            gex_file="fake.h5",
+            gex_file=str(fake_gex_file),
             barcode_col="barcode",
             genes="GENE1, GENE2, GENE3",  # With spaces
             prefix="gex",
@@ -337,3 +352,410 @@ class TestSampleSheetSourceTypes:
 
         assert len(tetramer) == 2
         assert all(s.is_tetramer_or_sct() for s in tetramer)
+
+
+# =============================================================================
+# CLI Validation Tests
+# =============================================================================
+
+
+class TestCliConditionalRequirement:
+    """Tests for validate_cli_conditional_requirement function."""
+
+    def test_no_error_when_condition_not_met(self):
+        """Should not raise when condition is not triggered."""
+        args = argparse.Namespace(
+            leaders_from_contigs=False,
+            contigs_dir=None,
+        )
+        # Should not raise
+        validate_cli_conditional_requirement(
+            args,
+            required_arg="contigs_dir",
+            condition_args=["leaders_from_contigs"],
+            condition_description="when using --leaders-from-contigs",
+        )
+
+    def test_no_error_when_requirement_satisfied(self):
+        """Should not raise when condition is met and requirement satisfied."""
+        args = argparse.Namespace(
+            leaders_from_contigs=True,
+            contigs_dir="/path/to/contigs",
+        )
+        # Should not raise
+        validate_cli_conditional_requirement(
+            args,
+            required_arg="contigs_dir",
+            condition_args=["leaders_from_contigs"],
+            condition_description="when using --leaders-from-contigs",
+        )
+
+    def test_error_when_requirement_missing(self):
+        """Should raise when condition met but requirement missing."""
+        args = argparse.Namespace(
+            leaders_from_contigs=True,
+            contigs_dir=None,
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_cli_conditional_requirement(
+                args,
+                required_arg="contigs_dir",
+                condition_args=["leaders_from_contigs"],
+                condition_description="when using --leaders-from-contigs",
+            )
+        assert "--contigs-dir is required" in str(exc_info.value)
+        assert "--leaders-from-contigs" in str(exc_info.value)
+
+    def test_condition_values_matching(self):
+        """Should check specific values when condition_values provided."""
+        args = argparse.Namespace(
+            alpha_leader="from_contig",
+            beta_leader="CD8A",
+            contigs_dir=None,
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_cli_conditional_requirement(
+                args,
+                required_arg="contigs_dir",
+                condition_args=["alpha_leader", "beta_leader"],
+                condition_values=["from_contig"],
+                condition_description="when using leader=from_contig",
+            )
+        assert "--contigs-dir is required" in str(exc_info.value)
+        assert "--alpha-leader=from_contig" in str(exc_info.value)
+
+    def test_condition_values_not_matching(self):
+        """Should not raise when condition_values don't match."""
+        args = argparse.Namespace(
+            alpha_leader="CD28",
+            beta_leader="CD8A",
+            contigs_dir=None,
+        )
+        # Should not raise - neither leader is "from_contig"
+        validate_cli_conditional_requirement(
+            args,
+            required_arg="contigs_dir",
+            condition_args=["alpha_leader", "beta_leader"],
+            condition_values=["from_contig"],
+            condition_description="when using leader=from_contig",
+        )
+
+    def test_multiple_conditions_any_triggers(self):
+        """Should trigger when any condition is met."""
+        args = argparse.Namespace(
+            alpha_leader="CD28",
+            beta_leader="from_contig",  # This triggers
+            contigs_dir=None,
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_cli_conditional_requirement(
+                args,
+                required_arg="contigs_dir",
+                condition_args=["alpha_leader", "beta_leader"],
+                condition_values=["from_contig"],
+                condition_description="when using leader=from_contig",
+            )
+        assert "--beta-leader=from_contig" in str(exc_info.value)
+
+    def test_empty_string_treated_as_missing(self):
+        """Empty string should be treated as missing."""
+        args = argparse.Namespace(
+            leaders_from_contigs=True,
+            contigs_dir="",
+        )
+        with pytest.raises(TCRsiftValidationError):
+            validate_cli_conditional_requirement(
+                args,
+                required_arg="contigs_dir",
+                condition_args=["leaders_from_contigs"],
+                condition_description="when using --leaders-from-contigs",
+            )
+
+
+class TestCliMutuallyExclusive:
+    """Tests for validate_cli_mutually_exclusive function."""
+
+    def test_no_error_when_none_set(self):
+        """Should not raise when no args in group are set."""
+        args = argparse.Namespace(
+            no_leaders=False,
+            leaders_from_contigs=False,
+        )
+        validate_cli_mutually_exclusive(
+            args,
+            arg_names=["no_leaders", "leaders_from_contigs"],
+            group_description="leader options",
+        )
+
+    def test_no_error_when_one_set(self):
+        """Should not raise when only one arg is set."""
+        args = argparse.Namespace(
+            no_leaders=True,
+            leaders_from_contigs=False,
+        )
+        validate_cli_mutually_exclusive(
+            args,
+            arg_names=["no_leaders", "leaders_from_contigs"],
+            group_description="leader options",
+        )
+
+    def test_error_when_multiple_set(self):
+        """Should raise when multiple mutually exclusive args set."""
+        args = argparse.Namespace(
+            no_leaders=True,
+            leaders_from_contigs=True,
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_cli_mutually_exclusive(
+                args,
+                arg_names=["no_leaders", "leaders_from_contigs"],
+                group_description="leader options",
+            )
+        assert "Cannot use" in str(exc_info.value)
+        assert "--no-leaders" in str(exc_info.value)
+        assert "--leaders-from-contigs" in str(exc_info.value)
+
+
+class TestValidateAssembleArgs:
+    """Tests for validate_assemble_args function."""
+
+    def test_valid_args_default_leaders(self):
+        """Should pass with default leader options."""
+        args = argparse.Namespace(
+            input="clonotypes.csv",
+            output="assembled.csv",
+            alpha_leader="CD28",
+            beta_leader="CD8A",
+            leaders_from_contigs=False,
+            contigs_dir=None,
+        )
+        # Should not raise
+        validate_assemble_args(args)
+
+    def test_valid_args_with_contigs(self):
+        """Should pass when from_contig used with contigs_dir."""
+        args = argparse.Namespace(
+            input="clonotypes.csv",
+            output="assembled.csv",
+            alpha_leader="from_contig",
+            beta_leader="from_contig",
+            leaders_from_contigs=False,
+            contigs_dir="/path/to/contigs",
+        )
+        # Mock directory existence
+        with patch("tcrsift.validation.validate_directory_exists"):
+            validate_assemble_args(args)
+
+    def test_error_leaders_from_contigs_without_dir(self):
+        """Should fail when --leaders-from-contigs used without --contigs-dir."""
+        args = argparse.Namespace(
+            input="clonotypes.csv",
+            output="assembled.csv",
+            alpha_leader="CD28",
+            beta_leader="CD8A",
+            leaders_from_contigs=True,
+            contigs_dir=None,
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_assemble_args(args)
+        assert "--contigs-dir is required" in str(exc_info.value)
+        assert "--leaders-from-contigs" in str(exc_info.value)
+
+    def test_error_alpha_from_contig_without_dir(self):
+        """Should fail when alpha_leader=from_contig without contigs_dir."""
+        args = argparse.Namespace(
+            input="clonotypes.csv",
+            output="assembled.csv",
+            alpha_leader="from_contig",
+            beta_leader="CD8A",
+            leaders_from_contigs=False,
+            contigs_dir=None,
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_assemble_args(args)
+        assert "--contigs-dir is required" in str(exc_info.value)
+
+    def test_error_beta_from_contig_without_dir(self):
+        """Should fail when beta_leader=from_contig without contigs_dir."""
+        args = argparse.Namespace(
+            input="clonotypes.csv",
+            output="assembled.csv",
+            alpha_leader="CD28",
+            beta_leader="from_contig",
+            leaders_from_contigs=False,
+            contigs_dir=None,
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_assemble_args(args)
+        assert "--contigs-dir is required" in str(exc_info.value)
+
+
+class TestValidateRunArgs:
+    """Tests for validate_run_args function."""
+
+    @pytest.fixture
+    def sample_sheet_file(self, tmp_path):
+        """Create a sample sheet file for testing."""
+        ss = tmp_path / "samples.yaml"
+        ss.write_text("samples:\n  - sample: S1\n    vdj_dir: /path\n")
+        return ss
+
+    def test_valid_args_default(self, sample_sheet_file):
+        """Should pass with default options."""
+        args = argparse.Namespace(
+            sample_sheet=str(sample_sheet_file),
+            output_dir="/output",
+            alpha_leader=None,
+            beta_leader=None,
+            leaders_from_contigs=False,
+            contigs_dir=None,
+        )
+        validate_run_args(args)
+
+    def test_error_leaders_from_contigs_without_dir(self, sample_sheet_file):
+        """Should fail when --leaders-from-contigs used without --contigs-dir."""
+        args = argparse.Namespace(
+            sample_sheet=str(sample_sheet_file),
+            output_dir="/output",
+            alpha_leader=None,
+            beta_leader=None,
+            leaders_from_contigs=True,
+            contigs_dir=None,
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_run_args(args)
+        assert "--contigs-dir is required" in str(exc_info.value)
+
+    def test_error_missing_sample_sheet(self, tmp_path):
+        """Should fail when sample sheet doesn't exist."""
+        args = argparse.Namespace(
+            sample_sheet=str(tmp_path / "nonexistent.yaml"),
+            output_dir="/output",
+            alpha_leader=None,
+            beta_leader=None,
+            leaders_from_contigs=False,
+            contigs_dir=None,
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_run_args(args)
+        assert "does not exist" in str(exc_info.value)
+
+
+class TestValidateAnnotateGexArgs:
+    """Tests for validate_annotate_gex_args function."""
+
+    @pytest.fixture
+    def gex_file(self, tmp_path):
+        """Create a fake GEX file for testing."""
+        gex = tmp_path / "matrix.h5"
+        gex.write_bytes(b"fake h5 content")
+        return gex
+
+    def test_valid_args(self, gex_file):
+        """Should pass with valid gex_file."""
+        args = argparse.Namespace(
+            gex_file=str(gex_file),
+        )
+        validate_annotate_gex_args(args)
+
+    def test_error_missing_gex_file(self, tmp_path):
+        """Should fail when gex_file doesn't exist."""
+        args = argparse.Namespace(
+            gex_file=str(tmp_path / "nonexistent.h5"),
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_annotate_gex_args(args)
+        assert "does not exist" in str(exc_info.value)
+
+
+class TestAssembleParserHelpStrings:
+    """Tests for assemble command help string organization."""
+
+    def test_assemble_has_required_group(self):
+        """Assemble parser should have a 'required arguments' group."""
+        parser = create_parser()
+
+        # Check the parser has expected structure
+        subparsers = parser._subparsers._group_actions[0].choices
+        asm_parser = subparsers["assemble"]
+
+        group_titles = [g.title for g in asm_parser._action_groups]
+        assert "required arguments" in group_titles
+        assert "leader peptide options" in group_titles
+        assert "sequence options" in group_titles
+
+    def test_assemble_description_shows_conditional_requirement(self):
+        """Assemble parser description should mention conditional requirements."""
+        parser = create_parser()
+        subparsers = parser._subparsers._group_actions[0].choices
+        asm_parser = subparsers["assemble"]
+
+        assert "CONDITIONALLY REQUIRED" in asm_parser.description
+        assert "--contigs-dir" in asm_parser.description
+
+    def test_match_til_has_required_group(self):
+        """Match-til parser should have a 'required arguments' group."""
+        parser = create_parser()
+        subparsers = parser._subparsers._group_actions[0].choices
+        til_parser = subparsers["match-til"]
+
+        group_titles = [g.title for g in til_parser._action_groups]
+        assert "required arguments" in group_titles
+
+    def test_annotate_gex_has_required_group(self):
+        """Annotate-gex parser should have a 'required arguments' group."""
+        parser = create_parser()
+        subparsers = parser._subparsers._group_actions[0].choices
+        gex_parser = subparsers["annotate-gex"]
+
+        group_titles = [g.title for g in gex_parser._action_groups]
+        assert "required arguments" in group_titles
+
+
+class TestCliEarlyValidation:
+    """Integration tests for early CLI validation."""
+
+    def test_assemble_fails_early_with_missing_contigs_dir(self, tmp_path, capsys):
+        """Assemble should fail before loading data when contigs_dir missing."""
+        # Create a valid input file
+        input_csv = tmp_path / "clonotypes.csv"
+        pd.DataFrame({
+            "CDR3_alpha": ["CAVX"],
+            "CDR3_beta": ["CASSX"],
+        }).to_csv(input_csv, index=False)
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "assemble",
+            "-i", str(input_csv),
+            "-o", str(tmp_path / "out.csv"),
+            "--leaders-from-contigs",  # This requires --contigs-dir
+        ])
+
+        # Should fail at validation, not at data loading
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            args.func(args)
+
+        assert "--contigs-dir is required" in str(exc_info.value)
+
+    def test_assemble_validates_contigs_dir_exists(self, tmp_path):
+        """Assemble should validate that contigs_dir exists."""
+        input_csv = tmp_path / "clonotypes.csv"
+        pd.DataFrame({
+            "CDR3_alpha": ["CAVX"],
+            "CDR3_beta": ["CASSX"],
+        }).to_csv(input_csv, index=False)
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "assemble",
+            "-i", str(input_csv),
+            "-o", str(tmp_path / "out.csv"),
+            "--leaders-from-contigs",
+            "--contigs-dir", str(tmp_path / "nonexistent_dir"),
+        ])
+
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            args.func(args)
+
+        assert "does not exist" in str(exc_info.value)

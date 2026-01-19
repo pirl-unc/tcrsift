@@ -2,21 +2,20 @@
 Tests for TCR annotation using public databases.
 """
 
-import pytest
-import pandas as pd
+
 import numpy as np
-from pathlib import Path
+import pandas as pd
+import pytest
 
 from tcrsift.annotate import (
-    load_vdjdb,
-    load_iedb,
-    load_cedar,
-    load_databases,
-    match_clonotypes,
+    _flag_viral,
     annotate_clonotypes,
     get_annotation_summary,
-    VIRAL_SPECIES_PATTERNS,
-    _flag_viral,
+    load_cedar,
+    load_databases,
+    load_iedb,
+    load_vdjdb,
+    match_clonotypes,
 )
 
 
@@ -203,7 +202,7 @@ class TestMatchClonotypes:
         assert "is_viral" in result.columns
 
         # First clone should match (same CDR3ab)
-        assert result["db_match"].iloc[0] == True
+        assert result["db_match"].iloc[0]
 
     def test_match_by_cdr3b_only(self, sample_clonotypes_df, sample_database_df):
         """Match by beta chain only."""
@@ -231,7 +230,7 @@ class TestMatchClonotypes:
         result = match_clonotypes(sample_clonotypes_df, non_matching_db, match_by="CDR3ab")
 
         assert result["db_match"].sum() == 0
-        assert all(result["is_viral"] == False)
+        assert (~result["is_viral"]).all()
 
     def test_viral_flag_propagation(self, sample_clonotypes_df, sample_database_df):
         """Viral flag should propagate from database."""

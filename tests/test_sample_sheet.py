@@ -2,18 +2,18 @@
 Tests for sample sheet parsing and validation.
 """
 
-import pytest
+
 import pandas as pd
-from pathlib import Path
+import pytest
 
 from tcrsift.sample_sheet import (
+    ANTIGEN_TYPE_TCELL_EXPECTATIONS,
+    VALID_ANTIGEN_TYPES,
+    VALID_SOURCES,
     Sample,
     SampleSheet,
     load_sample_sheet,
     validate_sample_sheet,
-    ANTIGEN_TYPE_TCELL_EXPECTATIONS,
-    VALID_ANTIGEN_TYPES,
-    VALID_SOURCES,
 )
 
 

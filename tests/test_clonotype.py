@@ -2,16 +2,14 @@
 Tests for clonotype aggregation.
 """
 
-import pytest
 import pandas as pd
-import numpy as np
-import anndata as ad
+import pytest
 
 from tcrsift.clonotype import (
     aggregate_clonotypes,
     calculate_clone_frequencies,
-    get_clonotype_summary,
     export_clonotypes_airr,
+    get_clonotype_summary,
 )
 
 

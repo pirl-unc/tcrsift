@@ -7,14 +7,13 @@ Fixtures use realistic data patterns based on CellRanger VDJ output:
 - UMI/read counts reflect typical single-cell sequencing ranges
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-import anndata as ad
-from pathlib import Path
 import tempfile
-import os
+from pathlib import Path
 
+import anndata as ad
+import numpy as np
+import pandas as pd
+import pytest
 
 # Realistic VDJ segment sequences from IMGT reference
 # These are truncated examples based on typical TCR sequences

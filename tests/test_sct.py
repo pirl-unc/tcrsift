@@ -135,9 +135,9 @@ class TestAggregateSct:
         result = aggregate_sct(sct_df_with_duplicates, verbose=False)
         ab_row = result[result["CDR3_pair"] == "A/B"].iloc[0]
         # high_quality: [True, True, False] -> any=True, all=False
-        assert ab_row["high_quality.any"] == True
+        assert ab_row["high_quality.any"]
         # chosen: [True, False, False] -> any=True, all=False
-        assert ab_row["chosen.any"] == True
+        assert ab_row["chosen.any"]
 
     def test_aggregate_sct_preserves_key_columns(self, sct_df_with_duplicates):
         """Test that key columns are preserved."""

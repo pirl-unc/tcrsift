@@ -2,22 +2,21 @@
 Tests for full-length TCR sequence assembly.
 """
 
-import pytest
+
 import pandas as pd
-import numpy as np
-from pathlib import Path
+import pytest
 
 from tcrsift.assemble import (
-    translate_dna,
-    find_longest_orf,
-    parse_fasta,
-    load_contigs,
-    assemble_full_sequences,
-    validate_sequences,
-    export_fasta,
     CODON_TABLE,
     T2A_LINKER_AA,
     T2A_LINKER_DNA,
+    assemble_full_sequences,
+    export_fasta,
+    find_longest_orf,
+    load_contigs,
+    parse_fasta,
+    translate_dna,
+    validate_sequences,
 )
 
 
@@ -638,7 +637,7 @@ class TestRealisticFullLengthAssembly:
                 assert T2A_LINKER_AA in sc, "T2A linker not found in single chain"
 
                 # Single chain should contain both CDR3s
-                cdr3_alpha = sample_full_length_clonotypes.loc[idx, "CDR3_alpha"]
+                sample_full_length_clonotypes.loc[idx, "CDR3_alpha"]
                 cdr3_beta = sample_full_length_clonotypes.loc[idx, "CDR3_beta"]
                 assert cdr3_beta in sc, "CDR3 beta not found in single chain"
 

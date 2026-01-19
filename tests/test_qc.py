@@ -13,7 +13,6 @@
 """Tests for QC validation module."""
 
 import pandas as pd
-import pytest
 
 from tcrsift.qc import (
     QCReport,

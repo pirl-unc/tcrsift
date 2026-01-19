@@ -27,7 +27,6 @@ from tcrsift.model import (
 def sample_clonotype_df():
     """Create sample clonotype DataFrame for testing."""
     np.random.seed(42)
-    n = 100
 
     # Create realistic frequency distribution
     max_freq = np.concatenate([

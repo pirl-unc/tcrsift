@@ -541,3 +541,221 @@ def log_validation_summary(
             logger.warning(w)
         if len(warnings) > 10:
             logger.warning(f"... and {len(warnings) - 10} more warnings")
+
+
+# =============================================================================
+# CLI Argument Validation
+# =============================================================================
+
+
+def validate_cli_conditional_requirement(
+    args,
+    required_arg: str,
+    condition_args: list[str],
+    condition_values: Optional[list] = None,
+    condition_description: str = "",
+) -> None:
+    """
+    Validate that a conditionally required CLI argument is provided.
+
+    Use this for arguments that are only required when certain other
+    arguments are set to specific values.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI arguments
+    required_arg : str
+        Name of the argument that is conditionally required
+    condition_args : list of str
+        Names of arguments that trigger the requirement
+    condition_values : list, optional
+        If provided, the condition is only met when any condition_arg
+        equals any of these values. If None, any truthy value triggers it.
+    condition_description : str
+        Human-readable description of when the argument is required
+
+    Raises
+    ------
+    TCRsiftValidationError
+        If the condition is met but the required argument is missing
+
+    Examples
+    --------
+    # --contigs-dir required when --leaders-from-contigs is set
+    validate_cli_conditional_requirement(
+        args,
+        required_arg="contigs_dir",
+        condition_args=["leaders_from_contigs"],
+        condition_description="when using --leaders-from-contigs",
+    )
+
+    # --contigs-dir required when --alpha-leader or --beta-leader is "from_contig"
+    validate_cli_conditional_requirement(
+        args,
+        required_arg="contigs_dir",
+        condition_args=["alpha_leader", "beta_leader"],
+        condition_values=["from_contig"],
+        condition_description="when using leader='from_contig'",
+    )
+    """
+    # Check if any condition is met
+    condition_met = False
+    triggering_args = []
+
+    for cond_arg in condition_args:
+        value = getattr(args, cond_arg, None)
+        if condition_values is not None:
+            # Check if value matches any of the specified values
+            if value in condition_values:
+                condition_met = True
+                triggering_args.append(f"--{cond_arg.replace('_', '-')}={value}")
+        else:
+            # Any truthy value triggers the condition
+            if value:
+                condition_met = True
+                triggering_args.append(f"--{cond_arg.replace('_', '-')}")
+
+    if not condition_met:
+        return  # Condition not met, no requirement to check
+
+    # Check if required argument is provided
+    required_value = getattr(args, required_arg, None)
+    if required_value is None or required_value == "":
+        arg_flag = f"--{required_arg.replace('_', '-')}"
+        raise TCRsiftValidationError(
+            f"{arg_flag} is required {condition_description}",
+            hint=f"You specified {', '.join(triggering_args)}, which requires {arg_flag}. "
+            f"Either provide {arg_flag} or use a different option.",
+        )
+
+
+def validate_cli_mutually_exclusive(
+    args,
+    arg_names: list[str],
+    group_description: str = "",
+) -> None:
+    """
+    Validate that at most one of a set of mutually exclusive arguments is set.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI arguments
+    arg_names : list of str
+        Names of mutually exclusive arguments
+    group_description : str
+        Human-readable description of the group
+
+    Raises
+    ------
+    TCRsiftValidationError
+        If more than one argument in the group is set
+    """
+    set_args = []
+    for arg_name in arg_names:
+        value = getattr(args, arg_name, None)
+        if value is not None and value is not False:
+            set_args.append(f"--{arg_name.replace('_', '-')}")
+
+    if len(set_args) > 1:
+        raise TCRsiftValidationError(
+            f"Cannot use {' and '.join(set_args)} together",
+            hint=f"These options are mutually exclusive{': ' + group_description if group_description else ''}. "
+            "Choose only one.",
+        )
+
+
+def validate_assemble_args(args) -> None:
+    """
+    Validate arguments for the assemble command.
+
+    Checks conditional requirements specific to sequence assembly.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI arguments for assemble command
+
+    Raises
+    ------
+    TCRsiftValidationError
+        If required arguments are missing
+    """
+    # Check if --leaders-from-contigs requires --contigs-dir
+    validate_cli_conditional_requirement(
+        args,
+        required_arg="contigs_dir",
+        condition_args=["leaders_from_contigs"],
+        condition_description="when using --leaders-from-contigs",
+    )
+
+    # Check if --alpha-leader=from_contig or --beta-leader=from_contig requires --contigs-dir
+    validate_cli_conditional_requirement(
+        args,
+        required_arg="contigs_dir",
+        condition_args=["alpha_leader", "beta_leader"],
+        condition_values=["from_contig"],
+        condition_description="when using --alpha-leader=from_contig or --beta-leader=from_contig",
+    )
+
+    # Validate contigs-dir exists if provided
+    if getattr(args, "contigs_dir", None):
+        validate_directory_exists(args.contigs_dir, "contigs directory")
+
+
+def validate_annotate_gex_args(args) -> None:
+    """
+    Validate arguments for the annotate-gex command.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI arguments for annotate-gex command
+
+    Raises
+    ------
+    TCRsiftValidationError
+        If required arguments are missing or invalid
+    """
+    # Validate GEX file exists
+    validate_file_exists(args.gex_file, "gene expression file (--gex-file)")
+
+
+def validate_run_args(args) -> None:
+    """
+    Validate arguments for the run command (unified pipeline).
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI arguments for run command
+
+    Raises
+    ------
+    TCRsiftValidationError
+        If required arguments are missing
+    """
+    # Check if --leaders-from-contigs requires --contigs-dir
+    validate_cli_conditional_requirement(
+        args,
+        required_arg="contigs_dir",
+        condition_args=["leaders_from_contigs"],
+        condition_description="when using --leaders-from-contigs",
+    )
+
+    # Check if --alpha-leader=from_contig or --beta-leader=from_contig requires --contigs-dir
+    validate_cli_conditional_requirement(
+        args,
+        required_arg="contigs_dir",
+        condition_args=["alpha_leader", "beta_leader"],
+        condition_values=["from_contig"],
+        condition_description="when using --alpha-leader=from_contig or --beta-leader=from_contig",
+    )
+
+    # Validate sample sheet exists
+    validate_file_exists(args.sample_sheet, "sample sheet (--sample-sheet)")
+
+    # Validate contigs-dir exists if provided
+    if getattr(args, "contigs_dir", None):
+        validate_directory_exists(args.contigs_dir, "contigs directory (--contigs-dir)")

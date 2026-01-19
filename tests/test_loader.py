@@ -13,7 +13,6 @@
 """Tests for loader module."""
 
 import pandas as pd
-import pytest
 
 from tcrsift.loader import (
     VDJ_SEGMENT_COLS,
@@ -75,9 +74,9 @@ class TestPivotVdjByBarcode:
         assert result.loc["AAAA", "TRB_1_cdr3"] == "CASSF1"
         assert result.loc["AAAA", "TRB_2_cdr3"] == "CASSF2"
         # Doublet flags
-        assert result.loc["AAAA", "multi_TRA"] == True
-        assert result.loc["AAAA", "multi_TRB"] == True
-        assert result.loc["AAAA", "multi_chain"] == True
+        assert result.loc["AAAA", "multi_TRA"]
+        assert result.loc["AAAA", "multi_TRB"]
+        assert result.loc["AAAA", "multi_chain"]
 
     def test_umi_prioritization(self):
         """Test that chains are prioritized by UMI count."""
@@ -120,16 +119,16 @@ class TestPivotVdjByBarcode:
         # AAAA has both chains
         assert result.loc["AAAA", "TRA_count"] == 1
         assert result.loc["AAAA", "TRB_count"] == 1
-        assert result.loc["AAAA", "has_TRA"] == True
-        assert result.loc["AAAA", "has_TRB"] == True
-        assert result.loc["AAAA", "has_both_chains"] == True
+        assert result.loc["AAAA", "has_TRA"]
+        assert result.loc["AAAA", "has_TRB"]
+        assert result.loc["AAAA", "has_both_chains"]
 
         # BBBB only has TRB
         assert result.loc["BBBB", "TRA_count"] == 0
         assert result.loc["BBBB", "TRB_count"] == 1
-        assert result.loc["BBBB", "has_TRA"] == False
-        assert result.loc["BBBB", "has_TRB"] == True
-        assert result.loc["BBBB", "has_both_chains"] == False
+        assert not result.loc["BBBB", "has_TRA"]
+        assert result.loc["BBBB", "has_TRB"]
+        assert not result.loc["BBBB", "has_both_chains"]
 
     def test_cdr3ab_identifier(self):
         """Test creation of CDR3ab identifier."""
