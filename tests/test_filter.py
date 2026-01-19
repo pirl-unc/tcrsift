@@ -144,9 +144,12 @@ class TestFilterClonotypesLogistic:
 
         assert "tier" in result.columns
 
+    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.PerfectSeparationWarning")
+    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.ConvergenceWarning")
     def test_logistic_fallback_without_statsmodels(self, monkeypatch, sample_clonotypes_df):
         """Should fall back to threshold method without statsmodels."""
         # This test verifies graceful fallback
+        # Warnings are expected with small synthetic data
         result = filter_clonotypes_logistic(sample_clonotypes_df)
         assert "tier" in result.columns
 
@@ -171,8 +174,11 @@ class TestFilterClonotypes:
 
         assert "tier" in result.columns
 
+    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.PerfectSeparationWarning")
+    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.ConvergenceWarning")
     def test_filter_logistic_method(self, sample_clonotypes_df):
         """Test logistic method through main function."""
+        # Warnings are expected with small synthetic data
         result = filter_clonotypes(
             sample_clonotypes_df,
             method="logistic",
