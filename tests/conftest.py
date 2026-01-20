@@ -325,6 +325,58 @@ def sample_full_length_clonotypes():
 
 
 @pytest.fixture
+def clonotypes_for_logistic():
+    """Create clonotypes suitable for logistic regression model fitting.
+
+    Generates 200 clones with realistic variation to avoid perfect separation:
+    - Varied max_frequency spanning 0.001 to 0.5
+    - Mix of viral (20%) and non-viral (80%) clones
+    - Varied n_samples (1-5)
+    - Realistic cell counts
+
+    The data is designed so the logistic model can fit without warnings:
+    - Some high-frequency viral clones (model sees high freq != always good)
+    - Some low-frequency non-viral clones (noise in target)
+    """
+    np.random.seed(42)
+    n = 200
+
+    # Generate frequencies with realistic distribution (log-normal-ish)
+    # Mix of rare and expanded clones
+    frequencies = np.concatenate([
+        np.random.beta(1, 20, n // 2),        # Many rare clones (0-0.1)
+        np.random.beta(2, 5, n // 4),         # Some expanded (0.1-0.3)
+        np.random.beta(5, 3, n // 4),         # Some highly expanded (0.3-0.6)
+    ])
+    np.random.shuffle(frequencies)
+    frequencies = frequencies[:n]
+
+    # Viral status: 20% viral, but NOT perfectly correlated with frequency
+    # Some high-freq clones are viral, some low-freq are non-viral
+    is_viral = np.random.random(n) < 0.20
+
+    # Cell counts correlated with frequency but with noise
+    cell_counts = (frequencies * 500 + np.random.poisson(3, n)).astype(int)
+    cell_counts = np.maximum(cell_counts, 1)
+
+    # n_samples: higher frequency clones tend to appear in more samples
+    n_samples = np.ones(n, dtype=int)
+    n_samples[frequencies > 0.1] = np.random.choice([1, 2], size=(frequencies > 0.1).sum())
+    n_samples[frequencies > 0.3] = np.random.choice([2, 3, 4], size=(frequencies > 0.3).sum())
+
+    return pd.DataFrame({
+        "clone_id": [f"clone_{i}" for i in range(n)],
+        "CDR3_alpha": [f"CAV{i:03d}QGNLIF" for i in range(n)],
+        "CDR3_beta": [f"CASS{i:03d}YEQYF" for i in range(n)],
+        "cell_count": cell_counts,
+        "max_frequency": frequencies,
+        "n_samples": n_samples,
+        "is_viral": is_viral,
+        "Tcell_type_consensus": ["Confident CD8+"] * (n // 2) + ["Confident CD4+"] * (n // 2),
+    })
+
+
+@pytest.fixture
 def mock_cellranger_vdj_dir(temp_dir):
     """Create a mock CellRanger VDJ output directory.
 

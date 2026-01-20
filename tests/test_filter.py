@@ -122,42 +122,40 @@ class TestAssignTiersThreshold:
 class TestFilterClonotypesLogistic:
     """Tests for logistic regression filtering."""
 
-    @pytest.fixture
-    def clonotypes_for_logistic(self):
-        """Create clonotypes suitable for logistic regression."""
-        np.random.seed(42)
-        n = 100
-
-        return pd.DataFrame({
-            "clone_id": [f"clone_{i}" for i in range(n)],
-            "CDR3_alpha": [f"CAV{i}QGNLIF" for i in range(n)],
-            "CDR3_beta": [f"CASS{i}YEQYF" for i in range(n)],
-            "cell_count": np.random.poisson(5, n) + 1,
-            "max_frequency": np.random.beta(2, 10, n),  # Varied frequencies
-            "n_samples": np.random.choice([1, 2, 3], n),
-            "is_viral": [False] * n,
-        })
-
     def test_logistic_returns_tiers(self, clonotypes_for_logistic):
         """Logistic method should return tier assignments."""
         result = filter_clonotypes_logistic(clonotypes_for_logistic)
 
         assert "tier" in result.columns
+        # Verify model actually fit and assigned varied tiers
+        tier_counts = result["tier"].value_counts()
+        assert len(tier_counts) >= 2  # Should have multiple tiers
 
-    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.PerfectSeparationWarning")
-    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.ConvergenceWarning")
-    def test_logistic_fallback_without_statsmodels(self, monkeypatch, sample_clonotypes_df):
-        """Should fall back to threshold method without statsmodels."""
-        # This test verifies graceful fallback
-        # Warnings are expected with small synthetic data
-        result = filter_clonotypes_logistic(sample_clonotypes_df)
-        assert "tier" in result.columns
+    def test_logistic_model_attributes(self, clonotypes_for_logistic):
+        """Logistic method should store model info in attrs."""
+        result = filter_clonotypes_logistic(clonotypes_for_logistic)
+
+        # Model should fit successfully and store weight
+        assert "logistic_model_weight" in result.attrs
+        assert result.attrs["logistic_model_weight"] > 0  # Positive weight expected
 
     def test_logistic_custom_fdr_tiers(self, clonotypes_for_logistic):
         """Custom FDR tiers should work."""
         custom_fdr = [0.05, 0.1, 0.2]
         result = filter_clonotypes_logistic(clonotypes_for_logistic, fdr_tiers=custom_fdr)
 
+        assert "tier" in result.columns
+        # Should have at most len(custom_fdr) tiers
+        unique_tiers = result["tier"].dropna().unique()
+        assert len(unique_tiers) <= len(custom_fdr)
+
+    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.PerfectSeparationWarning")
+    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.ConvergenceWarning")
+    def test_logistic_fallback_on_small_data(self, sample_clonotypes_df):
+        """Logistic method should gracefully handle small/degenerate data."""
+        # Small dataset will cause model fitting issues - test that it falls back gracefully
+        # Warnings are suppressed because they're expected behavior for degenerate input
+        result = filter_clonotypes_logistic(sample_clonotypes_df)
         assert "tier" in result.columns
 
 
@@ -174,17 +172,17 @@ class TestFilterClonotypes:
 
         assert "tier" in result.columns
 
-    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.PerfectSeparationWarning")
-    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.ConvergenceWarning")
-    def test_filter_logistic_method(self, sample_clonotypes_df):
+    def test_filter_logistic_method(self, clonotypes_for_logistic):
         """Test logistic method through main function."""
-        # Warnings are expected with small synthetic data
         result = filter_clonotypes(
-            sample_clonotypes_df,
+            clonotypes_for_logistic,
             method="logistic",
+            min_cells=1,
         )
 
         assert "tier" in result.columns
+        # Should have meaningful tier distribution
+        assert result["tier"].notna().sum() > 0
 
     def test_filter_combined_criteria(self, sample_clonotypes_df):
         """Test combining multiple filter criteria."""

@@ -14,6 +14,7 @@
 
 
 import anndata as ad
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -278,15 +279,13 @@ class TestIdentifyTilSpecificClones:
         assert "CDR3_alpha" in result.columns
         assert "CDR3_beta" in result.columns
 
-    @pytest.mark.filterwarnings("ignore::anndata._core.aligned_df.ImplicitModificationWarning")
     def test_empty_til_data(self):
         """Test with empty TIL data."""
-        # Warning is expected when creating AnnData with empty DataFrame
-        empty_til = ad.AnnData(obs=pd.DataFrame({
-            "CDR3_alpha": pd.Series([], dtype=str),
-            "CDR3_beta": pd.Series([], dtype=str),
-            "sample": pd.Series([], dtype=str),
-        }))
+        # Create empty AnnData with proper shape to avoid warnings
+        empty_til = ad.AnnData(np.empty((0, 0)))
+        empty_til.obs["CDR3_alpha"] = pd.Series([], dtype=str)
+        empty_til.obs["CDR3_beta"] = pd.Series([], dtype=str)
+        empty_til.obs["sample"] = pd.Series([], dtype=str)
 
         result = identify_til_specific_clones(empty_til)
 
