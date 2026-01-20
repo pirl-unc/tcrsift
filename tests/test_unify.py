@@ -20,26 +20,30 @@ class TestMergeExperiments:
     @pytest.fixture
     def til_clonotypes(self):
         """TIL clonotype DataFrame."""
-        return pd.DataFrame({
-            "CDR3_pair": ["A/B", "C/D", "E/F"],
-            "CDR3_alpha": ["A", "C", "E"],
-            "CDR3_beta": ["B", "D", "F"],
-            "total_cells.count": [10, 5, 3],
-            "CD4_only.count": [2, 4, 0],
-            "CD8_only.count": [8, 1, 3],
-        })
+        return pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B", "C/D", "E/F"],
+                "CDR3_alpha": ["A", "C", "E"],
+                "CDR3_beta": ["B", "D", "F"],
+                "total_cells.count": [10, 5, 3],
+                "CD4_only.count": [2, 4, 0],
+                "CD8_only.count": [8, 1, 3],
+            }
+        )
 
     @pytest.fixture
     def culture_clonotypes(self):
         """Culture clonotype DataFrame."""
-        return pd.DataFrame({
-            "CDR3_pair": ["A/B", "C/D", "G/H"],
-            "CDR3_alpha": ["A", "C", "G"],
-            "CDR3_beta": ["B", "D", "H"],
-            "total_cells.count": [20, 15, 8],
-            "CD4_only.count": [5, 10, 2],
-            "CD8_only.count": [15, 5, 6],
-        })
+        return pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B", "C/D", "G/H"],
+                "CDR3_alpha": ["A", "C", "G"],
+                "CDR3_beta": ["B", "D", "H"],
+                "total_cells.count": [20, 15, 8],
+                "CD4_only.count": [5, 10, 2],
+                "CD8_only.count": [15, 5, 6],
+            }
+        )
 
     def test_merge_basic_outer_join(self, til_clonotypes, culture_clonotypes):
         """Test that merge creates outer join of all clonotypes."""
@@ -104,12 +108,14 @@ class TestMergeExperiments:
     def test_merge_empty_experiments_raises(self):
         """Test that empty experiment list raises error."""
         from tcrsift.validation import TCRsiftValidationError
+
         with pytest.raises(TCRsiftValidationError, match="No experiments provided"):
             merge_experiments([])
 
     def test_merge_missing_cdr3_pair_raises(self):
         """Test that missing CDR3_pair column raises error."""
         from tcrsift.validation import TCRsiftValidationError
+
         df = pd.DataFrame({"other": [1, 2]})
         with pytest.raises(TCRsiftValidationError, match="missing CDR3_pair column"):
             merge_experiments([(df, "Test")])
@@ -121,11 +127,13 @@ class TestAddPhenotypeConfidence:
     @pytest.fixture
     def unified_df(self):
         """Create unified DataFrame with GEX columns."""
-        return pd.DataFrame({
-            "CDR3_pair": ["A/B", "C/D", "E/F", "G/H"],
-            "combined.gex.CD4.sum": [0.0, 100.0, 10.0, 50.0],
-            "combined.gex.CD8.sum": [50.0, 0.0, 10.0, 0.0],
-        })
+        return pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B", "C/D", "E/F", "G/H"],
+                "combined.gex.CD4.sum": [0.0, 100.0, 10.0, 50.0],
+                "combined.gex.CD8.sum": [50.0, 0.0, 10.0, 0.0],
+            }
+        )
 
     def test_confident_cd8_when_only_cd8(self, unified_df):
         """Test confident CD8 classification when only CD8 expression."""
@@ -151,11 +159,13 @@ class TestAddPhenotypeConfidence:
 
     def test_ratio_threshold_affects_confidence(self):
         """Test that ratio threshold parameter affects classification."""
-        df = pd.DataFrame({
-            "CDR3_pair": ["A/B"],
-            "combined.gex.CD4.sum": [10.0],
-            "combined.gex.CD8.sum": [50.0],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B"],
+                "combined.gex.CD4.sum": [10.0],
+                "combined.gex.CD8.sum": [50.0],
+            }
+        )
         # With ratio_threshold=10, 50 > 10*(1+10) = 110 is False
         result1 = add_phenotype_confidence(df.copy(), ratio_threshold=10.0, verbose=False)
         assert not result1["Confident_CD8"].iloc[0]
@@ -172,10 +182,12 @@ class TestAddPhenotypeConfidence:
 
     def test_handles_missing_gex_columns(self):
         """Test handling when GEX columns are missing."""
-        df = pd.DataFrame({
-            "CDR3_pair": ["A/B"],
-            "other_col": [1],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B"],
+                "other_col": [1],
+            }
+        )
         result = add_phenotype_confidence(df, verbose=False)
         # Should run without error, using default 0 values
         assert "Confident_CD4" in result.columns
@@ -188,19 +200,19 @@ class TestComputeConditionStatistics:
     @pytest.fixture
     def df_with_conditions(self):
         """Create DataFrame with condition fraction columns."""
-        return pd.DataFrame({
-            "CDR3_pair": ["A/B", "C/D"],
-            "TIL.condition_pool1.frac": [0.1, 0.2],
-            "Culture.condition_pool1.frac": [0.15, 0.25],
-            "TIL.condition_pool2.frac": [0.05, 0.1],
-            "Culture.condition_pool2.frac": [0.05, 0.15],
-        })
+        return pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B", "C/D"],
+                "TIL.condition_pool1.frac": [0.1, 0.2],
+                "Culture.condition_pool1.frac": [0.15, 0.25],
+                "TIL.condition_pool2.frac": [0.05, 0.1],
+                "Culture.condition_pool2.frac": [0.05, 0.15],
+            }
+        )
 
     def test_computes_sum_across_sources(self, df_with_conditions):
         """Test sum computation across sources."""
-        result = compute_condition_statistics(
-            df_with_conditions, ["pool1", "pool2"], verbose=False
-        )
+        result = compute_condition_statistics(df_with_conditions, ["pool1", "pool2"], verbose=False)
         assert "combined.pool1.frac.sum" in result.columns
 
         # A/B: 0.1 + 0.15 = 0.25
@@ -209,9 +221,7 @@ class TestComputeConditionStatistics:
 
     def test_computes_mean_across_sources(self, df_with_conditions):
         """Test mean computation across sources."""
-        result = compute_condition_statistics(
-            df_with_conditions, ["pool1", "pool2"], verbose=False
-        )
+        result = compute_condition_statistics(df_with_conditions, ["pool1", "pool2"], verbose=False)
         assert "combined.pool1.frac.mean" in result.columns
 
         # A/B: (0.1 + 0.15) / 2 = 0.125
@@ -220,18 +230,18 @@ class TestComputeConditionStatistics:
 
     def test_computes_std_and_cv(self, df_with_conditions):
         """Test standard deviation and CV computation."""
-        result = compute_condition_statistics(
-            df_with_conditions, ["pool1", "pool2"], verbose=False
-        )
+        result = compute_condition_statistics(df_with_conditions, ["pool1", "pool2"], verbose=False)
         assert "combined.pool1.frac.std" in result.columns
         assert "combined.pool1.frac.cv" in result.columns
 
     def test_handles_missing_condition_columns(self):
         """Test handling when condition columns don't exist."""
-        df = pd.DataFrame({
-            "CDR3_pair": ["A/B"],
-            "other_col": [1],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B"],
+                "other_col": [1],
+            }
+        )
         result = compute_condition_statistics(df, ["nonexistent"], verbose=False)
         # Should run without error
         assert "combined.nonexistent.frac.sum" not in result.columns
@@ -243,12 +253,14 @@ class TestFindTopCondition:
     @pytest.fixture
     def df_with_combined_stats(self):
         """Create DataFrame with combined condition statistics."""
-        return pd.DataFrame({
-            "CDR3_pair": ["A/B", "C/D", "E/F"],
-            "combined.pool1.frac.mean": [0.5, 0.1, 0.3],
-            "combined.pool2.frac.mean": [0.2, 0.4, 0.3],
-            "combined.pool3.frac.mean": [0.1, 0.1, 0.3],
-        })
+        return pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B", "C/D", "E/F"],
+                "combined.pool1.frac.mean": [0.5, 0.1, 0.3],
+                "combined.pool2.frac.mean": [0.2, 0.4, 0.3],
+                "combined.pool3.frac.mean": [0.1, 0.1, 0.3],
+            }
+        )
 
     def test_finds_top_condition(self, df_with_combined_stats):
         """Test finding the top condition for each clonotype."""
@@ -276,8 +288,10 @@ class TestFindTopCondition:
     def test_require_clear_winner_with_tie(self, df_with_combined_stats):
         """Test that ties don't get assigned when require_clear_winner=True."""
         result = find_top_condition(
-            df_with_combined_stats, ["pool1", "pool2", "pool3"],
-            require_clear_winner=True, verbose=False
+            df_with_combined_stats,
+            ["pool1", "pool2", "pool3"],
+            require_clear_winner=True,
+            verbose=False,
         )
         # E/F has equal values (0.3, 0.3, 0.3) - should be None
         ef_row = result[result["CDR3_pair"] == "E/F"].iloc[0]
@@ -286,8 +300,10 @@ class TestFindTopCondition:
     def test_no_clear_winner_allows_assignment(self, df_with_combined_stats):
         """Test that ties can be assigned when require_clear_winner=False."""
         result = find_top_condition(
-            df_with_combined_stats, ["pool1", "pool2", "pool3"],
-            require_clear_winner=False, verbose=False
+            df_with_combined_stats,
+            ["pool1", "pool2", "pool3"],
+            require_clear_winner=False,
+            verbose=False,
         )
         ef_row = result[result["CDR3_pair"] == "E/F"].iloc[0]
         # Should get some assignment (first one in sorted order)
@@ -295,10 +311,12 @@ class TestFindTopCondition:
 
     def test_handles_missing_columns(self):
         """Test handling when condition columns don't exist."""
-        df = pd.DataFrame({
-            "CDR3_pair": ["A/B"],
-            "other_col": [1],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B"],
+                "other_col": [1],
+            }
+        )
         result = find_top_condition(df, ["pool1", "pool2"], verbose=False)
         # Should run without error
         assert "top_condition" not in result.columns or result["top_condition"].isna().all()
@@ -310,17 +328,19 @@ class TestGetUnifySummary:
     @pytest.fixture
     def unified_result(self):
         """Create a unified result DataFrame."""
-        return pd.DataFrame({
-            "CDR3_pair": ["A/B", "C/D", "E/F"],
-            "is_paired": [True, True, False],
-            "occurs_in_TIL": [True, False, True],
-            "occurs_in_Culture": [True, True, False],
-            "combined.total_cells.count": [30, 20, 5],
-            "Confident_CD4": [False, True, False],
-            "Confident_CD8": [True, False, False],
-            "Likely_CD4": [False, True, False],
-            "Likely_CD8": [True, False, True],
-        })
+        return pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B", "C/D", "E/F"],
+                "is_paired": [True, True, False],
+                "occurs_in_TIL": [True, False, True],
+                "occurs_in_Culture": [True, True, False],
+                "combined.total_cells.count": [30, 20, 5],
+                "Confident_CD4": [False, True, False],
+                "Confident_CD8": [True, False, False],
+                "Likely_CD4": [False, True, False],
+                "Likely_CD8": [True, False, True],
+            }
+        )
 
     def test_summary_total_clonotypes(self, unified_result):
         """Test total clonotypes count."""
@@ -353,9 +373,11 @@ class TestGetUnifySummary:
 
     def test_summary_handles_missing_columns(self):
         """Test handling of missing columns."""
-        df = pd.DataFrame({
-            "CDR3_pair": ["A/B", "C/D"],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B", "C/D"],
+            }
+        )
         summary = get_unify_summary(df)
         assert summary["total_clonotypes"] == 2
         assert summary["paired_clonotypes"] == 0  # No is_paired column

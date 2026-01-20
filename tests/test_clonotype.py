@@ -324,11 +324,13 @@ class TestGetClonotypeSummaryExtended:
 
     def test_summary_without_n_samples(self):
         """Test summary when n_samples column is missing."""
-        df = pd.DataFrame({
-            "clone_id": ["A", "B"],
-            "cell_count": [5, 3],
-            # No n_samples column
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["A", "B"],
+                "cell_count": [5, 3],
+                # No n_samples column
+            }
+        )
 
         summary = get_clonotype_summary(df)
 
@@ -410,9 +412,12 @@ class TestRealisticClonotyping:
 
         # Valid T cell types
         valid_types = [
-            "Confident CD4+", "Confident CD8+",
-            "Likely CD4+", "Likely CD8+",
-            "Unknown", "Mixed"
+            "Confident CD4+",
+            "Confident CD8+",
+            "Likely CD4+",
+            "Likely CD8+",
+            "Unknown",
+            "Mixed",
         ]
 
         for tcell_type in df["Tcell_type_consensus"]:
@@ -424,8 +429,9 @@ class TestRealisticClonotyping:
 
         for idx, row in df.iterrows():
             expected_id = f"{row['CDR3_alpha']}_{row['CDR3_beta']}"
-            assert row["clone_id"] == expected_id, \
+            assert row["clone_id"] == expected_id, (
                 f"Clone ID {row['clone_id']} doesn't match expected {expected_id}"
+            )
 
 
 class TestClonotypeSummaryRealistic:

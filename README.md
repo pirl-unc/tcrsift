@@ -462,7 +462,7 @@ tcrsift unify \
 
 ### Generate Mnemonic Names
 
-Creates pronounceable names from CDR3 sequences for easier reference.
+Creates pronounceable names from CDR3 sequences for easier reference. Similar sequences produce similar names, making it easy to spot related clonotypes.
 
 ```bash
 tcrsift mnemonic -i clonotypes.csv -o clonotypes_named.csv
@@ -472,11 +472,12 @@ tcrsift mnemonic -i clonotypes.csv -o clonotypes_named.csv
 
 | CDR3_beta | mnemonic_name |
 |-----------|---------------|
-| CASSLGQAYEQYF | Dr. Loguq Aye, MD |
-| CASSLAGAYEQYF | Dr. Lag Aye, MD |
-| CASSFSGANVLTF | Dr. Fosuga Novultof |
+| CASSLGQAYEQYF | Laigqaye Qoy |
+| CASSLAGAYEQYF | Lagaye Qoy |
+| CASSIRASYEQYF | Irasye Qoy |
+| CASSIRANYEQYF | Iranye Qoy |
 
-Common CDR3 prefixes map to titles (CASS→"Dr.", CAS→"Prof.") and suffixes map to honorifics (QYF→"MD", QFF→"PhD").
+Common conserved prefixes (CASS, CAV) and suffixes (F) are stripped to focus on the variable region. Inserted vowels use diphthongs (ai, oo, ei) to distinguish from original amino acid vowels (A, E, I, Y).
 
 ## Workflows
 

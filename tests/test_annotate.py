@@ -2,7 +2,6 @@
 Tests for TCR annotation using public databases.
 """
 
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -66,13 +65,15 @@ class TestLoadVdjdb:
     def mock_vdjdb_file(self, temp_dir):
         """Create a mock VDJdb file."""
         vdjdb_path = temp_dir / "vdjdb.tsv"
-        df = pd.DataFrame({
-            "cdr3": ["CASSLGQAYEQYF", "CASSXYZAYEQYF"],
-            "cdr3.alpha": ["CAVSDGGSQGNLIF", "CAVXYZQGNLIF"],
-            "antigen.epitope": ["NLV", "GLC"],
-            "antigen.species": ["CMV", "EBV"],
-            "mhc.a": ["HLA-A*02:01", "HLA-B*08:01"],
-        })
+        df = pd.DataFrame(
+            {
+                "cdr3": ["CASSLGQAYEQYF", "CASSXYZAYEQYF"],
+                "cdr3.alpha": ["CAVSDGGSQGNLIF", "CAVXYZQGNLIF"],
+                "antigen.epitope": ["NLV", "GLC"],
+                "antigen.species": ["CMV", "EBV"],
+                "mhc.a": ["HLA-A*02:01", "HLA-B*08:01"],
+            }
+        )
         df.to_csv(vdjdb_path, sep="\t", index=False)
         return vdjdb_path
 
@@ -111,12 +112,14 @@ class TestLoadIedb:
     def mock_iedb_file(self, temp_dir):
         """Create a mock IEDB file."""
         iedb_path = temp_dir / "iedb.tsv"
-        df = pd.DataFrame({
-            "Chain 2 CDR3 Curated": ["CASSLGQAYEQYF"],
-            "Chain 1 CDR3 Curated": ["CAVSDGGSQGNLIF"],
-            "Epitope - Name": ["pp65"],
-            "Epitope - Source Organism Name": ["CMV"],
-        })
+        df = pd.DataFrame(
+            {
+                "Chain 2 CDR3 Curated": ["CASSLGQAYEQYF"],
+                "Chain 1 CDR3 Curated": ["CAVSDGGSQGNLIF"],
+                "Epitope - Name": ["pp65"],
+                "Epitope - Source Organism Name": ["CMV"],
+            }
+        )
         df.to_csv(iedb_path, sep="\t", index=False)
         return iedb_path
 
@@ -136,12 +139,14 @@ class TestLoadCedar:
     def mock_cedar_file(self, temp_dir):
         """Create a mock CEDAR file."""
         cedar_path = temp_dir / "cedar.tsv"
-        df = pd.DataFrame({
-            "cdr3_b_aa": ["CASSLGQAYEQYF"],
-            "cdr3_a_aa": ["CAVSDGGSQGNLIF"],
-            "epitope_sequence": ["NLVPMVATV"],
-            "organism": ["CMV"],
-        })
+        df = pd.DataFrame(
+            {
+                "cdr3_b_aa": ["CASSLGQAYEQYF"],
+                "cdr3_a_aa": ["CAVSDGGSQGNLIF"],
+                "epitope_sequence": ["NLVPMVATV"],
+                "organism": ["CMV"],
+            }
+        )
         df.to_csv(cedar_path, sep="\t", index=False)
         return cedar_path
 
@@ -163,17 +168,21 @@ class TestLoadDatabases:
         vdjdb_path = temp_dir / "vdjdb.tsv"
         iedb_path = temp_dir / "iedb.tsv"
 
-        pd.DataFrame({
-            "cdr3": ["CASSTEST1"],
-            "cdr3.alpha": ["CAVTEST1"],
-            "antigen.species": ["CMV"],
-        }).to_csv(vdjdb_path, sep="\t", index=False)
+        pd.DataFrame(
+            {
+                "cdr3": ["CASSTEST1"],
+                "cdr3.alpha": ["CAVTEST1"],
+                "antigen.species": ["CMV"],
+            }
+        ).to_csv(vdjdb_path, sep="\t", index=False)
 
-        pd.DataFrame({
-            "Chain 2 CDR3 Curated": ["CASSTEST2"],
-            "Chain 1 CDR3 Curated": ["CAVTEST2"],
-            "Epitope - Source Organism Name": ["EBV"],
-        }).to_csv(iedb_path, sep="\t", index=False)
+        pd.DataFrame(
+            {
+                "Chain 2 CDR3 Curated": ["CASSTEST2"],
+                "Chain 1 CDR3 Curated": ["CAVTEST2"],
+                "Epitope - Source Organism Name": ["EBV"],
+            }
+        ).to_csv(iedb_path, sep="\t", index=False)
 
         result = load_databases(vdjdb_path=vdjdb_path, iedb_path=iedb_path)
 
@@ -218,14 +227,16 @@ class TestMatchClonotypes:
     def test_no_match_annotation(self, sample_clonotypes_df):
         """Clonotypes without matches should have empty annotations."""
         # Database with non-matching sequences
-        non_matching_db = pd.DataFrame({
-            "cdr3_beta": ["CASSNOMATCH"],
-            "cdr3_alpha": ["CAVNOMATCH"],
-            "epitope": ["NOTFOUND"],
-            "species": ["Unknown"],
-            "database": ["TestDB"],
-            "is_viral": [False],
-        })
+        non_matching_db = pd.DataFrame(
+            {
+                "cdr3_beta": ["CASSNOMATCH"],
+                "cdr3_alpha": ["CAVNOMATCH"],
+                "epitope": ["NOTFOUND"],
+                "species": ["Unknown"],
+                "database": ["TestDB"],
+                "is_viral": [False],
+            }
+        )
 
         result = match_clonotypes(sample_clonotypes_df, non_matching_db, match_by="CDR3ab")
 
@@ -254,12 +265,14 @@ class TestAnnotateClonotypes:
     def mock_db_paths(self, temp_dir):
         """Create mock database files."""
         vdjdb_path = temp_dir / "vdjdb.tsv"
-        pd.DataFrame({
-            "cdr3": ["CASSLGQAYEQYF"],
-            "cdr3.alpha": ["CAVSDGGSQGNLIF"],
-            "antigen.epitope": ["NLV"],
-            "antigen.species": ["CMV"],
-        }).to_csv(vdjdb_path, sep="\t", index=False)
+        pd.DataFrame(
+            {
+                "cdr3": ["CASSLGQAYEQYF"],
+                "cdr3.alpha": ["CAVSDGGSQGNLIF"],
+                "antigen.epitope": ["NLV"],
+                "antigen.species": ["CMV"],
+            }
+        ).to_csv(vdjdb_path, sep="\t", index=False)
 
         return {"vdjdb_path": vdjdb_path}
 

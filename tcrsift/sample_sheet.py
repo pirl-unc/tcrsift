@@ -14,6 +14,7 @@ Sample sheet parsing for TCRsift.
 
 Supports both CSV and YAML formats for specifying samples and their metadata.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -23,16 +24,16 @@ import pandas as pd
 
 # Antigen types and their expected T cell responses
 ANTIGEN_TYPE_TCELL_EXPECTATIONS = {
-    "short_peptide": "CD8",      # 8-11aa, MHC-I direct binding
-    "long_peptide": "mixed",     # 15-25+aa, requires processing, favors CD4
-    "peptide_pool": "mixed",     # pool of peptides, mixed responses
-    "minigene": "mixed",         # requires processing, favors CD4
-    "minigene_library": "mixed", # library of minigenes, mixed responses
-    "whole_protein": "mixed",    # requires processing, favors CD4
-    "mrna": "mixed",             # mRNA encoding antigen(s), requires processing
-    "tetramer_mhc1": "CD8",      # MHC-I tetramer selection (single antigen)
-    "tetramer_mhc2": "CD4",      # MHC-II tetramer selection (single antigen)
-    "sct": "CD8",                # single-chain trimer (pMHC-I alpha-B2M-peptide fusion)
+    "short_peptide": "CD8",  # 8-11aa, MHC-I direct binding
+    "long_peptide": "mixed",  # 15-25+aa, requires processing, favors CD4
+    "peptide_pool": "mixed",  # pool of peptides, mixed responses
+    "minigene": "mixed",  # requires processing, favors CD4
+    "minigene_library": "mixed",  # library of minigenes, mixed responses
+    "whole_protein": "mixed",  # requires processing, favors CD4
+    "mrna": "mixed",  # mRNA encoding antigen(s), requires processing
+    "tetramer_mhc1": "CD8",  # MHC-I tetramer selection (single antigen)
+    "tetramer_mhc2": "CD4",  # MHC-II tetramer selection (single antigen)
+    "sct": "CD8",  # single-chain trimer (pMHC-I alpha-B2M-peptide fusion)
 }
 
 VALID_ANTIGEN_TYPES = set(ANTIGEN_TYPE_TCELL_EXPECTATIONS.keys())
@@ -45,6 +46,7 @@ VALID_PRE_SORTED = {"CD4", "CD8", None}
 @dataclass
 class Sample:
     """Represents a single sample with its metadata."""
+
     sample: str
     gex_dir: str | None = None
     vdj_dir: str | None = None
@@ -153,9 +155,8 @@ class Sample:
     def is_tetramer_or_sct(self) -> bool:
         """Check if this sample is from tetramer or SCT selection."""
         return self.source in {"tetramer", "sct"} or (
-            self.antigen_type is not None and (
-                self.antigen_type.startswith("tetramer_") or self.antigen_type == "sct"
-            )
+            self.antigen_type is not None
+            and (self.antigen_type.startswith("tetramer_") or self.antigen_type == "sct")
         )
 
     def is_til(self) -> bool:
@@ -194,6 +195,7 @@ class Sample:
 @dataclass
 class SampleSheet:
     """Collection of samples with their metadata."""
+
     samples: list[Sample] = field(default_factory=list)
 
     def __len__(self):
@@ -308,7 +310,9 @@ def load_sample_sheet(path: str | Path) -> SampleSheet:
     elif suffix in {".csv", ".tsv"}:
         return _load_csv_sample_sheet(path, sep="," if suffix == ".csv" else "\t")
     else:
-        raise ValueError(f"Unsupported sample sheet format: {suffix}. Use .csv, .tsv, .yaml, or .yml")
+        raise ValueError(
+            f"Unsupported sample sheet format: {suffix}. Use .csv, .tsv, .yaml, or .yml"
+        )
 
 
 def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
@@ -316,7 +320,9 @@ def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
     try:
         import yaml
     except ImportError:
-        raise ImportError("PyYAML is required to load YAML sample sheets. Install with: pip install pyyaml")
+        raise ImportError(
+            "PyYAML is required to load YAML sample sheets. Install with: pip install pyyaml"
+        )
 
     with open(path) as f:
         data = yaml.safe_load(f)

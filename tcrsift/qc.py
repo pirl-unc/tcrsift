@@ -20,6 +20,7 @@ Provides validation checks for TCR sequences including:
 - Chain length bounds
 - Read/UMI count thresholds
 """
+
 from __future__ import annotations
 
 import logging
@@ -45,6 +46,7 @@ DEFAULT_MIN_KMER_REPEAT = 2
 @dataclass
 class QCResult:
     """Result of a QC check."""
+
     passed: bool
     check_name: str
     message: str
@@ -54,6 +56,7 @@ class QCResult:
 @dataclass
 class QCReport:
     """Complete QC report for a dataset."""
+
     results: list[QCResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -220,79 +223,94 @@ def validate_sequence(
 
     # Length check (for amino acids, or DNA/3 for nucleotides)
     effective_length = len(sequence) // 3 if is_dna else len(sequence)
-    length_ok = check_chain_length(sequence if not is_dna else "X" * effective_length,
-                                    min_chain_length, max_chain_length)
-    report.add_result(QCResult(
-        length_ok,
-        "chain_length",
-        f"Chain length {effective_length}aa {'OK' if length_ok else f'out of bounds [{min_chain_length}, {max_chain_length}]'}",
-        {"length": effective_length}
-    ))
+    length_ok = check_chain_length(
+        sequence if not is_dna else "X" * effective_length, min_chain_length, max_chain_length
+    )
+    report.add_result(
+        QCResult(
+            length_ok,
+            "chain_length",
+            f"Chain length {effective_length}aa {'OK' if length_ok else f'out of bounds [{min_chain_length}, {max_chain_length}]'}",
+            {"length": effective_length},
+        )
+    )
 
     # DNA-specific checks
     if is_dna:
         # Reading frame
         frame_ok = check_reading_frame(sequence)
-        report.add_result(QCResult(
-            frame_ok,
-            "reading_frame",
-            f"Reading frame {'OK' if frame_ok else 'NOT a multiple of 3'}",
-            {"length": len(sequence), "remainder": len(sequence) % 3}
-        ))
+        report.add_result(
+            QCResult(
+                frame_ok,
+                "reading_frame",
+                f"Reading frame {'OK' if frame_ok else 'NOT a multiple of 3'}",
+                {"length": len(sequence), "remainder": len(sequence) % 3},
+            )
+        )
 
         if check_codons:
             # Start codon
             start_ok = check_start_codon(sequence)
-            report.add_result(QCResult(
-                start_ok,
-                "start_codon",
-                f"Start codon {'ATG found' if start_ok else 'NOT found'}",
-                {"first_codon": sequence[:3] if len(sequence) >= 3 else ""}
-            ))
+            report.add_result(
+                QCResult(
+                    start_ok,
+                    "start_codon",
+                    f"Start codon {'ATG found' if start_ok else 'NOT found'}",
+                    {"first_codon": sequence[:3] if len(sequence) >= 3 else ""},
+                )
+            )
 
             # Stop codon
             stop_ok = check_stop_codon(sequence)
-            report.add_result(QCResult(
-                stop_ok,
-                "stop_codon",
-                f"Stop codon {'found' if stop_ok else 'NOT found'}",
-                {"last_codon": sequence[-3:] if len(sequence) >= 3 else ""}
-            ))
+            report.add_result(
+                QCResult(
+                    stop_ok,
+                    "stop_codon",
+                    f"Stop codon {'found' if stop_ok else 'NOT found'}",
+                    {"last_codon": sequence[-3:] if len(sequence) >= 3 else ""},
+                )
+            )
 
     # CDR3 checks
     if cdr3:
         # CDR3 length
         cdr3_length_ok = check_cdr3_length(cdr3, min_cdr3_length, max_cdr3_length)
-        report.add_result(QCResult(
-            cdr3_length_ok,
-            "cdr3_length",
-            f"CDR3 length {len(cdr3)}aa {'OK' if cdr3_length_ok else f'out of bounds [{min_cdr3_length}, {max_cdr3_length}]'}",
-            {"cdr3_length": len(cdr3)}
-        ))
+        report.add_result(
+            QCResult(
+                cdr3_length_ok,
+                "cdr3_length",
+                f"CDR3 length {len(cdr3)}aa {'OK' if cdr3_length_ok else f'out of bounds [{min_cdr3_length}, {max_cdr3_length}]'}",
+                {"cdr3_length": len(cdr3)},
+            )
+        )
 
         # CDR3 presence in sequence
         check_seq = sequence if not is_dna else None  # Can't check AA in DNA directly
         if check_seq:
             cdr3_present = cdr3 in check_seq
             cdr3_count = check_seq.count(cdr3)
-            report.add_result(QCResult(
-                cdr3_present and cdr3_count == 1,
-                "cdr3_present",
-                f"CDR3 {'present once' if cdr3_present and cdr3_count == 1 else 'missing or duplicated'} in sequence",
-                {"present": cdr3_present, "count": cdr3_count}
-            ))
+            report.add_result(
+                QCResult(
+                    cdr3_present and cdr3_count == 1,
+                    "cdr3_present",
+                    f"CDR3 {'present once' if cdr3_present and cdr3_count == 1 else 'missing or duplicated'} in sequence",
+                    {"present": cdr3_present, "count": cdr3_count},
+                )
+            )
 
     # K-mer repeat check (only for amino acid sequences, or translate DNA first)
     check_seq_for_kmers = sequence if not is_dna else None
     if check_seq_for_kmers and len(check_seq_for_kmers) >= kmer_size:
         repeated_kmers = find_repeated_kmers(check_seq_for_kmers, kmer_size, min_kmer_repeat)
         kmer_ok = len(repeated_kmers) == 0
-        report.add_result(QCResult(
-            kmer_ok,
-            "repeated_kmers",
-            f"{'No' if kmer_ok else len(repeated_kmers)} repeated {kmer_size}-mers found",
-            {"repeated_kmers": repeated_kmers[:5]}  # Only store first 5
-        ))
+        report.add_result(
+            QCResult(
+                kmer_ok,
+                "repeated_kmers",
+                f"{'No' if kmer_ok else len(repeated_kmers)} repeated {kmer_size}-mers found",
+                {"repeated_kmers": repeated_kmers[:5]},  # Only store first 5
+            )
+        )
         if not kmer_ok:
             for kmer, count in repeated_kmers[:3]:
                 report.add_warning(f"Repeated k-mer (n={count}): {kmer}")
@@ -360,12 +378,14 @@ def validate_clonotypes(
 
         add_flag(invalid_cdr3a, "cdr3a_length")
         n_invalid = invalid_cdr3a.sum()
-        report.add_result(QCResult(
-            n_invalid == 0,
-            "cdr3_alpha_length",
-            f"CDR3 alpha length: {n_invalid}/{n_rows} out of bounds",
-            {"n_invalid": n_invalid, "min": min_cdr3_length, "max": max_cdr3_length}
-        ))
+        report.add_result(
+            QCResult(
+                n_invalid == 0,
+                "cdr3_alpha_length",
+                f"CDR3 alpha length: {n_invalid}/{n_rows} out of bounds",
+                {"n_invalid": n_invalid, "min": min_cdr3_length, "max": max_cdr3_length},
+            )
+        )
 
     # CDR3 beta length check
     if "CDR3_beta" in df.columns:
@@ -376,12 +396,14 @@ def validate_clonotypes(
 
         add_flag(invalid_cdr3b, "cdr3b_length")
         n_invalid = invalid_cdr3b.sum()
-        report.add_result(QCResult(
-            n_invalid == 0,
-            "cdr3_beta_length",
-            f"CDR3 beta length: {n_invalid}/{n_rows} out of bounds",
-            {"n_invalid": n_invalid, "min": min_cdr3_length, "max": max_cdr3_length}
-        ))
+        report.add_result(
+            QCResult(
+                n_invalid == 0,
+                "cdr3_beta_length",
+                f"CDR3 beta length: {n_invalid}/{n_rows} out of bounds",
+                {"n_invalid": n_invalid, "min": min_cdr3_length, "max": max_cdr3_length},
+            )
+        )
 
     # Read count check
     read_cols = [c for c in df.columns if c.endswith("_reads") or c == "reads"]
@@ -408,12 +430,14 @@ def validate_clonotypes(
         zero_cells = df["n_cells"] == 0
         add_flag(zero_cells, "zero_cells")
         n_zero = zero_cells.sum()
-        report.add_result(QCResult(
-            n_zero == 0,
-            "cell_count",
-            f"Cell count: {n_zero}/{n_rows} have zero cells",
-            {"n_zero": n_zero}
-        ))
+        report.add_result(
+            QCResult(
+                n_zero == 0,
+                "cell_count",
+                f"Cell count: {n_zero}/{n_rows} have zero cells",
+                {"n_zero": n_zero},
+            )
+        )
 
     # Full sequence checks
     if check_full_sequences:
@@ -429,12 +453,14 @@ def validate_clonotypes(
 
                 n_short = too_short.sum()
                 n_long = too_long.sum()
-                report.add_result(QCResult(
-                    n_short == 0 and n_long == 0,
-                    f"{chain}_chain_length",
-                    f"{chain.title()} chain: {n_short} too short, {n_long} too long",
-                    {"n_short": n_short, "n_long": n_long}
-                ))
+                report.add_result(
+                    QCResult(
+                        n_short == 0 and n_long == 0,
+                        f"{chain}_chain_length",
+                        f"{chain.title()} chain: {n_short} too short, {n_long} too long",
+                        {"n_short": n_short, "n_long": n_long},
+                    )
+                )
 
             dna_col = f"full_{chain}_dna"
             if dna_col in df.columns:
@@ -466,12 +492,14 @@ def validate_clonotypes(
 
     # Summary
     n_pass = df["qc_pass"].sum()
-    report.add_result(QCResult(
-        n_pass == n_rows,
-        "overall",
-        f"Overall: {n_pass}/{n_rows} clonotypes pass QC",
-        {"n_pass": n_pass, "n_fail": n_rows - n_pass}
-    ))
+    report.add_result(
+        QCResult(
+            n_pass == n_rows,
+            "overall",
+            f"Overall: {n_pass}/{n_rows} clonotypes pass QC",
+            {"n_pass": n_pass, "n_fail": n_rows - n_pass},
+        )
+    )
 
     return df, report
 
@@ -497,7 +525,9 @@ def get_qc_summary(clonotypes: pd.DataFrame) -> dict:
     # QC pass rate
     if "qc_pass" in clonotypes.columns:
         summary["n_qc_pass"] = clonotypes["qc_pass"].sum()
-        summary["qc_pass_rate"] = summary["n_qc_pass"] / len(clonotypes) if len(clonotypes) > 0 else 0
+        summary["qc_pass_rate"] = (
+            summary["n_qc_pass"] / len(clonotypes) if len(clonotypes) > 0 else 0
+        )
 
     # Chain completeness
     if "CDR3_alpha" in clonotypes.columns:

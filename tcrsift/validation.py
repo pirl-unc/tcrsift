@@ -390,9 +390,7 @@ def validate_sample_sheet_entry(
         if path_field in entry:
             path = Path(entry[path_field])
             if not path.exists():
-                warnings.append(
-                    f"Sample {index + 1}: {path_field} does not exist: {path}"
-                )
+                warnings.append(f"Sample {index + 1}: {path_field} does not exist: {path}")
 
     # Check for unusual values
     sample_name = entry.get("sample_name") or entry.get("name", "")

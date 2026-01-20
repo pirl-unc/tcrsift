@@ -105,7 +105,9 @@ def aggregate_clonotypes(
         n_doublets = df["multi_chain"].sum()
         if n_doublets > 0:
             if verbose:
-                logger.info(f"  Found {n_doublets:,} cells with multiple chains ({n_doublets/len(df)*100:.1f}%)")
+                logger.info(
+                    f"  Found {n_doublets:,} cells with multiple chains ({n_doublets / len(df) * 100:.1f}%)"
+                )
 
             if handle_doublets == "remove":
                 df = df[~df["multi_chain"]]
@@ -143,9 +145,7 @@ def aggregate_clonotypes(
     elif group_by == "CDR3b_only":
         df["clone_id"] = df["CDR3_beta"].fillna("")
         df["is_complete_clone"] = (
-            df["CDR3_beta"].notna()
-            & (df["CDR3_beta"] != "")
-            & df["TRB_pass_umi"]
+            df["CDR3_beta"].notna() & (df["CDR3_beta"] != "") & df["TRB_pass_umi"]
         )
     else:
         raise ValueError(f"Invalid group_by: {group_by}. Use 'CDR3ab' or 'CDR3b_only'")
@@ -153,7 +153,9 @@ def aggregate_clonotypes(
     # Filter to complete clones
     df_complete = df[df["is_complete_clone"]].copy()
     if verbose:
-        logger.info(f"  Found {len(df_complete):,} cells with complete TCR ({len(df_complete)/len(df)*100:.1f}%)")
+        logger.info(
+            f"  Found {len(df_complete):,} cells with complete TCR ({len(df_complete) / len(df) * 100:.1f}%)"
+        )
 
     if len(df_complete) == 0:
         raise TCRsiftValidationError(
@@ -178,12 +180,16 @@ def aggregate_clonotypes(
             n_singletons = (clonotypes["cell_count"] == 1).sum()
             n_expanded = (clonotypes["cell_count"] > 1).sum()
             max_size = clonotypes["cell_count"].max()
-            logger.info(f"    Singletons: {n_singletons:,}, Expanded clones: {n_expanded:,}, Max clone size: {max_size:,}")
+            logger.info(
+                f"    Singletons: {n_singletons:,}, Expanded clones: {n_expanded:,}, Max clone size: {max_size:,}"
+            )
 
     return clonotypes
 
 
-def _aggregate_clone_data(df: pd.DataFrame, group_by: str, show_progress: bool = True) -> pd.DataFrame:
+def _aggregate_clone_data(
+    df: pd.DataFrame, group_by: str, show_progress: bool = True
+) -> pd.DataFrame:
     """Aggregate cell-level data to clone-level."""
 
     clone_data = []
@@ -214,7 +220,9 @@ def _aggregate_clone_data(df: pd.DataFrame, group_by: str, show_progress: bool =
             record["CDR3_alpha"] = parts[0] if len(parts) > 0 else ""
             record["CDR3_beta"] = parts[1] if len(parts) > 1 else ""
         else:
-            record["CDR3_alpha"] = clone_df["CDR3_alpha"].mode().iloc[0] if "CDR3_alpha" in clone_df.columns else ""
+            record["CDR3_alpha"] = (
+                clone_df["CDR3_alpha"].mode().iloc[0] if "CDR3_alpha" in clone_df.columns else ""
+            )
             record["CDR3_beta"] = clone_id
 
         # Sample and condition information
@@ -273,7 +281,9 @@ def _aggregate_clone_data(df: pd.DataFrame, group_by: str, show_progress: bool =
         for chain, prefix in [("alpha", "TRA_1"), ("beta", "TRB_1")]:
             contig_col = f"{prefix}_contig_id"
             if contig_col in clone_df.columns:
-                record[f"{chain}_contig_ids"] = ";".join(clone_df[contig_col].dropna().astype(str).tolist())
+                record[f"{chain}_contig_ids"] = ";".join(
+                    clone_df[contig_col].dropna().astype(str).tolist()
+                )
 
         # Doublet information
         if "is_doublet" in clone_df.columns:
@@ -330,12 +340,14 @@ def calculate_clone_frequencies(
             sample_total = sample_totals.get(sample, 1)
             sample_freqs[sample] = sample_count / sample_total if sample_total > 0 else 0
 
-        freq_data.append({
-            "clone_id": clone_id,
-            "sample_frequencies": sample_freqs,
-            "max_frequency": max(sample_freqs.values()) if sample_freqs else 0,
-            "n_conditions_present": len(sample_freqs),
-        })
+        freq_data.append(
+            {
+                "clone_id": clone_id,
+                "sample_frequencies": sample_freqs,
+                "max_frequency": max(sample_freqs.values()) if sample_freqs else 0,
+                "n_conditions_present": len(sample_freqs),
+            }
+        )
 
     freq_df = pd.DataFrame(freq_data)
 
@@ -366,7 +378,9 @@ def get_clonotype_summary(clonotypes: pd.DataFrame) -> dict:
         "max_clone_size": clonotypes["cell_count"].max(),
         "n_singletons": (clonotypes["cell_count"] == 1).sum(),
         "n_expanded": (clonotypes["cell_count"] > 1).sum(),
-        "n_multi_sample": (clonotypes["n_samples"] > 1).sum() if "n_samples" in clonotypes.columns else 0,
+        "n_multi_sample": (clonotypes["n_samples"] > 1).sum()
+        if "n_samples" in clonotypes.columns
+        else 0,
     }
 
 

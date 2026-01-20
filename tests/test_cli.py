@@ -30,14 +30,19 @@ class TestAnnotateGexParser:
         """Parser should include annotate-gex command."""
         parser = create_parser()
         # Parse valid annotate-gex command to verify it exists
-        args = parser.parse_args([
-            "annotate-gex",
-            "-i", "input.csv",
-            "-o", "output.csv",
-            "--gex-file", "matrix.h5",
-        ])
+        args = parser.parse_args(
+            [
+                "annotate-gex",
+                "-i",
+                "input.csv",
+                "-o",
+                "output.csv",
+                "--gex-file",
+                "matrix.h5",
+            ]
+        )
         assert args.command == "annotate-gex"
-        assert hasattr(args, 'func')
+        assert hasattr(args, "func")
 
     def test_annotate_gex_required_args(self):
         """Test that required arguments are enforced."""
@@ -50,20 +55,29 @@ class TestAnnotateGexParser:
     def test_annotate_gex_all_options(self):
         """Test all annotate-gex options parse correctly."""
         parser = create_parser()
-        args = parser.parse_args([
-            "annotate-gex",
-            "-i", "input.csv",
-            "-o", "output.csv",
-            "--gex-file", "matrix.h5",
-            "--barcode-col", "cell_barcode",
-            "--genes", "CD3D,CD4,CD8A",
-            "--prefix", "expr",
-            "--no-qc",
-            "--aggregate",
-            "--group-col", "clone_id",
-            "--cd4-cd8-counts",
-            "--verbose",
-        ])
+        args = parser.parse_args(
+            [
+                "annotate-gex",
+                "-i",
+                "input.csv",
+                "-o",
+                "output.csv",
+                "--gex-file",
+                "matrix.h5",
+                "--barcode-col",
+                "cell_barcode",
+                "--genes",
+                "CD3D,CD4,CD8A",
+                "--prefix",
+                "expr",
+                "--no-qc",
+                "--aggregate",
+                "--group-col",
+                "clone_id",
+                "--cd4-cd8-counts",
+                "--verbose",
+            ]
+        )
 
         assert args.input == "input.csv"
         assert args.output == "output.csv"
@@ -84,11 +98,13 @@ class TestAnnotateGexCommand:
     @pytest.fixture
     def cells_csv(self, temp_dir):
         """Create a cells CSV file for testing."""
-        df = pd.DataFrame({
-            "barcode": ["bc1", "bc2", "bc3", "bc4", "bc5"],
-            "CDR3_pair": ["A/B", "A/B", "A/B", "C/D", "C/D"],
-            "sample": ["S1", "S1", "S1", "S2", "S2"],
-        })
+        df = pd.DataFrame(
+            {
+                "barcode": ["bc1", "bc2", "bc3", "bc4", "bc5"],
+                "CDR3_pair": ["A/B", "A/B", "A/B", "C/D", "C/D"],
+                "sample": ["S1", "S1", "S1", "S2", "S2"],
+            }
+        )
         path = temp_dir / "cells.csv"
         df.to_csv(path, index=False)
         return path
@@ -96,12 +112,14 @@ class TestAnnotateGexCommand:
     @pytest.fixture
     def cells_with_gex_csv(self, temp_dir):
         """Create a cells CSV file with GEX columns for testing."""
-        df = pd.DataFrame({
-            "barcode": ["bc1", "bc2", "bc3", "bc4", "bc5"],
-            "CDR3_pair": ["A/B", "A/B", "A/B", "C/D", "C/D"],
-            "gex.CD4": [10.0, 0.0, 5.0, 15.0, 0.0],
-            "gex.CD8": [0.0, 20.0, 0.0, 0.0, 10.0],
-        })
+        df = pd.DataFrame(
+            {
+                "barcode": ["bc1", "bc2", "bc3", "bc4", "bc5"],
+                "CDR3_pair": ["A/B", "A/B", "A/B", "C/D", "C/D"],
+                "gex.CD4": [10.0, 0.0, 5.0, 15.0, 0.0],
+                "gex.CD8": [0.0, 20.0, 0.0, 0.0, 10.0],
+            }
+        )
         path = temp_dir / "cells_with_gex.csv"
         df.to_csv(path, index=False)
         return path
@@ -116,10 +134,12 @@ class TestAnnotateGexCommand:
     def test_annotate_gex_missing_barcode_col_warning(self, temp_dir, fake_gex_file, capsys):
         """Test warning when barcode column is missing."""
         # Create CSV without barcode column
-        df = pd.DataFrame({
-            "CDR3_pair": ["A/B", "C/D"],
-            "cell_count": [3, 2],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B", "C/D"],
+                "cell_count": [3, 2],
+            }
+        )
         input_path = temp_dir / "no_barcode.csv"
         df.to_csv(input_path, index=False)
         output_path = temp_dir / "output.csv"
@@ -169,13 +189,17 @@ class TestAnnotateGexCommand:
         assert "total_cells.count" in result.columns
         assert result[result["CDR3_pair"] == "A/B"]["total_cells.count"].iloc[0] == 3
 
-    def test_annotate_gex_cd4_cd8_counts_without_augmentation(self, temp_dir, fake_gex_file, capsys):
+    def test_annotate_gex_cd4_cd8_counts_without_augmentation(
+        self, temp_dir, fake_gex_file, capsys
+    ):
         """Test CD4/CD8 counts warning when no augmentation."""
         # Create CSV without GEX columns
-        df = pd.DataFrame({
-            "CDR3_pair": ["A/B", "C/D"],
-            "cell_count": [3, 2],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B", "C/D"],
+                "cell_count": [3, 2],
+            }
+        )
         input_path = temp_dir / "no_gex.csv"
         df.to_csv(input_path, index=False)
         output_path = temp_dir / "output.csv"
@@ -201,10 +225,12 @@ class TestAnnotateGexCommand:
 
     def test_annotate_gex_custom_genes_parsing(self, capsys, temp_dir, fake_gex_file):
         """Test custom gene list parsing."""
-        df = pd.DataFrame({
-            "CDR3_pair": ["A/B"],
-            "cell_count": [1],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_pair": ["A/B"],
+                "cell_count": [1],
+            }
+        )
         input_path = temp_dir / "input.csv"
         df.to_csv(input_path, index=False)
         output_path = temp_dir / "output.csv"
@@ -342,12 +368,14 @@ class TestSampleSheetSourceTypes:
 
     def test_get_tetramer_samples(self):
         """Test filtering tetramer and SCT samples."""
-        ss = SampleSheet(samples=[
-            Sample(sample="C1", vdj_dir="/path1", source="culture"),
-            Sample(sample="T1", vdj_dir="/path2", source="til"),
-            Sample(sample="Tet1", vdj_dir="/path3", source="tetramer"),
-            Sample(sample="SCT1", vdj_dir="/path4", source="sct"),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(sample="C1", vdj_dir="/path1", source="culture"),
+                Sample(sample="T1", vdj_dir="/path2", source="til"),
+                Sample(sample="Tet1", vdj_dir="/path3", source="tetramer"),
+                Sample(sample="SCT1", vdj_dir="/path4", source="sct"),
+            ]
+        )
         tetramer = ss.get_tetramer_samples()
 
         assert len(tetramer) == 2
@@ -719,18 +747,24 @@ class TestCliEarlyValidation:
         """Assemble should fail before loading data when contigs_dir missing."""
         # Create a valid input file
         input_csv = tmp_path / "clonotypes.csv"
-        pd.DataFrame({
-            "CDR3_alpha": ["CAVX"],
-            "CDR3_beta": ["CASSX"],
-        }).to_csv(input_csv, index=False)
+        pd.DataFrame(
+            {
+                "CDR3_alpha": ["CAVX"],
+                "CDR3_beta": ["CASSX"],
+            }
+        ).to_csv(input_csv, index=False)
 
         parser = create_parser()
-        args = parser.parse_args([
-            "assemble",
-            "-i", str(input_csv),
-            "-o", str(tmp_path / "out.csv"),
-            "--leaders-from-contigs",  # This requires --contigs-dir
-        ])
+        args = parser.parse_args(
+            [
+                "assemble",
+                "-i",
+                str(input_csv),
+                "-o",
+                str(tmp_path / "out.csv"),
+                "--leaders-from-contigs",  # This requires --contigs-dir
+            ]
+        )
 
         # Should fail at validation, not at data loading
         with pytest.raises(TCRsiftValidationError) as exc_info:
@@ -741,19 +775,26 @@ class TestCliEarlyValidation:
     def test_assemble_validates_contigs_dir_exists(self, tmp_path):
         """Assemble should validate that contigs_dir exists."""
         input_csv = tmp_path / "clonotypes.csv"
-        pd.DataFrame({
-            "CDR3_alpha": ["CAVX"],
-            "CDR3_beta": ["CASSX"],
-        }).to_csv(input_csv, index=False)
+        pd.DataFrame(
+            {
+                "CDR3_alpha": ["CAVX"],
+                "CDR3_beta": ["CASSX"],
+            }
+        ).to_csv(input_csv, index=False)
 
         parser = create_parser()
-        args = parser.parse_args([
-            "assemble",
-            "-i", str(input_csv),
-            "-o", str(tmp_path / "out.csv"),
-            "--leaders-from-contigs",
-            "--contigs-dir", str(tmp_path / "nonexistent_dir"),
-        ])
+        args = parser.parse_args(
+            [
+                "assemble",
+                "-i",
+                str(input_csv),
+                "-o",
+                str(tmp_path / "out.csv"),
+                "--leaders-from-contigs",
+                "--contigs-dir",
+                str(tmp_path / "nonexistent_dir"),
+            ]
+        )
 
         with pytest.raises(TCRsiftValidationError) as exc_info:
             args.func(args)
@@ -768,14 +809,19 @@ class TestMatchTilParser:
         """Parser should include match-til command."""
         parser = create_parser()
         # Parse valid match-til command to verify it exists
-        args = parser.parse_args([
-            "match-til",
-            "-i", "clonotypes.csv",
-            "-o", "matched.csv",
-            "--til-csv", "til.csv",
-        ])
+        args = parser.parse_args(
+            [
+                "match-til",
+                "-i",
+                "clonotypes.csv",
+                "-o",
+                "matched.csv",
+                "--til-csv",
+                "til.csv",
+            ]
+        )
         assert args.command == "match-til"
-        assert hasattr(args, 'func')
+        assert hasattr(args, "func")
 
     def test_match_til_required_args(self):
         """Test that required arguments are enforced."""
@@ -790,54 +836,81 @@ class TestMatchTilParser:
         parser = create_parser()
 
         # Test --til-h5ad
-        args1 = parser.parse_args([
-            "match-til",
-            "-i", "clonotypes.csv",
-            "-o", "matched.csv",
-            "--til-h5ad", "til.h5ad",
-        ])
+        args1 = parser.parse_args(
+            [
+                "match-til",
+                "-i",
+                "clonotypes.csv",
+                "-o",
+                "matched.csv",
+                "--til-h5ad",
+                "til.h5ad",
+            ]
+        )
         assert args1.til_h5ad == "til.h5ad"
         assert args1.til_csv is None
 
         # Test --til-csv
-        args2 = parser.parse_args([
-            "match-til",
-            "-i", "clonotypes.csv",
-            "-o", "matched.csv",
-            "--til-csv", "til.csv",
-        ])
+        args2 = parser.parse_args(
+            [
+                "match-til",
+                "-i",
+                "clonotypes.csv",
+                "-o",
+                "matched.csv",
+                "--til-csv",
+                "til.csv",
+            ]
+        )
         assert args2.til_csv == "til.csv"
         assert args2.til_h5ad is None
 
         # Test --til-vdj-dir
-        args3 = parser.parse_args([
-            "match-til",
-            "-i", "clonotypes.csv",
-            "-o", "matched.csv",
-            "--til-vdj-dir", "/path/to/vdj",
-        ])
+        args3 = parser.parse_args(
+            [
+                "match-til",
+                "-i",
+                "clonotypes.csv",
+                "-o",
+                "matched.csv",
+                "--til-vdj-dir",
+                "/path/to/vdj",
+            ]
+        )
         assert args3.til_vdj_dir == "/path/to/vdj"
 
         # Test --sample-sheet
-        args4 = parser.parse_args([
-            "match-til",
-            "-i", "clonotypes.csv",
-            "-o", "matched.csv",
-            "-s", "samples.yaml",
-        ])
+        args4 = parser.parse_args(
+            [
+                "match-til",
+                "-i",
+                "clonotypes.csv",
+                "-o",
+                "matched.csv",
+                "-s",
+                "samples.yaml",
+            ]
+        )
         assert args4.sample_sheet == "samples.yaml"
 
     def test_match_til_matching_options(self):
         """Test matching options parse correctly."""
         parser = create_parser()
-        args = parser.parse_args([
-            "match-til",
-            "-i", "clonotypes.csv",
-            "-o", "matched.csv",
-            "--til-csv", "til.csv",
-            "--match-by", "CDR3b_only",
-            "--min-til-cells", "5",
-        ])
+        args = parser.parse_args(
+            [
+                "match-til",
+                "-i",
+                "clonotypes.csv",
+                "-o",
+                "matched.csv",
+                "--til-csv",
+                "til.csv",
+                "--match-by",
+                "CDR3b_only",
+                "--min-til-cells",
+                "5",
+            ]
+        )
         assert args.match_by == "CDR3b_only"
         assert args.min_til_cells == 5
 

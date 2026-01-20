@@ -14,6 +14,7 @@ T cell phenotyping for TCRsift.
 
 Classifies cells as CD4+ or CD8+ based on gene expression markers.
 """
+
 from __future__ import annotations
 
 import logging
@@ -182,7 +183,9 @@ def phenotype_cells(
         adata.obs["filter:min_cd3"] = adata.obs["CD3"] >= min_cd3_reads
         n_pass_cd3 = adata.obs["filter:min_cd3"].sum()
         if verbose:
-            logger.info(f"  CD3 filter (>={min_cd3_reads} reads): {n_pass_cd3:,}/{len(adata):,} cells pass")
+            logger.info(
+                f"  CD3 filter (>={min_cd3_reads} reads): {n_pass_cd3:,}/{len(adata):,} cells pass"
+            )
     else:
         adata.obs["filter:min_cd3"] = True
         if verbose:
@@ -191,9 +194,7 @@ def phenotype_cells(
     # Combined filter for confident T cells with complete TCR
     has_tcr = adata.obs.get("has_both_chains", pd.Series(True, index=adata.obs_names))
     adata.obs["confident_and_complete"] = (
-        adata.obs["is_confident"]
-        & has_tcr
-        & adata.obs["filter:min_cd3"]
+        adata.obs["is_confident"] & has_tcr & adata.obs["filter:min_cd3"]
     )
 
     # Log summary
@@ -298,15 +299,21 @@ def filter_by_tcell_type(
     if tcell_type.lower() == "cd8":
         mask = adata.obs["is_CD8"]
         if verbose:
-            logger.info(f"Filtering to CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum()/len(adata)*100:.1f}%)")
+            logger.info(
+                f"Filtering to CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum() / len(adata) * 100:.1f}%)"
+            )
     elif tcell_type.lower() == "cd4":
         mask = adata.obs["is_CD4"]
         if verbose:
-            logger.info(f"Filtering to CD4+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum()/len(adata)*100:.1f}%)")
+            logger.info(
+                f"Filtering to CD4+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum() / len(adata) * 100:.1f}%)"
+            )
     else:  # both
         mask = adata.obs["is_CD8"] | adata.obs["is_CD4"]
         if verbose:
-            logger.info(f"Keeping both CD4+ and CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum()/len(adata)*100:.1f}%)")
+            logger.info(
+                f"Keeping both CD4+ and CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum() / len(adata) * 100:.1f}%)"
+            )
 
     if mask.sum() == 0:
         raise TCRsiftValidationError(

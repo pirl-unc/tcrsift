@@ -125,7 +125,7 @@ class AssembleConfig:
     """Configuration for the assemble step."""
 
     alpha_leader: str | None = "CD28"  # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
-    beta_leader: str | None = "CD8A"   # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
+    beta_leader: str | None = "CD8A"  # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
     include_constant: bool = True
     constant_source: str = "ensembl"
     linker: str = "T2A"
@@ -400,8 +400,17 @@ class TCRsiftConfig:
         # Apply CLI overrides
         for key, value in args_dict.items():
             # Skip non-config args and shortcut flags
-            if key in ("func", "command", "config", "sample_sheet", "input", "output", "output_dir",
-                      "no_leaders", "leaders_from_contigs"):
+            if key in (
+                "func",
+                "command",
+                "config",
+                "sample_sheet",
+                "input",
+                "output",
+                "output_dir",
+                "no_leaders",
+                "leaders_from_contigs",
+            ):
                 continue
             # Handle special cases
             if key == "fdr_tiers" and isinstance(value, str):

@@ -219,14 +219,16 @@ def aggregate_sct(
 
     if numeric_cols is None:
         numeric_cols = [
-            c for c in df.columns
+            c
+            for c in df.columns
             if c not in group_cols
             and df[c].dtype in ["int64", "float64"]
             and not c.endswith("_bool")
         ]
         # Filter to likely SCT columns
         numeric_cols = [
-            c for c in numeric_cols
+            c
+            for c in numeric_cols
             if any(x in c.lower() for x in ["snr", "readcount", "count", "ratio"])
         ]
 
@@ -250,7 +252,9 @@ def aggregate_sct(
         if col in df.columns:
             # Convert Yes/No to boolean if needed
             if df[col].dtype == "object":
-                df[f"{col}_bool"] = df[col].map({"Yes": True, "No": False, True: True, False: False})
+                df[f"{col}_bool"] = df[col].map(
+                    {"Yes": True, "No": False, True: True, False: False}
+                )
             else:
                 df[f"{col}_bool"] = df[col].astype(bool)
             agg_dict[f"{col}_bool"] = ["any", "all"]
@@ -259,26 +263,27 @@ def aggregate_sct(
     result = df.groupby(group_cols).agg(agg_dict)
 
     # Flatten column names
-    result.columns = [
-        f"{col[0]}_{col[1]}" if col[1] else col[0]
-        for col in result.columns
-    ]
+    result.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in result.columns]
 
     # Rename columns
     result = result.rename(columns={"CDR3_pair_count": "num_original_entries"})
     for col in numeric_cols:
         if col in df.columns:
-            result = result.rename(columns={
-                f"{col}_min": f"{col}.min",
-                f"{col}_median": f"{col}.median",
-                f"{col}_max": f"{col}.max",
-            })
+            result = result.rename(
+                columns={
+                    f"{col}_min": f"{col}.min",
+                    f"{col}_median": f"{col}.median",
+                    f"{col}_max": f"{col}.max",
+                }
+            )
     for col in boolean_cols:
         if col in df.columns:
-            result = result.rename(columns={
-                f"{col}_bool_any": f"{col}.any",
-                f"{col}_bool_all": f"{col}.all",
-            })
+            result = result.rename(
+                columns={
+                    f"{col}_bool_any": f"{col}.any",
+                    f"{col}_bool_all": f"{col}.all",
+                }
+            )
 
     result = result.reset_index()
 

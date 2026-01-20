@@ -14,6 +14,7 @@ Full-length TCR sequence assembly for TCRsift.
 
 Builds complete TCR sequences including leader peptides and constant regions.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,22 +35,70 @@ logger = logging.getLogger(__name__)
 
 # Standard codon table
 CODON_TABLE = {
-    'ATA': 'I', 'ATC': 'I', 'ATT': 'I', 'ATG': 'M',
-    'ACA': 'T', 'ACC': 'T', 'ACG': 'T', 'ACT': 'T',
-    'AAC': 'N', 'AAT': 'N', 'AAA': 'K', 'AAG': 'K',
-    'AGC': 'S', 'AGT': 'S', 'AGA': 'R', 'AGG': 'R',
-    'CTA': 'L', 'CTC': 'L', 'CTG': 'L', 'CTT': 'L',
-    'CCA': 'P', 'CCC': 'P', 'CCG': 'P', 'CCT': 'P',
-    'CAC': 'H', 'CAT': 'H', 'CAA': 'Q', 'CAG': 'Q',
-    'CGA': 'R', 'CGC': 'R', 'CGG': 'R', 'CGT': 'R',
-    'GTA': 'V', 'GTC': 'V', 'GTG': 'V', 'GTT': 'V',
-    'GCA': 'A', 'GCC': 'A', 'GCG': 'A', 'GCT': 'A',
-    'GAC': 'D', 'GAT': 'D', 'GAA': 'E', 'GAG': 'E',
-    'GGA': 'G', 'GGC': 'G', 'GGG': 'G', 'GGT': 'G',
-    'TCA': 'S', 'TCC': 'S', 'TCG': 'S', 'TCT': 'S',
-    'TTC': 'F', 'TTT': 'F', 'TTA': 'L', 'TTG': 'L',
-    'TAC': 'Y', 'TAT': 'Y', 'TAA': '*', 'TAG': '*',
-    'TGC': 'C', 'TGT': 'C', 'TGA': '*', 'TGG': 'W',
+    "ATA": "I",
+    "ATC": "I",
+    "ATT": "I",
+    "ATG": "M",
+    "ACA": "T",
+    "ACC": "T",
+    "ACG": "T",
+    "ACT": "T",
+    "AAC": "N",
+    "AAT": "N",
+    "AAA": "K",
+    "AAG": "K",
+    "AGC": "S",
+    "AGT": "S",
+    "AGA": "R",
+    "AGG": "R",
+    "CTA": "L",
+    "CTC": "L",
+    "CTG": "L",
+    "CTT": "L",
+    "CCA": "P",
+    "CCC": "P",
+    "CCG": "P",
+    "CCT": "P",
+    "CAC": "H",
+    "CAT": "H",
+    "CAA": "Q",
+    "CAG": "Q",
+    "CGA": "R",
+    "CGC": "R",
+    "CGG": "R",
+    "CGT": "R",
+    "GTA": "V",
+    "GTC": "V",
+    "GTG": "V",
+    "GTT": "V",
+    "GCA": "A",
+    "GCC": "A",
+    "GCG": "A",
+    "GCT": "A",
+    "GAC": "D",
+    "GAT": "D",
+    "GAA": "E",
+    "GAG": "E",
+    "GGA": "G",
+    "GGC": "G",
+    "GGG": "G",
+    "GGT": "G",
+    "TCA": "S",
+    "TCC": "S",
+    "TCG": "S",
+    "TCT": "S",
+    "TTC": "F",
+    "TTT": "F",
+    "TTA": "L",
+    "TTG": "L",
+    "TAC": "Y",
+    "TAT": "Y",
+    "TAA": "*",
+    "TAG": "*",
+    "TGC": "C",
+    "TGT": "C",
+    "TGA": "*",
+    "TGG": "W",
 }
 
 # Self-cleaving 2A peptide linkers
@@ -156,15 +205,12 @@ def translate_dna(dna_seq: str) -> tuple[str, str]:
     else:
         ragged_nt = ""
 
-    aa_seq = "".join([
-        CODON_TABLE.get(dna_seq[i:i+3], 'X')
-        for i in range(0, len(dna_seq), 3)
-    ])
+    aa_seq = "".join([CODON_TABLE.get(dna_seq[i : i + 3], "X") for i in range(0, len(dna_seq), 3)])
 
     # Stop at first stop codon
     if "*" in aa_seq:
         ragged_nt = ""
-        aa_seq = aa_seq[:aa_seq.index("*")]
+        aa_seq = aa_seq[: aa_seq.index("*")]
 
     return aa_seq, ragged_nt
 
@@ -178,7 +224,7 @@ def find_longest_orf(dna_seq: str) -> tuple[str, int, str]:
     tuple
         (amino_acid_sequence, start_offset, ragged_3p_nucleotides)
     """
-    start_positions = [i for i in range(len(dna_seq)) if dna_seq[i:i+3] == "ATG"]
+    start_positions = [i for i in range(len(dna_seq)) if dna_seq[i : i + 3] == "ATG"]
 
     longest_aa = ""
     longest_offset = 0
@@ -276,7 +322,7 @@ def get_constant_region_sequences() -> dict[str, str]:
 
         def find_stop_codon(seq, offset=0):
             for i in range(offset, len(seq), 3):
-                codon = seq[i:i+3]
+                codon = seq[i : i + 3]
                 if codon in {"TAA", "TAG", "TGA"}:
                     return i
             return None
@@ -288,7 +334,7 @@ def get_constant_region_sequences() -> dict[str, str]:
         trac_seq = trac.transcripts[0].sequence
         stop_idx = find_stop_codon(trac_seq, offset=2)
         if stop_idx:
-            constants["TRAC"] = trac_seq[:stop_idx + 3]
+            constants["TRAC"] = trac_seq[: stop_idx + 3]
 
         # TRBC1 and TRBC2
         for name in ["TRBC1", "TRBC2"]:
@@ -296,7 +342,7 @@ def get_constant_region_sequences() -> dict[str, str]:
             seq = gene.transcripts[0].sequence
             stop_idx = find_stop_codon(seq, offset=2)
             if stop_idx:
-                constants[name] = seq[:stop_idx + 3]
+                constants[name] = seq[: stop_idx + 3]
 
         return constants
 
@@ -421,13 +467,17 @@ def assemble_full_sequences(
             logger.info("  Loading constant regions from Ensembl...")
         constant_seqs = get_constant_region_sequences()
         if not constant_seqs:
-            logger.warning("  Could not load constant regions from Ensembl, will use sequences from data")
+            logger.warning(
+                "  Could not load constant regions from Ensembl, will use sequences from data"
+            )
         elif verbose:
             logger.info(f"    Loaded {len(constant_seqs)} constant region sequences")
 
     # Load contigs if needed for leader extraction
     sample_contigs = {}
-    needs_contigs = leader_config["alpha"] == "from_contig" or leader_config["beta"] == "from_contig"
+    needs_contigs = (
+        leader_config["alpha"] == "from_contig" or leader_config["beta"] == "from_contig"
+    )
     if contigs_dir and needs_contigs:
         contigs_dir = validate_directory_exists(Path(contigs_dir), "contigs directory")
         if verbose:
@@ -477,7 +527,9 @@ def assemble_full_sequences(
     if verbose:
         n_with_alpha = df["full_alpha_aa"].notna().sum() if "full_alpha_aa" in df.columns else 0
         n_with_beta = df["full_beta_aa"].notna().sum() if "full_beta_aa" in df.columns else 0
-        n_single_chain = df["single_chain_aa"].notna().sum() if "single_chain_aa" in df.columns else 0
+        n_single_chain = (
+            df["single_chain_aa"].notna().sum() if "single_chain_aa" in df.columns else 0
+        )
         logger.info("  Assembly complete:")
         logger.info(f"    With full alpha: {n_with_alpha:,}")
         logger.info(f"    With full beta: {n_with_beta:,}")
@@ -575,7 +627,7 @@ def _extract_leader_from_contigs_single(
 
                 # Get leader DNA
                 if offset is not None:
-                    leader_dna = contig_seq[offset:offset + len(leader) * 3]
+                    leader_dna = contig_seq[offset : offset + len(leader) * 3]
                     leader_dna_counter[leader_dna] += 1
 
     if leader_counter:
@@ -652,9 +704,7 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
         return seq
 
     df["single_chain_aa"] = (
-        df["full_beta_aa"].apply(strip_stop) +
-        linker_aa +
-        df["full_alpha_aa"].fillna("")
+        df["full_beta_aa"].apply(strip_stop) + linker_aa + df["full_alpha_aa"].fillna("")
     )
 
     if "full_beta_nt" in df.columns and "full_alpha_nt" in df.columns and linker_nt:
@@ -667,9 +717,9 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
             return seq
 
         df["single_chain_nt"] = (
-            df["full_beta_nt"].apply(strip_stop_codon_dna) +
-            linker_nt +
-            df["full_alpha_nt"].fillna("")
+            df["full_beta_nt"].apply(strip_stop_codon_dna)
+            + linker_nt
+            + df["full_alpha_nt"].fillna("")
         )
 
     df["linker"] = linker_aa

@@ -2,7 +2,6 @@
 Tests for sample sheet parsing and validation.
 """
 
-
 import pandas as pd
 import pytest
 
@@ -231,10 +230,12 @@ class TestSampleSheet:
 
     def test_len(self):
         """Test __len__."""
-        ss = SampleSheet(samples=[
-            Sample(sample="S1", vdj_dir="/path1"),
-            Sample(sample="S2", vdj_dir="/path2"),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(sample="S1", vdj_dir="/path1"),
+                Sample(sample="S2", vdj_dir="/path2"),
+            ]
+        )
         assert len(ss) == 2
 
     def test_iter(self):
@@ -258,51 +259,61 @@ class TestSampleSheet:
 
     def test_get_sample(self):
         """Test get_sample by name."""
-        ss = SampleSheet(samples=[
-            Sample(sample="S1", vdj_dir="/path1"),
-            Sample(sample="S2", vdj_dir="/path2"),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(sample="S1", vdj_dir="/path1"),
+                Sample(sample="S2", vdj_dir="/path2"),
+            ]
+        )
         assert ss.get_sample("S1").sample == "S1"
         assert ss.get_sample("S2").sample == "S2"
         assert ss.get_sample("S3") is None
 
     def test_get_culture_samples(self):
         """Test filtering culture samples."""
-        ss = SampleSheet(samples=[
-            Sample(sample="C1", vdj_dir="/path1", source="culture"),
-            Sample(sample="T1", vdj_dir="/path2", source="til"),
-            Sample(sample="C2", vdj_dir="/path3", source="culture"),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(sample="C1", vdj_dir="/path1", source="culture"),
+                Sample(sample="T1", vdj_dir="/path2", source="til"),
+                Sample(sample="C2", vdj_dir="/path3", source="culture"),
+            ]
+        )
         culture = ss.get_culture_samples()
         assert len(culture) == 2
         assert all(s.source == "culture" for s in culture)
 
     def test_get_til_samples(self):
         """Test filtering TIL samples."""
-        ss = SampleSheet(samples=[
-            Sample(sample="C1", vdj_dir="/path1", source="culture"),
-            Sample(sample="T1", vdj_dir="/path2", source="til"),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(sample="C1", vdj_dir="/path1", source="culture"),
+                Sample(sample="T1", vdj_dir="/path2", source="til"),
+            ]
+        )
         til = ss.get_til_samples()
         assert len(til) == 1
         assert til[0].sample == "T1"
 
     def test_get_tetramer_samples(self):
         """Test filtering tetramer samples."""
-        ss = SampleSheet(samples=[
-            Sample(sample="C1", vdj_dir="/path1", source="culture"),
-            Sample(sample="Tet1", vdj_dir="/path2", source="tetramer"),
-            Sample(sample="SCT1", vdj_dir="/path3", source="sct"),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(sample="C1", vdj_dir="/path1", source="culture"),
+                Sample(sample="Tet1", vdj_dir="/path2", source="tetramer"),
+                Sample(sample="SCT1", vdj_dir="/path3", source="sct"),
+            ]
+        )
         tetramer = ss.get_tetramer_samples()
         assert len(tetramer) == 2
 
     def test_to_dataframe(self):
         """Test conversion to DataFrame."""
-        ss = SampleSheet(samples=[
-            Sample(sample="S1", vdj_dir="/path1", antigen_type="short_peptide"),
-            Sample(sample="S2", vdj_dir="/path2", source="til"),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(sample="S1", vdj_dir="/path1", antigen_type="short_peptide"),
+                Sample(sample="S2", vdj_dir="/path2", source="til"),
+            ]
+        )
         df = ss.to_dataframe()
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 2
@@ -345,44 +356,52 @@ class TestValidateSampleSheet:
 
     def test_duplicate_sample_names(self):
         """Test detection of duplicate sample names."""
-        ss = SampleSheet(samples=[
-            Sample(sample="S1", vdj_dir="/path1"),
-            Sample(sample="S1", vdj_dir="/path2"),  # duplicate
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(sample="S1", vdj_dir="/path1"),
+                Sample(sample="S1", vdj_dir="/path2"),  # duplicate
+            ]
+        )
         warnings = validate_sample_sheet(ss)
         assert any("Duplicate sample names" in w for w in warnings)
 
     def test_conflicting_long_peptide_cd8(self):
         """Test warning for long peptide expecting CD8."""
-        ss = SampleSheet(samples=[
-            Sample(
-                sample="S1",
-                vdj_dir="/path",
-                antigen_type="long_peptide",
-                tcell_type_expected="CD8",
-            ),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(
+                    sample="S1",
+                    vdj_dir="/path",
+                    antigen_type="long_peptide",
+                    tcell_type_expected="CD8",
+                ),
+            ]
+        )
         warnings = validate_sample_sheet(ss)
         assert any("Long peptides typically favor CD4" in w for w in warnings)
 
     def test_conflicting_short_peptide_cd4(self):
         """Test warning for short peptide expecting CD4."""
-        ss = SampleSheet(samples=[
-            Sample(
-                sample="S1",
-                vdj_dir="/path",
-                antigen_type="short_peptide",
-                tcell_type_expected="CD4",
-            ),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(
+                    sample="S1",
+                    vdj_dir="/path",
+                    antigen_type="short_peptide",
+                    tcell_type_expected="CD4",
+                ),
+            ]
+        )
         warnings = validate_sample_sheet(ss)
         assert any("Short peptides typically bind MHC-I" in w for w in warnings)
 
     def test_nonexistent_paths_warned(self, temp_dir):
         """Test warning for nonexistent paths."""
-        ss = SampleSheet(samples=[
-            Sample(sample="S1", gex_dir="/nonexistent/gex", vdj_dir="/nonexistent/vdj"),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(sample="S1", gex_dir="/nonexistent/gex", vdj_dir="/nonexistent/vdj"),
+            ]
+        )
         warnings = validate_sample_sheet(ss)
         assert any("gex_dir does not exist" in w for w in warnings)
         assert any("vdj_dir does not exist" in w for w in warnings)
@@ -394,14 +413,16 @@ class TestValidateSampleSheet:
         gex_dir.mkdir()
         vdj_dir.mkdir()
 
-        ss = SampleSheet(samples=[
-            Sample(
-                sample="S1",
-                gex_dir=str(gex_dir),
-                vdj_dir=str(vdj_dir),
-                antigen_type="short_peptide",
-            ),
-        ])
+        ss = SampleSheet(
+            samples=[
+                Sample(
+                    sample="S1",
+                    gex_dir=str(gex_dir),
+                    vdj_dir=str(vdj_dir),
+                    antigen_type="short_peptide",
+                ),
+            ]
+        )
         warnings = validate_sample_sheet(ss)
         # Should only have no warnings (paths exist, consistent metadata)
         assert len(warnings) == 0

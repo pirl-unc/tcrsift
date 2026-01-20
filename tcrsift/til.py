@@ -262,7 +262,9 @@ def match_til(
         raise TypeError(f"til_data must be AnnData, DataFrame, or dict, got {type(til_data)}")
 
     n_samples = len(til_dict)
-    logger.info(f"Matching {len(culture_clonotypes)} culture clonotypes against {n_samples} TIL sample(s)")
+    logger.info(
+        f"Matching {len(culture_clonotypes)} culture clonotypes against {n_samples} TIL sample(s)"
+    )
 
     df = culture_clonotypes.copy()
 
@@ -272,12 +274,14 @@ def match_til(
         # Build clone_id
         if match_by == "CDR3ab":
             til_df["clone_id"] = (
-                til_df.get("CDR3_alpha", pd.Series("", index=til_df.index)).fillna("") +
-                "_" +
-                til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
+                til_df.get("CDR3_alpha", pd.Series("", index=til_df.index)).fillna("")
+                + "_"
+                + til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
             )
         else:
-            til_df["clone_id"] = til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
+            til_df["clone_id"] = til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna(
+                ""
+            )
 
         # Count cells per clone
         clone_counts = til_df["clone_id"].value_counts().to_dict()
@@ -337,7 +341,9 @@ def match_til(
             df.loc[idx, "til_frequency"] = total_count / total_til_all if total_til_all > 0 else 0
 
     n_matches = df["til_match"].sum()
-    logger.info(f"Found {n_matches} culture clonotypes present in TILs ({n_matches/len(df)*100:.1f}%)")
+    logger.info(
+        f"Found {n_matches} culture clonotypes present in TILs ({n_matches / len(df) * 100:.1f}%)"
+    )
 
     if n_samples > 1:
         for sample_name in til_dict.keys():
@@ -405,7 +411,9 @@ def get_til_summary(
     summary = {
         "total_culture_clones": len(matched_clonotypes),
         "til_matched_clones": len(matched),
-        "til_recovery_rate": len(matched) / len(matched_clonotypes) if len(matched_clonotypes) > 0 else 0,
+        "til_recovery_rate": len(matched) / len(matched_clonotypes)
+        if len(matched_clonotypes) > 0
+        else 0,
         "total_til_cells_matched": matched["til_cell_count"].sum(),
         "median_til_frequency": matched["til_frequency"].median() if len(matched) > 0 else 0,
     }
@@ -456,15 +464,21 @@ def identify_til_specific_clones(
 
     # Build clone identifier
     til_df["clone_id"] = (
-        til_df.get("CDR3_alpha", pd.Series("", index=til_df.index)).fillna("") +
-        "_" +
-        til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
+        til_df.get("CDR3_alpha", pd.Series("", index=til_df.index)).fillna("")
+        + "_"
+        + til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
     )
 
     # Aggregate TIL clones
-    til_clones = til_df.groupby("clone_id").agg({
-        "sample": "first",
-    }).reset_index()
+    til_clones = (
+        til_df.groupby("clone_id")
+        .agg(
+            {
+                "sample": "first",
+            }
+        )
+        .reset_index()
+    )
 
     til_clones["til_cell_count"] = til_df.groupby("clone_id").size().values
     til_clones = til_clones[til_clones["til_cell_count"] >= min_cells]

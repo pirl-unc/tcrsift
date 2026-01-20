@@ -122,11 +122,7 @@ def merge_experiments(
             sources_with_gex.append(name)
 
         # Rename columns with prefix (except key columns)
-        rename_dict = {
-            col: f"{name}.{col}"
-            for col in df_copy.columns
-            if col not in key_cols
-        }
+        rename_dict = {col: f"{name}.{col}" for col in df_copy.columns if col not in key_cols}
         df_copy = df_copy.rename(columns=rename_dict)
         prefixed_dfs.append(df_copy)
         source_names.append(name)
@@ -242,13 +238,11 @@ def add_phenotype_confidence(
     cd8_sum = df.get(cd8_sum_col, pd.Series(0, index=df.index)).fillna(0)
 
     # Confident classifications based on expression ratio
-    df["Confident_CD4"] = (
-        ((cd4_sum > 0) & (cd8_sum == 0)) |
-        (cd4_sum > (ratio_threshold * (1 + cd8_sum)))
+    df["Confident_CD4"] = ((cd4_sum > 0) & (cd8_sum == 0)) | (
+        cd4_sum > (ratio_threshold * (1 + cd8_sum))
     )
-    df["Confident_CD8"] = (
-        ((cd8_sum > 0) & (cd4_sum == 0)) |
-        (cd8_sum > (ratio_threshold * (1 + cd4_sum)))
+    df["Confident_CD8"] = ((cd8_sum > 0) & (cd4_sum == 0)) | (
+        cd8_sum > (ratio_threshold * (1 + cd4_sum))
     )
 
     # TIL evidence
@@ -273,9 +267,7 @@ def add_phenotype_confidence(
 
     # Likely classifications
     df["Likely_CD8"] = df["Confident_CD8"] | til_cd8_mask
-    df["Likely_CD4"] = df["Confident_CD4"] | til_cd4_mask | (
-        ~df["Likely_CD8"] & (cd4_sum > 0)
-    )
+    df["Likely_CD4"] = df["Confident_CD4"] | til_cd4_mask | (~df["Likely_CD8"] & (cd4_sum > 0))
 
     if verbose:
         logger.info(f"  Confident CD4+: {df['Confident_CD4'].sum():,}")
@@ -321,7 +313,11 @@ def compute_condition_statistics(
     # Find condition columns for each condition
     for condition in conditions:
         # Find fraction columns for this condition
-        frac_pattern = f"condition_{condition}" if not source_prefix else f"{source_prefix}.condition_{condition}"
+        frac_pattern = (
+            f"condition_{condition}"
+            if not source_prefix
+            else f"{source_prefix}.condition_{condition}"
+        )
         frac_cols = [c for c in df.columns if frac_pattern in c and c.endswith(".frac")]
 
         if not frac_cols:

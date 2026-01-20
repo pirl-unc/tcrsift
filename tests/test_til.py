@@ -12,7 +12,6 @@
 
 """Tests for TIL matching module."""
 
-
 import anndata as ad
 import numpy as np
 import pandas as pd
@@ -31,23 +30,28 @@ from tcrsift.validation import TCRsiftValidationError
 @pytest.fixture
 def sample_til_data():
     """Create sample TIL AnnData for testing."""
-    obs = pd.DataFrame({
-        "CDR3_alpha": ["CASSL", "CASSL", "CAVSD", "CAVSD", "CAVSD", "UNKNOWN"],
-        "CDR3_beta": ["CASSF", "CASSF", "CASRG", "CASRG", "CASRG", "CASXX"],
-        "sample": ["TIL1"] * 6,
-    }, index=["cell1", "cell2", "cell3", "cell4", "cell5", "cell6"])
+    obs = pd.DataFrame(
+        {
+            "CDR3_alpha": ["CASSL", "CASSL", "CAVSD", "CAVSD", "CAVSD", "UNKNOWN"],
+            "CDR3_beta": ["CASSF", "CASSF", "CASRG", "CASRG", "CASRG", "CASXX"],
+            "sample": ["TIL1"] * 6,
+        },
+        index=["cell1", "cell2", "cell3", "cell4", "cell5", "cell6"],
+    )
     return ad.AnnData(obs=obs)
 
 
 @pytest.fixture
 def sample_culture_clonotypes():
     """Create sample culture clonotypes for testing."""
-    return pd.DataFrame({
-        "clone_id": ["CASSL_CASSF", "NOMATCH_NOMATCH"],
-        "CDR3_alpha": ["CASSL", "NOMATCH"],
-        "CDR3_beta": ["CASSF", "NOMATCH"],
-        "max_frequency": [0.1, 0.05],
-    })
+    return pd.DataFrame(
+        {
+            "clone_id": ["CASSL_CASSF", "NOMATCH_NOMATCH"],
+            "CDR3_alpha": ["CASSL", "NOMATCH"],
+            "CDR3_beta": ["CASSF", "NOMATCH"],
+            "max_frequency": [0.1, 0.05],
+        }
+    )
 
 
 class TestMatchTil:
@@ -71,11 +75,7 @@ class TestMatchTil:
 
     def test_cdr3b_only_matching(self, sample_til_data, sample_culture_clonotypes):
         """Test matching by CDR3 beta only."""
-        result = match_til(
-            sample_culture_clonotypes,
-            sample_til_data,
-            match_by="CDR3b_only"
-        )
+        result = match_til(sample_culture_clonotypes, sample_til_data, match_by="CDR3b_only")
 
         # Should match by beta chain only
         assert result.iloc[0]["til_match"]
@@ -85,7 +85,7 @@ class TestMatchTil:
         result = match_til(
             sample_culture_clonotypes,
             sample_til_data,
-            min_til_cells=3  # Require 3+ cells
+            min_til_cells=3,  # Require 3+ cells
         )
 
         # First clone only has 2 TIL cells, so should not match
@@ -104,10 +104,15 @@ class TestMatchTil:
         """Test with empty TIL data."""
         # Create TIL data with no matching clones instead of empty DataFrame
         # to avoid type issues with empty DataFrames
-        empty_til = ad.AnnData(obs=pd.DataFrame({
-            "CDR3_alpha": ["NOMATCH1"],
-            "CDR3_beta": ["NOMATCH2"],
-        }, index=["cell1"]))
+        empty_til = ad.AnnData(
+            obs=pd.DataFrame(
+                {
+                    "CDR3_alpha": ["NOMATCH1"],
+                    "CDR3_beta": ["NOMATCH2"],
+                },
+                index=["cell1"],
+            )
+        )
 
         result = match_til(sample_culture_clonotypes, empty_til)
 
@@ -120,12 +125,14 @@ class TestGetTilEnrichment:
 
     def test_enrichment_calculation(self):
         """Test enrichment calculation."""
-        matched_clonotypes = pd.DataFrame({
-            "clone_id": ["A", "B"],
-            "til_match": [True, True],
-            "til_frequency": [0.1, 0.01],
-            "max_frequency": [0.01, 0.1],
-        })
+        matched_clonotypes = pd.DataFrame(
+            {
+                "clone_id": ["A", "B"],
+                "til_match": [True, True],
+                "til_frequency": [0.1, 0.01],
+                "max_frequency": [0.01, 0.1],
+            }
+        )
 
         result = get_til_enrichment(matched_clonotypes)
 
@@ -137,10 +144,12 @@ class TestGetTilEnrichment:
 
     def test_no_matches(self):
         """Test with no TIL matches."""
-        unmatched = pd.DataFrame({
-            "clone_id": ["A", "B"],
-            "til_match": [False, False],
-        })
+        unmatched = pd.DataFrame(
+            {
+                "clone_id": ["A", "B"],
+                "til_match": [False, False],
+            }
+        )
 
         result = get_til_enrichment(unmatched)
 
@@ -155,10 +164,12 @@ class TestGetTilEnrichment:
 
     def test_missing_frequency_columns(self):
         """Test handling when frequency columns are missing."""
-        matched = pd.DataFrame({
-            "clone_id": ["A"],
-            "til_match": [True],
-        })
+        matched = pd.DataFrame(
+            {
+                "clone_id": ["A"],
+                "til_match": [True],
+            }
+        )
 
         result = get_til_enrichment(matched)
 
@@ -171,30 +182,34 @@ class TestGetTilSummary:
 
     def test_basic_summary(self):
         """Test basic summary statistics."""
-        matched_clonotypes = pd.DataFrame({
-            "clone_id": ["A", "B", "C"],
-            "til_match": [True, True, False],
-            "til_cell_count": [10, 5, 0],
-            "til_frequency": [0.1, 0.05, 0.0],
-        })
+        matched_clonotypes = pd.DataFrame(
+            {
+                "clone_id": ["A", "B", "C"],
+                "til_match": [True, True, False],
+                "til_cell_count": [10, 5, 0],
+                "til_frequency": [0.1, 0.05, 0.0],
+            }
+        )
 
         summary = get_til_summary(matched_clonotypes)
 
         assert summary["total_culture_clones"] == 3
         assert summary["til_matched_clones"] == 2
-        assert summary["til_recovery_rate"] == pytest.approx(2/3)
+        assert summary["til_recovery_rate"] == pytest.approx(2 / 3)
         assert summary["total_til_cells_matched"] == 15
         assert summary["median_til_frequency"] == pytest.approx(0.075)
 
     def test_summary_with_tiers(self):
         """Test summary with tier information."""
-        matched_clonotypes = pd.DataFrame({
-            "clone_id": ["A", "B", "C", "D"],
-            "til_match": [True, True, False, True],
-            "til_cell_count": [10, 5, 0, 3],
-            "til_frequency": [0.1, 0.05, 0.0, 0.03],
-            "tier": [1, 1, 2, 2],
-        })
+        matched_clonotypes = pd.DataFrame(
+            {
+                "clone_id": ["A", "B", "C", "D"],
+                "til_match": [True, True, False, True],
+                "til_cell_count": [10, 5, 0, 3],
+                "til_frequency": [0.1, 0.05, 0.0, 0.03],
+                "tier": [1, 1, 2, 2],
+            }
+        )
 
         summary = get_til_summary(matched_clonotypes)
 
@@ -204,13 +219,15 @@ class TestGetTilSummary:
 
     def test_summary_with_antigens(self):
         """Test summary with antigen information."""
-        matched_clonotypes = pd.DataFrame({
-            "clone_id": ["A", "B"],
-            "til_match": [True, True],
-            "til_cell_count": [10, 5],
-            "til_frequency": [0.1, 0.05],
-            "antigens": ["PRAME", "CMV"],
-        })
+        matched_clonotypes = pd.DataFrame(
+            {
+                "clone_id": ["A", "B"],
+                "til_match": [True, True],
+                "til_cell_count": [10, 5],
+                "til_frequency": [0.1, 0.05],
+                "antigens": ["PRAME", "CMV"],
+            }
+        )
 
         summary = get_til_summary(matched_clonotypes)
 
@@ -228,12 +245,14 @@ class TestGetTilSummary:
 
     def test_empty_clonotypes(self):
         """Test with empty clonotypes."""
-        empty = pd.DataFrame({
-            "clone_id": pd.Series([], dtype=str),
-            "til_match": pd.Series([], dtype=bool),
-            "til_cell_count": pd.Series([], dtype=int),
-            "til_frequency": pd.Series([], dtype=float),
-        })
+        empty = pd.DataFrame(
+            {
+                "clone_id": pd.Series([], dtype=str),
+                "til_match": pd.Series([], dtype=bool),
+                "til_cell_count": pd.Series([], dtype=int),
+                "til_frequency": pd.Series([], dtype=float),
+            }
+        )
 
         summary = get_til_summary(empty)
 
@@ -256,9 +275,7 @@ class TestIdentifyTilSpecificClones:
     def test_exclude_culture_clones(self, sample_til_data, sample_culture_clonotypes):
         """Test excluding culture clones."""
         result = identify_til_specific_clones(
-            sample_til_data,
-            culture_clonotypes=sample_culture_clonotypes,
-            min_cells=1
+            sample_til_data, culture_clonotypes=sample_culture_clonotypes, min_cells=1
         )
 
         # CASSL_CASSF should be excluded
@@ -298,11 +315,7 @@ class TestLoadTilData:
     def test_load_csv_standard_columns(self, tmp_path):
         """Test loading TIL data from CSV with standard column names."""
         csv_path = tmp_path / "til.csv"
-        csv_path.write_text(
-            "CDR3_alpha,CDR3_beta,sample\n"
-            "CAVSD,CASRG,TIL1\n"
-            "CASSL,CASSF,TIL1\n"
-        )
+        csv_path.write_text("CDR3_alpha,CDR3_beta,sample\nCAVSD,CASRG,TIL1\nCASSL,CASSF,TIL1\n")
 
         result = load_til_data("csv", csv_path, "TestSample")
 
@@ -314,11 +327,7 @@ class TestLoadTilData:
     def test_load_csv_alternate_columns(self, tmp_path):
         """Test loading TIL data from CSV with alternate column names."""
         csv_path = tmp_path / "til.csv"
-        csv_path.write_text(
-            "cdr3_alpha,cdr3_beta\n"
-            "CAVSD,CASRG\n"
-            "CASSL,CASSF\n"
-        )
+        csv_path.write_text("cdr3_alpha,cdr3_beta\nCAVSD,CASRG\nCASSL,CASSF\n")
 
         result = load_til_data("csv", csv_path, "TestSample")
 
@@ -332,10 +341,7 @@ class TestLoadTilData:
     def test_load_csv_with_CDR3a_CDR3b_columns(self, tmp_path):
         """Test loading CSV with CDR3a/CDR3b naming convention."""
         csv_path = tmp_path / "til.csv"
-        csv_path.write_text(
-            "CDR3a,CDR3b\n"
-            "CAVSD,CASRG\n"
-        )
+        csv_path.write_text("CDR3a,CDR3b\nCAVSD,CASRG\n")
 
         result = load_til_data("csv", csv_path, "TestSample")
 
@@ -362,10 +368,13 @@ class TestLoadTilData:
         h5ad_path = tmp_path / "til.h5ad"
 
         # Create a simple AnnData and save it
-        obs = pd.DataFrame({
-            "CDR3_alpha": ["CAVSD", "CASSL"],
-            "CDR3_beta": ["CASRG", "CASSF"],
-        }, index=["cell1", "cell2"])
+        obs = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CAVSD", "CASSL"],
+                "CDR3_beta": ["CASRG", "CASSF"],
+            },
+            index=["cell1", "cell2"],
+        )
         adata = ad.AnnData(obs=obs)
         adata.write_h5ad(h5ad_path)
 
@@ -399,14 +408,18 @@ class TestMultiSampleTilMatching:
     def test_match_til_dict_input(self, sample_culture_clonotypes):
         """Test matching against multiple TIL samples via dict."""
         til_dict = {
-            "TIL_Sample1": pd.DataFrame({
-                "CDR3_alpha": ["CASSL", "CASSL", "CAVSD"],
-                "CDR3_beta": ["CASSF", "CASSF", "CASRG"],
-            }),
-            "TIL_Sample2": pd.DataFrame({
-                "CDR3_alpha": ["CASSL", "OTHER"],
-                "CDR3_beta": ["CASSF", "OTHER"],
-            }),
+            "TIL_Sample1": pd.DataFrame(
+                {
+                    "CDR3_alpha": ["CASSL", "CASSL", "CAVSD"],
+                    "CDR3_beta": ["CASSF", "CASSF", "CASRG"],
+                }
+            ),
+            "TIL_Sample2": pd.DataFrame(
+                {
+                    "CDR3_alpha": ["CASSL", "OTHER"],
+                    "CDR3_beta": ["CASSF", "OTHER"],
+                }
+            ),
         }
 
         result = match_til(sample_culture_clonotypes, til_dict)
@@ -432,7 +445,9 @@ class TestMultiSampleTilMatching:
         assert "TIL_Sample1" in first_row["til_samples"]
         assert "TIL_Sample2" in first_row["til_samples"]
 
-    def test_match_til_single_sample_no_per_sample_columns(self, sample_til_data, sample_culture_clonotypes):
+    def test_match_til_single_sample_no_per_sample_columns(
+        self, sample_til_data, sample_culture_clonotypes
+    ):
         """Test that single sample doesn't add per-sample columns."""
         result = match_til(sample_culture_clonotypes, sample_til_data)
 
@@ -444,10 +459,12 @@ class TestMultiSampleTilMatching:
 
     def test_match_til_dataframe_input(self, sample_culture_clonotypes):
         """Test matching against single TIL DataFrame."""
-        til_df = pd.DataFrame({
-            "CDR3_alpha": ["CASSL", "CASSL"],
-            "CDR3_beta": ["CASSF", "CASSF"],
-        })
+        til_df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CASSL", "CASSL"],
+                "CDR3_beta": ["CASSF", "CASSF"],
+            }
+        )
 
         result = match_til(sample_culture_clonotypes, til_df)
 

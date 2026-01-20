@@ -14,6 +14,7 @@ Data loading functions for TCRsift.
 
 Handles loading CellRanger VDJ and GEX outputs into unified data structures.
 """
+
 from __future__ import annotations
 
 import logging
@@ -141,7 +142,9 @@ def load_cellranger_vdj(
     n_cells = df["barcode"].nunique()
     n_productive = df["productive"].sum() if "productive" in df.columns else "unknown"
     if verbose:
-        logger.info(f"  Loaded {n_contigs:,} contigs from {n_cells:,} cells ({n_productive} productive)")
+        logger.info(
+            f"  Loaded {n_contigs:,} contigs from {n_cells:,} cells ({n_productive} productive)"
+        )
 
     # Validate chain types
     valid_chains = {"TRA", "TRB", "TRD", "TRG", "IGH", "IGK", "IGL", "Multi"}
@@ -166,7 +169,9 @@ def load_cellranger_vdj(
             if "inkt_evidence" in df_clonotypes.columns:
                 clonotype_cols.append("inkt_evidence")
             df_clonotypes_subset = df_clonotypes[clonotype_cols].copy()
-            df_clonotypes_subset = df_clonotypes_subset.rename(columns={"clonotype_id": "raw_clonotype_id"})
+            df_clonotypes_subset = df_clonotypes_subset.rename(
+                columns={"clonotype_id": "raw_clonotype_id"}
+            )
             df = df.merge(df_clonotypes_subset, on="raw_clonotype_id", how="left")
 
     # Combine VDJ segments into full sequence if available
@@ -292,7 +297,9 @@ def load_cellranger_gex(
     adata.obs["gex_dir"] = str(gex_dir)
 
     # Calculate QC metrics
-    adata.var["mt"] = adata.var_names.str.startswith("MT-") | adata.var_names.str.contains("^ENSG.*MT-")
+    adata.var["mt"] = adata.var_names.str.startswith("MT-") | adata.var_names.str.contains(
+        "^ENSG.*MT-"
+    )
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True)
 
     # Rename QC columns for consistency
@@ -421,7 +428,9 @@ def _pivot_vdj_by_barcode(vdj_df: pd.DataFrame) -> pd.DataFrame:
     Handles doublets by keeping track of multiple chains per barcode.
     """
     # Sort by UMI count to prioritize high-quality chains
-    vdj_df = vdj_df.sort_values(["barcode", "chain", "umis", "reads"], ascending=[True, True, False, False])
+    vdj_df = vdj_df.sort_values(
+        ["barcode", "chain", "umis", "reads"], ascending=[True, True, False, False]
+    )
 
     # Create entry ID for each chain per barcode (1, 2, etc.)
     vdj_df["entry_id"] = vdj_df.groupby(["barcode", "chain"]).cumcount() + 1
@@ -460,7 +469,9 @@ def _pivot_vdj_by_barcode(vdj_df: pd.DataFrame) -> pd.DataFrame:
 
     # Add chain count and doublet flags
     for chain in ["TRA", "TRB"]:
-        umi_cols = [c for c in pivot_df.columns if c.startswith(f"{chain}_") and c.endswith("_umis")]
+        umi_cols = [
+            c for c in pivot_df.columns if c.startswith(f"{chain}_") and c.endswith("_umis")
+        ]
         pivot_df[f"{chain}_count"] = pivot_df[umi_cols].notna().sum(axis=1)
         pivot_df[f"has_{chain}"] = pivot_df[f"{chain}_count"] > 0
         pivot_df[f"multi_{chain}"] = pivot_df[f"{chain}_count"] > 1
@@ -586,14 +597,18 @@ def load_samples(
     validation_errors = []
     for i, sample in enumerate(sample_sheet):
         if sample.vdj_dir and not Path(sample.vdj_dir).exists():
-            validation_errors.append(f"Sample '{sample.sample}': VDJ directory not found: {sample.vdj_dir}")
+            validation_errors.append(
+                f"Sample '{sample.sample}': VDJ directory not found: {sample.vdj_dir}"
+            )
         if sample.gex_dir and not Path(sample.gex_dir).exists():
-            validation_errors.append(f"Sample '{sample.sample}': GEX directory not found: {sample.gex_dir}")
+            validation_errors.append(
+                f"Sample '{sample.sample}': GEX directory not found: {sample.gex_dir}"
+            )
 
     if validation_errors:
         raise TCRsiftValidationError(
-            f"Sample sheet validation failed with {len(validation_errors)} error(s):\n" +
-            "\n".join(f"  - {e}" for e in validation_errors[:5]),
+            f"Sample sheet validation failed with {len(validation_errors)} error(s):\n"
+            + "\n".join(f"  - {e}" for e in validation_errors[:5]),
             hint="Check that all paths in the sample sheet are correct and accessible.",
         )
 

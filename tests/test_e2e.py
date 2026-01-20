@@ -16,9 +16,6 @@ These tests exercise the complete workflow from raw VDJ data through
 filtering and annotation, using realistic synthetic data.
 """
 
-import tempfile
-from pathlib import Path
-
 import anndata as ad
 import numpy as np
 import pandas as pd
@@ -78,37 +75,17 @@ class TestEndToEndPipeline:
             barcode = f"CELL{cell_idx:04d}-1"
 
             # Alpha chain
-            rows.append({
-                "barcode": barcode,
-                "contig_id": f"{barcode}_contig_1",
-                "chain": "TRA",
-                "v_gene": f"TRAV{np.random.randint(1, 30)}-1",
-                "j_gene": f"TRAJ{np.random.randint(1, 60)}",
-                "c_gene": "TRAC",
-                "d_gene": None,
-                "cdr3": cdr3_alpha,
-                "cdr3_nt": "N" * (len(cdr3_alpha) * 3),
-                "umis": np.random.randint(5, 200),
-                "reads": np.random.randint(50, 2000),
-                "productive": True,
-                "full_length": True,
-                "is_cell": True,
-                "high_confidence": True,
-                "raw_clonotype_id": f"clonotype{clone_id}",
-            })
-
-            # Beta chain (95% have paired beta)
-            if np.random.random() < 0.95:
-                rows.append({
+            rows.append(
+                {
                     "barcode": barcode,
-                    "contig_id": f"{barcode}_contig_2",
-                    "chain": "TRB",
-                    "v_gene": f"TRBV{np.random.randint(1, 30)}-1",
-                    "j_gene": f"TRBJ{np.random.choice(['1-1', '1-2', '2-1', '2-7'])}",
-                    "c_gene": np.random.choice(["TRBC1", "TRBC2"]),
-                    "d_gene": np.random.choice(["TRBD1", "TRBD2"]),
-                    "cdr3": cdr3_beta,
-                    "cdr3_nt": "N" * (len(cdr3_beta) * 3),
+                    "contig_id": f"{barcode}_contig_1",
+                    "chain": "TRA",
+                    "v_gene": f"TRAV{np.random.randint(1, 30)}-1",
+                    "j_gene": f"TRAJ{np.random.randint(1, 60)}",
+                    "c_gene": "TRAC",
+                    "d_gene": None,
+                    "cdr3": cdr3_alpha,
+                    "cdr3_nt": "N" * (len(cdr3_alpha) * 3),
                     "umis": np.random.randint(5, 200),
                     "reads": np.random.randint(50, 2000),
                     "productive": True,
@@ -116,7 +93,31 @@ class TestEndToEndPipeline:
                     "is_cell": True,
                     "high_confidence": True,
                     "raw_clonotype_id": f"clonotype{clone_id}",
-                })
+                }
+            )
+
+            # Beta chain (95% have paired beta)
+            if np.random.random() < 0.95:
+                rows.append(
+                    {
+                        "barcode": barcode,
+                        "contig_id": f"{barcode}_contig_2",
+                        "chain": "TRB",
+                        "v_gene": f"TRBV{np.random.randint(1, 30)}-1",
+                        "j_gene": f"TRBJ{np.random.choice(['1-1', '1-2', '2-1', '2-7'])}",
+                        "c_gene": np.random.choice(["TRBC1", "TRBC2"]),
+                        "d_gene": np.random.choice(["TRBD1", "TRBD2"]),
+                        "cdr3": cdr3_beta,
+                        "cdr3_nt": "N" * (len(cdr3_beta) * 3),
+                        "umis": np.random.randint(5, 200),
+                        "reads": np.random.randint(50, 2000),
+                        "productive": True,
+                        "full_length": True,
+                        "is_cell": True,
+                        "high_confidence": True,
+                        "raw_clonotype_id": f"clonotype{clone_id}",
+                    }
+                )
 
         return pd.DataFrame(rows)
 
@@ -142,12 +143,12 @@ class TestEndToEndPipeline:
         # CD8+ cells
         X[:cd8_cells, -2] = np.random.poisson(25, cd8_cells)  # CD8A
         X[:cd8_cells, -1] = np.random.poisson(20, cd8_cells)  # CD8B
-        X[:cd8_cells, -3] = np.random.poisson(2, cd8_cells)   # CD4
+        X[:cd8_cells, -3] = np.random.poisson(2, cd8_cells)  # CD4
 
         # CD4+ cells
-        X[cd8_cells:cd8_cells+cd4_cells, -3] = np.random.poisson(25, cd4_cells)  # CD4
-        X[cd8_cells:cd8_cells+cd4_cells, -2] = np.random.poisson(2, cd4_cells)   # CD8A
-        X[cd8_cells:cd8_cells+cd4_cells, -1] = np.random.poisson(2, cd4_cells)   # CD8B
+        X[cd8_cells : cd8_cells + cd4_cells, -3] = np.random.poisson(25, cd4_cells)  # CD4
+        X[cd8_cells : cd8_cells + cd4_cells, -2] = np.random.poisson(2, cd4_cells)  # CD8A
+        X[cd8_cells : cd8_cells + cd4_cells, -1] = np.random.poisson(2, cd4_cells)  # CD8B
 
         # CD3 for all
         X[:, -6:-3] = np.random.poisson(15, (n_cells, 3))
@@ -179,11 +180,13 @@ class TestEndToEndPipeline:
                 cdr3_alpha = f"CAV{clone_idx:03d}TILSPEC"
                 cdr3_beta = f"CASS{clone_idx:03d}TILSEQ"
 
-            rows.append({
-                "CDR3_alpha": cdr3_alpha,
-                "CDR3_beta": cdr3_beta,
-                "sample": "TIL_sample",
-            })
+            rows.append(
+                {
+                    "CDR3_alpha": cdr3_alpha,
+                    "CDR3_beta": cdr3_beta,
+                    "sample": "TIL_sample",
+                }
+            )
 
         df = pd.DataFrame(rows)
         df.index = [f"TIL_cell_{i}" for i in range(len(df))]
@@ -192,22 +195,24 @@ class TestEndToEndPipeline:
     @pytest.fixture
     def synthetic_database(self):
         """Generate a mock annotation database."""
-        return pd.DataFrame({
-            "cdr3_beta": [
-                "CASS000YEQYF",  # Match first clone
-                "CASS001YEQYF",  # Match second clone
-                "CASSVIRALSEQ",  # Viral sequence
-            ],
-            "cdr3_alpha": [
-                "CAV000QGNLIF",
-                "CAV001QGNLIF",
-                "",
-            ],
-            "epitope": ["pp65", "MART-1", "EBV_BMLF1"],
-            "species": ["CMV", "self", "EBV"],
-            "database": ["VDJdb", "IEDB", "VDJdb"],
-            "is_viral": [True, False, True],
-        })
+        return pd.DataFrame(
+            {
+                "cdr3_beta": [
+                    "CASS000YEQYF",  # Match first clone
+                    "CASS001YEQYF",  # Match second clone
+                    "CASSVIRALSEQ",  # Viral sequence
+                ],
+                "cdr3_alpha": [
+                    "CAV000QGNLIF",
+                    "CAV001QGNLIF",
+                    "",
+                ],
+                "epitope": ["pp65", "MART-1", "EBV_BMLF1"],
+                "species": ["CMV", "self", "EBV"],
+                "database": ["VDJdb", "IEDB", "VDJdb"],
+                "is_viral": [True, False, True],
+            }
+        )
 
     def test_load_aggregate_filter_pipeline(self, synthetic_cellranger_data, tmp_path):
         """Test loading VDJ data, aggregating to clonotypes, and filtering."""
@@ -234,7 +239,7 @@ class TestEndToEndPipeline:
 
         # Should have mix of clone sizes
         assert clonotypes["cell_count"].max() >= 10  # Some expanded
-        assert clonotypes["cell_count"].min() <= 2   # Some rare
+        assert clonotypes["cell_count"].min() <= 2  # Some rare
 
         # Step 3: Filter clonotypes (threshold method)
         filtered = filter_clonotypes(
@@ -271,9 +276,7 @@ class TestEndToEndPipeline:
         assert "total_clonotypes" in summary
         assert "tier_counts" in summary
 
-    def test_til_matching_pipeline(
-        self, synthetic_cellranger_data, synthetic_til_data, tmp_path
-    ):
+    def test_til_matching_pipeline(self, synthetic_cellranger_data, synthetic_til_data, tmp_path):
         """Test TIL matching with culture clonotypes."""
         from tcrsift.clonotype import aggregate_clonotypes
         from tcrsift.loader import _pivot_vdj_by_barcode
@@ -369,6 +372,7 @@ class TestCLIEndToEnd:
     def test_cli_help(self):
         """Test that CLI help works."""
         import subprocess
+
         result = subprocess.run(
             ["python", "-m", "tcrsift.cli", "--help"],
             capture_output=True,
@@ -380,6 +384,7 @@ class TestCLIEndToEnd:
     def test_cli_version(self):
         """Test that CLI version works."""
         import subprocess
+
         result = subprocess.run(
             ["python", "-m", "tcrsift.cli", "--version"],
             capture_output=True,

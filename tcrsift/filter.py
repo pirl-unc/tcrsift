@@ -126,21 +126,27 @@ def filter_clonotypes_threshold(
         before = len(df)
         df = df[df["cell_count"] >= min_cells]
         if verbose:
-            logger.info(f"  min_cells >= {min_cells}: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
+            logger.info(
+                f"  min_cells >= {min_cells}: {before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
 
     # Frequency filter
     if min_frequency > 0 and "max_frequency" in df.columns:
         before = len(df)
         df = df[df["max_frequency"] >= min_frequency]
         if verbose:
-            logger.info(f"  min_frequency >= {min_frequency}: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
+            logger.info(
+                f"  min_frequency >= {min_frequency}: {before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
 
     # Condition specificity filter
     if max_conditions < 999 and "n_samples" in df.columns:
         before = len(df)
         df = df[df["n_samples"] <= max_conditions]
         if verbose:
-            logger.info(f"  max_conditions <= {max_conditions}: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
+            logger.info(
+                f"  max_conditions <= {max_conditions}: {before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
 
     # Complete TCR filter
     if require_complete:
@@ -149,7 +155,9 @@ def filter_clonotypes_threshold(
         has_beta = df["CDR3_beta"].notna() & (df["CDR3_beta"] != "")
         df = df[has_alpha & has_beta]
         if verbose:
-            logger.info(f"  require_complete TCR: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
+            logger.info(
+                f"  require_complete TCR: {before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
 
     # T cell type filter
     if tcell_type and "Tcell_type_consensus" in df.columns:
@@ -159,7 +167,9 @@ def filter_clonotypes_threshold(
         elif tcell_type.lower() == "cd4":
             df = df[df["Tcell_type_consensus"].str.contains("CD4", na=False)]
         if verbose:
-            logger.info(f"  tcell_type={tcell_type}: {before:,} -> {len(df):,} ({before - len(df):,} removed)")
+            logger.info(
+                f"  tcell_type={tcell_type}: {before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
 
     # Viral exclusion
     if exclude_viral and "is_viral" in df.columns:
@@ -167,10 +177,14 @@ def filter_clonotypes_threshold(
         n_viral = df["is_viral"].sum()
         df = df[~df["is_viral"]]
         if verbose:
-            logger.info(f"  exclude_viral: {before:,} -> {len(df):,} ({n_viral:,} viral clones removed)")
+            logger.info(
+                f"  exclude_viral: {before:,} -> {len(df):,} ({n_viral:,} viral clones removed)"
+            )
 
     if verbose:
-        logger.info(f"  Final: {initial_count:,} -> {len(df):,} clonotypes ({len(df)/initial_count*100:.1f}% retained)")
+        logger.info(
+            f"  Final: {initial_count:,} -> {len(df):,} clonotypes ({len(df) / initial_count * 100:.1f}% retained)"
+        )
 
     if len(df) == 0:
         raise TCRsiftValidationError(
@@ -499,6 +513,8 @@ def get_filter_summary(clonotypes: pd.DataFrame) -> dict:
         if tier is not None:
             tier_df = clonotypes[clonotypes["tier"] == tier]
             summary[f"{tier}_cells"] = tier_df["cell_count"].sum()
-            summary[f"{tier}_median_freq"] = tier_df["max_frequency"].median() if "max_frequency" in tier_df.columns else None
+            summary[f"{tier}_median_freq"] = (
+                tier_df["max_frequency"].median() if "max_frequency" in tier_df.columns else None
+            )
 
     return summary

@@ -21,21 +21,23 @@ from tcrsift.data import annotate_combined_df
 @pytest.fixture
 def sample_combined_df():
     """Create sample combined gene expression + VDJ DataFrame."""
-    return pd.DataFrame({
-        "barcode": ["AAAA-1", "BBBB-1", "CCCC-1", "DDDD-1", "EEEE-1"],
-        "sample": ["Sample_1", "Sample_1", "Sample_2", "Sample_2", "Sample_3"],
-        "cdr3_aa1": ["CASSL", "CAVSD", None, "CATRD", "CAETF"],
-        "cdr3_aa2": ["CASSF", "CASRG", "CASXX", None, "CASYY"],
-        "ENSG00000167286.10": [10, 5, 8, 12, 0],  # CD3D
-        "ENSG00000198851.10": [8, 4, 6, 10, 0],   # CD3E
-        "ENSG00000160654.11": [5, 3, 4, 8, 0],    # CD3G
-        "ENSG00000010610.10": [100, 5, 200, 10, 50],  # CD4
-        "ENSG00000153563.16": [5, 100, 10, 200, 50],  # CD8A
-        "ENSG00000172116.23": [3, 80, 8, 150, 40],    # CD8B
-        "nCount_RNA": [5000, 6000, 7000, 8000, 9000],
-        "nFeature_RNA": [1000, 1200, 1400, 1600, 1800],
-        "percent.mt": [3.0, 4.0, 5.0, 6.0, 7.0],
-    })
+    return pd.DataFrame(
+        {
+            "barcode": ["AAAA-1", "BBBB-1", "CCCC-1", "DDDD-1", "EEEE-1"],
+            "sample": ["Sample_1", "Sample_1", "Sample_2", "Sample_2", "Sample_3"],
+            "cdr3_aa1": ["CASSL", "CAVSD", None, "CATRD", "CAETF"],
+            "cdr3_aa2": ["CASSF", "CASRG", "CASXX", None, "CASYY"],
+            "ENSG00000167286.10": [10, 5, 8, 12, 0],  # CD3D
+            "ENSG00000198851.10": [8, 4, 6, 10, 0],  # CD3E
+            "ENSG00000160654.11": [5, 3, 4, 8, 0],  # CD3G
+            "ENSG00000010610.10": [100, 5, 200, 10, 50],  # CD4
+            "ENSG00000153563.16": [5, 100, 10, 200, 50],  # CD8A
+            "ENSG00000172116.23": [3, 80, 8, 150, 40],  # CD8B
+            "nCount_RNA": [5000, 6000, 7000, 8000, 9000],
+            "nFeature_RNA": [1000, 1200, 1400, 1600, 1800],
+            "percent.mt": [3.0, 4.0, 5.0, 6.0, 7.0],
+        }
+    )
 
 
 class TestAnnotateCombinedDf:
@@ -59,14 +61,17 @@ class TestAnnotateCombinedDf:
         result = annotate_combined_df(sample_combined_df)
 
         # CD3 = CD3D + CD3E + CD3G
-        expected_cd3 = sample_combined_df["ENSG00000167286.10"] + \
-                       sample_combined_df["ENSG00000198851.10"] + \
-                       sample_combined_df["ENSG00000160654.11"]
+        expected_cd3 = (
+            sample_combined_df["ENSG00000167286.10"]
+            + sample_combined_df["ENSG00000198851.10"]
+            + sample_combined_df["ENSG00000160654.11"]
+        )
         assert list(result["CD3"]) == list(expected_cd3)
 
         # CD8 = CD8A + CD8B
-        expected_cd8 = sample_combined_df["ENSG00000153563.16"] + \
-                       sample_combined_df["ENSG00000172116.23"]
+        expected_cd8 = (
+            sample_combined_df["ENSG00000153563.16"] + sample_combined_df["ENSG00000172116.23"]
+        )
         assert list(result["CD8"]) == list(expected_cd8)
 
     def test_tcr_completeness(self, sample_combined_df):
@@ -182,25 +187,29 @@ class TestAnnotateCombinedDf:
 
         assert "filtered_confident_and_complete" in result.columns
 
-    @pytest.mark.xfail(reason="annotate_combined_df doesn't handle empty DataFrames due to pandas type issues")
+    @pytest.mark.xfail(
+        reason="annotate_combined_df doesn't handle empty DataFrames due to pandas type issues"
+    )
     def test_empty_dataframe(self):
         """Test with empty DataFrame."""
         # Use explicit dtypes to avoid pandas type conversion issues
-        empty_df = pd.DataFrame({
-            "barcode": pd.Series([], dtype=str),
-            "sample": pd.Series([], dtype=str),
-            "cdr3_aa1": pd.Series([], dtype=str),
-            "cdr3_aa2": pd.Series([], dtype=str),
-            "ENSG00000167286.10": pd.Series([], dtype=float),
-            "ENSG00000198851.10": pd.Series([], dtype=float),
-            "ENSG00000160654.11": pd.Series([], dtype=float),
-            "ENSG00000010610.10": pd.Series([], dtype=float),
-            "ENSG00000153563.16": pd.Series([], dtype=float),
-            "ENSG00000172116.23": pd.Series([], dtype=float),
-            "nCount_RNA": pd.Series([], dtype=float),
-            "nFeature_RNA": pd.Series([], dtype=float),
-            "percent.mt": pd.Series([], dtype=float),
-        })
+        empty_df = pd.DataFrame(
+            {
+                "barcode": pd.Series([], dtype=str),
+                "sample": pd.Series([], dtype=str),
+                "cdr3_aa1": pd.Series([], dtype=str),
+                "cdr3_aa2": pd.Series([], dtype=str),
+                "ENSG00000167286.10": pd.Series([], dtype=float),
+                "ENSG00000198851.10": pd.Series([], dtype=float),
+                "ENSG00000160654.11": pd.Series([], dtype=float),
+                "ENSG00000010610.10": pd.Series([], dtype=float),
+                "ENSG00000153563.16": pd.Series([], dtype=float),
+                "ENSG00000172116.23": pd.Series([], dtype=float),
+                "nCount_RNA": pd.Series([], dtype=float),
+                "nFeature_RNA": pd.Series([], dtype=float),
+                "percent.mt": pd.Series([], dtype=float),
+            }
+        )
 
         result = annotate_combined_df(empty_df)
 
@@ -208,21 +217,23 @@ class TestAnnotateCombinedDf:
 
     def test_semicolon_separated_cdr3(self):
         """Test handling of semicolon-separated CDR3 sequences (doublets)."""
-        df = pd.DataFrame({
-            "barcode": ["AAAA-1"],
-            "sample": ["Sample_1"],
-            "cdr3_aa1": ["CASSL;CAVSD"],  # Two alpha chains
-            "cdr3_aa2": ["CASSF"],
-            "ENSG00000167286.10": [10],
-            "ENSG00000198851.10": [8],
-            "ENSG00000160654.11": [5],
-            "ENSG00000010610.10": [100],
-            "ENSG00000153563.16": [5],
-            "ENSG00000172116.23": [3],
-            "nCount_RNA": [5000],
-            "nFeature_RNA": [1000],
-            "percent.mt": [3.0],
-        })
+        df = pd.DataFrame(
+            {
+                "barcode": ["AAAA-1"],
+                "sample": ["Sample_1"],
+                "cdr3_aa1": ["CASSL;CAVSD"],  # Two alpha chains
+                "cdr3_aa2": ["CASSF"],
+                "ENSG00000167286.10": [10],
+                "ENSG00000198851.10": [8],
+                "ENSG00000160654.11": [5],
+                "ENSG00000010610.10": [100],
+                "ENSG00000153563.16": [5],
+                "ENSG00000172116.23": [3],
+                "nCount_RNA": [5000],
+                "nFeature_RNA": [1000],
+                "percent.mt": [3.0],
+            }
+        )
 
         result = annotate_combined_df(df)
 
@@ -249,21 +260,23 @@ class TestAnnotateCombinedDf:
         # For "Likely" instead of "Confident", CD4 must be > 0 and CD8 = 0
         # BUT ratio (1+CD4)/(1+CD8) must be <= threshold (default 3)
         # So we need CD4 = 1 or 2 to get ratio of 2/1 = 2 or 3/1 = 3
-        df = pd.DataFrame({
-            "barcode": ["AAAA-1"],
-            "sample": ["Sample_1"],
-            "cdr3_aa1": ["CASSL"],
-            "cdr3_aa2": ["CASSF"],
-            "ENSG00000167286.10": [10],
-            "ENSG00000198851.10": [8],
-            "ENSG00000160654.11": [5],
-            "ENSG00000010610.10": [2],  # Low CD4: (1+2)/(1+0) = 3, not > 3
-            "ENSG00000153563.16": [0],  # No CD8A
-            "ENSG00000172116.23": [0],  # No CD8B
-            "nCount_RNA": [5000],
-            "nFeature_RNA": [1000],
-            "percent.mt": [3.0],
-        })
+        df = pd.DataFrame(
+            {
+                "barcode": ["AAAA-1"],
+                "sample": ["Sample_1"],
+                "cdr3_aa1": ["CASSL"],
+                "cdr3_aa2": ["CASSF"],
+                "ENSG00000167286.10": [10],
+                "ENSG00000198851.10": [8],
+                "ENSG00000160654.11": [5],
+                "ENSG00000010610.10": [2],  # Low CD4: (1+2)/(1+0) = 3, not > 3
+                "ENSG00000153563.16": [0],  # No CD8A
+                "ENSG00000172116.23": [0],  # No CD8B
+                "nCount_RNA": [5000],
+                "nFeature_RNA": [1000],
+                "percent.mt": [3.0],
+            }
+        )
 
         result = annotate_combined_df(df)
 

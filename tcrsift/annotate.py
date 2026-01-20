@@ -14,6 +14,7 @@ TCR annotation using public databases for TCRsift.
 
 Matches TCRs against VDJdb, IEDB, and CEDAR to identify known specificities.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,15 +35,25 @@ logger = logging.getLogger(__name__)
 
 # Known viral species patterns for flagging
 VIRAL_SPECIES_PATTERNS = [
-    "cmv", "cytomegalovirus",
-    "ebv", "epstein-barr",
-    "hiv", "human immunodeficiency",
-    "flu", "influenza",
-    "sars", "coronavirus",
-    "herpes", "hsv",
-    "hpv", "papilloma",
-    "hepatitis", "hbv", "hcv",
-    "dengue", "zika",
+    "cmv",
+    "cytomegalovirus",
+    "ebv",
+    "epstein-barr",
+    "hiv",
+    "human immunodeficiency",
+    "flu",
+    "influenza",
+    "sars",
+    "coronavirus",
+    "herpes",
+    "hsv",
+    "hpv",
+    "papilloma",
+    "hepatitis",
+    "hbv",
+    "hcv",
+    "dengue",
+    "zika",
     "yellow fever",
 ]
 
@@ -300,7 +311,9 @@ def match_clonotypes(
         )
 
     if verbose:
-        logger.info(f"Matching {len(clonotypes):,} clonotypes against {len(database):,} database entries by {match_by}")
+        logger.info(
+            f"Matching {len(clonotypes):,} clonotypes against {len(database):,} database entries by {match_by}"
+        )
 
     df = clonotypes.copy()
 
@@ -315,10 +328,7 @@ def match_clonotypes(
     if match_by == "CDR3ab":
         # Match on both alpha and beta
         db_alpha_beta = set(
-            zip(
-                database["cdr3_alpha"].fillna(""),
-                database["cdr3_beta"].fillna("")
-            )
+            zip(database["cdr3_alpha"].fillna(""), database["cdr3_beta"].fillna(""))
         )
 
         # Create iterator with optional progress bar
@@ -336,8 +346,7 @@ def match_clonotypes(
 
             if (alpha, beta) in db_alpha_beta:
                 matches = database[
-                    (database["cdr3_alpha"] == alpha) &
-                    (database["cdr3_beta"] == beta)
+                    (database["cdr3_alpha"] == alpha) & (database["cdr3_beta"] == beta)
                 ]
                 _annotate_match(df, idx, matches)
 

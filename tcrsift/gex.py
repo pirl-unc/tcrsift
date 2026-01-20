@@ -35,11 +35,25 @@ logger = logging.getLogger(__name__)
 
 # Default gene lists for T cell analysis
 DEFAULT_GENE_LIST = [
-    "CD3D", "CD3E", "CD3G", "CD4", "CD8A", "CD8B",
-    "GZMA", "GZMB", "PRF1", "IFNG",
-    "PDCD1", "CD274", "PDCD1LG2",  # PD-1/PD-L1
-    "CTLA4", "LAG3", "HAVCR2", "TIGIT",  # Checkpoint
-    "FOXP3", "IL2RA",  # Treg
+    "CD3D",
+    "CD3E",
+    "CD3G",
+    "CD4",
+    "CD8A",
+    "CD8B",
+    "GZMA",
+    "GZMB",
+    "PRF1",
+    "IFNG",
+    "PDCD1",
+    "CD274",
+    "PDCD1LG2",  # PD-1/PD-L1
+    "CTLA4",
+    "LAG3",
+    "HAVCR2",
+    "TIGIT",  # Checkpoint
+    "FOXP3",
+    "IL2RA",  # Treg
 ]
 
 DEFAULT_GENE_GROUPS = {
@@ -217,7 +231,9 @@ def augment_with_gex(
 
     if verbose:
         logger.info(f"  Matched {matched_barcodes:,}/{len(df):,} barcodes")
-        logger.info(f"  Added {len(available_genes)} gene columns + {len(gene_groups)} group columns")
+        logger.info(
+            f"  Added {len(available_genes)} gene columns + {len(gene_groups)} group columns"
+        )
 
     return df
 
@@ -357,12 +373,14 @@ def compute_cd4_cd8_counts(
         cd8_only = ((cd8_vals > 0) & (cd4_vals == 0)).sum()
         total = len(group)
 
-        result_data.append({
-            group_col: clonotype,
-            "total_cells.count": total,
-            "CD4_only.count": cd4_only,
-            "CD8_only.count": cd8_only,
-        })
+        result_data.append(
+            {
+                group_col: clonotype,
+                "total_cells.count": total,
+                "CD4_only.count": cd4_only,
+                "CD8_only.count": cd8_only,
+            }
+        )
 
     result = pd.DataFrame(result_data)
 

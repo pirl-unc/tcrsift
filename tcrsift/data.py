@@ -95,9 +95,7 @@ def annotate_combined_df(
 
     df["Seq"] = df.CDR3_alpha.fillna("") + "_" + df.CDR3_beta.fillna("")
     df["CDR3_alpha_missing"] = (
-        df.CDR3_alpha.isnull()
-        | (df.CDR3_alpha.str.len() == 0)
-        | (df.CDR3_alpha == "NA")
+        df.CDR3_alpha.isnull() | (df.CDR3_alpha.str.len() == 0) | (df.CDR3_alpha == "NA")
     )
     df["CDR3_beta_missing"] = (
         df.CDR3_beta.isnull() | (df.CDR3_beta.str.len() == 0) | (df.CDR3_beta == "NA")
@@ -114,33 +112,27 @@ def annotate_combined_df(
                 else (
                     "Likely CD8+"
                     if (cd8 > 0 and cd4 == 0)
-                    else "Likely CD4+" if (cd4 > 0 and cd8 == 0) else "Unknown"
+                    else "Likely CD4+"
+                    if (cd4 > 0 and cd8 == 0)
+                    else "Unknown"
                 )
             )
         )
         for (cd8, cd4) in zip(df.CD8, df.CD4)
     ]
     df["Tcell_type"] = pd.Categorical(tcell_type, categories=sorted(set(tcell_type)))
-    df["confident_and_complete"] = (
-        df["Tcell_type"].str.startswith("Confident")
-    ) & df.TCR_complete
+    df["confident_and_complete"] = (df["Tcell_type"].str.startswith("Confident")) & df.TCR_complete
     df["filter:cd3_reads"] = df.CD3 >= min_cd3_reads
     df["filter:percent.mt"] = (df["percent.mt"] > min_percent_mt) & (
         df["percent.mt"] < max_percent_mt
     )
-    df["filter:num_reads"] = (df["nCount_RNA"] > min_reads) & (
-        df["nCount_RNA"] < max_reads
-    )
+    df["filter:num_reads"] = (df["nCount_RNA"] > min_reads) & (df["nCount_RNA"] < max_reads)
 
-    df["filter:num_genes"] = (df["nFeature_RNA"] > min_genes) & (
-        df["nFeature_RNA"] < max_genes
-    )
+    df["filter:num_genes"] = (df["nFeature_RNA"] > min_genes) & (df["nFeature_RNA"] < max_genes)
 
     filter_cols = [col for col in df.columns if col.startswith("filter:")]
     df["filter:all"] = df[filter_cols].all(axis=1)
-    df["filtered_confident_and_complete"] = (
-        df["confident_and_complete"] & df["filter:all"]
-    )
+    df["filtered_confident_and_complete"] = df["confident_and_complete"] & df["filter:all"]
     return df
 
 
@@ -179,14 +171,10 @@ def load_sample_cellranger_count_and_vdj_outputs(
     vdj_clonotypes_filename="clonotypes.csv",
     vdj_annotations_filename="all_contig_annotations.csv",
 ):
-    gene_expression_matrix_dir = join(
-        gene_expression__dir, "filtered_feature_bc_matrix"
-    )
+    gene_expression_matrix_dir = join(gene_expression__dir, "filtered_feature_bc_matrix")
     vdj_clonotypes_csv_path = join(vdj_dir, vdj_clonotypes_filename)
     vdj_annotations_csv_path = join(vdj_dir, vdj_annotations_filename)
-    gene_expression_data = sc.read_10x_mtx(
-        gene_expression_matrix_dir, var_names="gene_ids"
-    )
+    gene_expression_data = sc.read_10x_mtx(gene_expression_matrix_dir, var_names="gene_ids")
     df_clonotypes = pd.read_csv(vdj_clonotypes_csv_path)
     df_annotations = pd.read_csv(vdj_annotations_csv_path)
     print("Loaded data")

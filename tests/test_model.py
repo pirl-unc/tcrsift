@@ -29,11 +29,13 @@ def sample_clonotype_df():
     np.random.seed(42)
 
     # Create realistic frequency distribution
-    max_freq = np.concatenate([
-        np.random.uniform(0.01, 0.1, 40),   # Low frequency
-        np.random.uniform(0.1, 0.5, 30),    # Medium frequency
-        np.random.uniform(0.5, 1.0, 30),    # High frequency
-    ])
+    max_freq = np.concatenate(
+        [
+            np.random.uniform(0.01, 0.1, 40),  # Low frequency
+            np.random.uniform(0.1, 0.5, 30),  # Medium frequency
+            np.random.uniform(0.5, 1.0, 30),  # High frequency
+        ]
+    )
 
     # Create specificity descriptions
     specificity = []
@@ -45,10 +47,12 @@ def sample_clonotype_df():
         else:
             specificity.append("Viral" if np.random.random() > 0.5 else "Multi-culture")
 
-    return pd.DataFrame({
-        "max_freq": max_freq,
-        "specificity_description": specificity,
-    })
+    return pd.DataFrame(
+        {
+            "max_freq": max_freq,
+            "specificity_description": specificity,
+        }
+    )
 
 
 class TestCountAtThreshold:
@@ -60,8 +64,8 @@ class TestCountAtThreshold:
 
         # Should count Single-culture clones above threshold
         expected = (
-            (sample_clonotype_df["specificity_description"] == "Single-culture") &
-            (sample_clonotype_df["max_freq"] >= 0.5)
+            (sample_clonotype_df["specificity_description"] == "Single-culture")
+            & (sample_clonotype_df["max_freq"] >= 0.5)
         ).sum()
 
         assert count == expected
@@ -84,10 +88,12 @@ class TestCountAtThreshold:
 
     def test_empty_dataframe(self):
         """Test with empty DataFrame."""
-        empty_df = pd.DataFrame({
-            "max_freq": [],
-            "specificity_description": [],
-        })
+        empty_df = pd.DataFrame(
+            {
+                "max_freq": [],
+                "specificity_description": [],
+            }
+        )
 
         count = count_at_threshold(empty_df, 0.5)
 
@@ -99,10 +105,12 @@ class TestCalcThreshold:
 
     def test_basic_threshold_calculation(self):
         """Test basic threshold calculation."""
-        df = pd.DataFrame({
-            "max_freq": np.linspace(0, 1, 100),
-            "specificity_description": ["Single-culture"] * 100,
-        })
+        df = pd.DataFrame(
+            {
+                "max_freq": np.linspace(0, 1, 100),
+                "specificity_description": ["Single-culture"] * 100,
+            }
+        )
 
         x_plot = np.linspace(0, 1, 1000)
         y_plot = x_plot  # Linear probability model
@@ -114,10 +122,12 @@ class TestCalcThreshold:
 
     def test_min_value_constraint(self):
         """Test minimum value constraint."""
-        df = pd.DataFrame({
-            "max_freq": np.linspace(0, 1, 100),
-            "specificity_description": ["Single-culture"] * 100,
-        })
+        df = pd.DataFrame(
+            {
+                "max_freq": np.linspace(0, 1, 100),
+                "specificity_description": ["Single-culture"] * 100,
+            }
+        )
 
         x_plot = np.linspace(0, 1, 1000)
         y_plot = np.ones(1000) * 0.95  # Always 95% probability
@@ -129,10 +139,12 @@ class TestCalcThreshold:
 
     def test_different_fdr_levels(self):
         """Test different FDR levels give different thresholds."""
-        df = pd.DataFrame({
-            "max_freq": np.linspace(0, 1, 100),
-            "specificity_description": ["Single-culture"] * 100,
-        })
+        df = pd.DataFrame(
+            {
+                "max_freq": np.linspace(0, 1, 100),
+                "specificity_description": ["Single-culture"] * 100,
+            }
+        )
 
         x_plot = np.linspace(0, 1, 1000)
         y_plot = x_plot  # Linear probability
@@ -163,13 +175,14 @@ class TestCalcThresholdsAndCounts:
     def test_default_threshold_on_messy_data(self):
         """Test fallback to default threshold when data is messy."""
         # Create messy data where model would fail
-        messy_df = pd.DataFrame({
-            "max_freq": np.random.uniform(0, 1, 50),
-            "specificity_description": np.random.choice(
-                ["Single-culture", "Viral", "Multi-culture"],
-                50
-            ),
-        })
+        messy_df = pd.DataFrame(
+            {
+                "max_freq": np.random.uniform(0, 1, 50),
+                "specificity_description": np.random.choice(
+                    ["Single-culture", "Viral", "Multi-culture"], 50
+                ),
+            }
+        )
 
         fdr_to_threshold, threshold_to_count, model = calc_thresholds_and_counts(
             messy_df,
@@ -234,4 +247,4 @@ class TestCalcThresholdsAndCounts:
         )
 
         # Model should have params
-        assert hasattr(model, 'params')
+        assert hasattr(model, "params")

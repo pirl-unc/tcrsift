@@ -1,259 +1,454 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Generate pronounceable mnemonic names from CDR3 sequences.
+
+This module converts CDR3 amino acid sequences into human-readable names
+that preserve sequence similarity - similar sequences produce similar names.
+Common conserved prefixes (CASS, CAV) and suffixes (F) are stripped to focus
+on the variable region that distinguishes clonotypes.
+
+Key design choices:
+- Inserted vowels use O, U, and diphthongs (ai, ei, oo, etc.) - not A, E, I, Y alone
+- This allows distinguishing original amino acid vowels from inserted ones
+- Different consonant cluster rules for word start, middle, and end positions
+- Diphthong choice is based on surrounding consonants for natural-sounding names
+"""
+
+# Common CDR3 prefixes/suffixes (data-driven from typical TCR sequences)
+DEFAULT_PREFIXES = ["CASS", "CAS", "CAV", "CA"]
+DEFAULT_SUFFIXES = ["F"]
+
+# Vowels that exist as amino acids - these come from the sequence
+_AMINO_VOWELS = set("aeiy")
+
+# Single vowels safe to insert (O and U are NOT amino acid codes)
+_SAFE_SINGLES = ["o", "u"]
+
+# Diphthongs/double vowels for insertion (more varied, natural-sounding)
+# These are clearly distinguishable from single amino acid vowels
+_DIPHTHONGS = [
+    "ai",
+    "ei",
+    "oi",
+    "au",
+    "ou",  # Classic diphthongs
+    "oo",
+    "ee",  # Long vowels
+    "ao",
+    "eo",
+    "io",  # O-ending
+]
+
+# All vowels for pronunciation purposes
+_ALL_VOWELS = set("aeiouy")
+
+# Consonant clusters acceptable at WORD START
+_START_CLUSTERS = {
+    "bl",
+    "br",
+    "ch",
+    "cl",
+    "cr",
+    "dr",
+    "dw",
+    "fl",
+    "fr",
+    "gl",
+    "gr",
+    "gw",
+    "kn",
+    "kr",
+    "ph",
+    "pl",
+    "pr",
+    "ps",
+    "qu",
+    "sc",
+    "sh",
+    "sk",
+    "sl",
+    "sm",
+    "sn",
+    "sp",
+    "st",
+    "sw",
+    "th",
+    "tr",
+    "tw",
+    "wh",
+    "wr",
+}
+
+# Consonant clusters acceptable in WORD MIDDLE
+_MID_CLUSTERS = _START_CLUSTERS | {
+    # Nasals + stops
+    "mb",
+    "mp",
+    "nc",
+    "nd",
+    "ng",
+    "nk",
+    "nt",
+    "nch",
+    "nz",
+    # Liquids + stops
+    "lb",
+    "lc",
+    "ld",
+    "lf",
+    "lg",
+    "lk",
+    "lm",
+    "ln",
+    "lp",
+    "ls",
+    "lt",
+    "lv",
+    "rb",
+    "rc",
+    "rd",
+    "rf",
+    "rg",
+    "rk",
+    "rl",
+    "rm",
+    "rn",
+    "rp",
+    "rs",
+    "rt",
+    "rv",
+    "rz",
+    # Other common mid-word clusters
+    "ct",
+    "ft",
+    "pt",
+    "xt",
+    "gn",
+    "ks",
+    "ps",
+}
+
+# Consonant clusters acceptable at WORD END
+_END_CLUSTERS = {
+    "ch",
+    "ck",
+    "ct",
+    "ft",
+    "fth",
+    "ld",
+    "lf",
+    "lk",
+    "lm",
+    "ln",
+    "lp",
+    "ls",
+    "lt",
+    "lth",
+    "lv",
+    "mb",
+    "mp",
+    "mph",
+    "nc",
+    "nch",
+    "nd",
+    "ng",
+    "ngth",
+    "nk",
+    "ns",
+    "nt",
+    "nth",
+    "nz",
+    "ph",
+    "ps",
+    "pt",
+    "rb",
+    "rc",
+    "rd",
+    "rf",
+    "rg",
+    "rk",
+    "rl",
+    "rm",
+    "rn",
+    "rp",
+    "rs",
+    "rt",
+    "rth",
+    "rv",
+    "rz",
+    "sh",
+    "sk",
+    "sp",
+    "st",
+    "sth",
+    "th",
+    "ts",
+    "xt",
+}
+
+# Consonant-to-vowel affinity: which vowels sound good after which consonants
+_CONSONANT_VOWEL_AFFINITY = {
+    # Labials prefer rounded vowels
+    "b": ["o", "oo", "au", "ou"],
+    "p": ["o", "oo", "au", "ei"],
+    "m": ["o", "oo", "ai", "au"],
+    "f": ["ai", "ei", "oo", "o"],
+    "v": ["ai", "ei", "o", "u"],
+    "w": ["ai", "ei", "oo", "o"],
+    # Dentals/alveolars
+    "t": ["ai", "ei", "o", "oo"],
+    "d": ["ai", "ei", "o", "oo"],
+    "n": ["ai", "ei", "o", "oo"],
+    "s": ["ai", "ei", "o", "oo"],
+    "z": ["ai", "ei", "oo", "o"],
+    "l": ["ai", "ei", "oo", "o"],
+    "r": ["ai", "ei", "oo", "o"],
+    # Velars prefer back vowels
+    "k": ["ai", "oo", "o", "au"],
+    "g": ["ai", "oo", "o", "au"],
+    "h": ["ai", "ei", "oo", "o"],
+    # Others
+    "c": ["ai", "oo", "o", "ei"],
+    "j": ["ai", "ei", "oo", "o"],
+    "q": ["ai", "oo", "o", "u"],
+    "x": ["ai", "ei", "o", "oo"],
+    "y": ["oo", "ai", "o", "ei"],
+}
+_DEFAULT_VOWELS = ["o", "ai", "oo", "ei"]
+
+
+def _choose_vowel(prev_consonant: str, position: int) -> str:
+    """Choose a vowel to insert based on preceding consonant and position.
+
+    Args:
+        prev_consonant: The consonant before the insertion point
+        position: Position in the sequence (affects variety)
+
+    Returns:
+        Vowel or diphthong to insert
+    """
+    options = _CONSONANT_VOWEL_AFFINITY.get(prev_consonant.lower(), _DEFAULT_VOWELS)
+    return options[position % len(options)]
+
+
+def _make_pronounceable(seq: str) -> str:
+    """Insert vowels to make a sequence pronounceable.
+
+    Uses O, U, and diphthongs for inserted vowels to distinguish from
+    original amino acid vowels (A, E, I, Y).
+
+    Args:
+        seq: Amino acid sequence (will be lowercased)
+
+    Returns:
+        Pronounceable string with vowels inserted as needed
+    """
+    seq = seq.lower()
+    if not seq:
+        return ""
+
+    result = []
+    insert_count = 0  # Tracks number of insertions for variety
+
+    i = 0
+    while i < len(seq):
+        c = seq[i]
+
+        # If current char is a vowel, just add it
+        if c in _ALL_VOWELS:
+            result.append(c)
+            i += 1
+            continue
+
+        # Q needs a vowel after it - use 'o' if not followed by a/e/i/o
+        if c == "q":
+            result.append(c)
+            next_char = seq[i + 1] if i + 1 < len(seq) else ""
+            if next_char not in "aeio":
+                result.append("o")
+                insert_count += 1
+            i += 1
+            continue
+
+        # Current char is a consonant
+        # Count trailing consonants in result
+        trail = 0
+        for x in reversed(result):
+            if x in _ALL_VOWELS:
+                break
+            trail += 1
+
+        # Determine position context
+        at_start = not any(x in _ALL_VOWELS for x in result)
+
+        # Decide if we need to insert a vowel
+        need_insert = False
+
+        if trail == 0:
+            # Just had a vowel, single consonant is fine
+            pass
+        elif trail == 1:
+            # One consonant trailing, check if pair is valid
+            pair = result[-1] + c
+            clusters = _START_CLUSTERS if at_start else _MID_CLUSTERS
+            if pair not in clusters:
+                need_insert = True
+        elif trail >= 2:
+            # Two+ consonants trailing, check if adding another is valid
+            triple = "".join(result[-2:]) + c
+            pair = result[-1] + c
+            clusters = _START_CLUSTERS if at_start else _MID_CLUSTERS
+            if triple not in clusters and pair not in clusters:
+                need_insert = True
+
+        if need_insert:
+            # Choose vowel based on the last consonant and position
+            prev_cons = result[-1] if result else "t"
+            vowel = _choose_vowel(prev_cons, insert_count)
+            result.append(vowel)
+            insert_count += 1
+
+        result.append(c)
+        i += 1
+
+    return "".join(result)
+
+
+def _split_into_words(name: str, target_len: int = 4, min_word: int = 3) -> list[str]:
+    """Split a pronounceable string into words.
+
+    Splits at vowel boundaries, respecting consonant cluster rules for
+    word endings and beginnings.
+
+    Args:
+        name: Pronounceable string to split
+        target_len: Target length for each word
+        min_word: Minimum word length
+
+    Returns:
+        List of word strings
+    """
+    if len(name) <= target_len + min_word:
+        return [name] if name else []
+
+    words = []
+    current = ""
+
+    i = 0
+    while i < len(name):
+        c = name[i]
+        current += c
+
+        # Check if we should split after this character
+        if len(current) >= target_len and i < len(name) - min_word:
+            remaining = name[i + 1 :]
+
+            # Good split point: after a vowel, before a consonant
+            if c in _ALL_VOWELS and remaining:
+                if remaining[0] not in _ALL_VOWELS:
+                    # Check if remaining starts with valid cluster
+                    can_split = True
+                    if len(remaining) >= 2 and remaining[1] not in _ALL_VOWELS:
+                        pair = remaining[0:2]
+                        if pair not in _START_CLUSTERS:
+                            can_split = False
+
+                    if can_split and len(remaining) >= min_word:
+                        words.append(current)
+                        current = ""
+
+        i += 1
+
+    if current:
+        if len(current) < min_word and words:
+            words[-1] += current
+        else:
+            words.append(current)
+
+    return words
+
+
+def _capitalize_words(words: list[str]) -> str:
+    """Capitalize each word and join with spaces."""
+    return " ".join(w.capitalize() for w in words if w)
+
+
 def tcr_name(
-        seq,
-        split=True,
-        extra_consonants = "BJXZ",
-        extra_vowels = "OU",
-        valid_vowel_clusters_start = {
-            "AI",
-            "AU",
-            "EA",
-            "EI",
-            "EU",
-            "EW",
-            "EA",
-            "EI",
-            "EU",
-            "IA",
-            "IE",
-            "OI",
-            "OO",
-            "OY",
-        },
-      valid_vowel_clusters = {
-            "AI",
-            "AU",
-            "AY",
-            "EA",
-            "EE",
-            "EI",
-            "EU",
-            "EW",
-            "EY",
-            "EA",
-            "EE",
-            "EI",
-            "EU",
-            "EY",
-            "IA",
-            "IE",
-            "OI",
-            "OO",
-            "OU",
-            "OY",
-        },
-        valid_consonant_clusters_start = {
-            "BL",
-            "BR",
-            "CH",
-            "CR",
-            "CHR",
-            "CL",
-            "DR",
-            "FL",
+    seq: str,
+    prefixes: list[str] | None = None,
+    suffixes: list[str] | None = None,
+) -> str:
+    """Generate a pronounceable mnemonic name from a CDR3 sequence.
 
-            "FR",
-            "GL",
+    Similar sequences will produce similar names. Common conserved
+    prefixes (CASS, CAV) and suffixes (F) are stripped to focus on
+    the variable region.
 
-            "GR",
-            "KR",
-            "PH",
-            "PL",
-            "PR",
+    Inserted vowels use O, U, and diphthongs (ai, ei, oo, etc.), since
+    A, E, I, Y are amino acid codes. This allows distinguishing original
+    sequence characters from inserted ones.
 
-            "SC",
-            "SCH",
-            "SH",
-            "SCH",
-            "SL",
-            "SP",
-            "SPR",
-            "SS",
-            "ST",
-            "STR",
-            "TH",
-            "THR",
-            "TR"
-        },
-        valid_consonant_clusters_middle={
-            "BL",
-            "BR",
-            "CH",
-            "CR",
-            "CHR",
-            "CL",
-            "DR",
-            "FL",
+    Args:
+        seq: CDR3 amino acid sequence (e.g., "CASSLGQAYEQYF")
+        prefixes: List of prefixes to strip (default: CASS, CAS, CAV, CA)
+        suffixes: List of suffixes to strip (default: F)
 
-            "FR",
-            "FT",
-            "GL",
-            "GN",
-            "GR",
-            "GS",
-            "KS",
-            "LL",
-            "LT",
-            "NV",
-            "PH",
-            "PL",
-            "PR",
-            "RG",
-            "RK",
-            "RR",
-            "SC",
-            "SCH",
-            "SH",
-            "SCH",
-            "SL",
-            "SP",
-            "SPR",
-            "SS",
-            "ST",
-            "STR",
-            "TH",
-            "THR",
-            "TR"
-            "TT",
-        },
-        valid_consonant_clusters_end = {
-            "CK",
-            "CKS",
-            "FF",
-            "FT"
-            "FTS",
+    Returns:
+        Human-readable name
 
+    Examples:
+        >>> tcr_name("CASSLGQAYEQYF")  # LGQ needs vowel insertion
+        'Laigo Qaye Qy'
+        >>> tcr_name("CASSLAGAYEQYF")  # LAGA has original A
+        'Lagaye Qy'
+    """
+    if not seq:
+        return "Anon"
 
-            "LD",
-            "LDS",
-            "LL",
-
-            "KS",
-            "NS",
-            "NG",
-            "NGS",
-            "NGTH",
-            "PS",
-            "RD",
-            "RDS",
-            "RP",
-            "RPS",
-            "RT",
-            "RTS",
-            "RK",
-
-            "SH",
-            "SS",
-            "ST",
-            "TS",
-            "TT",
-            "TTS",
-
-        },
-        trim_prefixes={
-            "CASS": "Dr.",
-            "CAS": "Prof.",
-            "CSA": "Gen.",
-            "CAT": "Capt.",
-            "CAW": "Sir",
-            "CAI": "Madame",
-            "CSV": "The Honourable"
-        },
-        trim_suffixes={
-            "QYF": "MD",
-            "QFF": "PhD",
-            "AFF": "Esq.",
-            "LFF": "Jr.",
-            "YTF": "Sr.",
-        }):
+    # Handle multiple sequences separated by semicolon
     if ";" in seq:
         parts = seq.split(";")
-        part_names = [
-            tcr_name(part, split=True)
-            for part in parts
-        ]
-        return " or ".join(part_names)
+        names = [tcr_name(p.strip(), prefixes, suffixes) for p in parts if p.strip()]
+        return " or ".join(names) if names else "Anon"
 
-    name_prefix = ""
-    name_suffix = ""
-    if split:
-        for (aa_prefix, candidate_name_prefix) in trim_prefixes.items():
-            if seq.startswith(aa_prefix):
-                seq = seq[len(aa_prefix):]
-                name_prefix = candidate_name_prefix
-                break
-        for (aa_suffix, candidate_name_suffix) in trim_suffixes.items():
-            if seq.endswith(aa_suffix):
-                seq = seq[:-len(aa_suffix)]
-                name_suffix = candidate_name_suffix
-                break
+    seq = seq.upper().strip()
 
-        half = len(seq) // 2
-        first = tcr_name(seq[:half], split=False)
-        second = tcr_name(seq[half:], split=False)
-        name = f"{first} {second}"
-        if name_prefix:
-            name = f"{name_prefix} {name}"
-        if name_suffix:
-            name = f"{name}, {name_suffix}"
-        return name
-    else:
-        num_added = 0
-        letters = []
+    # Use default prefixes/suffixes if not specified
+    if prefixes is None:
+        prefixes = DEFAULT_PREFIXES
+    if suffixes is None:
+        suffixes = DEFAULT_SUFFIXES
 
-        vowels_in_a_row = 0
-        consonants_in_a_row = 0
-        valid_clusters_start = valid_consonant_clusters_start.union(valid_vowel_clusters_start)
-        valid_clusters_middle = valid_consonant_clusters_middle.union(valid_vowel_clusters)
+    # Strip longest matching prefix
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        if seq.startswith(prefix):
+            seq = seq[len(prefix) :]
+            break
 
-        valid_clusters_end = valid_consonant_clusters_end.union(valid_vowel_clusters)
+    # Strip longest matching suffix
+    for suffix in sorted(suffixes, key=len, reverse=True):
+        if seq.endswith(suffix):
+            seq = seq[: -len(suffix)]
+            break
 
-        for i, letter in enumerate(seq):
+    if not seq:
+        return "Anon"
 
-            last_pos = i == len(seq) - 1
-            curr_is_vowel = letter in "AEIOU" or (i == last_pos and letter == "Y")
-            curr_is_consonant = not curr_is_vowel
-            longest_stretch = max(vowels_in_a_row, consonants_in_a_row)
-            if vowels_in_a_row >= 2 and curr_is_vowel:
-                letters.append(extra_consonants[num_added % len(extra_consonants)])
-                num_added += 1
-                consonants_in_a_row = 1
-                vowels_in_a_row = 0
-            elif consonants_in_a_row >= 3 and curr_is_consonant:
-                letters.append(
-                    extra_vowels[num_added % len(extra_vowels)] if letter != "Q" else "UO")
-                num_added += 1
-                consonants_in_a_row = 0
-                vowels_in_a_row = 1
-            elif (
-                    (i == 0) or
-                    (curr_is_vowel and consonants_in_a_row > 0) or
-                    (curr_is_consonant and vowels_in_a_row > 0) or
-                    (last_pos and i > 0 and "".join(letters[-1:] + [letter]) in valid_clusters_end) or
-                    (last_pos and i > 1 and "".join(letters[-2:] + [letter]) in valid_clusters_end) or
-                    (i == 1 and (letters[0] + letter) in valid_clusters_start) or
-                    (i == 2 and longest_stretch == 2 and "".join(letters[-2:] + [letter]) in valid_clusters_start) or
-                    (i > 1 and longest_stretch == 1 and "".join(letters[-1:] + [letter]) in valid_clusters_middle) or
-                    (i > 2 and longest_stretch == 2 and "".join(letters[-2:] + [letter]) in valid_clusters_middle)
-            ):
-                # print(i, curr_is_vowel, last_pos, consonants_in_a_row, vowels_in_a_row, letter, letters)
+    # Make pronounceable and split into words
+    pronounceable = _make_pronounceable(seq)
+    words = _split_into_words(pronounceable)
 
-                pass
-            elif consonants_in_a_row > 0:
-                letters.append(extra_vowels[num_added % len(extra_vowels)])
-                num_added += 1
-                vowels_in_a_row = 1
-                consonants_in_a_row = 0
-            elif vowels_in_a_row > 0:
-                letters.append(extra_consonants[num_added % len(extra_consonants)])
-                num_added += 1
-                vowels_in_a_row = 0
-                consonants_in_a_row = 1
+    if not words:
+        return pronounceable.capitalize() if pronounceable else "Anon"
 
-            letters.append(letter)
-            if curr_is_vowel:
-                consonants_in_a_row = 0
-                vowels_in_a_row += 1
-            else:
-                vowels_in_a_row = 0
-                consonants_in_a_row += 1
-    return "".join(letters).capitalize()
+    return _capitalize_words(words)

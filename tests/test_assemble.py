@@ -2,7 +2,6 @@
 Tests for full-length TCR sequence assembly.
 """
 
-
 import pandas as pd
 import pytest
 
@@ -175,18 +174,24 @@ class TestAssembleFullSequences:
     @pytest.fixture
     def clonotypes_with_vdj(self):
         """Create clonotypes with VDJ sequences."""
-        return pd.DataFrame({
-            "clone_id": ["clone1", "clone2"],
-            "CDR3_alpha": ["CAVSDGGSQGNLIF", "CAVSAGGSQGNLIF"],
-            "CDR3_beta": ["CASSLGQAYEQYF", "CASSLAGAYEQYF"],
-            "VDJ_alpha_aa": ["MQRLQVWVLLFFLLPGTRG...CAVSDGGSQGNLIF...",
-                            "MQRLQVWVLLFFLLPGTRG...CAVSAGGSQGNLIF..."],
-            "VDJ_beta_aa": ["MGSRLLCWVLLCLLGAGPVKA...CASSLGQAYEQYF...",
-                           "MGSRLLCWVLLCLLGAGPVKA...CASSLAGAYEQYF..."],
-            "alpha_c_gene": ["TRAC", "TRAC"],
-            "beta_c_gene": ["TRBC1", "TRBC2"],
-            "samples": ["S1", "S2"],
-        })
+        return pd.DataFrame(
+            {
+                "clone_id": ["clone1", "clone2"],
+                "CDR3_alpha": ["CAVSDGGSQGNLIF", "CAVSAGGSQGNLIF"],
+                "CDR3_beta": ["CASSLGQAYEQYF", "CASSLAGAYEQYF"],
+                "VDJ_alpha_aa": [
+                    "MQRLQVWVLLFFLLPGTRG...CAVSDGGSQGNLIF...",
+                    "MQRLQVWVLLFFLLPGTRG...CAVSAGGSQGNLIF...",
+                ],
+                "VDJ_beta_aa": [
+                    "MGSRLLCWVLLCLLGAGPVKA...CASSLGQAYEQYF...",
+                    "MGSRLLCWVLLCLLGAGPVKA...CASSLAGAYEQYF...",
+                ],
+                "alpha_c_gene": ["TRAC", "TRAC"],
+                "beta_c_gene": ["TRBC1", "TRBC2"],
+                "samples": ["S1", "S2"],
+            }
+        )
 
     def test_assemble_basic(self, clonotypes_with_vdj):
         """Basic assembly without contigs or constant regions."""
@@ -224,34 +229,40 @@ class TestValidateSequences:
 
     def test_validate_short_sequence(self):
         """Short sequences should trigger warning."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "full_alpha_aa": ["SHORT"],  # Too short
-            "full_beta_aa": ["ALSO_SHORT"],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "full_alpha_aa": ["SHORT"],  # Too short
+                "full_beta_aa": ["ALSO_SHORT"],
+            }
+        )
 
         warnings = validate_sequences(df)
         assert any("too short" in w for w in warnings)
 
     def test_validate_long_sequence(self):
         """Very long sequences should trigger warning."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "full_alpha_aa": ["A" * 500],  # Too long
-            "full_beta_aa": ["B" * 300],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "full_alpha_aa": ["A" * 500],  # Too long
+                "full_beta_aa": ["B" * 300],
+            }
+        )
 
         warnings = validate_sequences(df)
         assert any("too long" in w for w in warnings)
 
     def test_validate_cdr3_present(self):
         """CDR3 should be present in full sequence."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "CDR3_alpha": ["CAVTEST"],
-            "full_alpha_aa": ["SOMESEQUENCE"],  # CDR3 not in sequence
-            "full_beta_aa": ["BETASEQUENCE"],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "CDR3_alpha": ["CAVTEST"],
+                "full_alpha_aa": ["SOMESEQUENCE"],  # CDR3 not in sequence
+                "full_beta_aa": ["BETASEQUENCE"],
+            }
+        )
 
         warnings = validate_sequences(df)
         assert any("CDR3_alpha not found" in w for w in warnings)
@@ -262,12 +273,14 @@ class TestExportFasta:
 
     def test_export_single_chain(self, temp_dir):
         """Export single-chain sequences to FASTA."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1", "clone2"],
-            "CDR3_alpha": ["CAVTEST1", "CAVTEST2"],
-            "CDR3_beta": ["CASSTEST1", "CASSTEST2"],
-            "single_chain_aa": ["SEQUENCEONE", "SEQUENCETWO"],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1", "clone2"],
+                "CDR3_alpha": ["CAVTEST1", "CAVTEST2"],
+                "CDR3_beta": ["CASSTEST1", "CASSTEST2"],
+                "single_chain_aa": ["SEQUENCEONE", "SEQUENCETWO"],
+            }
+        )
 
         output_path = temp_dir / "output.fasta"
         export_fasta(df, output_path, sequence_col="single_chain_aa")
@@ -283,12 +296,14 @@ class TestExportFasta:
 
     def test_export_skips_empty(self, temp_dir):
         """Export should skip empty sequences."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1", "clone2"],
-            "CDR3_alpha": ["CAVTEST1", "CAVTEST2"],
-            "CDR3_beta": ["CASSTEST1", "CASSTEST2"],
-            "single_chain_aa": ["SEQUENCEONE", ""],  # Second is empty
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1", "clone2"],
+                "CDR3_alpha": ["CAVTEST1", "CAVTEST2"],
+                "CDR3_beta": ["CASSTEST1", "CASSTEST2"],
+                "single_chain_aa": ["SEQUENCEONE", ""],  # Second is empty
+            }
+        )
 
         output_path = temp_dir / "output.fasta"
         export_fasta(df, output_path, sequence_col="single_chain_aa")
@@ -309,7 +324,7 @@ class TestT2ALinker:
         """T2A DNA should translate to T2A AA."""
         aa, _ = translate_dna(T2A_LINKER_DNA)
         # The last codon might be partial, so check prefix
-        assert T2A_LINKER_AA.startswith(aa) or aa.startswith(T2A_LINKER_AA[:len(aa)])
+        assert T2A_LINKER_AA.startswith(aa) or aa.startswith(T2A_LINKER_AA[: len(aa)])
 
 
 class TestAssembleWithContigs:
@@ -331,15 +346,17 @@ ATGCCCGGGAAATTT
 
     def test_assemble_without_contigs_dir(self):
         """Test assembly when contigs_dir is None."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "CDR3_alpha": ["CAVMKGFF"],
-            "CDR3_beta": ["CASSMPGKF"],
-            "VDJ_alpha_aa": ["MKGFF"],
-            "VDJ_beta_aa": ["MPGKF"],
-            "alpha_c_gene": ["TRAC"],
-            "beta_c_gene": ["TRBC1"],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "CDR3_alpha": ["CAVMKGFF"],
+                "CDR3_beta": ["CASSMPGKF"],
+                "VDJ_alpha_aa": ["MKGFF"],
+                "VDJ_beta_aa": ["MPGKF"],
+                "alpha_c_gene": ["TRAC"],
+                "beta_c_gene": ["TRBC1"],
+            }
+        )
 
         result = assemble_full_sequences(
             df,
@@ -358,17 +375,19 @@ class TestBuildFullSequences:
 
     def test_assemble_with_vdj_only(self):
         """Assembly with only VDJ sequences."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "CDR3_alpha": ["CAVALPHASEQUENCE"],
-            "CDR3_beta": ["CASSBETASEQUENCE"],
-            "VDJ_alpha_aa": ["VDJALPHASEQUENCE"],
-            "VDJ_alpha_nt": ["ATGATGATGATGATGATG"],
-            "VDJ_beta_aa": ["VDJBETASEQUENCE"],
-            "VDJ_beta_nt": ["GCAGCAGCAGCAGCAGCA"],
-            "alpha_c_gene": ["TRAC"],
-            "beta_c_gene": ["TRBC1"],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "CDR3_alpha": ["CAVALPHASEQUENCE"],
+                "CDR3_beta": ["CASSBETASEQUENCE"],
+                "VDJ_alpha_aa": ["VDJALPHASEQUENCE"],
+                "VDJ_alpha_nt": ["ATGATGATGATGATGATG"],
+                "VDJ_beta_aa": ["VDJBETASEQUENCE"],
+                "VDJ_beta_nt": ["GCAGCAGCAGCAGCAGCA"],
+                "alpha_c_gene": ["TRAC"],
+                "beta_c_gene": ["TRBC1"],
+            }
+        )
 
         result = assemble_full_sequences(
             df,
@@ -386,15 +405,17 @@ class TestAddSingleChain:
 
     def test_single_chain_with_nt_sequences(self):
         """Test single-chain with nucleotide sequences."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "CDR3_alpha": ["CAVALPHA"],
-            "CDR3_beta": ["CASSBETA"],
-            "full_alpha_aa": ["ALPHASEQUENCE"],
-            "full_beta_aa": ["BETASEQUENCE*"],  # With stop codon
-            "full_alpha_nt": ["GCACTGGCAAGCCAGAACACC"],
-            "full_beta_nt": ["TGCGAGTGCAGCAGCTAA"],  # TAA is stop codon
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "CDR3_alpha": ["CAVALPHA"],
+                "CDR3_beta": ["CASSBETA"],
+                "full_alpha_aa": ["ALPHASEQUENCE"],
+                "full_beta_aa": ["BETASEQUENCE*"],  # With stop codon
+                "full_alpha_nt": ["GCACTGGCAAGCCAGAACACC"],
+                "full_beta_nt": ["TGCGAGTGCAGCAGCTAA"],  # TAA is stop codon
+            }
+        )
 
         result = assemble_full_sequences(
             df,
@@ -411,13 +432,15 @@ class TestAddSingleChain:
 
     def test_single_chain_custom_linker(self):
         """Test single-chain with custom linker."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "CDR3_alpha": ["CAVALPHA"],
-            "CDR3_beta": ["CASSBETA"],
-            "full_alpha_aa": ["ALPHASEQUENCE"],
-            "full_beta_aa": ["BETASEQUENCE"],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "CDR3_alpha": ["CAVALPHA"],
+                "CDR3_beta": ["CASSBETA"],
+                "full_alpha_aa": ["ALPHASEQUENCE"],
+                "full_beta_aa": ["BETASEQUENCE"],
+            }
+        )
 
         result = assemble_full_sequences(
             df,
@@ -440,13 +463,15 @@ class TestValidateSequencesExtended:
         alpha_seq = "M" * 100 + "CAVTEST" + "A" * 150  # ~257 aa
         beta_seq = "M" * 100 + "CASSTEST" + "A" * 150  # ~258 aa
 
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "CDR3_alpha": ["CAVTEST"],
-            "CDR3_beta": ["CASSTEST"],
-            "full_alpha_aa": [alpha_seq],
-            "full_beta_aa": [beta_seq],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "CDR3_alpha": ["CAVTEST"],
+                "CDR3_beta": ["CASSTEST"],
+                "full_alpha_aa": [alpha_seq],
+                "full_beta_aa": [beta_seq],
+            }
+        )
 
         warnings = validate_sequences(df)
 
@@ -459,25 +484,29 @@ class TestValidateSequencesExtended:
 
     def test_validate_cdr3_beta_not_found(self):
         """CDR3 beta missing from sequence should trigger warning."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "CDR3_alpha": ["CAVTEST"],
-            "CDR3_beta": ["CASSNOTPRESENT"],
-            "full_alpha_aa": ["CAVTEST" + "A" * 200],
-            "full_beta_aa": ["DIFFERENTSEQ" + "A" * 200],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "CDR3_alpha": ["CAVTEST"],
+                "CDR3_beta": ["CASSNOTPRESENT"],
+                "full_alpha_aa": ["CAVTEST" + "A" * 200],
+                "full_beta_aa": ["DIFFERENTSEQ" + "A" * 200],
+            }
+        )
 
         warnings = validate_sequences(df)
         assert any("CDR3_beta not found" in w for w in warnings)
 
     def test_validate_missing_full_sequence(self):
         """Missing full sequence should not cause error."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "CDR3_alpha": ["CAVTEST"],
-            "full_alpha_aa": [None],  # Missing
-            "full_beta_aa": ["BETASEQ"],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "CDR3_alpha": ["CAVTEST"],
+                "full_alpha_aa": [None],  # Missing
+                "full_beta_aa": ["BETASEQ"],
+            }
+        )
 
         # Should not raise
         warnings = validate_sequences(df)
@@ -489,12 +518,14 @@ class TestExportFastaExtended:
 
     def test_export_includes_cdr3_in_header(self, temp_dir):
         """Export should include CDR3 sequences in FASTA header."""
-        df = pd.DataFrame({
-            "clone_id": ["clone1"],
-            "CDR3_alpha": ["CAVTEST"],
-            "CDR3_beta": ["CASSTEST"],
-            "single_chain_aa": ["TESTSEQUENCE"],
-        })
+        df = pd.DataFrame(
+            {
+                "clone_id": ["clone1"],
+                "CDR3_alpha": ["CAVTEST"],
+                "CDR3_beta": ["CASSTEST"],
+                "single_chain_aa": ["TESTSEQUENCE"],
+            }
+        )
 
         output_path = temp_dir / "output.fasta"
         export_fasta(df, output_path, sequence_col="single_chain_aa")
@@ -505,11 +536,13 @@ class TestExportFastaExtended:
 
     def test_export_with_missing_clone_id(self, temp_dir):
         """Export should handle missing clone_id by using index."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["CAVTEST"],
-            "CDR3_beta": ["CASSTEST"],
-            "single_chain_aa": ["TESTSEQUENCE"],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CAVTEST"],
+                "CDR3_beta": ["CASSTEST"],
+                "single_chain_aa": ["TESTSEQUENCE"],
+            }
+        )
 
         output_path = temp_dir / "output.fasta"
         export_fasta(df, output_path, sequence_col="single_chain_aa")
@@ -582,12 +615,14 @@ class TestRealisticFullLengthAssembly:
 
         for idx, row in df.iterrows():
             # CDR3 alpha should be in full alpha sequence
-            assert row["CDR3_alpha"] in row["full_alpha_aa"], \
+            assert row["CDR3_alpha"] in row["full_alpha_aa"], (
                 f"CDR3_alpha not found in full_alpha_aa for clone {row['clone_id']}"
+            )
 
             # CDR3 beta should be in full beta sequence
-            assert row["CDR3_beta"] in row["full_beta_aa"], \
+            assert row["CDR3_beta"] in row["full_beta_aa"], (
                 f"CDR3_beta not found in full_beta_aa for clone {row['clone_id']}"
+            )
 
     def test_validate_realistic_sequences(self, sample_full_length_clonotypes):
         """Validate realistic sequences should pass validation."""

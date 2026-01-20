@@ -26,18 +26,20 @@ class TestPivotVdjByBarcode:
 
     def test_basic_pivot(self):
         """Test basic pivoting of VDJ data."""
-        vdj_df = pd.DataFrame({
-            "barcode": ["AAAA", "AAAA", "BBBB", "BBBB"],
-            "chain": ["TRA", "TRB", "TRA", "TRB"],
-            "cdr3": ["CASSL", "CASSF", "CAVSD", "CASRG"],
-            "v_gene": ["TRAV1", "TRBV2", "TRAV3", "TRBV4"],
-            "d_gene": [None, "TRBD1", None, "TRBD2"],
-            "j_gene": ["TRAJ1", "TRBJ2", "TRAJ3", "TRBJ4"],
-            "c_gene": ["TRAC", "TRBC1", "TRAC", "TRBC2"],
-            "umis": [100, 200, 150, 250],
-            "reads": [1000, 2000, 1500, 2500],
-            "contig_id": ["c1", "c2", "c3", "c4"],
-        })
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["AAAA", "AAAA", "BBBB", "BBBB"],
+                "chain": ["TRA", "TRB", "TRA", "TRB"],
+                "cdr3": ["CASSL", "CASSF", "CAVSD", "CASRG"],
+                "v_gene": ["TRAV1", "TRBV2", "TRAV3", "TRBV4"],
+                "d_gene": [None, "TRBD1", None, "TRBD2"],
+                "j_gene": ["TRAJ1", "TRBJ2", "TRAJ3", "TRBJ4"],
+                "c_gene": ["TRAC", "TRBC1", "TRAC", "TRBC2"],
+                "umis": [100, 200, 150, 250],
+                "reads": [1000, 2000, 1500, 2500],
+                "contig_id": ["c1", "c2", "c3", "c4"],
+            }
+        )
 
         result = _pivot_vdj_by_barcode(vdj_df)
 
@@ -51,18 +53,20 @@ class TestPivotVdjByBarcode:
 
     def test_doublet_handling(self):
         """Test handling of cells with multiple chains (doublets)."""
-        vdj_df = pd.DataFrame({
-            "barcode": ["AAAA", "AAAA", "AAAA", "AAAA"],
-            "chain": ["TRA", "TRA", "TRB", "TRB"],
-            "cdr3": ["CASSL1", "CASSL2", "CASSF1", "CASSF2"],
-            "v_gene": ["TRAV1", "TRAV2", "TRBV1", "TRBV2"],
-            "d_gene": [None, None, "TRBD1", "TRBD2"],
-            "j_gene": ["TRAJ1", "TRAJ2", "TRBJ1", "TRBJ2"],
-            "c_gene": ["TRAC", "TRAC", "TRBC1", "TRBC2"],
-            "umis": [100, 50, 200, 75],
-            "reads": [1000, 500, 2000, 750],
-            "contig_id": ["c1", "c2", "c3", "c4"],
-        })
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["AAAA", "AAAA", "AAAA", "AAAA"],
+                "chain": ["TRA", "TRA", "TRB", "TRB"],
+                "cdr3": ["CASSL1", "CASSL2", "CASSF1", "CASSF2"],
+                "v_gene": ["TRAV1", "TRAV2", "TRBV1", "TRBV2"],
+                "d_gene": [None, None, "TRBD1", "TRBD2"],
+                "j_gene": ["TRAJ1", "TRAJ2", "TRBJ1", "TRBJ2"],
+                "c_gene": ["TRAC", "TRAC", "TRBC1", "TRBC2"],
+                "umis": [100, 50, 200, 75],
+                "reads": [1000, 500, 2000, 750],
+                "contig_id": ["c1", "c2", "c3", "c4"],
+            }
+        )
 
         result = _pivot_vdj_by_barcode(vdj_df)
 
@@ -80,18 +84,20 @@ class TestPivotVdjByBarcode:
 
     def test_umi_prioritization(self):
         """Test that chains are prioritized by UMI count."""
-        vdj_df = pd.DataFrame({
-            "barcode": ["AAAA", "AAAA"],
-            "chain": ["TRA", "TRA"],
-            "cdr3": ["LOW_UMI", "HIGH_UMI"],
-            "v_gene": ["TRAV1", "TRAV2"],
-            "d_gene": [None, None],
-            "j_gene": ["TRAJ1", "TRAJ2"],
-            "c_gene": ["TRAC", "TRAC"],
-            "umis": [10, 100],
-            "reads": [100, 1000],
-            "contig_id": ["c1", "c2"],
-        })
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["AAAA", "AAAA"],
+                "chain": ["TRA", "TRA"],
+                "cdr3": ["LOW_UMI", "HIGH_UMI"],
+                "v_gene": ["TRAV1", "TRAV2"],
+                "d_gene": [None, None],
+                "j_gene": ["TRAJ1", "TRAJ2"],
+                "c_gene": ["TRAC", "TRAC"],
+                "umis": [10, 100],
+                "reads": [100, 1000],
+                "contig_id": ["c1", "c2"],
+            }
+        )
 
         result = _pivot_vdj_by_barcode(vdj_df)
 
@@ -101,18 +107,20 @@ class TestPivotVdjByBarcode:
 
     def test_chain_count_columns(self):
         """Test that chain count columns are properly created."""
-        vdj_df = pd.DataFrame({
-            "barcode": ["AAAA", "AAAA", "BBBB"],
-            "chain": ["TRA", "TRB", "TRB"],
-            "cdr3": ["CASSL", "CASSF", "CASRG"],
-            "v_gene": ["TRAV1", "TRBV2", "TRBV4"],
-            "d_gene": [None, "TRBD1", "TRBD2"],
-            "j_gene": ["TRAJ1", "TRBJ2", "TRBJ4"],
-            "c_gene": ["TRAC", "TRBC1", "TRBC2"],
-            "umis": [100, 200, 250],
-            "reads": [1000, 2000, 2500],
-            "contig_id": ["c1", "c2", "c3"],
-        })
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["AAAA", "AAAA", "BBBB"],
+                "chain": ["TRA", "TRB", "TRB"],
+                "cdr3": ["CASSL", "CASSF", "CASRG"],
+                "v_gene": ["TRAV1", "TRBV2", "TRBV4"],
+                "d_gene": [None, "TRBD1", "TRBD2"],
+                "j_gene": ["TRAJ1", "TRBJ2", "TRBJ4"],
+                "c_gene": ["TRAC", "TRBC1", "TRBC2"],
+                "umis": [100, 200, 250],
+                "reads": [1000, 2000, 2500],
+                "contig_id": ["c1", "c2", "c3"],
+            }
+        )
 
         result = _pivot_vdj_by_barcode(vdj_df)
 
@@ -132,18 +140,20 @@ class TestPivotVdjByBarcode:
 
     def test_cdr3ab_identifier(self):
         """Test creation of CDR3ab identifier."""
-        vdj_df = pd.DataFrame({
-            "barcode": ["AAAA", "AAAA"],
-            "chain": ["TRA", "TRB"],
-            "cdr3": ["CASSL", "CASSF"],
-            "v_gene": ["TRAV1", "TRBV2"],
-            "d_gene": [None, "TRBD1"],
-            "j_gene": ["TRAJ1", "TRBJ2"],
-            "c_gene": ["TRAC", "TRBC1"],
-            "umis": [100, 200],
-            "reads": [1000, 2000],
-            "contig_id": ["c1", "c2"],
-        })
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["AAAA", "AAAA"],
+                "chain": ["TRA", "TRB"],
+                "cdr3": ["CASSL", "CASSF"],
+                "v_gene": ["TRAV1", "TRBV2"],
+                "d_gene": [None, "TRBD1"],
+                "j_gene": ["TRAJ1", "TRBJ2"],
+                "c_gene": ["TRAC", "TRBC1"],
+                "umis": [100, 200],
+                "reads": [1000, 2000],
+                "contig_id": ["c1", "c2"],
+            }
+        )
 
         result = _pivot_vdj_by_barcode(vdj_df)
 
@@ -153,24 +163,26 @@ class TestPivotVdjByBarcode:
 
     def test_segment_preservation(self):
         """Test that VDJ segment columns are preserved in pivot."""
-        vdj_df = pd.DataFrame({
-            "barcode": ["AAAA", "AAAA"],
-            "chain": ["TRA", "TRB"],
-            "cdr3": ["CASSL", "CASSF"],
-            "v_gene": ["TRAV1", "TRBV2"],
-            "d_gene": [None, "TRBD1"],
-            "j_gene": ["TRAJ1", "TRBJ2"],
-            "c_gene": ["TRAC", "TRBC1"],
-            "umis": [100, 200],
-            "reads": [1000, 2000],
-            "contig_id": ["c1", "c2"],
-            "fwr1": ["MRLV", "MGVT"],
-            "cdr1": ["TSGF", "SGHD"],
-            "fwr2": ["WYRQ", "WYQQ"],
-            "cdr2": ["YSSG", "SNNE"],
-            "fwr3": ["GKAP", "GKGP"],
-            "fwr4": ["FGGG", "FGXG"],
-        })
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["AAAA", "AAAA"],
+                "chain": ["TRA", "TRB"],
+                "cdr3": ["CASSL", "CASSF"],
+                "v_gene": ["TRAV1", "TRBV2"],
+                "d_gene": [None, "TRBD1"],
+                "j_gene": ["TRAJ1", "TRBJ2"],
+                "c_gene": ["TRAC", "TRBC1"],
+                "umis": [100, 200],
+                "reads": [1000, 2000],
+                "contig_id": ["c1", "c2"],
+                "fwr1": ["MRLV", "MGVT"],
+                "cdr1": ["TSGF", "SGHD"],
+                "fwr2": ["WYRQ", "WYQQ"],
+                "cdr2": ["YSSG", "SNNE"],
+                "fwr3": ["GKAP", "GKGP"],
+                "fwr4": ["FGGG", "FGXG"],
+            }
+        )
 
         result = _pivot_vdj_by_barcode(vdj_df)
 
@@ -183,20 +195,22 @@ class TestPivotVdjByBarcode:
 
     def test_vdj_sequence_preservation(self):
         """Test that combined VDJ sequences are preserved."""
-        vdj_df = pd.DataFrame({
-            "barcode": ["AAAA", "AAAA"],
-            "chain": ["TRA", "TRB"],
-            "cdr3": ["CASSL", "CASSF"],
-            "v_gene": ["TRAV1", "TRBV2"],
-            "d_gene": [None, "TRBD1"],
-            "j_gene": ["TRAJ1", "TRBJ2"],
-            "c_gene": ["TRAC", "TRBC1"],
-            "umis": [100, 200],
-            "reads": [1000, 2000],
-            "contig_id": ["c1", "c2"],
-            "vdj_aa": ["MRLVTSGFWYRQYSSGCASSL", "MGVTSGHDFGGG"],
-            "vdj_nt": ["ATGCGT...", "ATGGGT..."],
-        })
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["AAAA", "AAAA"],
+                "chain": ["TRA", "TRB"],
+                "cdr3": ["CASSL", "CASSF"],
+                "v_gene": ["TRAV1", "TRBV2"],
+                "d_gene": [None, "TRBD1"],
+                "j_gene": ["TRAJ1", "TRBJ2"],
+                "c_gene": ["TRAC", "TRBC1"],
+                "umis": [100, 200],
+                "reads": [1000, 2000],
+                "contig_id": ["c1", "c2"],
+                "vdj_aa": ["MRLVTSGFWYRQYSSGCASSL", "MGVTSGHDFGGG"],
+                "vdj_nt": ["ATGCGT...", "ATGGGT..."],
+            }
+        )
 
         result = _pivot_vdj_by_barcode(vdj_df)
 
@@ -206,18 +220,20 @@ class TestPivotVdjByBarcode:
 
     def test_empty_dataframe(self):
         """Test handling of empty DataFrame."""
-        vdj_df = pd.DataFrame({
-            "barcode": [],
-            "chain": [],
-            "cdr3": [],
-            "v_gene": [],
-            "d_gene": [],
-            "j_gene": [],
-            "c_gene": [],
-            "umis": [],
-            "reads": [],
-            "contig_id": [],
-        })
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": [],
+                "chain": [],
+                "cdr3": [],
+                "v_gene": [],
+                "d_gene": [],
+                "j_gene": [],
+                "c_gene": [],
+                "umis": [],
+                "reads": [],
+                "contig_id": [],
+            }
+        )
 
         result = _pivot_vdj_by_barcode(vdj_df)
 
@@ -225,18 +241,20 @@ class TestPivotVdjByBarcode:
 
     def test_more_than_two_chains_filtered(self):
         """Test that more than 2 chains per type are filtered to top 2."""
-        vdj_df = pd.DataFrame({
-            "barcode": ["AAAA"] * 4,
-            "chain": ["TRA", "TRA", "TRA", "TRA"],
-            "cdr3": ["BEST", "SECOND", "THIRD", "FOURTH"],
-            "v_gene": ["TRAV1", "TRAV2", "TRAV3", "TRAV4"],
-            "d_gene": [None, None, None, None],
-            "j_gene": ["TRAJ1", "TRAJ2", "TRAJ3", "TRAJ4"],
-            "c_gene": ["TRAC", "TRAC", "TRAC", "TRAC"],
-            "umis": [100, 80, 60, 40],
-            "reads": [1000, 800, 600, 400],
-            "contig_id": ["c1", "c2", "c3", "c4"],
-        })
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["AAAA"] * 4,
+                "chain": ["TRA", "TRA", "TRA", "TRA"],
+                "cdr3": ["BEST", "SECOND", "THIRD", "FOURTH"],
+                "v_gene": ["TRAV1", "TRAV2", "TRAV3", "TRAV4"],
+                "d_gene": [None, None, None, None],
+                "j_gene": ["TRAJ1", "TRAJ2", "TRAJ3", "TRAJ4"],
+                "c_gene": ["TRAC", "TRAC", "TRAC", "TRAC"],
+                "umis": [100, 80, 60, 40],
+                "reads": [1000, 800, 600, 400],
+                "contig_id": ["c1", "c2", "c3", "c4"],
+            }
+        )
 
         result = _pivot_vdj_by_barcode(vdj_df)
 

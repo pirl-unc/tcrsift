@@ -14,6 +14,7 @@ Visualization functions for TCRsift.
 
 Generates plots for QC, phenotyping, clonotype analysis, and filtering.
 """
+
 from __future__ import annotations
 
 import logging
@@ -42,6 +43,7 @@ def save_figure(fig: plt.Figure, output_path: str | Path, dpi: int = 300):
 # =============================================================================
 # QC Plots (load command)
 # =============================================================================
+
 
 def plot_qc(adata: ad.AnnData, output_dir: str | Path):
     """Generate QC plots for loaded data."""
@@ -104,6 +106,7 @@ def plot_qc(adata: ad.AnnData, output_dir: str | Path):
 # =============================================================================
 # Phenotype Plots
 # =============================================================================
+
 
 def plot_phenotype(adata: ad.AnnData, output_dir: str | Path):
     """Generate phenotype plots."""
@@ -168,6 +171,7 @@ def plot_phenotype(adata: ad.AnnData, output_dir: str | Path):
 # Clonotype Plots
 # =============================================================================
 
+
 def plot_clonotypes(clonotypes: pd.DataFrame, output_dir: str | Path):
     """Generate clonotype analysis plots."""
     output_dir = Path(output_dir)
@@ -188,7 +192,11 @@ def plot_clonotypes(clonotypes: pd.DataFrame, output_dir: str | Path):
     # Clone size histogram
     fig, ax = plt.subplots(figsize=(10, 6))
     max_size = min(50, clonotypes["cell_count"].max())
-    ax.hist(clonotypes["cell_count"].clip(upper=max_size), bins=range(1, max_size + 2), edgecolor="black")
+    ax.hist(
+        clonotypes["cell_count"].clip(upper=max_size),
+        bins=range(1, max_size + 2),
+        edgecolor="black",
+    )
     ax.set_xlabel("Clone Size (cells)")
     ax.set_ylabel("Number of Clones")
     ax.set_title("Clone Size Distribution")
@@ -249,6 +257,7 @@ def plot_clonotypes(clonotypes: pd.DataFrame, output_dir: str | Path):
 # Filter Plots
 # =============================================================================
 
+
 def plot_filter(clonotypes: pd.DataFrame, output_dir: str | Path):
     """Generate filtering analysis plots."""
     output_dir = Path(output_dir)
@@ -291,7 +300,11 @@ def plot_filter(clonotypes: pd.DataFrame, output_dir: str | Path):
     if "tier" in clonotypes.columns:
         fig, ax = plt.subplots(figsize=(10, 6))
         tier_counts = clonotypes["tier"].value_counts().sort_index()
-        ax.bar(range(len(tier_counts)), tier_counts.values, color=plt.cm.viridis(np.linspace(0, 1, len(tier_counts))))
+        ax.bar(
+            range(len(tier_counts)),
+            tier_counts.values,
+            color=plt.cm.viridis(np.linspace(0, 1, len(tier_counts))),
+        )
         ax.set_xticks(range(len(tier_counts)))
         ax.set_xticklabels(tier_counts.index)
         ax.set_ylabel("Number of Clonotypes")
@@ -316,8 +329,8 @@ def plot_filter(clonotypes: pd.DataFrame, output_dir: str | Path):
         x = np.arange(len(tiers))
         width = 0.35
 
-        ax.bar(x - width/2, cd8_counts, width, label="CD8+")
-        ax.bar(x + width/2, cd4_counts, width, label="CD4+")
+        ax.bar(x - width / 2, cd8_counts, width, label="CD8+")
+        ax.bar(x + width / 2, cd4_counts, width, label="CD4+")
         ax.set_xticks(x)
         ax.set_xticklabels(tiers)
         ax.set_ylabel("Number of Clonotypes")
@@ -329,6 +342,7 @@ def plot_filter(clonotypes: pd.DataFrame, output_dir: str | Path):
 # =============================================================================
 # Annotation Plots
 # =============================================================================
+
 
 def plot_annotations(clonotypes: pd.DataFrame, output_dir: str | Path):
     """Generate annotation plots."""
@@ -349,7 +363,11 @@ def plot_annotations(clonotypes: pd.DataFrame, output_dir: str | Path):
         unmatched = len(clonotypes) - matched
 
         sizes = [viral, non_viral_matched, unmatched]
-        labels = [f"Viral ({viral})", f"Non-viral matched ({non_viral_matched})", f"Unmatched ({unmatched})"]
+        labels = [
+            f"Viral ({viral})",
+            f"Non-viral matched ({non_viral_matched})",
+            f"Unmatched ({unmatched})",
+        ]
         colors = ["red", "orange", "gray"]
 
         ax.pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%", startangle=90)
@@ -374,6 +392,7 @@ def plot_annotations(clonotypes: pd.DataFrame, output_dir: str | Path):
 # TIL Plots
 # =============================================================================
 
+
 def plot_til(matched_clonotypes: pd.DataFrame, output_dir: str | Path):
     """Generate TIL matching plots."""
     output_dir = Path(output_dir)
@@ -392,10 +411,14 @@ def plot_til(matched_clonotypes: pd.DataFrame, output_dir: str | Path):
 
         for tier in tiers:
             tier_data = matched_clonotypes[matched_clonotypes["tier"] == tier]
-            recovery = tier_data["til_match"].sum() / len(tier_data) * 100 if len(tier_data) > 0 else 0
+            recovery = (
+                tier_data["til_match"].sum() / len(tier_data) * 100 if len(tier_data) > 0 else 0
+            )
             recovery_rates.append(recovery)
 
-        ax.bar(range(len(tiers)), recovery_rates, color=plt.cm.viridis(np.linspace(0, 1, len(tiers))))
+        ax.bar(
+            range(len(tiers)), recovery_rates, color=plt.cm.viridis(np.linspace(0, 1, len(tiers)))
+        )
         ax.set_xticks(range(len(tiers)))
         ax.set_xticklabels(tiers)
         ax.set_ylabel("TIL Recovery Rate (%)")
@@ -406,7 +429,11 @@ def plot_til(matched_clonotypes: pd.DataFrame, output_dir: str | Path):
 
     # Culture vs TIL frequency scatter
     matched = matched_clonotypes[matched_clonotypes["til_match"]]
-    if len(matched) > 0 and "max_frequency" in matched.columns and "til_frequency" in matched.columns:
+    if (
+        len(matched) > 0
+        and "max_frequency" in matched.columns
+        and "til_frequency" in matched.columns
+    ):
         fig, ax = plt.subplots(figsize=(10, 10))
         ax.scatter(
             matched["max_frequency"] * 100,
@@ -431,6 +458,7 @@ def plot_til(matched_clonotypes: pd.DataFrame, output_dir: str | Path):
 # Assembly Plots
 # =============================================================================
 
+
 def plot_assembly(clonotypes: pd.DataFrame, output_dir: str | Path):
     """Generate sequence assembly plots."""
     output_dir = Path(output_dir)
@@ -447,7 +475,12 @@ def plot_assembly(clonotypes: pd.DataFrame, output_dir: str | Path):
                 ax.set_xlabel("Sequence Length (aa)")
                 ax.set_ylabel("Number of Clonotypes")
                 ax.set_title(f"{chain.upper()} Chain Length Distribution")
-                ax.axvline(lengths.median(), color="red", linestyle="--", label=f"Median: {lengths.median():.0f}")
+                ax.axvline(
+                    lengths.median(),
+                    color="red",
+                    linestyle="--",
+                    label=f"Median: {lengths.median():.0f}",
+                )
                 ax.legend()
                 save_figure(fig, output_dir / f"assembly_{chain}_length.png")
 
@@ -468,6 +501,7 @@ def plot_assembly(clonotypes: pd.DataFrame, output_dir: str | Path):
 # =============================================================================
 # Funnel Plot
 # =============================================================================
+
 
 def plot_funnel(
     stage_counts: dict[str, int],
@@ -608,6 +642,7 @@ def create_pipeline_funnel(
 # =============================================================================
 # Color-Coded TCR Sequence PDF
 # =============================================================================
+
 
 def create_tcr_sequence_pdf(
     df: pd.DataFrame,
@@ -759,13 +794,19 @@ def create_tcr_sequence_pdf(
             write_text(f"CDR3 Beta: {row['CDR3_beta']}")
 
         # Gene information
-        gene_cols = [c for c in row.index if c.endswith("_gene") or c.endswith("_v_gene") or c.endswith("_j_gene")]
+        gene_cols = [
+            c
+            for c in row.index
+            if c.endswith("_gene") or c.endswith("_v_gene") or c.endswith("_j_gene")
+        ]
         for col in gene_cols[:6]:  # Limit to 6 genes
             if pd.notna(row.get(col)):
                 write_text(f"{col}: {row[col]}", x=40)
 
         # Sequence length
-        total_len = sum(len(str(row.get(col, ""))) for col in sequence_columns.keys() if pd.notna(row.get(col)))
+        total_len = sum(
+            len(str(row.get(col, ""))) for col in sequence_columns.keys() if pd.notna(row.get(col))
+        )
         write_text(f"Total Length: {total_len} aa", x=40)
 
         blank(20)
@@ -827,6 +868,7 @@ def create_tcr_sequence_pdf(
 # Combined Report Generation
 # =============================================================================
 
+
 def generate_report(
     output_dir: str | Path,
     format: str = "pdf",
@@ -873,7 +915,8 @@ def generate_report(
 
                 c.drawImage(
                     img,
-                    x, y,
+                    x,
+                    y,
                     width=scaled_width,
                     height=scaled_height,
                 )

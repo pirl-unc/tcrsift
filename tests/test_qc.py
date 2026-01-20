@@ -274,7 +274,9 @@ class TestValidateSequence:
             "HFSNYSQQMKFSASPVVVSGQEGTRHTASLTFSPPSGKGGKTVSILVGKNALRQITVNDQVF"
             "GKTLTITKQSGTQVFLNDKVVLTTGTTLLLGKQVLRQI"
         )
-        report = validate_sequence(seq, is_dna=False, min_chain_length=80, kmer_size=10, min_kmer_repeat=2)
+        report = validate_sequence(
+            seq, is_dna=False, min_chain_length=80, kmer_size=10, min_kmer_repeat=2
+        )
         # Check that at least the chain length check passed
         chain_result = next(r for r in report.results if r.check_name == "chain_length")
         assert chain_result.passed is True
@@ -343,7 +345,9 @@ class TestValidateSequence:
         # Sequence with repeated 10-mer
         repeated_part = "ABCDEFGHIJ"
         seq = repeated_part + "XYZ" + repeated_part + "M" * 100
-        report = validate_sequence(seq, is_dna=False, kmer_size=10, min_kmer_repeat=2, min_chain_length=50)
+        report = validate_sequence(
+            seq, is_dna=False, kmer_size=10, min_kmer_repeat=2, min_chain_length=50
+        )
         assert any(r.check_name == "repeated_kmers" and not r.passed for r in report.results)
 
 
@@ -352,24 +356,28 @@ class TestValidateClonotypes:
 
     def test_valid_clonotypes(self):
         """Valid clonotypes should pass."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
-            "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
-            "n_cells": [10, 5],
-            "reads": [100, 50],
-            "umis": [20, 10],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
+                "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
+                "n_cells": [10, 5],
+                "reads": [100, 50],
+                "umis": [20, 10],
+            }
+        )
         result_df, report = validate_clonotypes(df)
         assert "qc_pass" in result_df.columns
         assert result_df["qc_pass"].all()
 
     def test_cdr3_too_short(self):
         """CDR3 too short should be flagged."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["CAS", "CASSLTGELF"],  # First is too short
-            "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
-            "n_cells": [10, 5],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CAS", "CASSLTGELF"],  # First is too short
+                "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
+                "n_cells": [10, 5],
+            }
+        )
         result_df, report = validate_clonotypes(df, min_cdr3_length=5)
         assert not result_df.loc[0, "qc_pass"]
         assert result_df.loc[1, "qc_pass"]
@@ -377,34 +385,40 @@ class TestValidateClonotypes:
 
     def test_cdr3_too_long(self):
         """CDR3 too long should be flagged."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["C" * 50, "CASSLTGELF"],  # First is too long
-            "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
-            "n_cells": [10, 5],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["C" * 50, "CASSLTGELF"],  # First is too long
+                "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
+                "n_cells": [10, 5],
+            }
+        )
         result_df, report = validate_clonotypes(df, max_cdr3_length=40)
         assert not result_df.loc[0, "qc_pass"]
         assert result_df.loc[1, "qc_pass"]
 
     def test_zero_cells(self):
         """Zero cells should be flagged."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
-            "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
-            "n_cells": [0, 5],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
+                "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
+                "n_cells": [0, 5],
+            }
+        )
         result_df, report = validate_clonotypes(df)
         assert not result_df.loc[0, "qc_pass"]
         assert "zero_cells" in result_df.loc[0, "qc_flags"]
 
     def test_low_reads_warning(self):
         """Low reads should generate warning."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
-            "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
-            "reads": [5, 100],  # First has low reads
-            "n_cells": [10, 5],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
+                "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
+                "reads": [5, 100],  # First has low reads
+                "n_cells": [10, 5],
+            }
+        )
         result_df, report = validate_clonotypes(df, min_reads=10)
         assert len(report.warnings) > 0
         assert "low_reads" in result_df.loc[0, "qc_flags"]
@@ -421,11 +435,13 @@ class TestGetQCSummary:
 
     def test_basic_summary(self):
         """Basic summary statistics."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP", None],
-            "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY", "CASSYEQY"],
-            "n_cells": [10, 5, 3],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP", None],
+                "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY", "CASSYEQY"],
+                "n_cells": [10, 5, 3],
+            }
+        )
         summary = get_qc_summary(df)
         assert summary["n_clonotypes"] == 3
         assert summary["n_with_alpha"] == 2
@@ -434,23 +450,27 @@ class TestGetQCSummary:
 
     def test_with_qc_pass(self):
         """Summary with qc_pass column."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
-            "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
-            "n_cells": [10, 5],
-            "qc_pass": [True, False],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
+                "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
+                "n_cells": [10, 5],
+                "qc_pass": [True, False],
+            }
+        )
         summary = get_qc_summary(df)
         assert summary["n_qc_pass"] == 1
         assert summary["qc_pass_rate"] == 0.5
 
     def test_cdr3_length_stats(self):
         """CDR3 length statistics."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["CASSG", "CASSLTGELF"],  # lengths 5 and 10
-            "CDR3_beta": ["CSARDR", "CASSLGQAYEQY"],  # lengths 6 and 12
-            "n_cells": [10, 5],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CASSG", "CASSLTGELF"],  # lengths 5 and 10
+                "CDR3_beta": ["CSARDR", "CASSLGQAYEQY"],  # lengths 6 and 12
+                "n_cells": [10, 5],
+            }
+        )
         summary = get_qc_summary(df)
         assert summary["cdr3_alpha_mean_length"] == 7.5
         assert summary["cdr3_alpha_min_length"] == 5
@@ -458,11 +478,13 @@ class TestGetQCSummary:
 
     def test_cell_count_stats(self):
         """Cell count statistics."""
-        df = pd.DataFrame({
-            "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
-            "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
-            "n_cells": [10, 20],
-        })
+        df = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CASSLTGELF", "CAVSGGSYIP"],
+                "CDR3_beta": ["CSARDRVGNTIY", "CASSLGQAYEQY"],
+                "n_cells": [10, 20],
+            }
+        )
         summary = get_qc_summary(df)
         assert summary["total_cells"] == 30
         assert summary["mean_cells_per_clonotype"] == 15
