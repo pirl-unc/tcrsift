@@ -460,6 +460,24 @@ tcrsift unify \
 - Combined statistics (`combined.total_cells.count`)
 - Phenotype confidence based on combined evidence
 
+### Generate Mnemonic Names
+
+Creates pronounceable names from CDR3 sequences for easier reference.
+
+```bash
+tcrsift mnemonic -i clonotypes.csv -o clonotypes_named.csv
+```
+
+**Example output:**
+
+| CDR3_beta | mnemonic_name |
+|-----------|---------------|
+| CASSLGQAYEQYF | Dr. Loguq Aye, MD |
+| CASSLAGAYEQYF | Dr. Lag Aye, MD |
+| CASSFSGANVLTF | Dr. Fosuga Novultof |
+
+Common CDR3 prefixes map to titles (CASS→"Dr.", CAS→"Prof.") and suffixes map to honorifics (QYF→"MD", QFF→"PhD").
+
 ## Workflows
 
 ### Standard Single-Experiment Analysis
