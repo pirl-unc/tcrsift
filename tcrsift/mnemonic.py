@@ -10,6 +10,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 """Generate pronounceable mnemonic names from CDR3 sequences.
 
 This module converts CDR3 amino acid sequences into human-readable names
