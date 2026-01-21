@@ -737,3 +737,246 @@ class TestCombineGexAndVdj:
         assert "CDR3_alpha" in result.obs.columns
         # No cells should have VDJ data since barcodes don't overlap
         assert result.obs["CDR3_alpha"].isna().all()
+
+
+class TestLoadCellrangerGex:
+    """Tests for load_cellranger_gex function."""
+
+    @pytest.fixture
+    def mock_gex_dir(self, tmp_path):
+        """Create a mock CellRanger GEX output directory with 10x matrix format."""
+        import gzip
+        from scipy.io import mmwrite
+
+        gex_dir = tmp_path / "gex_outs"
+        gex_dir.mkdir()
+        matrix_dir = gex_dir / "filtered_feature_bc_matrix"
+        matrix_dir.mkdir()
+
+        n_cells = 20
+        n_genes = 30
+
+        # Create sparse expression matrix
+        np.random.seed(42)
+        X = sp.random(n_cells, n_genes, density=0.3, format="coo")
+        X.data = np.random.poisson(10, len(X.data)).astype(float)
+
+        # Write matrix.mtx then gzip it (scanpy expects .mtx.gz)
+        mtx_path = matrix_dir / "matrix.mtx"
+        mmwrite(mtx_path, X.T)  # 10x format is genes x cells
+        with open(mtx_path, "rb") as f_in:
+            with gzip.open(str(mtx_path) + ".gz", "wb") as f_out:
+                f_out.write(f_in.read())
+        mtx_path.unlink()  # Remove uncompressed version
+
+        # Write features.tsv.gz (gene_id, gene_name, feature_type)
+        gene_names = [f"Gene{i}" for i in range(n_genes - 6)]
+        gene_names.extend(["CD3D", "CD3E", "CD3G", "CD4", "CD8A", "CD8B"])
+        # Add some MT genes for mito QC
+        gene_names[0] = "MT-CO1"
+        gene_names[1] = "MT-CO2"
+
+        with gzip.open(matrix_dir / "features.tsv.gz", "wt") as f:
+            for i, name in enumerate(gene_names):
+                f.write(f"ENSG{i:011d}\t{name}\tGene Expression\n")
+
+        # Write barcodes.tsv.gz
+        with gzip.open(matrix_dir / "barcodes.tsv.gz", "wt") as f:
+            for i in range(n_cells):
+                f.write(f"CELL{i:04d}-1\n")
+
+        return gex_dir
+
+    def test_load_gex_basic(self, mock_gex_dir):
+        """Test basic GEX loading."""
+        from tcrsift.loader import load_cellranger_gex
+
+        adata = load_cellranger_gex(mock_gex_dir, "test_sample", verbose=False)
+
+        assert isinstance(adata, ad.AnnData)
+        assert adata.n_obs == 20
+        assert adata.n_vars == 30
+        assert "sample" in adata.obs.columns
+        assert adata.obs["sample"].iloc[0] == "test_sample"
+
+    def test_load_gex_adds_qc_metrics(self, mock_gex_dir):
+        """Test that QC metrics are added."""
+        from tcrsift.loader import load_cellranger_gex
+
+        adata = load_cellranger_gex(mock_gex_dir, "test_sample", verbose=False)
+
+        # QC columns should be present
+        assert "n_genes" in adata.obs.columns
+        assert "n_counts" in adata.obs.columns
+        assert "percent_mt" in adata.obs.columns
+
+    def test_load_gex_adds_filter_flags(self, mock_gex_dir):
+        """Test that filter flags are added."""
+        from tcrsift.loader import load_cellranger_gex
+
+        adata = load_cellranger_gex(
+            mock_gex_dir,
+            "test_sample",
+            min_genes=1,
+            max_genes=100,
+            min_counts=1,
+            max_counts=10000,
+            min_mito_pct=0,
+            max_mito_pct=50,
+            verbose=False,
+        )
+
+        # Filter flag columns should be present
+        assert "filter:min_genes" in adata.obs.columns
+        assert "filter:max_genes" in adata.obs.columns
+        assert "filter:pass_qc" in adata.obs.columns
+
+    def test_load_gex_invalid_dir_raises(self, tmp_path):
+        """Test that invalid directory raises error."""
+        from tcrsift.loader import load_cellranger_gex
+
+        with pytest.raises(TCRsiftValidationError):
+            load_cellranger_gex(tmp_path / "nonexistent", "test", verbose=False)
+
+    def test_load_gex_invalid_params_raises(self, mock_gex_dir):
+        """Test that invalid QC parameters raise errors."""
+        from tcrsift.loader import load_cellranger_gex
+
+        # min_genes > max_genes
+        with pytest.raises(TCRsiftValidationError, match="min_genes"):
+            load_cellranger_gex(
+                mock_gex_dir, "test", min_genes=1000, max_genes=100, verbose=False
+            )
+
+        # min_counts > max_counts
+        with pytest.raises(TCRsiftValidationError, match="min_counts"):
+            load_cellranger_gex(
+                mock_gex_dir, "test", min_counts=1000, max_counts=100, verbose=False
+            )
+
+        # min_mito > max_mito
+        with pytest.raises(TCRsiftValidationError, match="min_mito"):
+            load_cellranger_gex(
+                mock_gex_dir, "test", min_mito_pct=50, max_mito_pct=10, verbose=False
+            )
+
+
+class TestLoadSample:
+    """Tests for load_sample function."""
+
+    @pytest.fixture
+    def mock_sample_dirs(self, tmp_path):
+        """Create mock VDJ and GEX directories for a single sample."""
+        import gzip
+        from scipy.io import mmwrite
+
+        # Create VDJ dir
+        vdj_dir = tmp_path / "vdj_outs"
+        vdj_dir.mkdir()
+
+        annotations = pd.DataFrame(
+            {
+                "barcode": ["CELL0000-1", "CELL0000-1", "CELL0001-1", "CELL0001-1"],
+                "chain": ["TRA", "TRB", "TRA", "TRB"],
+                "cdr3": ["CAVSDLEPNSSASKIIF", "CASSLGQAYEQYF", "CAVRSGYSTLTF", "CASSLAPGTGELFF"],
+                "v_gene": ["TRAV1-1", "TRBV2-1", "TRAV3-1", "TRBV4-1"],
+                "d_gene": [None, "TRBD1", None, "TRBD2"],
+                "j_gene": ["TRAJ10", "TRBJ2-1", "TRAJ20", "TRBJ1-1"],
+                "c_gene": ["TRAC", "TRBC1", "TRAC", "TRBC2"],
+                "umis": [100, 200, 150, 250],
+                "reads": [1000, 2000, 1500, 2500],
+                "contig_id": ["c1", "c2", "c3", "c4"],
+                "productive": [True, True, True, True],
+            }
+        )
+        annotations.to_csv(vdj_dir / "filtered_contig_annotations.csv", index=False)
+
+        # Create GEX dir
+        gex_dir = tmp_path / "gex_outs"
+        gex_dir.mkdir()
+        matrix_dir = gex_dir / "filtered_feature_bc_matrix"
+        matrix_dir.mkdir()
+
+        n_cells = 5
+        n_genes = 15
+
+        np.random.seed(42)
+        X = sp.random(n_cells, n_genes, density=0.4, format="coo")
+        X.data = np.random.poisson(15, len(X.data)).astype(float)
+
+        # Write and gzip matrix
+        mtx_path = matrix_dir / "matrix.mtx"
+        mmwrite(mtx_path, X.T)
+        with open(mtx_path, "rb") as f_in:
+            with gzip.open(str(mtx_path) + ".gz", "wb") as f_out:
+                f_out.write(f_in.read())
+        mtx_path.unlink()
+
+        gene_names = [f"Gene{i}" for i in range(n_genes - 6)]
+        gene_names.extend(["CD3D", "CD3E", "CD3G", "CD4", "CD8A", "CD8B"])
+
+        with gzip.open(matrix_dir / "features.tsv.gz", "wt") as f:
+            for i, name in enumerate(gene_names):
+                f.write(f"ENSG{i:011d}\t{name}\tGene Expression\n")
+
+        # Barcodes match VDJ data
+        with gzip.open(matrix_dir / "barcodes.tsv.gz", "wt") as f:
+            for i in range(n_cells):
+                f.write(f"CELL{i:04d}-1\n")
+
+        return {"vdj_dir": vdj_dir, "gex_dir": gex_dir}
+
+    def test_load_sample_combines_gex_vdj(self, mock_sample_dirs):
+        """Test loading a sample with both GEX and VDJ."""
+        from tcrsift.loader import load_sample
+        from tcrsift.sample_sheet import Sample
+
+        sample = Sample(
+            sample="test_sample",
+            vdj_dir=str(mock_sample_dirs["vdj_dir"]),
+            gex_dir=str(mock_sample_dirs["gex_dir"]),
+        )
+
+        adata = load_sample(sample, min_genes=1, min_counts=1, min_mito_pct=0)
+
+        assert isinstance(adata, ad.AnnData)
+        assert "CDR3_alpha" in adata.obs.columns
+        assert "CDR3_beta" in adata.obs.columns
+        assert "CD3D" in adata.obs.columns
+
+    def test_load_sample_vdj_only(self, mock_sample_dirs):
+        """Test loading a sample with only VDJ data."""
+        from tcrsift.loader import load_sample
+        from tcrsift.sample_sheet import Sample
+
+        sample = Sample(
+            sample="test_sample",
+            vdj_dir=str(mock_sample_dirs["vdj_dir"]),
+            gex_dir=None,
+        )
+
+        adata = load_sample(sample)
+
+        assert isinstance(adata, ad.AnnData)
+        assert "CDR3_alpha" in adata.obs.columns
+        assert len(adata) == 2  # 2 unique barcodes in VDJ data
+
+    def test_load_sample_adds_metadata(self, mock_sample_dirs):
+        """Test that sample metadata is added."""
+        from tcrsift.loader import load_sample
+        from tcrsift.sample_sheet import Sample
+
+        sample = Sample(
+            sample="test_sample",
+            vdj_dir=str(mock_sample_dirs["vdj_dir"]),
+            gex_dir=str(mock_sample_dirs["gex_dir"]),
+            antigen_type="short_peptide",
+            antigen_description="Test antigen",
+            source="culture",
+        )
+
+        adata = load_sample(sample, min_genes=1, min_counts=1, min_mito_pct=0)
+
+        assert adata.obs["antigen_type"].iloc[0] == "short_peptide"
+        assert adata.obs["antigen_description"].iloc[0] == "Test antigen"
+        assert adata.obs["source"].iloc[0] == "culture"
