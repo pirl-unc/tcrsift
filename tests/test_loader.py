@@ -1080,6 +1080,83 @@ class TestCombineGexAndVdjBugs:
         assert result.obs.loc["CELL0001-2", "CDR3_alpha"] == "CAV2"
 
 
+class TestMitochondrialGeneDetection:
+    """Test mitochondrial gene detection in load_cellranger_gex."""
+
+    @pytest.fixture
+    def mock_gex_dir_with_mt_genes(self, tmp_path):
+        """Create mock GEX directory with MT genes using ENSEMBL IDs as var_names."""
+        import gzip
+        from scipy.io import mmwrite
+
+        gex_dir = tmp_path / "gex_outs"
+        gex_dir.mkdir()
+        matrix_dir = gex_dir / "filtered_feature_bc_matrix"
+        matrix_dir.mkdir()
+
+        n_cells = 10
+        n_genes = 6
+
+        # Create expression matrix with higher MT expression
+        np.random.seed(42)
+        X = sp.random(n_cells, n_genes, density=0.5, format="coo")
+        X = X.toarray()
+        # Make MT genes (first 2) have higher expression
+        X[:, 0] = np.random.poisson(50, n_cells)  # MT-ND1
+        X[:, 1] = np.random.poisson(40, n_cells)  # MT-CO1
+        X = sp.coo_matrix(X)
+
+        # Write matrix.mtx.gz
+        mtx_path = matrix_dir / "matrix.mtx"
+        mmwrite(mtx_path, X.T)
+        with open(mtx_path, "rb") as f_in:
+            with gzip.open(str(mtx_path) + ".gz", "wb") as f_out:
+                f_out.write(f_in.read())
+        mtx_path.unlink()
+
+        # Write features.tsv.gz with ENSEMBL IDs and gene symbols
+        # Include MT genes to test detection
+        with gzip.open(matrix_dir / "features.tsv.gz", "wt") as f:
+            f.write("ENSG00000198888\tMT-ND1\tGene Expression\n")
+            f.write("ENSG00000198804\tMT-CO1\tGene Expression\n")
+            f.write("ENSG00000167286\tCD3D\tGene Expression\n")
+            f.write("ENSG00000010610\tCD4\tGene Expression\n")
+            f.write("ENSG00000153563\tCD8A\tGene Expression\n")
+            f.write("ENSG00000172116\tCD8B\tGene Expression\n")
+
+        # Write barcodes.tsv.gz
+        with gzip.open(matrix_dir / "barcodes.tsv.gz", "wt") as f:
+            for i in range(n_cells):
+                f.write(f"CELL{i:04d}-1\n")
+
+        return gex_dir
+
+    def test_mt_detection_with_ensembl_ids(self, mock_gex_dir_with_mt_genes):
+        """Test that MT genes are detected when var_names are ENSEMBL IDs."""
+        from tcrsift.loader import load_cellranger_gex
+
+        adata = load_cellranger_gex(
+            mock_gex_dir_with_mt_genes,
+            "test_sample",
+            min_genes=1,
+            min_counts=1,
+            min_mito_pct=0,
+            max_mito_pct=100,
+            verbose=False,
+        )
+
+        # Check that MT genes were detected
+        assert "mt" in adata.var.columns
+        mt_genes = adata.var[adata.var["mt"]].index.tolist()
+
+        # Should detect 2 MT genes (MT-ND1 and MT-CO1 via gene_symbols column)
+        assert len(mt_genes) == 2
+
+        # percent_mt should be calculated and non-zero
+        assert "percent_mt" in adata.obs.columns
+        assert adata.obs["percent_mt"].mean() > 0
+
+
 class TestExtractTcellMarkersWithVersionedIds:
     """Test T-cell marker extraction with versioned ENSEMBL IDs."""
 

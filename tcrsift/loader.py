@@ -280,10 +280,14 @@ def load_cellranger_gex(
     adata.obs["sample"] = sample_name
     adata.obs["gex_dir"] = str(gex_dir)
 
-    # Calculate QC metrics
-    adata.var["mt"] = adata.var_names.str.startswith("MT-") | adata.var_names.str.contains(
-        "^ENSG.*MT-"
-    )
+    # Calculate QC metrics - detect mitochondrial genes
+    # Handle both loading paths:
+    # - h5 path: var_names are gene symbols (MT-ND1, etc.)
+    # - mtx path with var_names="gene_ids": var_names are ENSEMBL IDs, symbols in var['gene_symbols']
+    if "gene_symbols" in adata.var.columns:
+        adata.var["mt"] = adata.var["gene_symbols"].str.startswith("MT-")
+    else:
+        adata.var["mt"] = adata.var_names.str.startswith("MT-")
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True)
 
     # Rename QC columns for consistency
