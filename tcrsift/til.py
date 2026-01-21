@@ -156,7 +156,7 @@ def _load_til_from_csv(path: Path, sample_name: str) -> pd.DataFrame:
 def _load_til_from_vdj_dir(path: Path, sample_name: str) -> pd.DataFrame:
     """Load TIL data from a CellRanger VDJ directory."""
     # Import here to avoid circular imports
-    from .loader import load_cellranger_vdj, pivot_vdj_to_cells
+    from .loader import _pivot_vdj_by_barcode, load_cellranger_vdj
 
     if not path.exists():
         raise TCRsiftValidationError(
@@ -168,7 +168,8 @@ def _load_til_from_vdj_dir(path: Path, sample_name: str) -> pd.DataFrame:
     vdj_df = load_cellranger_vdj(path, sample_name, verbose=False)
 
     # Pivot to per-cell format
-    df = pivot_vdj_to_cells(vdj_df, sample_name)
+    df = _pivot_vdj_by_barcode(vdj_df)
+    df["sample"] = sample_name
 
     logger.info(f"Loaded {len(df)} TIL cells from VDJ directory: {path}")
     return df
