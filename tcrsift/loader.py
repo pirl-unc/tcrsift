@@ -25,6 +25,7 @@ import pandas as pd
 import scanpy as sc
 from tqdm.auto import tqdm
 
+from .genes import TCELL_MARKERS, find_column_for_gene
 from .sample_sheet import Sample, load_sample_sheet
 from .validation import (
     TCRsiftValidationError,
@@ -36,23 +37,6 @@ from .validation import (
 
 logger = logging.getLogger(__name__)
 
-
-# Standard column names for VDJ annotations
-VDJ_COLUMNS = {
-    "barcode": "barcode",
-    "contig_id": "contig_id",
-    "chain": "chain",
-    "v_gene": "v_gene",
-    "d_gene": "d_gene",
-    "j_gene": "j_gene",
-    "c_gene": "c_gene",
-    "cdr3": "cdr3",
-    "cdr3_nt": "cdr3_nt",
-    "reads": "reads",
-    "umis": "umis",
-    "productive": "productive",
-    "full_length": "full_length",
-}
 
 # VDJ segment columns for full sequence assembly
 VDJ_SEGMENT_COLS = ["fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4"]
@@ -334,37 +318,18 @@ def _extract_tcell_markers(adata: ad.AnnData) -> pd.DataFrame:
     Extract T cell marker gene expression from AnnData.
 
     Returns DataFrame with CD3, CD4, CD8 expression per cell.
+    Uses version-robust ENSEMBL ID matching from genes.py.
     """
-    # Gene name mappings (ENSEMBL IDs to gene symbols)
-    gene_mappings = {
-        "ENSG00000167286": "CD3D",
-        "ENSG00000198851": "CD3E",
-        "ENSG00000160654": "CD3G",
-        "ENSG00000010610": "CD4",
-        "ENSG00000153563": "CD8A",
-        "ENSG00000172116": "CD8B",
-    }
-
-    markers = ["CD3D", "CD3E", "CD3G", "CD4", "CD8A", "CD8B"]
     marker_df = pd.DataFrame(index=adata.obs_names)
+    var_names = list(adata.var_names)
 
-    for marker in markers:
-        # Try direct gene name match
-        if marker in adata.var_names:
-            marker_df[marker] = adata[:, marker].X.toarray().flatten()
+    for gene in TCELL_MARKERS:
+        col = find_column_for_gene(gene, var_names)
+        if col is not None:
+            marker_df[gene.symbol] = adata[:, col].X.toarray().flatten()
         else:
-            # Try ENSEMBL ID match
-            found = False
-            for ensembl_id, gene_name in gene_mappings.items():
-                if gene_name == marker:
-                    matching_vars = [v for v in adata.var_names if v.startswith(ensembl_id)]
-                    if matching_vars:
-                        marker_df[marker] = adata[:, matching_vars[0]].X.toarray().flatten()
-                        found = True
-                        break
-            if not found:
-                marker_df[marker] = 0
-                logger.warning(f"T cell marker {marker} not found in gene expression data")
+            marker_df[gene.symbol] = 0
+            logger.warning(f"T cell marker {gene.symbol} not found in gene expression data")
 
     return marker_df
 
@@ -404,19 +369,28 @@ def combine_gex_and_vdj(
     if len(vdj_df) > 0:
         vdj_pivoted = _pivot_vdj_by_barcode(vdj_df)
 
-        # Join on barcode
-        # Make sure barcodes match format (sometimes have -1 suffix)
+        # Build barcode mapping (handles gem group suffixes like -1, -2, -3)
+        # Map each GEX barcode to matching VDJ barcode without modifying adata
         adata_barcodes = set(adata.obs_names)
         vdj_barcodes = set(vdj_pivoted.index)
 
-        # Try to match barcodes
-        if not adata_barcodes.intersection(vdj_barcodes):
-            # Try stripping -1 suffix from GEX barcodes
-            adata.obs_names = [b.split("-")[0] for b in adata.obs_names]
+        # Check if barcodes match directly
+        if adata_barcodes.intersection(vdj_barcodes):
+            # Direct match - use obs_names as-is for reindexing
+            barcode_to_vdj = {bc: bc for bc in adata.obs_names if bc in vdj_barcodes}
+        else:
+            # Try stripping gem group suffix (e.g., -1, -2, -3) from GEX barcodes
+            barcode_to_vdj = {}
+            for bc in adata.obs_names:
+                bc_base = bc.rsplit("-", 1)[0] if "-" in bc else bc
+                if bc_base in vdj_barcodes:
+                    barcode_to_vdj[bc] = bc_base
 
-        # Add VDJ columns to adata.obs
+        # Add VDJ columns to adata.obs using the mapping
         for col in vdj_pivoted.columns:
-            adata.obs[col] = vdj_pivoted[col].reindex(adata.obs_names).values
+            # Map GEX barcodes to VDJ barcodes and get values
+            mapped_barcodes = [barcode_to_vdj.get(bc) for bc in adata.obs_names]
+            adata.obs[col] = vdj_pivoted[col].reindex(mapped_barcodes).values
 
     return adata
 

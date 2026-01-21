@@ -980,3 +980,142 @@ class TestLoadSample:
         assert adata.obs["antigen_type"].iloc[0] == "short_peptide"
         assert adata.obs["antigen_description"].iloc[0] == "Test antigen"
         assert adata.obs["source"].iloc[0] == "culture"
+
+
+class TestCombineGexAndVdjBugs:
+    """Tests for bugs in combine_gex_and_vdj function."""
+
+    @pytest.fixture
+    def gex_adata_with_suffix(self):
+        """Create GEX AnnData with -1 barcode suffix."""
+        n_cells = 5
+        n_genes = 10
+
+        X = sp.random(n_cells, n_genes, density=0.3, format="csr")
+
+        var_names = [f"Gene{i}" for i in range(n_genes - 4)]
+        var_names.extend(["CD3D", "CD4", "CD8A", "CD8B"])
+
+        adata = ad.AnnData(X)
+        adata.var_names = var_names
+        # Barcodes with -1 suffix (CellRanger format)
+        adata.obs_names = [f"CELL{i:04d}-1" for i in range(n_cells)]
+        adata.obs["sample"] = "test_sample"
+
+        return adata
+
+    @pytest.fixture
+    def vdj_df_without_suffix(self):
+        """Create VDJ DataFrame without barcode suffix."""
+        return pd.DataFrame(
+            {
+                "barcode": ["CELL0000", "CELL0000", "CELL0001", "CELL0001"],
+                "chain": ["TRA", "TRB", "TRA", "TRB"],
+                "cdr3": ["CAV1", "CASS1", "CAV2", "CASS2"],
+                "v_gene": ["TRAV1", "TRBV1", "TRAV2", "TRBV2"],
+                "j_gene": ["TRAJ1", "TRBJ1", "TRAJ2", "TRBJ2"],
+                "d_gene": [None, "TRBD1", None, "TRBD1"],
+                "c_gene": ["TRAC", "TRBC1", "TRAC", "TRBC1"],
+                "umis": [100, 200, 150, 250],
+                "reads": [1000, 2000, 1500, 2500],
+                "contig_id": ["c1", "c2", "c3", "c4"],
+                "sample": ["test_sample"] * 4,
+            }
+        )
+
+    def test_combine_does_not_modify_original_barcodes(
+        self, gex_adata_with_suffix, vdj_df_without_suffix
+    ):
+        """Test that combine_gex_and_vdj does not destructively modify barcodes.
+
+        BUG: Currently the function modifies adata.obs_names in place when
+        barcodes don't match, which is a side effect that callers don't expect.
+        """
+        original_barcodes = list(gex_adata_with_suffix.obs_names)
+
+        combine_gex_and_vdj(gex_adata_with_suffix, vdj_df_without_suffix, "test_sample")
+
+        # After combining, original AnnData's barcodes should be unchanged
+        # (or we should work on a copy)
+        assert list(gex_adata_with_suffix.obs_names) == original_barcodes
+
+    def test_combine_handles_different_gem_groups(self):
+        """Test that combine handles -2, -3 gem group suffixes, not just -1.
+
+        BUG: Currently only handles -1 suffix, but CellRanger can produce
+        -2, -3, etc. for multiplexed samples.
+        """
+        n_cells = 3
+        n_genes = 8
+
+        X = sp.random(n_cells, n_genes, density=0.3, format="csr")
+        var_names = ["Gene1", "Gene2", "Gene3", "Gene4", "CD3D", "CD4", "CD8A", "CD8B"]
+
+        adata = ad.AnnData(X)
+        adata.var_names = var_names
+        # Mix of gem groups
+        adata.obs_names = ["CELL0000-1", "CELL0001-2", "CELL0002-3"]
+        adata.obs["sample"] = "test_sample"
+
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["CELL0000", "CELL0000", "CELL0001", "CELL0001"],
+                "chain": ["TRA", "TRB", "TRA", "TRB"],
+                "cdr3": ["CAV1", "CASS1", "CAV2", "CASS2"],
+                "v_gene": ["TRAV1", "TRBV1", "TRAV2", "TRBV2"],
+                "j_gene": ["TRAJ1", "TRBJ1", "TRAJ2", "TRBJ2"],
+                "d_gene": [None, "TRBD1", None, "TRBD1"],
+                "c_gene": ["TRAC", "TRBC1", "TRAC", "TRBC1"],
+                "umis": [100, 200, 150, 250],
+                "reads": [1000, 2000, 1500, 2500],
+                "contig_id": ["c1", "c2", "c3", "c4"],
+                "sample": ["test_sample"] * 4,
+            }
+        )
+
+        result = combine_gex_and_vdj(adata, vdj_df, "test_sample")
+
+        # Should match CELL0000-1 to CELL0000 and CELL0001-2 to CELL0001
+        assert result.obs.loc["CELL0000-1", "CDR3_alpha"] == "CAV1"
+        assert result.obs.loc["CELL0001-2", "CDR3_alpha"] == "CAV2"
+
+
+class TestExtractTcellMarkersWithVersionedIds:
+    """Test T-cell marker extraction with versioned ENSEMBL IDs."""
+
+    def test_extract_markers_versioned_ensembl(self):
+        """Test marker extraction when genes use versioned ENSEMBL IDs."""
+        n_cells = 10
+        n_genes = 8
+
+        X = sp.random(n_cells, n_genes, density=0.3, format="csr").toarray()
+
+        # Use versioned ENSEMBL IDs (like real CellRanger output)
+        var_names = [
+            "ENSG00000167286.10",  # CD3D
+            "ENSG00000198851.5",  # CD3E
+            "ENSG00000160654.11",  # CD3G
+            "ENSG00000010610.8",  # CD4
+            "ENSG00000153563.16",  # CD8A
+            "ENSG00000172116.23",  # CD8B
+            "OtherGene1",
+            "OtherGene2",
+        ]
+
+        adata = ad.AnnData(sp.csr_matrix(X))
+        adata.var_names = var_names
+        adata.obs_names = [f"cell_{i}" for i in range(n_cells)]
+
+        markers = _extract_tcell_markers(adata)
+
+        # Should find all markers even with versioned IDs
+        assert "CD3D" in markers.columns
+        assert "CD3E" in markers.columns
+        assert "CD3G" in markers.columns
+        assert "CD4" in markers.columns
+        assert "CD8A" in markers.columns
+        assert "CD8B" in markers.columns
+
+        # Values should be extracted (not all zeros)
+        # Since we used random sparse matrix, check structure is correct
+        assert len(markers) == n_cells

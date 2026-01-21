@@ -18,6 +18,8 @@ from os.path import join
 import pandas as pd
 import scanpy as sc
 
+from .genes import TCELL_MARKERS, build_versioned_rename_map
+
 
 def annotate_combined_df(
     df,
@@ -55,21 +57,19 @@ def annotate_combined_df(
 
 
     """
-    df = df.rename(
-        columns={
-            "ENSG00000167286.10": "CD3D",
-            "ENSG00000198851.10": "CD3E",
-            "ENSG00000160654.11": "CD3G",
-            "ENSG00000010610.10": "CD4",
-            "ENSG00000153563.16": "CD8A",
-            "ENSG00000172116.23": "CD8B",
-            "barcode": "Barcode",
-            "Row.names": "Barcode",
-            "sample": "Sample",
-            "cdr3_aa1": "CDR3_alpha",
-            "cdr3_aa2": "CDR3_beta",
-        }
-    )
+    # Build rename map for ENSEMBL IDs to gene symbols (version-robust)
+    gene_rename_map = build_versioned_rename_map(df.columns, TCELL_MARKERS)
+
+    # Add other column renames
+    rename_map = {
+        **gene_rename_map,
+        "barcode": "Barcode",
+        "Row.names": "Barcode",
+        "sample": "Sample",
+        "cdr3_aa1": "CDR3_alpha",
+        "cdr3_aa2": "CDR3_beta",
+    }
+    df = df.rename(columns=rename_map)
 
     if "Peptide_Number" not in df.columns:
         df["Peptide_Number"] = [s.split("_")[-1] for s in df["Sample"]]
