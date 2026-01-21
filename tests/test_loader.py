@@ -12,13 +12,24 @@
 
 """Tests for loader module."""
 
+import tempfile
+from pathlib import Path
+
+import anndata as ad
+import numpy as np
 import pandas as pd
+import pytest
+import scipy.sparse as sp
 
 from tcrsift.loader import (
     VDJ_SEGMENT_COLS,
     VDJ_SEGMENT_NT_COLS,
+    _extract_tcell_markers,
     _pivot_vdj_by_barcode,
+    combine_gex_and_vdj,
+    load_cellranger_vdj,
 )
+from tcrsift.validation import TCRsiftValidationError
 
 
 class TestPivotVdjByBarcode:
@@ -361,3 +372,368 @@ class TestRealisticVdjPivot:
 
         # CCCC should have different clone
         assert result.loc["AAAA", "CDR3ab"] != result.loc["CCCC", "CDR3ab"]
+
+
+class TestLoadCellrangerVdj:
+    """Tests for load_cellranger_vdj function."""
+
+    @pytest.fixture
+    def mock_vdj_dir(self, tmp_path):
+        """Create a mock CellRanger VDJ output directory."""
+        vdj_dir = tmp_path / "vdj_outs"
+        vdj_dir.mkdir()
+
+        # Create filtered_contig_annotations.csv
+        annotations = pd.DataFrame(
+            {
+                "barcode": [
+                    "AAAA-1",
+                    "AAAA-1",
+                    "BBBB-1",
+                    "BBBB-1",
+                    "CCCC-1",
+                    "CCCC-1",
+                ],
+                "is_cell": [True, True, True, True, True, True],
+                "contig_id": ["c1", "c2", "c3", "c4", "c5", "c6"],
+                "high_confidence": [True, True, True, True, True, True],
+                "length": [500, 600, 550, 620, 480, 590],
+                "chain": ["TRA", "TRB", "TRA", "TRB", "TRA", "TRB"],
+                "v_gene": [
+                    "TRAV1-1",
+                    "TRBV2-1",
+                    "TRAV1-1",
+                    "TRBV2-1",
+                    "TRAV3-1",
+                    "TRBV4-1",
+                ],
+                "d_gene": [None, "TRBD1", None, "TRBD1", None, "TRBD2"],
+                "j_gene": [
+                    "TRAJ10",
+                    "TRBJ2-1",
+                    "TRAJ10",
+                    "TRBJ2-1",
+                    "TRAJ20",
+                    "TRBJ1-1",
+                ],
+                "c_gene": ["TRAC", "TRBC1", "TRAC", "TRBC1", "TRAC", "TRBC2"],
+                "full_length": [True, True, True, True, True, True],
+                "productive": [True, True, True, True, True, True],
+                "cdr3": [
+                    "CAVSDLEPNSSASKIIF",
+                    "CASSLGQAYEQYF",
+                    "CAVSDLEPNSSASKIIF",
+                    "CASSLGQAYEQYF",
+                    "CAVRSGYSTLTF",
+                    "CASSLAPGTGELFF",
+                ],
+                "cdr3_nt": ["TGTGCC", "TGTGCC", "TGTGCC", "TGTGCC", "TGTGCC", "TGTGCC"],
+                "reads": [1000, 2000, 1500, 2500, 800, 1200],
+                "umis": [100, 200, 150, 250, 80, 120],
+                "raw_clonotype_id": [
+                    "clonotype1",
+                    "clonotype1",
+                    "clonotype1",
+                    "clonotype1",
+                    "clonotype2",
+                    "clonotype2",
+                ],
+            }
+        )
+        annotations.to_csv(vdj_dir / "filtered_contig_annotations.csv", index=False)
+
+        return vdj_dir
+
+    @pytest.fixture
+    def mock_vdj_dir_with_clonotypes(self, mock_vdj_dir):
+        """Create mock VDJ dir with clonotypes.csv containing MAIT/iNKT evidence."""
+        clonotypes = pd.DataFrame(
+            {
+                "clonotype_id": ["clonotype1", "clonotype2"],
+                "frequency": [2, 1],
+                "proportion": [0.67, 0.33],
+                "cdr3s_aa": [
+                    "TRA:CAVSDLEPNSSASKIIF;TRB:CASSLGQAYEQYF",
+                    "TRA:CAVRSGYSTLTF;TRB:CASSLAPGTGELFF",
+                ],
+                "mait_evidence": ["none", "none"],
+                "inkt_evidence": ["none", "none"],
+            }
+        )
+        clonotypes.to_csv(mock_vdj_dir / "clonotypes.csv", index=False)
+        return mock_vdj_dir
+
+    def test_load_basic(self, mock_vdj_dir):
+        """Test basic VDJ loading."""
+        df = load_cellranger_vdj(mock_vdj_dir, "test_sample", verbose=False)
+
+        assert len(df) == 6
+        assert "sample" in df.columns
+        assert df["sample"].iloc[0] == "test_sample"
+        assert "barcode" in df.columns
+        assert "chain" in df.columns
+        assert "cdr3" in df.columns
+
+    def test_load_adds_sample_name(self, mock_vdj_dir):
+        """Test that sample name is added to DataFrame."""
+        df = load_cellranger_vdj(mock_vdj_dir, "my_sample", verbose=False)
+
+        assert all(df["sample"] == "my_sample")
+        assert all(df["vdj_dir"] == str(mock_vdj_dir))
+
+    def test_load_with_clonotypes(self, mock_vdj_dir_with_clonotypes):
+        """Test loading with clonotypes.csv containing MAIT/iNKT evidence."""
+        df = load_cellranger_vdj(
+            mock_vdj_dir_with_clonotypes, "test_sample", verbose=False
+        )
+
+        assert "mait_evidence" in df.columns
+        assert "inkt_evidence" in df.columns
+
+    def test_load_invalid_dir_raises(self, tmp_path):
+        """Test that invalid directory raises error."""
+        with pytest.raises(TCRsiftValidationError):
+            load_cellranger_vdj(tmp_path / "nonexistent", "test", verbose=False)
+
+    def test_load_empty_file_raises(self, tmp_path):
+        """Test that empty annotations file raises error."""
+        vdj_dir = tmp_path / "empty_vdj"
+        vdj_dir.mkdir()
+
+        # Create empty CSV with just headers
+        empty_df = pd.DataFrame(columns=["barcode", "chain", "cdr3"])
+        empty_df.to_csv(vdj_dir / "filtered_contig_annotations.csv", index=False)
+
+        with pytest.raises(TCRsiftValidationError, match="empty"):
+            load_cellranger_vdj(vdj_dir, "test", verbose=False)
+
+    def test_load_missing_columns_raises(self, tmp_path):
+        """Test that file with missing required columns raises error."""
+        vdj_dir = tmp_path / "bad_vdj"
+        vdj_dir.mkdir()
+
+        # Create CSV missing required columns
+        bad_df = pd.DataFrame({"some_col": [1, 2, 3], "other_col": ["a", "b", "c"]})
+        bad_df.to_csv(vdj_dir / "filtered_contig_annotations.csv", index=False)
+
+        with pytest.raises(TCRsiftValidationError, match="missing required columns"):
+            load_cellranger_vdj(vdj_dir, "test", verbose=False)
+
+    def test_load_uses_all_contig_fallback(self, tmp_path):
+        """Test that loader falls back to all_contig_annotations.csv."""
+        vdj_dir = tmp_path / "vdj_fallback"
+        vdj_dir.mkdir()
+
+        # Create only all_contig_annotations.csv (not filtered)
+        annotations = pd.DataFrame(
+            {
+                "barcode": ["AAAA-1", "AAAA-1"],
+                "chain": ["TRA", "TRB"],
+                "cdr3": ["CAVSDL", "CASSL"],
+                "v_gene": ["TRAV1", "TRBV2"],
+                "j_gene": ["TRAJ1", "TRBJ2"],
+                "umis": [100, 200],
+                "reads": [1000, 2000],
+            }
+        )
+        annotations.to_csv(vdj_dir / "all_contig_annotations.csv", index=False)
+
+        df = load_cellranger_vdj(vdj_dir, "test_sample", verbose=False)
+        assert len(df) == 2
+
+
+class TestExtractTcellMarkers:
+    """Tests for _extract_tcell_markers function."""
+
+    @pytest.fixture
+    def mock_adata_with_markers(self):
+        """Create mock AnnData with T-cell marker genes."""
+        n_cells = 50
+        n_genes = 20
+
+        # Create sparse expression matrix
+        X = sp.random(n_cells, n_genes, density=0.3, format="csr")
+
+        # Gene names including T-cell markers
+        var_names = [f"Gene{i}" for i in range(n_genes - 6)]
+        var_names.extend(["CD3D", "CD3E", "CD3G", "CD4", "CD8A", "CD8B"])
+
+        adata = ad.AnnData(X)
+        adata.var_names = var_names
+        adata.obs_names = [f"cell_{i}" for i in range(n_cells)]
+
+        # Set CD8+ expression pattern for first half
+        cd8a_idx = var_names.index("CD8A")
+        cd8b_idx = var_names.index("CD8B")
+        cd4_idx = var_names.index("CD4")
+
+        # Modify expression: first 25 cells are CD8+, next 25 are CD4+
+        X_dense = X.toarray()
+        X_dense[:25, cd8a_idx] = np.random.poisson(20, 25)
+        X_dense[:25, cd8b_idx] = np.random.poisson(15, 25)
+        X_dense[:25, cd4_idx] = np.random.poisson(2, 25)
+        X_dense[25:, cd4_idx] = np.random.poisson(20, 25)
+        X_dense[25:, cd8a_idx] = np.random.poisson(2, 25)
+        X_dense[25:, cd8b_idx] = np.random.poisson(2, 25)
+
+        adata.X = sp.csr_matrix(X_dense)
+
+        return adata
+
+    def test_extract_markers_basic(self, mock_adata_with_markers):
+        """Test basic T-cell marker extraction."""
+        markers = _extract_tcell_markers(mock_adata_with_markers)
+
+        assert isinstance(markers, pd.DataFrame)
+        assert len(markers) == 50
+        assert "CD3D" in markers.columns
+        assert "CD8A" in markers.columns
+        assert "CD4" in markers.columns
+
+    def test_extract_markers_missing_genes(self):
+        """Test extraction when some marker genes are missing."""
+        # Create AnnData without CD8B
+        n_cells = 10
+        n_genes = 5
+        X = sp.random(n_cells, n_genes, density=0.3, format="csr")
+
+        adata = ad.AnnData(X)
+        adata.var_names = ["Gene1", "Gene2", "CD3D", "CD4", "CD8A"]
+        adata.obs_names = [f"cell_{i}" for i in range(n_cells)]
+
+        markers = _extract_tcell_markers(adata)
+
+        assert "CD3D" in markers.columns
+        assert "CD8A" in markers.columns
+        # Missing genes are added with value 0
+        assert "CD8B" in markers.columns
+        assert (markers["CD8B"] == 0).all()
+
+
+class TestCombineGexAndVdj:
+    """Tests for combine_gex_and_vdj function."""
+
+    @pytest.fixture
+    def mock_gex_adata(self):
+        """Create mock GEX AnnData."""
+        n_cells = 10
+        n_genes = 15
+
+        X = sp.random(n_cells, n_genes, density=0.3, format="csr")
+
+        var_names = [f"Gene{i}" for i in range(n_genes - 4)]
+        var_names.extend(["CD3D", "CD4", "CD8A", "CD8B"])
+
+        adata = ad.AnnData(X)
+        adata.var_names = var_names
+        adata.obs_names = [f"CELL{i:04d}-1" for i in range(n_cells)]
+        adata.obs["sample"] = "test_sample"
+
+        return adata
+
+    @pytest.fixture
+    def mock_vdj_df(self):
+        """Create mock VDJ DataFrame."""
+        # Create VDJ data for 5 of the 10 cells (partial overlap)
+        return pd.DataFrame(
+            {
+                "barcode": [
+                    "CELL0000-1",
+                    "CELL0000-1",
+                    "CELL0001-1",
+                    "CELL0001-1",
+                    "CELL0002-1",
+                    "CELL0002-1",
+                    "CELL0003-1",
+                    "CELL0003-1",
+                    "CELL0004-1",
+                    "CELL0004-1",
+                ],
+                "chain": [
+                    "TRA",
+                    "TRB",
+                    "TRA",
+                    "TRB",
+                    "TRA",
+                    "TRB",
+                    "TRA",
+                    "TRB",
+                    "TRA",
+                    "TRB",
+                ],
+                "cdr3": [
+                    "CAV1",
+                    "CASS1",
+                    "CAV2",
+                    "CASS2",
+                    "CAV3",
+                    "CASS3",
+                    "CAV4",
+                    "CASS4",
+                    "CAV5",
+                    "CASS5",
+                ],
+                "v_gene": ["TRAV1"] * 10,
+                "j_gene": ["TRAJ1"] * 10,
+                "d_gene": [None, "TRBD1"] * 5,
+                "c_gene": ["TRAC", "TRBC1"] * 5,
+                "umis": [100] * 10,
+                "reads": [1000] * 10,
+                "contig_id": [f"c{i}" for i in range(10)],
+                "sample": ["test_sample"] * 10,
+            }
+        )
+
+    def test_combine_basic(self, mock_gex_adata, mock_vdj_df):
+        """Test basic combination of GEX and VDJ data."""
+        result = combine_gex_and_vdj(mock_gex_adata, mock_vdj_df, "test_sample")
+
+        assert isinstance(result, ad.AnnData)
+        # Returns all GEX cells with VDJ columns merged (left join)
+        assert len(result) == 10
+        assert "CDR3_alpha" in result.obs.columns
+        assert "CDR3_beta" in result.obs.columns
+        # First 5 cells should have VDJ data, rest should be NaN
+        assert result.obs["CDR3_alpha"].notna().sum() == 5
+
+    def test_combine_preserves_gex(self, mock_gex_adata, mock_vdj_df):
+        """Test that GEX expression data is preserved."""
+        result = combine_gex_and_vdj(mock_gex_adata, mock_vdj_df, "test_sample")
+
+        # Expression matrix should be preserved
+        assert result.X is not None
+        assert result.n_vars == mock_gex_adata.n_vars
+
+    def test_combine_adds_tcell_markers(self, mock_gex_adata, mock_vdj_df):
+        """Test that T-cell marker columns are added."""
+        result = combine_gex_and_vdj(mock_gex_adata, mock_vdj_df, "test_sample")
+
+        # Should have T-cell marker columns
+        assert "CD3D" in result.obs.columns or "gex_CD3D" in result.obs.columns
+
+    def test_combine_no_overlap_vdj_columns_nan(self, mock_gex_adata):
+        """Test combining when there's no barcode overlap."""
+        # VDJ data with completely different barcodes
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["XXXX-1", "XXXX-1"],
+                "chain": ["TRA", "TRB"],
+                "cdr3": ["CAV", "CASS"],
+                "v_gene": ["TRAV1", "TRBV1"],
+                "j_gene": ["TRAJ1", "TRBJ1"],
+                "d_gene": [None, "TRBD1"],
+                "c_gene": ["TRAC", "TRBC1"],
+                "umis": [100, 100],
+                "reads": [1000, 1000],
+                "contig_id": ["c1", "c2"],
+                "sample": ["test_sample", "test_sample"],
+            }
+        )
+
+        result = combine_gex_and_vdj(mock_gex_adata, vdj_df, "test_sample")
+
+        # Returns all GEX cells, VDJ columns are NaN for non-matching cells
+        assert len(result) == 10
+        assert "CDR3_alpha" in result.obs.columns
+        # No cells should have VDJ data since barcodes don't overlap
+        assert result.obs["CDR3_alpha"].isna().all()
