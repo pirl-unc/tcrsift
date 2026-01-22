@@ -250,7 +250,7 @@ tcrsift clonotype -i phenotyped.h5ad -o clonotypes.csv --group-by CDR3ab
 - `CDR3b_only`: Match by beta chain only (allows alpha variation)
 
 **Output columns:**
-- `clone_id`: Unique identifier (CDR3α_CDR3β)
+- `CDR3ab`: Unique identifier (CDR3_alpha_CDR3_beta)
 - `cell_count`: Number of cells with this TCR
 - `frequency`: Proportion of total cells
 - `Tcell_type_consensus`: Most common phenotype
@@ -667,7 +667,7 @@ export_fasta(assembled, "sequences.fasta", sequence_col="single_chain_aa")
 
 | Column | Description |
 |--------|-------------|
-| `clone_id` | Unique identifier (CDR3α_CDR3β) |
+| `CDR3ab` | Unique identifier (CDR3_alpha_CDR3_beta) |
 | `CDR3_alpha` | Alpha chain CDR3 sequence |
 | `CDR3_beta` | Beta chain CDR3 sequence |
 | `cell_count` | Number of cells |
@@ -681,7 +681,7 @@ export_fasta(assembled, "sequences.fasta", sequence_col="single_chain_aa")
 
 | Column | Description |
 |--------|-------------|
-| `clone_id` | Clonotype identifier |
+| `CDR3ab` | Clonotype identifier |
 | `alpha_full_aa` | Full alpha chain (leader + VDJ + constant) |
 | `beta_full_aa` | Full beta chain |
 | `single_chain_aa` | Beta-2A-Alpha construct |

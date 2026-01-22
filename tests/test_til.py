@@ -46,7 +46,7 @@ def sample_culture_clonotypes():
     """Create sample culture clonotypes for testing."""
     return pd.DataFrame(
         {
-            "clone_id": ["CASSL_CASSF", "NOMATCH_NOMATCH"],
+            "CDR3ab": ["CASSL_CASSF", "NOMATCH_NOMATCH"],
             "CDR3_alpha": ["CASSL", "NOMATCH"],
             "CDR3_beta": ["CASSF", "NOMATCH"],
             "max_frequency": [0.1, 0.05],
@@ -127,7 +127,7 @@ class TestGetTilEnrichment:
         """Test enrichment calculation."""
         matched_clonotypes = pd.DataFrame(
             {
-                "clone_id": ["A", "B"],
+                "CDR3ab": ["A", "B"],
                 "til_match": [True, True],
                 "til_frequency": [0.1, 0.01],
                 "max_frequency": [0.01, 0.1],
@@ -146,7 +146,7 @@ class TestGetTilEnrichment:
         """Test with no TIL matches."""
         unmatched = pd.DataFrame(
             {
-                "clone_id": ["A", "B"],
+                "CDR3ab": ["A", "B"],
                 "til_match": [False, False],
             }
         )
@@ -157,7 +157,7 @@ class TestGetTilEnrichment:
 
     def test_missing_til_match_column(self):
         """Test error when til_match column is missing."""
-        no_match_col = pd.DataFrame({"clone_id": ["A"]})
+        no_match_col = pd.DataFrame({"CDR3ab": ["A"]})
 
         with pytest.raises(ValueError, match="TIL match information"):
             get_til_enrichment(no_match_col)
@@ -166,7 +166,7 @@ class TestGetTilEnrichment:
         """Test handling when frequency columns are missing."""
         matched = pd.DataFrame(
             {
-                "clone_id": ["A"],
+                "CDR3ab": ["A"],
                 "til_match": [True],
             }
         )
@@ -184,7 +184,7 @@ class TestGetTilSummary:
         """Test basic summary statistics."""
         matched_clonotypes = pd.DataFrame(
             {
-                "clone_id": ["A", "B", "C"],
+                "CDR3ab": ["A", "B", "C"],
                 "til_match": [True, True, False],
                 "til_cell_count": [10, 5, 0],
                 "til_frequency": [0.1, 0.05, 0.0],
@@ -203,7 +203,7 @@ class TestGetTilSummary:
         """Test summary with tier information."""
         matched_clonotypes = pd.DataFrame(
             {
-                "clone_id": ["A", "B", "C", "D"],
+                "CDR3ab": ["A", "B", "C", "D"],
                 "til_match": [True, True, False, True],
                 "til_cell_count": [10, 5, 0, 3],
                 "til_frequency": [0.1, 0.05, 0.0, 0.03],
@@ -221,7 +221,7 @@ class TestGetTilSummary:
         """Test summary with antigen information."""
         matched_clonotypes = pd.DataFrame(
             {
-                "clone_id": ["A", "B"],
+                "CDR3ab": ["A", "B"],
                 "til_match": [True, True],
                 "til_cell_count": [10, 5],
                 "til_frequency": [0.1, 0.05],
@@ -237,7 +237,7 @@ class TestGetTilSummary:
 
     def test_missing_til_match(self):
         """Test error handling for missing til_match column."""
-        no_match = pd.DataFrame({"clone_id": ["A"]})
+        no_match = pd.DataFrame({"CDR3ab": ["A"]})
 
         summary = get_til_summary(no_match)
 
@@ -247,7 +247,7 @@ class TestGetTilSummary:
         """Test with empty clonotypes."""
         empty = pd.DataFrame(
             {
-                "clone_id": pd.Series([], dtype=str),
+                "CDR3ab": pd.Series([], dtype=str),
                 "til_match": pd.Series([], dtype=bool),
                 "til_cell_count": pd.Series([], dtype=int),
                 "til_frequency": pd.Series([], dtype=float),
@@ -269,7 +269,7 @@ class TestIdentifyTilSpecificClones:
 
         # Should find clones with 2+ cells
         assert len(result) >= 1
-        assert "clone_id" in result.columns
+        assert "CDR3ab" in result.columns
         assert "til_cell_count" in result.columns
 
     def test_exclude_culture_clones(self, sample_til_data, sample_culture_clonotypes):
@@ -279,7 +279,7 @@ class TestIdentifyTilSpecificClones:
         )
 
         # CASSL_CASSF should be excluded
-        assert "CASSL_CASSF" not in result["clone_id"].values
+        assert "CASSL_CASSF" not in result["CDR3ab"].values
 
     def test_min_cells_filter(self, sample_til_data):
         """Test minimum cells filter."""

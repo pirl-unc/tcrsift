@@ -234,7 +234,7 @@ class TestEndToEndPipeline:
         clonotypes = aggregate_clonotypes(adata)
 
         assert len(clonotypes) > 0
-        assert "clone_id" in clonotypes.columns
+        assert "CDR3ab" in clonotypes.columns
         assert "cell_count" in clonotypes.columns
 
         # Should have mix of clone sizes

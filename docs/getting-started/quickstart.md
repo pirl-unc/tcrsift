@@ -108,7 +108,7 @@ The output CSV files contain:
 
 | Column | Description |
 |--------|-------------|
-| `clone_id` | Unique identifier (CDR3a_CDR3b) |
+| `CDR3ab` | Unique identifier (CDR3_alpha_CDR3_beta) |
 | `CDR3_alpha` | Alpha chain CDR3 sequence |
 | `CDR3_beta` | Beta chain CDR3 sequence |
 | `cell_count` | Number of cells |

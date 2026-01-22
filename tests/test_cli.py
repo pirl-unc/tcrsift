@@ -73,7 +73,7 @@ class TestAnnotateGexParser:
                 "--no-qc",
                 "--aggregate",
                 "--group-col",
-                "clone_id",
+                "CDR3ab",
                 "--cd4-cd8-counts",
                 "--verbose",
             ]
@@ -87,7 +87,7 @@ class TestAnnotateGexParser:
         assert args.prefix == "expr"
         assert args.no_qc is True
         assert args.aggregate is True
-        assert args.group_col == "clone_id"
+        assert args.group_col == "CDR3ab"
         assert args.cd4_cd8_counts is True
         assert args.verbose is True
 

@@ -12,7 +12,6 @@
 
 """Tests for loader module."""
 
-
 import anndata as ad
 import numpy as np
 import pandas as pd
@@ -481,9 +480,7 @@ class TestLoadCellrangerVdj:
 
     def test_load_with_clonotypes(self, mock_vdj_dir_with_clonotypes):
         """Test loading with clonotypes.csv containing MAIT/iNKT evidence."""
-        df = load_cellranger_vdj(
-            mock_vdj_dir_with_clonotypes, "test_sample", verbose=False
-        )
+        df = load_cellranger_vdj(mock_vdj_dir_with_clonotypes, "test_sample", verbose=False)
 
         assert "mait_evidence" in df.columns
         assert "inkt_evidence" in df.columns
@@ -843,9 +840,7 @@ class TestLoadCellrangerGex:
 
         # min_genes > max_genes
         with pytest.raises(TCRsiftValidationError, match="min_genes"):
-            load_cellranger_gex(
-                mock_gex_dir, "test", min_genes=1000, max_genes=100, verbose=False
-            )
+            load_cellranger_gex(mock_gex_dir, "test", min_genes=1000, max_genes=100, verbose=False)
 
         # min_counts > max_counts
         with pytest.raises(TCRsiftValidationError, match="min_counts"):

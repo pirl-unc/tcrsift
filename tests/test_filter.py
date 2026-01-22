@@ -45,7 +45,7 @@ class TestFilterClonotypesThreshold:
         # Add incomplete clone
         df = sample_clonotypes_df.copy()
         df.loc[len(df)] = {
-            "clone_id": "incomplete",
+            "CDR3ab": "incomplete",
             "CDR3_alpha": "",  # missing alpha
             "CDR3_beta": "CASSTEST",
             "cell_count": 10,
@@ -112,9 +112,9 @@ class TestAssignTiersThreshold:
 
         # Clone that qualifies for tier1 shouldn't be in tier2, tier3, etc.
         tier1_clones = result[result["tier"] == "tier1"]
-        for clone_id in tier1_clones["clone_id"]:
+        for CDR3ab in tier1_clones["CDR3ab"]:
             # This clone should only appear in tier1, not lower tiers
-            other_tiers = result[(result["clone_id"] == clone_id) & (result["tier"] != "tier1")]
+            other_tiers = result[(result["CDR3ab"] == CDR3ab) & (result["tier"] != "tier1")]
             assert len(other_tiers) == 0
 
 

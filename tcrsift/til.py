@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 from .sample_sheet import Sample, SampleSheet
-from .validation import TCRsiftValidationError
+from .validation import TCRsiftValidationError, safe_divide, safe_percentage
 
 logger = logging.getLogger(__name__)
 
@@ -272,21 +272,21 @@ def match_til(
     # Process each TIL sample
     sample_stats = {}
     for sample_name, til_df in til_dict.items():
-        # Build clone_id
+        # Build CDR3ab identifier
         if match_by == "CDR3ab":
-            til_df["clone_id"] = (
+            til_df["CDR3ab"] = (
                 til_df.get("CDR3_alpha", pd.Series("", index=til_df.index)).fillna("")
                 + "_"
                 + til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
             )
         else:
-            til_df["clone_id"] = til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna(
-                ""
-            )
+            til_df["CDR3ab"] = til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
 
         # Count cells per clone
-        clone_counts = til_df["clone_id"].value_counts().to_dict()
-        total_til = len(til_df[til_df["clone_id"] != "_"])
+        # Exclude both "_" (empty alpha+beta) and "" (empty string) from counts
+        clone_counts = til_df["CDR3ab"].value_counts().to_dict()
+        valid_cdr3_mask = (til_df["CDR3ab"] != "_") & (til_df["CDR3ab"] != "")
+        total_til = len(til_df[valid_cdr3_mask])
 
         sample_stats[sample_name] = {
             "clone_counts": clone_counts,
@@ -311,19 +311,19 @@ def match_til(
     # Match each culture clone
     for idx, row in df.iterrows():
         if match_by == "CDR3ab":
-            clone_id = row.get("clone_id", "")
+            cdr3ab = row.get("CDR3ab", "")
         else:
-            clone_id = row.get("CDR3_beta", "")
+            cdr3ab = row.get("CDR3_beta", "")
 
-        if not clone_id:
+        if not cdr3ab:
             continue
 
         matching_samples = []
         total_count = 0
 
         for sample_name, stats in sample_stats.items():
-            if clone_id in stats["clone_counts"]:
-                count = stats["clone_counts"][clone_id]
+            if cdr3ab in stats["clone_counts"]:
+                count = stats["clone_counts"][cdr3ab]
                 if count >= min_til_cells:
                     matching_samples.append(sample_name)
                     total_count += count
@@ -331,18 +331,18 @@ def match_til(
                     # Per-sample stats
                     if n_samples > 1:
                         df.loc[idx, f"til_cell_count.{sample_name}"] = count
-                        df.loc[idx, f"til_frequency.{sample_name}"] = (
-                            count / stats["total_til"] if stats["total_til"] > 0 else 0
+                        df.loc[idx, f"til_frequency.{sample_name}"] = safe_divide(
+                            count, stats["total_til"], default=0.0
                         )
 
         if matching_samples:
             df.loc[idx, "til_match"] = True
             df.loc[idx, "til_samples"] = ",".join(matching_samples)
             df.loc[idx, "til_cell_count"] = total_count
-            df.loc[idx, "til_frequency"] = total_count / total_til_all if total_til_all > 0 else 0
+            df.loc[idx, "til_frequency"] = safe_divide(total_count, total_til_all, default=0.0)
 
     n_matches = df["til_match"].sum()
-    match_pct = (n_matches / len(df) * 100) if len(df) > 0 else 0
+    match_pct = safe_percentage(n_matches, len(df), default=0.0)
     logger.info(f"Found {n_matches} culture clonotypes present in TILs ({match_pct:.1f}%)")
 
     if n_samples > 1:
@@ -411,9 +411,7 @@ def get_til_summary(
     summary = {
         "total_culture_clones": len(matched_clonotypes),
         "til_matched_clones": len(matched),
-        "til_recovery_rate": len(matched) / len(matched_clonotypes)
-        if len(matched_clonotypes) > 0
-        else 0,
+        "til_recovery_rate": safe_divide(len(matched), len(matched_clonotypes), default=0.0),
         "total_til_cells_matched": matched["til_cell_count"].sum(),
         "median_til_frequency": matched["til_frequency"].median() if len(matched) > 0 else 0,
     }
@@ -425,7 +423,7 @@ def get_til_summary(
             if tier is not None:
                 tier_df = matched_clonotypes[matched_clonotypes["tier"] == tier]
                 tier_matched = tier_df["til_match"].sum()
-                tier_recovery[tier] = tier_matched / len(tier_df) if len(tier_df) > 0 else 0
+                tier_recovery[tier] = safe_divide(tier_matched, len(tier_df), default=0.0)
         summary["recovery_by_tier"] = tier_recovery
 
     # By antigen if available
@@ -463,7 +461,7 @@ def identify_til_specific_clones(
     til_df = til_data.obs.copy()
 
     # Build clone identifier
-    til_df["clone_id"] = (
+    til_df["CDR3ab"] = (
         til_df.get("CDR3_alpha", pd.Series("", index=til_df.index)).fillna("")
         + "_"
         + til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
@@ -471,7 +469,7 @@ def identify_til_specific_clones(
 
     # Aggregate TIL clones
     til_clones = (
-        til_df.groupby("clone_id")
+        til_df.groupby("CDR3ab")
         .agg(
             {
                 "sample": "first",
@@ -480,17 +478,17 @@ def identify_til_specific_clones(
         .reset_index()
     )
 
-    til_clones["til_cell_count"] = til_df.groupby("clone_id").size().values
+    til_clones["til_cell_count"] = til_df.groupby("CDR3ab").size().values
     til_clones = til_clones[til_clones["til_cell_count"] >= min_cells]
 
     # Extract CDR3 sequences
-    til_clones["CDR3_alpha"] = til_clones["clone_id"].str.split("_").str[0]
-    til_clones["CDR3_beta"] = til_clones["clone_id"].str.split("_").str[1]
+    til_clones["CDR3_alpha"] = til_clones["CDR3ab"].str.split("_").str[0]
+    til_clones["CDR3_beta"] = til_clones["CDR3ab"].str.split("_").str[1]
 
     # Filter out culture clones if provided
     if culture_clonotypes is not None:
-        culture_ids = set(culture_clonotypes["clone_id"].values)
-        til_clones = til_clones[~til_clones["clone_id"].isin(culture_ids)]
+        culture_ids = set(culture_clonotypes["CDR3ab"].values)
+        til_clones = til_clones[~til_clones["CDR3ab"].isin(culture_ids)]
         logger.info(f"Found {len(til_clones)} TIL-specific clones not in culture")
     else:
         logger.info(f"Found {len(til_clones)} expanded TIL clones")

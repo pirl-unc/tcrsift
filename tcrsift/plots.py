@@ -229,7 +229,7 @@ def plot_clonotypes(clonotypes: pd.DataFrame, output_dir: str | Path):
             sample_clones = {}
             for sample in samples:
                 mask = clonotypes["samples"].fillna("").str.contains(sample)
-                sample_clones[sample] = set(clonotypes.loc[mask, "clone_id"])
+                sample_clones[sample] = set(clonotypes.loc[mask, "CDR3ab"])
 
             jaccard_matrix = np.zeros((len(samples), len(samples)))
             for i, s1 in enumerate(samples):
@@ -775,8 +775,8 @@ def create_tcr_sequence_pdf(
             title = f"TCR: {row[title_column]}"
         elif "tcr_name" in row:
             title = f"TCR: {row['tcr_name']}"
-        elif "clone_id" in row:
-            title = f"Clone: {row['clone_id']}"
+        elif "CDR3ab" in row:
+            title = f"Clone: {row['CDR3ab']}"
         else:
             title = f"TCR #{idx}"
 

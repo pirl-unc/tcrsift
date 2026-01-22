@@ -798,11 +798,11 @@ def export_fasta(df: pd.DataFrame, output_path: str | Path, sequence_col: str = 
                 continue
 
             # Build header
-            clone_id = row.get("clone_id", idx)
+            cdr3ab = row.get("CDR3ab", idx)
             cdr3a = row.get("CDR3_alpha", "")
             cdr3b = row.get("CDR3_beta", "")
 
-            header = f">{clone_id} CDR3a={cdr3a} CDR3b={cdr3b}"
+            header = f">{cdr3ab} CDR3a={cdr3a} CDR3b={cdr3b}"
             f.write(f"{header}\n{seq}\n")
 
     logger.info(f"Exported {len(df)} sequences to {output_path}")

@@ -329,6 +329,13 @@ def validate_cdr3_sequence(
     -------
     bool
         True if valid
+
+    Notes
+    -----
+    This function checks:
+    - Characters are valid amino acid letters (ACDEFGHIKLMNPQRSTVWY) or stop codon (*)
+    - Warns (debug level) if sequence doesn't start with C
+    - Warns (debug level) if sequence length is outside 5-30 aa range
     """
     if pd.isna(seq) or seq == "":
         return True  # Missing is OK
@@ -354,7 +361,182 @@ def validate_cdr3_sequence(
     elif chain == "beta" and not seq_upper.startswith("C"):
         logger.debug(f"CDR3 beta doesn't start with C: {seq}")
 
+    # Check length bounds (typical CDR3 is 5-30 aa)
+    if len(seq) < 5:
+        logger.debug(f"CDR3 {chain} unusually short ({len(seq)} aa): {seq}")
+    elif len(seq) > 30:
+        logger.debug(f"CDR3 {chain} unusually long ({len(seq)} aa): {seq}")
+
     return True
+
+
+def validate_cdr3_dataframe(
+    df: pd.DataFrame,
+    alpha_col: str = "CDR3_alpha",
+    beta_col: str = "CDR3_beta",
+    strict: bool = False,
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Validate CDR3 sequences in a DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing CDR3 sequences
+    alpha_col : str
+        Column name for alpha chain CDR3
+    beta_col : str
+        Column name for beta chain CDR3
+    strict : bool
+        If True, raise on first invalid sequence
+
+    Returns
+    -------
+    tuple[pd.DataFrame, list[str]]
+        - DataFrame with 'cdr3_valid' column added
+        - List of warning messages for invalid sequences
+
+    Examples
+    --------
+    >>> df, warnings = validate_cdr3_dataframe(clonotypes)
+    >>> if warnings:
+    ...     print(f"Found {len(warnings)} invalid CDR3 sequences")
+    >>> valid_df = df[df['cdr3_valid']]
+    """
+    warnings = []
+    valid_mask = pd.Series(True, index=df.index)
+
+    for col, chain in [(alpha_col, "alpha"), (beta_col, "beta")]:
+        if col not in df.columns:
+            continue
+
+        for idx, seq in df[col].items():
+            if not validate_cdr3_sequence(seq, chain=chain, strict=strict):
+                valid_mask[idx] = False
+                warnings.append(f"Row {idx}: Invalid CDR3 {chain} sequence: {seq}")
+
+    df = df.copy()
+    df["cdr3_valid"] = valid_mask
+
+    return df, warnings
+
+
+# =============================================================================
+# Safe Calculation Utilities
+# =============================================================================
+
+
+def safe_divide(
+    numerator: float,
+    denominator: float,
+    default: float = 0.0,
+) -> float:
+    """
+    Safely divide two numbers, returning a default value if denominator is zero.
+
+    Parameters
+    ----------
+    numerator : float
+        The numerator
+    denominator : float
+        The denominator
+    default : float
+        Value to return if denominator is zero (default: 0.0)
+
+    Returns
+    -------
+    float
+        Result of division or default value
+
+    Examples
+    --------
+    >>> safe_divide(10, 2)
+    5.0
+    >>> safe_divide(10, 0)
+    0.0
+    >>> safe_divide(10, 0, default=float('nan'))
+    nan
+    """
+    if denominator == 0:
+        return default
+    return numerator / denominator
+
+
+def safe_percentage(
+    part: float,
+    total: float,
+    default: float = 0.0,
+) -> float:
+    """
+    Safely calculate a percentage, returning default if total is zero.
+
+    Parameters
+    ----------
+    part : float
+        The part (numerator)
+    total : float
+        The total (denominator)
+    default : float
+        Value to return if total is zero (default: 0.0)
+
+    Returns
+    -------
+    float
+        Percentage (0-100) or default value
+
+    Examples
+    --------
+    >>> safe_percentage(25, 100)
+    25.0
+    >>> safe_percentage(10, 0)
+    0.0
+    """
+    if total == 0:
+        return default
+    return (part / total) * 100
+
+
+def safe_mode(series: pd.Series, default: Any = None) -> Any:
+    """
+    Safely get the mode of a pandas Series, returning default if empty.
+
+    This is useful when aggregating data where some groups may be empty
+    or have no valid values.
+
+    Parameters
+    ----------
+    series : pd.Series
+        Series to get mode from
+    default : Any
+        Value to return if series is empty or has no mode (default: None)
+
+    Returns
+    -------
+    Any
+        The mode value or default
+
+    Examples
+    --------
+    >>> safe_mode(pd.Series(['A', 'A', 'B']))
+    'A'
+    >>> safe_mode(pd.Series([]))
+    None
+    >>> safe_mode(pd.Series([np.nan, np.nan]), default='Unknown')
+    'Unknown'
+    """
+    if series is None or len(series) == 0:
+        return default
+
+    # Drop NA values before computing mode
+    clean_series = series.dropna()
+    if len(clean_series) == 0:
+        return default
+
+    mode_result = clean_series.mode()
+    if len(mode_result) == 0:
+        return default
+
+    return mode_result.iloc[0]
 
 
 def validate_sample_sheet_entry(
@@ -429,9 +611,9 @@ def validate_clonotype_df(
     df = validate_dataframe(df, "Clonotype DataFrame", min_rows=1)
 
     # Check for clone identifier
-    if "clone_id" not in df.columns and "CDR3_beta" not in df.columns:
+    if "CDR3ab" not in df.columns and "CDR3_beta" not in df.columns:
         raise TCRsiftValidationError(
-            "Clonotype DataFrame must have 'clone_id' or 'CDR3_beta' column",
+            "Clonotype DataFrame must have 'CDR3ab' or 'CDR3_beta' column",
             hint="Make sure you're using output from tcrsift.aggregate_clonotypes().",
         )
 
@@ -444,7 +626,7 @@ def validate_clonotype_df(
             )
 
     if for_annotation:
-        cdr3_cols = ["CDR3_alpha", "CDR3_beta", "CDR3_beta"]
+        cdr3_cols = ["CDR3_alpha", "CDR3_beta"]
         if not any(col in df.columns for col in cdr3_cols):
             raise TCRsiftValidationError(
                 "Annotation requires CDR3 sequence columns (CDR3_alpha, CDR3_beta)",

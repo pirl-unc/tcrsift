@@ -132,7 +132,14 @@ from .unify import (
     get_unify_summary,
     merge_experiments,
 )
-from .validation import TCRsiftValidationError
+from .validation import (
+    TCRsiftValidationError,
+    safe_divide,
+    safe_mode,
+    safe_percentage,
+    validate_cdr3_dataframe,
+    validate_cdr3_sequence,
+)
 from .version import __version__
 
 __all__ = [
@@ -216,6 +223,11 @@ __all__ = [
     "get_qc_summary",
     # Utilities
     "tcr_name",
-    # Exceptions
+    # Validation
     "TCRsiftValidationError",
+    "validate_cdr3_sequence",
+    "validate_cdr3_dataframe",
+    "safe_divide",
+    "safe_percentage",
+    "safe_mode",
 ]

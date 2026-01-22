@@ -61,7 +61,7 @@ class TestAggregateClonotypes:
         clonotypes = aggregate_clonotypes(adata_with_tcr, group_by="CDR3ab")
 
         assert len(clonotypes) > 0
-        assert "clone_id" in clonotypes.columns
+        assert "CDR3ab" in clonotypes.columns
         assert "CDR3_alpha" in clonotypes.columns
         assert "CDR3_beta" in clonotypes.columns
         assert "cell_count" in clonotypes.columns
@@ -71,7 +71,7 @@ class TestAggregateClonotypes:
         clonotypes = aggregate_clonotypes(adata_with_tcr, group_by="CDR3b_only")
 
         assert len(clonotypes) > 0
-        assert "clone_id" in clonotypes.columns
+        assert "CDR3ab" in clonotypes.columns
         assert "CDR3_beta" in clonotypes.columns
 
     def test_aggregate_invalid_group_by(self, adata_with_tcr):
@@ -209,7 +209,7 @@ class TestCalculateCloneFrequencies:
         adata.obs["sample"] = ["S1"] * 50 + ["S2"] * 50
         adata.obs["CDR3_alpha"] = ["CASSL"] * 30 + ["CAVSD"] * 70
         adata.obs["CDR3_beta"] = ["CASSF"] * 30 + ["CASRG"] * 70
-        adata.obs["clone_id"] = adata.obs["CDR3_alpha"] + "_" + adata.obs["CDR3_beta"]
+        adata.obs["CDR3ab"] = adata.obs["CDR3_alpha"] + "_" + adata.obs["CDR3_beta"]
         adata.obs["is_complete_clone"] = True
         return adata
 
@@ -326,7 +326,7 @@ class TestGetClonotypeSummaryExtended:
         """Test summary when n_samples column is missing."""
         df = pd.DataFrame(
             {
-                "clone_id": ["A", "B"],
+                "CDR3ab": ["A", "B"],
                 "cell_count": [5, 3],
                 # No n_samples column
             }
@@ -402,8 +402,8 @@ class TestRealisticClonotyping:
         sorted_by_freq = df.sort_values("max_frequency", ascending=False)
 
         # Top clone by count should also be among top by frequency
-        top_by_count = sorted_by_count.iloc[0]["clone_id"]
-        top_3_by_freq = sorted_by_freq.head(3)["clone_id"].tolist()
+        top_by_count = sorted_by_count.iloc[0]["CDR3ab"]
+        top_3_by_freq = sorted_by_freq.head(3)["CDR3ab"].tolist()
         assert top_by_count in top_3_by_freq
 
     def test_tcell_type_annotations(self, sample_clonotypes_df):
@@ -423,14 +423,14 @@ class TestRealisticClonotyping:
         for tcell_type in df["Tcell_type_consensus"]:
             assert tcell_type in valid_types, f"Unknown T cell type: {tcell_type}"
 
-    def test_clone_id_format(self, sample_clonotypes_df):
-        """Test that clone IDs are formatted as CDR3a_CDR3b."""
+    def test_CDR3ab_format(self, sample_clonotypes_df):
+        """Test that clone IDs are formatted as CDR3_alpha_CDR3_beta."""
         df = sample_clonotypes_df
 
         for idx, row in df.iterrows():
             expected_id = f"{row['CDR3_alpha']}_{row['CDR3_beta']}"
-            assert row["clone_id"] == expected_id, (
-                f"Clone ID {row['clone_id']} doesn't match expected {expected_id}"
+            assert row["CDR3ab"] == expected_id, (
+                f"Clone ID {row['CDR3ab']} doesn't match expected {expected_id}"
             )
 
 

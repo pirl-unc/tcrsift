@@ -25,6 +25,8 @@ from tqdm.auto import tqdm
 
 from .validation import (
     TCRsiftValidationError,
+    safe_divide,
+    safe_mode,
     validate_anndata,
     validate_numeric_param,
 )
@@ -133,7 +135,7 @@ def aggregate_clonotypes(
     # Build clone identifier
     if group_by == "CDR3ab":
         # Require both chains for complete clone
-        df["clone_id"] = df["CDR3_alpha"].fillna("") + "_" + df["CDR3_beta"].fillna("")
+        df["CDR3ab"] = df["CDR3_alpha"].fillna("") + "_" + df["CDR3_beta"].fillna("")
         df["is_complete_clone"] = (
             df["CDR3_alpha"].notna()
             & (df["CDR3_alpha"] != "")
@@ -143,7 +145,7 @@ def aggregate_clonotypes(
             & df["TRB_pass_umi"]
         )
     elif group_by == "CDR3b_only":
-        df["clone_id"] = df["CDR3_beta"].fillna("")
+        df["CDR3ab"] = df["CDR3_beta"].fillna("")
         df["is_complete_clone"] = (
             df["CDR3_beta"].notna() & (df["CDR3_beta"] != "") & df["TRB_pass_umi"]
         )
@@ -166,7 +168,7 @@ def aggregate_clonotypes(
         )
 
     # Count unique clones for progress bar
-    n_unique_clones = df_complete["clone_id"].nunique()
+    n_unique_clones = df_complete["CDR3ab"].nunique()
     if verbose:
         logger.info(f"  Aggregating {n_unique_clones:,} unique clone IDs...")
 
@@ -195,21 +197,21 @@ def _aggregate_clone_data(
     clone_data = []
 
     # Create iterator with optional progress bar
-    grouped = df.groupby("clone_id")
+    grouped = df.groupby("CDR3ab")
     if show_progress:
         grouped = tqdm(
             grouped,
             desc="Aggregating clones",
             unit="clone",
-            total=df["clone_id"].nunique(),
+            total=df["CDR3ab"].nunique(),
         )
 
-    for clone_id, clone_df in grouped:
-        if clone_id == "_" or clone_id == "":
+    for cdr3ab, clone_df in grouped:
+        if cdr3ab == "_" or cdr3ab == "":
             continue
 
         record = {
-            "clone_id": clone_id,
+            "CDR3ab": cdr3ab,
             "cell_count": len(clone_df),
             "cell_barcodes": ";".join(clone_df.index.tolist()),
         }
@@ -217,15 +219,14 @@ def _aggregate_clone_data(
         # CDR3 sequences
         if group_by == "CDR3ab":
             # Split on first underscore only to handle edge cases
-            parts = clone_id.split("_", 1)
+            parts = cdr3ab.split("_", 1)
             record["CDR3_alpha"] = parts[0] if len(parts) > 0 else ""
             record["CDR3_beta"] = parts[1] if len(parts) > 1 else ""
         else:
             # For CDR3b_only grouping, get most common alpha chain
-            record["CDR3_beta"] = clone_id
+            record["CDR3_beta"] = cdr3ab
             if "CDR3_alpha" in clone_df.columns:
-                alpha_mode = clone_df["CDR3_alpha"].dropna().mode()
-                record["CDR3_alpha"] = alpha_mode.iloc[0] if len(alpha_mode) > 0 else ""
+                record["CDR3_alpha"] = safe_mode(clone_df["CDR3_alpha"], default="")
             else:
                 record["CDR3_alpha"] = ""
 
@@ -248,7 +249,9 @@ def _aggregate_clone_data(
             type_counts = clone_df["Tcell_type"].value_counts()
             if len(type_counts) > 0:
                 record["Tcell_type_consensus"] = type_counts.index[0]
-                record["Tcell_type_purity"] = type_counts.iloc[0] / len(clone_df)
+                record["Tcell_type_purity"] = safe_divide(
+                    type_counts.iloc[0], len(clone_df), default=0.0
+                )
             else:
                 record["Tcell_type_consensus"] = "Unknown"
                 record["Tcell_type_purity"] = 0.0
@@ -262,20 +265,17 @@ def _aggregate_clone_data(
             for gene in ["v_gene", "j_gene", "c_gene"]:
                 col = f"{prefix}_{gene}"
                 if col in clone_df.columns:
-                    mode_val = clone_df[col].mode()
-                    record[f"{chain}_{gene}"] = mode_val.iloc[0] if len(mode_val) > 0 else None
+                    record[f"{chain}_{gene}"] = safe_mode(clone_df[col], default=None)
 
         # VDJ sequences if available
         for chain, prefix in [("alpha", "TRA_1"), ("beta", "TRB_1")]:
             vdj_col = f"{prefix}_vdj_aa"
             if vdj_col in clone_df.columns:
-                mode_val = clone_df[vdj_col].mode()
-                record[f"VDJ_{chain}_aa"] = mode_val.iloc[0] if len(mode_val) > 0 else None
+                record[f"VDJ_{chain}_aa"] = safe_mode(clone_df[vdj_col], default=None)
 
             vdj_nt_col = f"{prefix}_vdj_nt"
             if vdj_nt_col in clone_df.columns:
-                mode_val = clone_df[vdj_nt_col].mode()
-                record[f"VDJ_{chain}_nt"] = mode_val.iloc[0] if len(mode_val) > 0 else None
+                record[f"VDJ_{chain}_nt"] = safe_mode(clone_df[vdj_nt_col], default=None)
 
         # Quality metrics
         for chain, prefix in [("alpha", "TRA_1"), ("beta", "TRB_1")]:
@@ -298,13 +298,14 @@ def _aggregate_clone_data(
             record["n_doublet_cells"] = clone_df["is_doublet"].sum()
 
         # Calculate clone frequency within each sample
+        # Note: Uses outer 'df' (not df_complete) to get total count of complete
+        # clones per sample, which is the correct denominator for frequency
         sample_freqs = []
         for sample in clone_df["sample"].unique():
             sample_total = df[df["sample"] == sample]["is_complete_clone"].sum()
             sample_count = (clone_df["sample"] == sample).sum()
-            if sample_total > 0:
-                freq = sample_count / sample_total
-                sample_freqs.append(freq)
+            freq = safe_divide(sample_count, sample_total, default=0.0)
+            sample_freqs.append(freq)
         record["max_frequency"] = max(sample_freqs) if sample_freqs else 0
         record["mean_frequency"] = np.mean(sample_freqs) if sample_freqs else 0
 
@@ -339,18 +340,18 @@ def calculate_clone_frequencies(
 
     freq_data = []
     for _, clone_row in clonotypes.iterrows():
-        clone_id = clone_row["clone_id"]
-        clone_cells = df[df["clone_id"] == clone_id]
+        cdr3ab = clone_row["CDR3ab"]
+        clone_cells = df[df["CDR3ab"] == cdr3ab]
 
         sample_freqs = {}
         for sample in clone_cells["sample"].unique():
             sample_count = (clone_cells["sample"] == sample).sum()
-            sample_total = sample_totals.get(sample, 1)
-            sample_freqs[sample] = sample_count / sample_total if sample_total > 0 else 0
+            sample_total = sample_totals.get(sample, 0)
+            sample_freqs[sample] = safe_divide(sample_count, sample_total, default=0.0)
 
         freq_data.append(
             {
-                "clone_id": clone_id,
+                "CDR3ab": cdr3ab,
                 "sample_frequencies": sample_freqs,
                 "max_frequency": max(sample_freqs.values()) if sample_freqs else 0,
                 "n_conditions_present": len(sample_freqs),
@@ -361,8 +362,8 @@ def calculate_clone_frequencies(
 
     # Merge back
     clonotypes = clonotypes.merge(
-        freq_df[["clone_id", "sample_frequencies", "n_conditions_present"]],
-        on="clone_id",
+        freq_df[["CDR3ab", "sample_frequencies", "n_conditions_present"]],
+        on="CDR3ab",
         how="left",
         suffixes=("", "_new"),
     )
@@ -405,7 +406,7 @@ def export_clonotypes_airr(clonotypes: pd.DataFrame, output_path: str):
     """
     # Map to AIRR standard columns
     airr_mapping = {
-        "clone_id": "clone_id",
+        "CDR3ab": "clone_id",
         "CDR3_alpha": "junction_aa_tra",
         "CDR3_beta": "junction_aa_trb",
         "alpha_v_gene": "v_call_tra",

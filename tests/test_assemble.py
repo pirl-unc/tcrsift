@@ -176,7 +176,7 @@ class TestAssembleFullSequences:
         """Create clonotypes with VDJ sequences."""
         return pd.DataFrame(
             {
-                "clone_id": ["clone1", "clone2"],
+                "CDR3ab": ["clone1", "clone2"],
                 "CDR3_alpha": ["CAVSDGGSQGNLIF", "CAVSAGGSQGNLIF"],
                 "CDR3_beta": ["CASSLGQAYEQYF", "CASSLAGAYEQYF"],
                 "VDJ_alpha_aa": [
@@ -231,7 +231,7 @@ class TestValidateSequences:
         """Short sequences should trigger warning."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "full_alpha_aa": ["SHORT"],  # Too short
                 "full_beta_aa": ["ALSO_SHORT"],
             }
@@ -244,7 +244,7 @@ class TestValidateSequences:
         """Very long sequences should trigger warning."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "full_alpha_aa": ["A" * 500],  # Too long
                 "full_beta_aa": ["B" * 300],
             }
@@ -257,7 +257,7 @@ class TestValidateSequences:
         """CDR3 should be present in full sequence."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "CDR3_alpha": ["CAVTEST"],
                 "full_alpha_aa": ["SOMESEQUENCE"],  # CDR3 not in sequence
                 "full_beta_aa": ["BETASEQUENCE"],
@@ -275,7 +275,7 @@ class TestExportFasta:
         """Export single-chain sequences to FASTA."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1", "clone2"],
+                "CDR3ab": ["clone1", "clone2"],
                 "CDR3_alpha": ["CAVTEST1", "CAVTEST2"],
                 "CDR3_beta": ["CASSTEST1", "CASSTEST2"],
                 "single_chain_aa": ["SEQUENCEONE", "SEQUENCETWO"],
@@ -298,7 +298,7 @@ class TestExportFasta:
         """Export should skip empty sequences."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1", "clone2"],
+                "CDR3ab": ["clone1", "clone2"],
                 "CDR3_alpha": ["CAVTEST1", "CAVTEST2"],
                 "CDR3_beta": ["CASSTEST1", "CASSTEST2"],
                 "single_chain_aa": ["SEQUENCEONE", ""],  # Second is empty
@@ -348,7 +348,7 @@ ATGCCCGGGAAATTT
         """Test assembly when contigs_dir is None."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "CDR3_alpha": ["CAVMKGFF"],
                 "CDR3_beta": ["CASSMPGKF"],
                 "VDJ_alpha_aa": ["MKGFF"],
@@ -377,7 +377,7 @@ class TestBuildFullSequences:
         """Assembly with only VDJ sequences."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "CDR3_alpha": ["CAVALPHASEQUENCE"],
                 "CDR3_beta": ["CASSBETASEQUENCE"],
                 "VDJ_alpha_aa": ["VDJALPHASEQUENCE"],
@@ -407,7 +407,7 @@ class TestAddSingleChain:
         """Test single-chain with nucleotide sequences."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "CDR3_alpha": ["CAVALPHA"],
                 "CDR3_beta": ["CASSBETA"],
                 "full_alpha_aa": ["ALPHASEQUENCE"],
@@ -434,7 +434,7 @@ class TestAddSingleChain:
         """Test single-chain with custom linker."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "CDR3_alpha": ["CAVALPHA"],
                 "CDR3_beta": ["CASSBETA"],
                 "full_alpha_aa": ["ALPHASEQUENCE"],
@@ -465,7 +465,7 @@ class TestValidateSequencesExtended:
 
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "CDR3_alpha": ["CAVTEST"],
                 "CDR3_beta": ["CASSTEST"],
                 "full_alpha_aa": [alpha_seq],
@@ -486,7 +486,7 @@ class TestValidateSequencesExtended:
         """CDR3 beta missing from sequence should trigger warning."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "CDR3_alpha": ["CAVTEST"],
                 "CDR3_beta": ["CASSNOTPRESENT"],
                 "full_alpha_aa": ["CAVTEST" + "A" * 200],
@@ -501,7 +501,7 @@ class TestValidateSequencesExtended:
         """Missing full sequence should not cause error."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "CDR3_alpha": ["CAVTEST"],
                 "full_alpha_aa": [None],  # Missing
                 "full_beta_aa": ["BETASEQ"],
@@ -520,7 +520,7 @@ class TestExportFastaExtended:
         """Export should include CDR3 sequences in FASTA header."""
         df = pd.DataFrame(
             {
-                "clone_id": ["clone1"],
+                "CDR3ab": ["clone1"],
                 "CDR3_alpha": ["CAVTEST"],
                 "CDR3_beta": ["CASSTEST"],
                 "single_chain_aa": ["TESTSEQUENCE"],
@@ -534,8 +534,8 @@ class TestExportFastaExtended:
         assert "CDR3a=CAVTEST" in content
         assert "CDR3b=CASSTEST" in content
 
-    def test_export_with_missing_clone_id(self, temp_dir):
-        """Export should handle missing clone_id by using index."""
+    def test_export_with_missing_CDR3ab(self, temp_dir):
+        """Export should handle missing CDR3ab by using index."""
         df = pd.DataFrame(
             {
                 "CDR3_alpha": ["CAVTEST"],
@@ -549,7 +549,7 @@ class TestExportFastaExtended:
 
         assert output_path.exists()
         content = output_path.read_text()
-        # Should use index (0) as clone_id
+        # Should use index (0) as CDR3ab
         assert ">0" in content or content.startswith(">")
 
 
@@ -616,12 +616,12 @@ class TestRealisticFullLengthAssembly:
         for idx, row in df.iterrows():
             # CDR3 alpha should be in full alpha sequence
             assert row["CDR3_alpha"] in row["full_alpha_aa"], (
-                f"CDR3_alpha not found in full_alpha_aa for clone {row['clone_id']}"
+                f"CDR3_alpha not found in full_alpha_aa for clone {row['CDR3ab']}"
             )
 
             # CDR3 beta should be in full beta sequence
             assert row["CDR3_beta"] in row["full_beta_aa"], (
-                f"CDR3_beta not found in full_beta_aa for clone {row['clone_id']}"
+                f"CDR3_beta not found in full_beta_aa for clone {row['CDR3ab']}"
             )
 
     def test_validate_realistic_sequences(self, sample_full_length_clonotypes):

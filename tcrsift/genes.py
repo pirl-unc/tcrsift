@@ -101,9 +101,7 @@ def find_gene_by_symbol(symbol: str, genes: Sequence[Gene] | None = None) -> Gen
     return None
 
 
-def find_gene_by_ensembl(
-    ensembl_id: str, genes: Sequence[Gene] | None = None
-) -> Gene | None:
+def find_gene_by_ensembl(ensembl_id: str, genes: Sequence[Gene] | None = None) -> Gene | None:
     """Find a gene by its ENSEMBL ID (version-robust).
 
     Args:

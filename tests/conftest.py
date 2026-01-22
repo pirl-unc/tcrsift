@@ -178,7 +178,7 @@ def sample_clonotypes_df():
     """
     return pd.DataFrame(
         {
-            "clone_id": [
+            "CDR3ab": [
                 "CAVSDGGSQGNLIF_CASSLGQAYEQYF",
                 "CAVSAGGSQGNLIF_CASSLGQAYEQYF",
                 "CAVNAGGSQGNLIF_CASSLAGAYEQYF",
@@ -370,7 +370,7 @@ def sample_full_length_clonotypes():
 
     return pd.DataFrame(
         {
-            "clone_id": ["clone1", "clone2"],
+            "CDR3ab": ["clone1", "clone2"],
             "CDR3_alpha": [REALISTIC_TRA_CDR3, "CAVSAGGSQGNLIF"],
             "CDR3_beta": [REALISTIC_TRB_CDR3, "CASSLAGAYEQYF"],
             "VDJ_alpha_aa": [vdj_alpha, vdj_alpha.replace(REALISTIC_TRA_CDR3, "CAVSAGGSQGNLIF")],
@@ -443,7 +443,7 @@ def clonotypes_for_logistic():
 
     return pd.DataFrame(
         {
-            "clone_id": [f"clone_{i}" for i in range(n)],
+            "CDR3ab": [f"clone_{i}" for i in range(n)],
             "CDR3_alpha": [f"CAV{i:03d}QGNLIF" for i in range(n)],
             "CDR3_beta": [f"CASS{i:03d}YEQYF" for i in range(n)],
             "cell_count": cell_counts,

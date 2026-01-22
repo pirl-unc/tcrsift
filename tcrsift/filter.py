@@ -24,6 +24,7 @@ import pandas as pd
 
 from .validation import (
     TCRsiftValidationError,
+    safe_percentage,
     validate_clonotype_df,
     validate_numeric_param,
 )
@@ -32,8 +33,22 @@ logger = logging.getLogger(__name__)
 
 
 # Default tier definitions for threshold-based filtering
+#
+# These are configurable defaults - adjust based on your data and use case.
+# The general principle is that higher tiers (tier1) have stricter criteria,
+# while lower tiers (tier5) are more permissive.
+#
+# Criteria:
+#   - min_cells: Minimum number of cells sharing this clonotype
+#   - min_frequency: Minimum frequency within any single sample
+#   - max_conditions: Maximum number of samples/conditions the clone appears in
+#     (lower values favor condition-specific clones)
+#
+# To customize, pass your own tier_definitions dict to assign_tiers_threshold()
+# or filter_clonotypes().
+#
 DEFAULT_THRESHOLD_TIERS = {
-    "tier1": {  # Highest confidence
+    "tier1": {  # Strictest criteria
         "min_cells": 10,
         "min_frequency": 0.01,  # 1%
         "max_conditions": 2,
@@ -53,7 +68,7 @@ DEFAULT_THRESHOLD_TIERS = {
         "min_frequency": 0.0005,  # 0.05%
         "max_conditions": 10,
     },
-    "tier5": {  # Lowest confidence
+    "tier5": {  # Most permissive
         "min_cells": 2,
         "min_frequency": 0.0,
         "max_conditions": 999,
@@ -182,8 +197,9 @@ def filter_clonotypes_threshold(
             )
 
     if verbose:
+        pct_retained = safe_percentage(len(df), initial_count, default=0.0)
         logger.info(
-            f"  Final: {initial_count:,} -> {len(df):,} clonotypes ({len(df) / initial_count * 100:.1f}% retained)"
+            f"  Final: {initial_count:,} -> {len(df):,} clonotypes ({pct_retained:.1f}% retained)"
         )
 
     if len(df) == 0:
