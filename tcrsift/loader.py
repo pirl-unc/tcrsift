@@ -341,7 +341,6 @@ def _extract_tcell_markers(adata: ad.AnnData) -> pd.DataFrame:
 def combine_gex_and_vdj(
     adata: ad.AnnData,
     vdj_df: pd.DataFrame,
-    sample_name: str,
 ) -> ad.AnnData:
     """
     Combine gene expression and VDJ data for a single sample.
@@ -352,8 +351,6 @@ def combine_gex_and_vdj(
         Gene expression data
     vdj_df : pd.DataFrame
         VDJ annotations
-    sample_name : str
-        Sample name
 
     Returns
     -------
@@ -473,7 +470,7 @@ def load_sample(
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
     min_mito_pct: float = 2.0,
-) -> ad.AnnData:
+) -> ad.AnnData | None:
     """
     Load all data for a single sample.
 
@@ -486,8 +483,9 @@ def load_sample(
 
     Returns
     -------
-    ad.AnnData
-        Combined AnnData with GEX and VDJ data
+    ad.AnnData or None
+        Combined AnnData with GEX and VDJ data, or None if sample has neither
+        gex_dir nor vdj_dir.
     """
     adata = None
     vdj_df = None
@@ -511,7 +509,7 @@ def load_sample(
 
     # Combine or create from VDJ only
     if adata is not None and vdj_df is not None:
-        adata = combine_gex_and_vdj(adata, vdj_df, sample.sample)
+        adata = combine_gex_and_vdj(adata, vdj_df)
     elif vdj_df is not None:
         # Create minimal AnnData from VDJ data
         vdj_pivoted = _pivot_vdj_by_barcode(vdj_df)
@@ -573,7 +571,7 @@ def load_samples(
 
     # Pre-validate all sample paths to fail fast
     validation_errors = []
-    for i, sample in enumerate(sample_sheet):
+    for sample in sample_sheet:
         if sample.vdj_dir and not Path(sample.vdj_dir).exists():
             validation_errors.append(
                 f"Sample '{sample.sample}': VDJ directory not found: {sample.vdj_dir}"

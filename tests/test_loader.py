@@ -12,8 +12,6 @@
 
 """Tests for loader module."""
 
-import tempfile
-from pathlib import Path
 
 import anndata as ad
 import numpy as np
@@ -686,7 +684,7 @@ class TestCombineGexAndVdj:
 
     def test_combine_basic(self, mock_gex_adata, mock_vdj_df):
         """Test basic combination of GEX and VDJ data."""
-        result = combine_gex_and_vdj(mock_gex_adata, mock_vdj_df, "test_sample")
+        result = combine_gex_and_vdj(mock_gex_adata, mock_vdj_df)
 
         assert isinstance(result, ad.AnnData)
         # Returns all GEX cells with VDJ columns merged (left join)
@@ -698,7 +696,7 @@ class TestCombineGexAndVdj:
 
     def test_combine_preserves_gex(self, mock_gex_adata, mock_vdj_df):
         """Test that GEX expression data is preserved."""
-        result = combine_gex_and_vdj(mock_gex_adata, mock_vdj_df, "test_sample")
+        result = combine_gex_and_vdj(mock_gex_adata, mock_vdj_df)
 
         # Expression matrix should be preserved
         assert result.X is not None
@@ -706,7 +704,7 @@ class TestCombineGexAndVdj:
 
     def test_combine_adds_tcell_markers(self, mock_gex_adata, mock_vdj_df):
         """Test that T-cell marker columns are added."""
-        result = combine_gex_and_vdj(mock_gex_adata, mock_vdj_df, "test_sample")
+        result = combine_gex_and_vdj(mock_gex_adata, mock_vdj_df)
 
         # Should have T-cell marker columns
         assert "CD3D" in result.obs.columns or "gex_CD3D" in result.obs.columns
@@ -730,7 +728,7 @@ class TestCombineGexAndVdj:
             }
         )
 
-        result = combine_gex_and_vdj(mock_gex_adata, vdj_df, "test_sample")
+        result = combine_gex_and_vdj(mock_gex_adata, vdj_df)
 
         # Returns all GEX cells, VDJ columns are NaN for non-matching cells
         assert len(result) == 10
@@ -746,6 +744,7 @@ class TestLoadCellrangerGex:
     def mock_gex_dir(self, tmp_path):
         """Create a mock CellRanger GEX output directory with 10x matrix format."""
         import gzip
+
         from scipy.io import mmwrite
 
         gex_dir = tmp_path / "gex_outs"
@@ -868,6 +867,7 @@ class TestLoadSample:
     def mock_sample_dirs(self, tmp_path):
         """Create mock VDJ and GEX directories for a single sample."""
         import gzip
+
         from scipy.io import mmwrite
 
         # Create VDJ dir
@@ -1033,7 +1033,7 @@ class TestCombineGexAndVdjBugs:
         """
         original_barcodes = list(gex_adata_with_suffix.obs_names)
 
-        combine_gex_and_vdj(gex_adata_with_suffix, vdj_df_without_suffix, "test_sample")
+        combine_gex_and_vdj(gex_adata_with_suffix, vdj_df_without_suffix)
 
         # After combining, original AnnData's barcodes should be unchanged
         # (or we should work on a copy)
@@ -1073,7 +1073,7 @@ class TestCombineGexAndVdjBugs:
             }
         )
 
-        result = combine_gex_and_vdj(adata, vdj_df, "test_sample")
+        result = combine_gex_and_vdj(adata, vdj_df)
 
         # Should match CELL0000-1 to CELL0000 and CELL0001-2 to CELL0001
         assert result.obs.loc["CELL0000-1", "CDR3_alpha"] == "CAV1"
@@ -1087,6 +1087,7 @@ class TestMitochondrialGeneDetection:
     def mock_gex_dir_with_mt_genes(self, tmp_path):
         """Create mock GEX directory with MT genes using ENSEMBL IDs as var_names."""
         import gzip
+
         from scipy.io import mmwrite
 
         gex_dir = tmp_path / "gex_outs"
@@ -1196,3 +1197,25 @@ class TestExtractTcellMarkersWithVersionedIds:
         # Values should be extracted (not all zeros)
         # Since we used random sparse matrix, check structure is correct
         assert len(markers) == n_cells
+
+
+class TestLoaderBugs:
+    """Tests for specific bugs in loader.py."""
+
+    def test_combine_gex_and_vdj_no_sample_name_parameter(self):
+        """Test that sample_name was removed from combine_gex_and_vdj.
+
+        The sample_name parameter was unused, so it was removed.
+        """
+        import inspect
+
+        from tcrsift.loader import combine_gex_and_vdj
+
+        # Get the function signature
+        sig = inspect.signature(combine_gex_and_vdj)
+        param_names = list(sig.parameters.keys())
+
+        # sample_name should NOT be a parameter anymore
+        assert "sample_name" not in param_names
+        # Only adata and vdj_df should be parameters
+        assert param_names == ["adata", "vdj_df"]

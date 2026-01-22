@@ -22,8 +22,8 @@ genome builds. The utilities here handle both versioned and unversioned IDs.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 
 @dataclass(frozen=True)

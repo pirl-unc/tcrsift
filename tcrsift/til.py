@@ -342,9 +342,8 @@ def match_til(
             df.loc[idx, "til_frequency"] = total_count / total_til_all if total_til_all > 0 else 0
 
     n_matches = df["til_match"].sum()
-    logger.info(
-        f"Found {n_matches} culture clonotypes present in TILs ({n_matches / len(df) * 100:.1f}%)"
-    )
+    match_pct = (n_matches / len(df) * 100) if len(df) > 0 else 0
+    logger.info(f"Found {n_matches} culture clonotypes present in TILs ({match_pct:.1f}%)")
 
     if n_samples > 1:
         for sample_name in til_dict.keys():

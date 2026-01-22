@@ -333,16 +333,12 @@ def filter_clonotypes_logistic(
         result = model.fit(disp=False)
         weight = result.params[0]
     except Exception as e:
-        logger.warning(f"Model fitting failed: {e}. Using default thresholds.")
-        df["tier"] = "tier5"
-        df.loc[df["max_frequency"] >= default_freq_threshold, "tier"] = "tier1"
-        return df
+        logger.warning(f"Model fitting failed: {e}. Falling back to threshold method.")
+        return assign_tiers_threshold(df)
 
     if weight < 0:
-        logger.warning("Data too noisy for adaptive thresholds, using defaults")
-        df["tier"] = "tier5"
-        df.loc[df["max_frequency"] >= default_freq_threshold, "tier"] = "tier1"
-        return df
+        logger.warning("Data too noisy for adaptive thresholds, falling back to threshold method")
+        return assign_tiers_threshold(df)
 
     # Calculate thresholds for each FDR level
     x_range = np.linspace(df["max_frequency"].min(), df["max_frequency"].max(), 10000)

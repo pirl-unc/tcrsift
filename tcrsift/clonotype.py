@@ -216,14 +216,18 @@ def _aggregate_clone_data(
 
         # CDR3 sequences
         if group_by == "CDR3ab":
-            parts = clone_id.split("_")
+            # Split on first underscore only to handle edge cases
+            parts = clone_id.split("_", 1)
             record["CDR3_alpha"] = parts[0] if len(parts) > 0 else ""
             record["CDR3_beta"] = parts[1] if len(parts) > 1 else ""
         else:
-            record["CDR3_alpha"] = (
-                clone_df["CDR3_alpha"].mode().iloc[0] if "CDR3_alpha" in clone_df.columns else ""
-            )
+            # For CDR3b_only grouping, get most common alpha chain
             record["CDR3_beta"] = clone_id
+            if "CDR3_alpha" in clone_df.columns:
+                alpha_mode = clone_df["CDR3_alpha"].dropna().mode()
+                record["CDR3_alpha"] = alpha_mode.iloc[0] if len(alpha_mode) > 0 else ""
+            else:
+                record["CDR3_alpha"] = ""
 
         # Sample and condition information
         record["samples"] = ";".join(clone_df["sample"].unique())
@@ -242,8 +246,12 @@ def _aggregate_clone_data(
         # T cell type consensus
         if "Tcell_type" in clone_df.columns:
             type_counts = clone_df["Tcell_type"].value_counts()
-            record["Tcell_type_consensus"] = type_counts.index[0]
-            record["Tcell_type_purity"] = type_counts.iloc[0] / len(clone_df)
+            if len(type_counts) > 0:
+                record["Tcell_type_consensus"] = type_counts.index[0]
+                record["Tcell_type_purity"] = type_counts.iloc[0] / len(clone_df)
+            else:
+                record["Tcell_type_consensus"] = "Unknown"
+                record["Tcell_type_purity"] = 0.0
 
             # CD4/CD8 counts
             record["n_CD8"] = clone_df["is_CD8"].sum() if "is_CD8" in clone_df.columns else 0

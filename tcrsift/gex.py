@@ -198,26 +198,27 @@ def augment_with_gex(
     # Populate values
     missing_barcodes = 0
     matched_barcodes = 0
-    for i, bc in enumerate(df[barcode_col]):
+    # Use zip with df.index to correctly handle DataFrames with non-sequential indices
+    for row_idx, bc in zip(df.index, df[barcode_col]):
         if bc not in bc_to_idx:
             missing_barcodes += 1
             continue
 
-        idx = bc_to_idx[bc]
+        adata_idx = bc_to_idx[bc]
         matched_barcodes += 1
 
         # QC metrics
         if include_qc:
-            df.at[i, f"{col_prefix}.n_reads"] = total_counts[idx]
-            df.at[i, f"{col_prefix}.n_genes"] = n_genes_detected[idx]
-            df.at[i, f"{col_prefix}.pct_mito"] = pct_mito[idx]
+            df.at[row_idx, f"{col_prefix}.n_reads"] = total_counts[adata_idx]
+            df.at[row_idx, f"{col_prefix}.n_genes"] = n_genes_detected[adata_idx]
+            df.at[row_idx, f"{col_prefix}.pct_mito"] = pct_mito[adata_idx]
 
         # Gene expression
         for gene in available_genes:
-            v = adata.X[idx, gene_to_idx[gene]]
+            v = adata.X[adata_idx, gene_to_idx[gene]]
             if hasattr(v, "toarray"):
                 v = v.toarray()[0, 0]
-            df.at[i, f"{col_prefix}.{gene}"] = v
+            df.at[row_idx, f"{col_prefix}.{gene}"] = v
 
     # Compute gene groups
     if verbose:

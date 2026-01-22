@@ -16,10 +16,8 @@ import pytest
 
 from tcrsift.genes import (
     CD3D,
-    CD4,
-    CD8A,
-    Gene,
     TCELL_MARKERS,
+    Gene,
     build_versioned_rename_map,
     find_column_for_gene,
     find_gene,
