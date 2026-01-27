@@ -7,6 +7,11 @@ usage() {
 
 DRY_RUN=0
 VERSION_INPUT=""
+UV_AVAILABLE=0
+
+if command -v uv &> /dev/null; then
+  UV_AVAILABLE=1
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,8 +88,12 @@ PY
   git push
 fi
 
-python3 -m pip install --upgrade build
-python3 -m pip install --upgrade twine
+if [[ "${UV_AVAILABLE}" -eq 1 ]]; then
+  uv pip install --upgrade build twine
+else
+  python3 -m pip install --upgrade build
+  python3 -m pip install --upgrade twine
+fi
 rm -rf dist
 python3 -m build
 git --version
