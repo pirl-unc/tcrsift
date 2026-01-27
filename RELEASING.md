@@ -1,8 +1,23 @@
-# Releasing Vaxrank
+# Releasing TCRsift
 
-This document explains what do once your [Pull Request](https://www.atlassian.com/git/tutorials/making-a-pull-request/) has been reviewed and all final changes applied. Now you're ready merge your branch into master and release it to the world:
+This document explains how to publish a new TCRsift release once your changes are merged and the working tree is clean.
 
-0. Make sure that you have `pandoc` and `pypandoc` installed: this is needed for readme markdown on PyPI. (See [here](http://pandoc.org/installing.html) and [here](https://pypi.python.org/pypi/pypandoc), respectively, for instructions.)
-1. Bump the [version](http://semver.org/) on __init__.py, as part of the PR you want to release.
-2. Merge your branch into master.
-3. Run `python setup.py sdist upload`, which pushes the newest release to PyPI.
+## Fast path (recommended)
+
+Use the release script to run lint/tests, optionally bump the version, build, upload, and tag:
+
+```bash
+# Verify readiness without uploading or tagging
+./deploy.sh --dry-run
+
+# Bump to a new version and release
+./deploy.sh 0.2.5
+
+# Release the current version without bumping
+./deploy.sh
+```
+
+## Notes
+
+- Version is stored in `tcrsift/version.py` as `__version__`.
+- The release script will refuse to run if the working tree is dirty.

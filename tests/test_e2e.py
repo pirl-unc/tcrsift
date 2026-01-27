@@ -391,3 +391,9 @@ class TestCLIEndToEnd:
             text=True,
         )
         assert result.returncode == 0
+        result = subprocess.run(
+            ["python", "-m", "tcrsift.cli", "-v"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0

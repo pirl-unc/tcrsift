@@ -29,6 +29,7 @@ from .validation import (
     validate_file_exists,
     validate_run_args,
 )
+from .version import __version__
 
 
 def setup_logging(verbose: bool = False):
@@ -951,7 +952,7 @@ def create_parser():
         prog="tcrsift",
         description="TCRsift: TCR selection from antigen-specific culture and scRNA/VDJ sequencing data",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -975,7 +976,7 @@ def create_parser():
     p_load.add_argument("--max-mito", type=float, default=8.0, help="Max mito %% (default: 8)")
     p_load.add_argument("--plot-qc", action="store_true", help="Generate QC plots")
     p_load.add_argument("--output-dir", help="Output directory for plots")
-    p_load.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_load.add_argument("--verbose", action="store_true", help="Verbose output")
     p_load.set_defaults(func=cmd_load)
 
     # -------------------------------------------------------------------------
@@ -992,7 +993,7 @@ def create_parser():
     )
     p_pheno.add_argument("--plot-phenotype", action="store_true", help="Generate phenotype plots")
     p_pheno.add_argument("--output-dir", help="Output directory for plots")
-    p_pheno.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_pheno.add_argument("--verbose", action="store_true", help="Verbose output")
     p_pheno.set_defaults(func=cmd_phenotype)
 
     # -------------------------------------------------------------------------
@@ -1011,7 +1012,7 @@ def create_parser():
     p_clone.add_argument("--airr", help="Also output AIRR format to this path")
     p_clone.add_argument("--plot-clonotypes", action="store_true", help="Generate clonotype plots")
     p_clone.add_argument("--output-dir", help="Output directory for plots")
-    p_clone.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_clone.add_argument("--verbose", action="store_true", help="Verbose output")
     p_clone.set_defaults(func=cmd_clonotype)
 
     # -------------------------------------------------------------------------
@@ -1038,7 +1039,7 @@ def create_parser():
     p_filter.add_argument("--exclude-viral", action="store_true", help="Exclude viral clones")
     p_filter.add_argument("--plot-filter", action="store_true", help="Generate filter plots")
     p_filter.add_argument("--output-dir", help="Output directory for plots")
-    p_filter.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_filter.add_argument("--verbose", action="store_true", help="Verbose output")
     p_filter.set_defaults(func=cmd_filter)
 
     # -------------------------------------------------------------------------
@@ -1062,7 +1063,7 @@ def create_parser():
         "--plot-annotations", action="store_true", help="Generate annotation plots"
     )
     p_annot.add_argument("--output-dir", help="Output directory for plots")
-    p_annot.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_annot.add_argument("--verbose", action="store_true", help="Verbose output")
     p_annot.set_defaults(func=cmd_annotate)
 
     # -------------------------------------------------------------------------
@@ -1146,7 +1147,7 @@ OUTPUT:
     til_out.add_argument(
         "--output-dir", metavar="DIR", help="Output directory for plots (default: next to output)"
     )
-    til_out.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    til_out.add_argument("--verbose", action="store_true", help="Verbose output")
     p_til.set_defaults(func=cmd_match_til)
 
     # -------------------------------------------------------------------------
@@ -1246,7 +1247,7 @@ CONDITIONALLY REQUIRED:
     asm_out.add_argument(
         "--output-dir", metavar="DIR", help="Output directory for plots (default: next to output)"
     )
-    asm_out.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    asm_out.add_argument("--verbose", action="store_true", help="Verbose output")
     p_asm.set_defaults(func=cmd_assemble)
 
     # -------------------------------------------------------------------------
@@ -1401,7 +1402,7 @@ CONDITIONALLY REQUIRED:
         default=None,
         help="Skip report generation",
     )
-    out_group.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    out_group.add_argument("--verbose", action="store_true", help="Verbose output")
 
     p_run.set_defaults(func=cmd_run)
 
@@ -1431,7 +1432,7 @@ CONDITIONALLY REQUIRED:
         "--require-compact-match", action="store_true", help="Require comPACT ID match"
     )
     p_sct.add_argument("--aggregate", action="store_true", help="Aggregate to unique clonotypes")
-    p_sct.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_sct.add_argument("--verbose", action="store_true", help="Verbose output")
     p_sct.set_defaults(func=cmd_load_sct)
 
     # -------------------------------------------------------------------------
@@ -1495,7 +1496,7 @@ REQUIRED INPUTS:
         action="store_true",
         help="Compute CD4-only and CD8-only cell counts per clonotype",
     )
-    gex_agg.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    gex_agg.add_argument("--verbose", action="store_true", help="Verbose output")
     p_gex.set_defaults(func=cmd_annotate_gex)
 
     # -------------------------------------------------------------------------
@@ -1535,7 +1536,7 @@ REQUIRED INPUTS:
     p_unify.add_argument(
         "--conditions", help="Comma-separated condition names for top-condition analysis"
     )
-    p_unify.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_unify.add_argument("--verbose", action="store_true", help="Verbose output")
     p_unify.set_defaults(func=cmd_unify)
 
     # -------------------------------------------------------------------------
@@ -1548,7 +1549,7 @@ REQUIRED INPUTS:
         "--cdr3-col", help="Column with CDR3 sequences (auto-detected if not specified)"
     )
     p_mnem.add_argument("--name-col", default="tcr_name", help="Output column name")
-    p_mnem.add_argument("--verbose", "-v", action="store_true")
+    p_mnem.add_argument("--verbose", action="store_true")
     p_mnem.set_defaults(func=cmd_mnemonic)
 
     # -------------------------------------------------------------------------

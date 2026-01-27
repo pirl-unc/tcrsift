@@ -6,6 +6,7 @@ TCRsift provides a command-line interface with subcommands for each pipeline ste
 
 ```bash
 tcrsift --version      # Show version
+tcrsift -v             # Show version (short form)
 tcrsift --help         # Show help
 ```
 
