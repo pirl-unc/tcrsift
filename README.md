@@ -356,6 +356,8 @@ tcrsift run --sample-sheet samples.yaml -o results/ --til-samples Patient1_TIL
 - `til_cell_count`: Number of TIL cells with this TCR
 - `til_frequency`: Frequency in TIL repertoire
 
+TIL samples are excluded from culture clonotype aggregation and are only used for matching.
+
 **Why TIL matching matters:** Clones that appear in both antigen-stimulated culture AND tumor tissue provide orthogonal evidence of tumor-reactivity.
 
 ### Match TIL (Cross-Run)
@@ -365,7 +367,7 @@ Use `match-til` only when TIL data was processed in a **separate** pipeline run.
 ```bash
 tcrsift match-til \
     -i culture_clonotypes.csv \
-    --til-data til_processed.h5ad \
+    --til-h5ad til_processed.h5ad \
     -o matched.csv
 ```
 
@@ -443,6 +445,9 @@ tcrsift unify \
     -i til_results/clonotypes.csv culture_results/clonotypes.csv sct_clonotypes.csv \
     -o unified.csv
 ```
+
+**Note:** Inputs can be standard TCRsift clonotype outputs (`CDR3ab`) or SCT-style tables
+(`CDR3_pair`); `tcrsift unify` will normalize identifiers automatically.
 
 **When to use:** You have results from multiple independent runs and want to compare or combine them.
 

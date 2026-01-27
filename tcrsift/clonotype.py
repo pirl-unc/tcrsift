@@ -235,8 +235,21 @@ def _aggregate_clone_data(
         record["n_samples"] = clone_df["sample"].nunique()
 
         # Antigen information if available
-        if "antigen_description" in clone_df.columns:
-            antigens = clone_df["antigen_description"].dropna().unique()
+        if "antigen_description" in clone_df.columns or "antigen_name" in clone_df.columns:
+            antigen_desc = (
+                clone_df["antigen_description"]
+                if "antigen_description" in clone_df.columns
+                else pd.Series(index=clone_df.index, dtype=object)
+            )
+            antigen_name = (
+                clone_df["antigen_name"]
+                if "antigen_name" in clone_df.columns
+                else pd.Series(index=clone_df.index, dtype=object)
+            )
+            antigens_series = antigen_desc.where(
+                antigen_desc.notna() & (antigen_desc != ""), antigen_name
+            )
+            antigens = antigens_series.dropna().unique()
             record["antigens"] = ";".join(str(a) for a in antigens)
             record["n_antigens"] = len(antigens)
 

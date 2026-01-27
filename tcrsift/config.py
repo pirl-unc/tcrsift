@@ -250,11 +250,11 @@ class TCRsiftConfig:
             "til_match_by": ("til", "match_by"),
             "min_til_cells": ("til", "min_til_cells"),
             "til_samples": ("til", "til_samples"),
-            # Amplify
-            "min_snr": ("amplify", "min_snr"),
-            "min_reads_per_chain": ("amplify", "min_reads_per_chain"),
-            "require_mutation_match": ("amplify", "require_mutation_match"),
-            "require_compact_match": ("amplify", "require_compact_match"),
+            # SCT
+            "min_snr": ("sct", "min_snr"),
+            "min_reads_per_chain": ("sct", "min_reads_per_chain"),
+            "require_mutation_match": ("sct", "require_mutation_match"),
+            "require_compact_match": ("sct", "require_compact_match"),
             # GEX
             "gene_list": ("gex", "gene_list"),
             "gene_groups": ("gex", "gene_groups"),

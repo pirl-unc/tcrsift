@@ -85,21 +85,24 @@ The pipeline creates:
 
 ```
 results/
-├── loaded.h5ad           # Raw loaded data
-├── phenotyped.h5ad       # With CD4/CD8 classification
-├── clonotypes.csv        # All clonotypes
-├── filtered/
-│   ├── tier1.csv         # Highest confidence clones
-│   ├── tier2.csv
-│   ├── tier3.csv
-│   ├── tier4.csv
-│   └── tier5.csv
-├── annotated.csv         # With database annotations
+├── data/
+│   ├── loaded.h5ad           # Raw loaded data
+│   ├── phenotyped.h5ad       # With CD4/CD8 classification
+│   ├── clonotypes.csv        # All clonotypes
+│   ├── filtered_tier1.csv    # Highest confidence clones
+│   ├── filtered_tier2.csv
+│   ├── filtered_tier3.csv
+│   ├── filtered_tier4.csv
+│   ├── filtered_tier5.csv
+│   ├── annotated.csv         # With database annotations (if provided)
+│   ├── til_matched.csv       # TIL matching results (if TIL samples provided)
+│   └── full_sequences.csv    # Assembled sequences (if assembly enabled)
 ├── plots/
 │   ├── qc.pdf
 │   ├── phenotype.pdf
-│   └── clonotypes.pdf
-└── report.pdf            # Summary report
+│   ├── clonotypes.pdf
+│   └── tcrsift_report.pdf    # Summary report (if enabled)
+└── config.yaml               # Resolved config used for the run
 ```
 
 ### Key Columns

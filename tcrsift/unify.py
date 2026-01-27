@@ -88,6 +88,43 @@ def merge_experiments(
     if key_cols is None:
         key_cols = ["CDR3_pair", "CDR3_alpha", "CDR3_beta"]
 
+    def _ensure_cdr3_pair(df: pd.DataFrame, name: str) -> pd.DataFrame:
+        """Ensure a CDR3_pair column exists, deriving from CDR3ab or alpha/beta."""
+        if "CDR3_pair" in df.columns:
+            return df
+
+        df_copy = df.copy()
+
+        # Prefer explicit alpha/beta columns
+        if "CDR3_alpha" in df_copy.columns and "CDR3_beta" in df_copy.columns:
+            df_copy["CDR3_pair"] = df_copy["CDR3_alpha"].fillna("") + "/" + df_copy[
+                "CDR3_beta"
+            ].fillna("")
+            return df_copy
+
+        # Fall back to CDR3ab if present
+        if "CDR3ab" in df_copy.columns:
+            parts = df_copy["CDR3ab"].fillna("").str.split("_", n=1, expand=True)
+            if "CDR3_alpha" not in df_copy.columns:
+                df_copy["CDR3_alpha"] = parts[0]
+            if "CDR3_beta" not in df_copy.columns:
+                df_copy["CDR3_beta"] = parts[1] if parts.shape[1] > 1 else ""
+            df_copy["CDR3_pair"] = df_copy["CDR3_alpha"].fillna("") + "/" + df_copy[
+                "CDR3_beta"
+            ].fillna("")
+            return df_copy
+
+        raise TCRsiftValidationError(
+            f"Experiment '{name}' missing CDR3_pair column",
+            hint="Ensure all DataFrames have CDR3_pair, or provide CDR3_alpha/CDR3_beta or CDR3ab.",
+        )
+
+    # Normalize experiments to ensure CDR3_pair exists
+    normalized_experiments = []
+    for df, name in experiments:
+        normalized_experiments.append((_ensure_cdr3_pair(df, name), name))
+    experiments = normalized_experiments
+
     if verbose:
         logger.info(f"Merging {len(experiments)} experiments")
         for df, name in experiments:
@@ -95,12 +132,7 @@ def merge_experiments(
 
     # Collect all unique clonotypes
     all_clonotypes = set()
-    for df, name in experiments:
-        if "CDR3_pair" not in df.columns:
-            raise TCRsiftValidationError(
-                f"Experiment '{name}' missing CDR3_pair column",
-                hint="Ensure all DataFrames have standardized clonotype columns",
-            )
+    for df, _name in experiments:
         all_clonotypes.update(df["CDR3_pair"].dropna())
 
     if verbose:

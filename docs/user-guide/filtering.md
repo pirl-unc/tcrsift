@@ -127,7 +127,7 @@ For tumor studies, the strongest evidence for tumor-specificity is:
 tcrsift filter -i culture_clonotypes.csv -o filtered/ --method threshold
 
 # Then match against TIL
-tcrsift match-til -i filtered/tier1.csv --til-data til_clonotypes.csv -o matched.csv
+tcrsift match-til -i filtered/tier1.csv --til-csv til_clonotypes.csv -o matched.csv
 ```
 
 Clones in both culture and TIL are the highest confidence candidates.
@@ -150,7 +150,7 @@ Clones in both culture and TIL are the highest confidence candidates.
 
 4. **If available, validate with TIL**
    ```bash
-   tcrsift match-til -i annotated.csv --til-data til.csv -o final.csv
+tcrsift match-til -i annotated.csv --til-csv til.csv -o final.csv
    ```
 
 5. **Prioritize clones for validation**

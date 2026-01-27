@@ -433,6 +433,26 @@ class TestRealisticClonotyping:
                 f"Clone ID {row['CDR3ab']} doesn't match expected {expected_id}"
             )
 
+    def test_antigen_name_fallback(self):
+        """antigen_name should be used when antigen_description is missing."""
+        import anndata as ad
+
+        obs = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CAVAAA", "CAVAAA"],
+                "CDR3_beta": ["CASSBBB", "CASSBBB"],
+                "sample": ["S1", "S1"],
+                "antigen_name": ["CMV", "CMV"],
+            },
+            index=["cell1", "cell2"],
+        )
+        adata = ad.AnnData(obs=obs)
+
+        clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab", show_progress=False)
+
+        assert "antigens" in clonotypes.columns
+        assert clonotypes["antigens"].iloc[0] == "CMV"
+
 
 class TestClonotypeSummaryRealistic:
     """Tests for clonotype summary with realistic data."""

@@ -10,6 +10,7 @@ import pytest
 
 from tcrsift.cli import (
     cmd_annotate_gex,
+    cmd_run,
     create_parser,
 )
 from tcrsift.sample_sheet import Sample, SampleSheet, load_sample_sheet
@@ -90,6 +91,26 @@ class TestAnnotateGexParser:
         assert args.group_col == "CDR3ab"
         assert args.cd4_cd8_counts is True
         assert args.verbose is True
+
+
+class TestAnnotateParser:
+    """Tests for annotate CLI parser configuration."""
+
+    def test_annotate_match_by_option(self):
+        """Annotate command should accept --match-by."""
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "annotate",
+                "-i",
+                "input.csv",
+                "-o",
+                "output.csv",
+                "--match-by",
+                "CDR3b_only",
+            ]
+        )
+        assert args.match_by == "CDR3b_only"
 
 
 class TestAnnotateGexCommand:
@@ -343,6 +364,244 @@ samples:
             til_sample_names = []
 
         assert til_sample_names == ["Patient1_TIL", "Patient1_TIL2"]
+
+
+class TestRunCommandTilSamples:
+    """Tests for run command behavior with explicit TIL samples."""
+
+    def test_run_with_explicit_til_samples_does_not_crash(
+        self, tmp_path, monkeypatch
+    ):
+        """cmd_run should work when til_samples are explicitly set."""
+        import anndata as ad
+        import pandas as pd
+
+        # Sample sheet with culture + TIL
+        sample_sheet_path = tmp_path / "samples.yaml"
+        sample_sheet_path.write_text(
+            """
+samples:
+  - sample: "Culture1"
+    vdj_dir: "/data/culture/vdj"
+    source: "culture"
+  - sample: "Patient1_TIL"
+    vdj_dir: "/data/til/vdj"
+    source: "til"
+"""
+        )
+
+        # Minimal AnnData returned by patched load_samples
+        obs = pd.DataFrame(
+            {
+                "sample": ["Culture1"],
+                "source": ["culture"],
+            },
+            index=["cell1"],
+        )
+        adata = ad.AnnData(obs=obs)
+
+        def fake_load_samples(*_args, **_kwargs):
+            return adata
+
+        def fake_phenotype_cells(adata_in, *_args, **_kwargs):
+            return adata_in
+
+        def fake_filter_by_tcell_type(adata_in, *_args, **_kwargs):
+            return adata_in
+
+        def fake_aggregate_clonotypes(*_args, **_kwargs):
+            return pd.DataFrame(
+                {
+                    "CDR3ab": ["A_B"],
+                    "CDR3_alpha": ["A"],
+                    "CDR3_beta": ["B"],
+                    "cell_count": [1],
+                }
+            )
+
+        def fake_filter_clonotypes(df, *_args, **_kwargs):
+            return df.assign(tier="tier1")
+
+        def fake_split_by_tier(df, *_args, **_kwargs):
+            return {"tier1": df}
+
+        def fake_load_til_samples(*_args, **_kwargs):
+            return {}
+
+        # Patch heavy functions
+        monkeypatch.setattr("tcrsift.loader.load_samples", fake_load_samples)
+        monkeypatch.setattr("tcrsift.phenotype.phenotype_cells", fake_phenotype_cells)
+        monkeypatch.setattr("tcrsift.phenotype.filter_by_tcell_type", fake_filter_by_tcell_type)
+        monkeypatch.setattr("tcrsift.clonotype.aggregate_clonotypes", fake_aggregate_clonotypes)
+        monkeypatch.setattr("tcrsift.filter.filter_clonotypes", fake_filter_clonotypes)
+        monkeypatch.setattr("tcrsift.filter.split_by_tier", fake_split_by_tier)
+        monkeypatch.setattr("tcrsift.til.load_til_samples", fake_load_til_samples)
+
+        output_dir = tmp_path / "out"
+
+        args = argparse.Namespace(
+            sample_sheet=str(sample_sheet_path),
+            output_dir=str(output_dir),
+            config=None,
+            # Disable optional outputs
+            generate_plots=False,
+            generate_report=False,
+            # Ensure assembly is skipped
+            no_leaders=True,
+            include_constant=False,
+            single_chain=False,
+            # Explicit TIL samples
+            til_samples="Patient1_TIL",
+            # Required defaults for other args
+            min_genes=None,
+            max_genes=None,
+            min_counts=None,
+            max_counts=None,
+            min_mito_pct=None,
+            max_mito_pct=None,
+            cd4_cd8_ratio=None,
+            min_cd3_reads=None,
+            group_by=None,
+            handle_doublets=None,
+            min_umi=None,
+            tcell_type=None,
+            method=None,
+            min_cells=None,
+            min_frequency=None,
+            require_complete=None,
+            fdr_tiers=None,
+            vdjdb_path=None,
+            iedb_path=None,
+            cedar_path=None,
+            match_by=None,
+            exclude_viral=None,
+            flag_only=None,
+            til_match_by=None,
+            min_til_cells=None,
+            alpha_leader=None,
+            beta_leader=None,
+            leaders_from_contigs=False,
+            contigs_dir=None,
+            linker=None,
+            constant_source=None,
+            skip_plots=None,
+            verbose=False,
+        )
+
+        # Should not raise (previously UnboundLocalError)
+        cmd_run(args)
+
+    def test_run_excludes_til_cells_from_clonotyping(self, tmp_path, monkeypatch):
+        """Culture clonotyping should exclude TIL cells when present in sample sheet."""
+        import anndata as ad
+        import pandas as pd
+
+        sample_sheet_path = tmp_path / "samples.yaml"
+        sample_sheet_path.write_text(
+            """
+samples:
+  - sample: "Culture1"
+    vdj_dir: "/data/culture/vdj"
+    source: "culture"
+  - sample: "Patient1_TIL"
+    vdj_dir: "/data/til/vdj"
+    source: "til"
+"""
+        )
+
+        obs = pd.DataFrame(
+            {
+                "sample": ["Culture1", "Patient1_TIL"],
+                "source": ["culture", "til"],
+            },
+            index=["cell1", "cell2"],
+        )
+        adata = ad.AnnData(obs=obs)
+
+        def fake_load_samples(*_args, **_kwargs):
+            return adata
+
+        def fake_phenotype_cells(adata_in, *_args, **_kwargs):
+            return adata_in
+
+        def fake_filter_by_tcell_type(adata_in, *_args, **_kwargs):
+            return adata_in
+
+        def fake_aggregate_clonotypes(adata_in, *_args, **_kwargs):
+            # Ensure TIL cells were filtered out before clonotyping
+            assert "til" not in adata_in.obs["source"].unique()
+            return pd.DataFrame(
+                {
+                    "CDR3ab": ["A_B"],
+                    "CDR3_alpha": ["A"],
+                    "CDR3_beta": ["B"],
+                    "cell_count": [1],
+                }
+            )
+
+        def fake_filter_clonotypes(df, *_args, **_kwargs):
+            return df.assign(tier="tier1")
+
+        def fake_split_by_tier(df, *_args, **_kwargs):
+            return {"tier1": df}
+
+        # Patch heavy functions
+        monkeypatch.setattr("tcrsift.loader.load_samples", fake_load_samples)
+        monkeypatch.setattr("tcrsift.phenotype.phenotype_cells", fake_phenotype_cells)
+        monkeypatch.setattr("tcrsift.phenotype.filter_by_tcell_type", fake_filter_by_tcell_type)
+        monkeypatch.setattr("tcrsift.clonotype.aggregate_clonotypes", fake_aggregate_clonotypes)
+        monkeypatch.setattr("tcrsift.filter.filter_clonotypes", fake_filter_clonotypes)
+        monkeypatch.setattr("tcrsift.filter.split_by_tier", fake_split_by_tier)
+        monkeypatch.setattr("tcrsift.til.load_til_samples", lambda *_a, **_k: {})
+
+        output_dir = tmp_path / "out"
+
+        args = argparse.Namespace(
+            sample_sheet=str(sample_sheet_path),
+            output_dir=str(output_dir),
+            config=None,
+            generate_plots=False,
+            generate_report=False,
+            no_leaders=True,
+            include_constant=False,
+            single_chain=False,
+            til_samples="Patient1_TIL",
+            min_genes=None,
+            max_genes=None,
+            min_counts=None,
+            max_counts=None,
+            min_mito_pct=None,
+            max_mito_pct=None,
+            cd4_cd8_ratio=None,
+            min_cd3_reads=None,
+            group_by=None,
+            handle_doublets=None,
+            min_umi=None,
+            tcell_type=None,
+            method=None,
+            min_cells=None,
+            min_frequency=None,
+            require_complete=None,
+            fdr_tiers=None,
+            vdjdb_path=None,
+            iedb_path=None,
+            cedar_path=None,
+            match_by=None,
+            exclude_viral=None,
+            flag_only=None,
+            til_match_by=None,
+            min_til_cells=None,
+            alpha_leader=None,
+            beta_leader=None,
+            leaders_from_contigs=False,
+            contigs_dir=None,
+            linker=None,
+            constant_source=None,
+            skip_plots=None,
+            verbose=False,
+        )
+
+        cmd_run(args)
 
 
 class TestSampleSheetSourceTypes:

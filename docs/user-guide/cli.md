@@ -260,7 +260,7 @@ tcrsift assemble -i annotated.csv -o sequences.csv \
 | Option | Description |
 |--------|-------------|
 | `--include-constant` | Add constant regions |
-| `--constant-source` | `ensembl` or `from-data` |
+| `--constant-source` | `ensembl` or `from-data` (use `*_constant_aa/nt` columns if present) |
 | `--single-chain` | Generate single-chain constructs |
 | `--linker` | Linker for single-chain (default: T2A) |
 

@@ -26,7 +26,7 @@ import scanpy as sc
 from tqdm.auto import tqdm
 
 from .genes import TCELL_MARKERS, find_column_for_gene
-from .sample_sheet import Sample, load_sample_sheet
+from .sample_sheet import Sample, SampleSheet, load_sample_sheet
 from .validation import (
     TCRsiftValidationError,
     validate_cellranger_gex_dir,
@@ -372,20 +372,32 @@ def combine_gex_and_vdj(
 
         # Build barcode mapping (handles gem group suffixes like -1, -2, -3)
         # Map each GEX barcode to matching VDJ barcode without modifying adata
-        adata_barcodes = set(adata.obs_names)
         vdj_barcodes = set(vdj_pivoted.index)
 
-        # Check if barcodes match directly
-        if adata_barcodes.intersection(vdj_barcodes):
-            # Direct match - use obs_names as-is for reindexing
-            barcode_to_vdj = {bc: bc for bc in adata.obs_names if bc in vdj_barcodes}
-        else:
-            # Try stripping gem group suffix (e.g., -1, -2, -3) from GEX barcodes
-            barcode_to_vdj = {}
-            for bc in adata.obs_names:
-                bc_base = bc.rsplit("-", 1)[0] if "-" in bc else bc
-                if bc_base in vdj_barcodes:
-                    barcode_to_vdj[bc] = bc_base
+        # Helper to strip gem group suffix (e.g., -1, -2, -3)
+        def _strip_suffix(bc: str) -> str:
+            return bc.rsplit("-", 1)[0] if "-" in bc else bc
+
+        # Start with direct matches where possible
+        barcode_to_vdj = {bc: bc for bc in adata.obs_names if bc in vdj_barcodes}
+
+        # Build base-barcode mapping for VDJ barcodes
+        vdj_by_base: dict[str, list[str]] = {}
+        for bc in vdj_barcodes:
+            base = _strip_suffix(bc)
+            vdj_by_base.setdefault(base, []).append(bc)
+
+        # Try base matching for any unmapped GEX barcodes
+        for bc in adata.obs_names:
+            if bc in barcode_to_vdj:
+                continue
+            bc_base = _strip_suffix(bc)
+            if bc_base in vdj_by_base:
+                candidates = vdj_by_base[bc_base]
+                if bc in candidates:
+                    barcode_to_vdj[bc] = bc
+                else:
+                    barcode_to_vdj[bc] = candidates[0]
 
         # Add VDJ columns to adata.obs using the mapping
         for col in vdj_pivoted.columns:
@@ -520,6 +532,13 @@ def load_sample(
     if adata is not None:
         adata.obs["antigen_type"] = sample.antigen_type
         adata.obs["antigen_description"] = sample.antigen_description
+        adata.obs["antigen_name"] = sample.antigen_name
+        adata.obs["antigen_sequence"] = sample.antigen_sequence
+        adata.obs["epitope_sequence"] = sample.epitope_sequence
+        adata.obs["mhc_allele"] = sample.mhc_allele
+        adata.obs["antigen_names"] = sample.antigen_names
+        adata.obs["antigen_sequences"] = sample.antigen_sequences
+        adata.obs["epitope_sequences"] = sample.epitope_sequences
         adata.obs["source"] = sample.source
         adata.obs["expected_tcell_type"] = sample.get_expected_tcell_type()
 
@@ -527,7 +546,7 @@ def load_sample(
 
 
 def load_samples(
-    sample_sheet_path: str | Path,
+    sample_sheet_path: str | Path | SampleSheet,
     min_genes: int = 250,
     max_genes: int = 15000,
     min_counts: int = 500,
@@ -542,8 +561,8 @@ def load_samples(
 
     Parameters
     ----------
-    sample_sheet_path : str or Path
-        Path to sample sheet (CSV or YAML)
+    sample_sheet_path : str or Path or SampleSheet
+        Path to sample sheet (CSV or YAML), or a SampleSheet instance
     min_genes, max_genes, min_counts, max_counts, max_mito_pct, min_mito_pct
         QC filter parameters
     verbose : bool
@@ -556,18 +575,22 @@ def load_samples(
     ad.AnnData
         Combined AnnData with all samples
     """
-    # Validate sample sheet path
-    sample_sheet_path = validate_file_exists(sample_sheet_path, "sample sheet")
-
-    sample_sheet = load_sample_sheet(sample_sheet_path)
+    # Load sample sheet (path or object)
+    if isinstance(sample_sheet_path, SampleSheet):
+        sample_sheet = sample_sheet_path
+        sample_sheet_label = "<SampleSheet>"
+    else:
+        sample_sheet_path = validate_file_exists(sample_sheet_path, "sample sheet")
+        sample_sheet = load_sample_sheet(sample_sheet_path)
+        sample_sheet_label = str(sample_sheet_path)
 
     if len(sample_sheet) == 0:
         raise TCRsiftValidationError(
-            f"Sample sheet is empty: {sample_sheet_path}",
+            f"Sample sheet is empty: {sample_sheet_label}",
             hint="Add sample entries to the sample sheet.",
         )
 
-    logger.info(f"Loading {len(sample_sheet)} samples from {sample_sheet_path}")
+    logger.info(f"Loading {len(sample_sheet)} samples from {sample_sheet_label}")
 
     # Pre-validate all sample paths to fail fast
     validation_errors = []

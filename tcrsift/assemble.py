@@ -473,6 +473,20 @@ def assemble_full_sequences(
         elif verbose:
             logger.info(f"    Loaded {len(constant_seqs)} constant region sequences")
 
+    # Warn if from-data constants requested but not present
+    if include_constant and constant_source == "from-data":
+        constant_cols = [
+            "alpha_constant_aa",
+            "alpha_constant_nt",
+            "beta_constant_aa",
+            "beta_constant_nt",
+        ]
+        if not any(col in df.columns for col in constant_cols):
+            logger.warning(
+                "  constant_source='from-data' but no constant region columns found in input. "
+                "Constants will be omitted."
+            )
+
     # Load contigs if needed for leader extraction
     sample_contigs = {}
     needs_contigs = (
@@ -509,6 +523,7 @@ def assemble_full_sequences(
             constant_seqs,
             leader_config,
             include_constant,
+            constant_source,
         )
         assembly_results.append(result)
 
@@ -544,6 +559,7 @@ def _assemble_clone(
     constant_seqs: dict,
     leader_config: dict,
     include_constant: bool,
+    constant_source: str,
 ) -> dict:
     """Assemble full sequence for a single clone."""
     result = {}
@@ -578,7 +594,10 @@ def _assemble_clone(
 
     # Add constant regions
     if include_constant:
-        _add_constant_regions(result, constant_seqs)
+        if constant_source == "from-data":
+            _add_constant_from_row(row, result)
+        else:
+            _add_constant_regions(result, constant_seqs)
 
     # Determine which chains have leaders for building full sequences
     include_alpha_leader = leader_config.get("alpha") is not None
@@ -650,6 +669,25 @@ def _add_constant_regions(result: dict, constant_seqs: dict):
             result[f"{chain}_constant_aa"] = const_aa
 
 
+def _add_constant_from_row(row: pd.Series, result: dict):
+    """Add constant region sequences directly from row columns if present."""
+    for chain in ["alpha", "beta"]:
+        aa_col = f"{chain}_constant_aa"
+        nt_col = f"{chain}_constant_nt"
+
+        aa_val = row.get(aa_col) if aa_col in row else None
+        nt_val = row.get(nt_col) if nt_col in row else None
+
+        if pd.notna(aa_val):
+            result[f"{chain}_constant_aa"] = aa_val
+        if pd.notna(nt_val):
+            result[f"{chain}_constant_nt"] = nt_val
+            # If AA not provided, translate from NT
+            if pd.isna(aa_val):
+                const_aa, _ = translate_dna(str(nt_val))
+                result[f"{chain}_constant_aa"] = const_aa
+
+
 def _build_full_sequences(
     result: dict,
     include_alpha_leader: bool,
@@ -699,28 +737,35 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
 
     # Remove stop codon from beta if present
     def strip_stop(seq):
-        if seq and seq.endswith("*"):
+        if not isinstance(seq, str):
+            return None
+        if seq.endswith("*"):
             return seq[:-1]
         return seq
 
-    df["single_chain_aa"] = (
-        df["full_beta_aa"].apply(strip_stop) + linker_aa + df["full_alpha_aa"].fillna("")
-    )
+    beta_aa = df["full_beta_aa"].apply(strip_stop)
+    alpha_aa = df["full_alpha_aa"].where(df["full_alpha_aa"].apply(lambda x: isinstance(x, str)))
+
+    single_chain = beta_aa.fillna("") + linker_aa + alpha_aa.fillna("")
+    missing_mask = df["full_beta_aa"].isna() | df["full_alpha_aa"].isna()
+    df["single_chain_aa"] = single_chain.where(~missing_mask, pd.NA)
 
     if "full_beta_nt" in df.columns and "full_alpha_nt" in df.columns and linker_nt:
         # Remove stop codon from beta DNA
         def strip_stop_codon_dna(seq):
-            if seq and len(seq) >= 3:
+            if not isinstance(seq, str):
+                return None
+            if len(seq) >= 3:
                 last_codon = seq[-3:]
                 if last_codon in {"TAA", "TAG", "TGA"}:
                     return seq[:-3]
             return seq
 
-        df["single_chain_nt"] = (
-            df["full_beta_nt"].apply(strip_stop_codon_dna)
-            + linker_nt
-            + df["full_alpha_nt"].fillna("")
-        )
+        beta_nt = df["full_beta_nt"].apply(strip_stop_codon_dna)
+        alpha_nt = df["full_alpha_nt"].where(df["full_alpha_nt"].apply(lambda x: isinstance(x, str)))
+        single_chain_nt = beta_nt.fillna("") + linker_nt + alpha_nt.fillna("")
+        missing_nt_mask = df["full_beta_nt"].isna() | df["full_alpha_nt"].isna()
+        df["single_chain_nt"] = single_chain_nt.where(~missing_nt_mask, pd.NA)
 
     df["linker"] = linker_aa
 

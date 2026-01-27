@@ -44,8 +44,7 @@ Or via command line:
 tcrsift run \
     --sample-sheet samples.yaml \
     --output-dir results/ \
-    --vdjdb /path/to/vdjdb \
-    --report
+    --vdjdb /path/to/vdjdb
 ```
 
 ## Installation

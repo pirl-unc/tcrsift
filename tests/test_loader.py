@@ -25,7 +25,10 @@ from tcrsift.loader import (
     _pivot_vdj_by_barcode,
     combine_gex_and_vdj,
     load_cellranger_vdj,
+    load_sample,
+    load_samples,
 )
+from tcrsift.sample_sheet import Sample, SampleSheet
 from tcrsift.validation import TCRsiftValidationError
 
 
@@ -369,6 +372,74 @@ class TestRealisticVdjPivot:
 
         # CCCC should have different clone
         assert result.loc["AAAA", "CDR3ab"] != result.loc["CCCC", "CDR3ab"]
+
+
+class TestCombineGexAndVdj:
+    """Tests for combine_gex_and_vdj barcode matching."""
+
+    def test_vdj_suffix_mapping_with_gex_no_suffix(self):
+        """VDJ barcodes with suffixes should map to GEX barcodes without suffix."""
+        # GEX with no suffix
+        adata = ad.AnnData(
+            X=sp.csr_matrix((2, 1)),
+            obs=pd.DataFrame(index=["AAAA", "BBBB"]),
+            var=pd.DataFrame(index=["GENE1"]),
+        )
+
+        # VDJ with suffix
+        vdj_df = pd.DataFrame(
+            {
+                "barcode": ["AAAA-1", "AAAA-1", "BBBB-1", "BBBB-1"],
+                "chain": ["TRA", "TRB", "TRA", "TRB"],
+                "cdr3": ["CAVAAA", "CASSAAA", "CAVBBB", "CASSBBB"],
+                "v_gene": ["TRAV1", "TRBV1", "TRAV2", "TRBV2"],
+                "d_gene": [None, "TRBD1", None, "TRBD1"],
+                "j_gene": ["TRAJ1", "TRBJ1", "TRAJ2", "TRBJ2"],
+                "c_gene": ["TRAC", "TRBC1", "TRAC", "TRBC1"],
+                "umis": [10, 12, 8, 9],
+                "reads": [100, 120, 80, 90],
+                "contig_id": ["c1", "c2", "c3", "c4"],
+            }
+        )
+
+        combined = combine_gex_and_vdj(adata, vdj_df)
+
+        assert combined.obs.loc["AAAA", "CDR3_alpha"] == "CAVAAA"
+        assert combined.obs.loc["AAAA", "CDR3_beta"] == "CASSAAA"
+        assert combined.obs.loc["BBBB", "CDR3_alpha"] == "CAVBBB"
+        assert combined.obs.loc["BBBB", "CDR3_beta"] == "CASSBBB"
+
+
+class TestLoadSamplesWithSampleSheet:
+    """Tests for load_samples accepting SampleSheet objects."""
+
+    def test_load_samples_with_samplesheet(self, mock_cellranger_vdj_dir):
+        """load_samples should accept a SampleSheet instance."""
+        sample = Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir))
+        sheet = SampleSheet(samples=[sample])
+
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert adata.n_obs > 0
+        assert "sample" in adata.obs.columns
+        assert adata.obs["sample"].iloc[0] == "S1"
+
+
+class TestLoadSampleMetadata:
+    """Tests for sample metadata propagation."""
+
+    def test_load_sample_adds_antigen_name(self, mock_cellranger_vdj_dir):
+        """antigen_name should be propagated into adata.obs."""
+        sample = Sample(
+            sample="S1",
+            vdj_dir=str(mock_cellranger_vdj_dir),
+            antigen_name="CMV_pp65",
+        )
+
+        adata = load_sample(sample)
+
+        assert "antigen_name" in adata.obs.columns
+        assert adata.obs["antigen_name"].iloc[0] == "CMV_pp65"
 
 
 class TestLoadCellrangerVdj:

@@ -124,13 +124,15 @@ Annotations include:
 For tumor studies, match culture clonotypes against TIL:
 
 ```bash
-tcrsift match-til -i annotated.csv --til-data til_clonotypes.csv -o matched.csv
+tcrsift match-til -i annotated.csv --til-csv til_clonotypes.csv -o matched.csv
 ```
 
 This identifies clones that:
 
 - Were expanded in culture AND present in tumor
 - Are TIL-specific (not in culture)
+
+TIL samples are excluded from culture aggregation/filtering and only used for matching.
 
 ## 7. Assemble Full Sequences
 
@@ -161,7 +163,7 @@ tcrsift run \
     --vdjdb /path/to/vdjdb \
     --tcell-type cd8 \
     --method threshold \
-    --report
+    # report generation is enabled by default; use --no-report to disable
 ```
 
 This creates a complete output directory with all intermediate files and a summary report.

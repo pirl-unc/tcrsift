@@ -9,6 +9,7 @@ from tcrsift.assemble import (
     CODON_TABLE,
     T2A_LINKER_AA,
     T2A_LINKER_DNA,
+    _add_single_chain,
     assemble_full_sequences,
     export_fasta,
     find_longest_orf,
@@ -675,6 +676,49 @@ class TestRealisticFullLengthAssembly:
                 sample_full_length_clonotypes.loc[idx, "CDR3_alpha"]
                 cdr3_beta = sample_full_length_clonotypes.loc[idx, "CDR3_beta"]
                 assert cdr3_beta in sc, "CDR3 beta not found in single chain"
+
+    def test_constant_source_from_data_uses_columns(self):
+        """from-data should use provided constant region columns."""
+        df = pd.DataFrame(
+            {
+                "CDR3ab": ["clone1"],
+                "CDR3_alpha": ["CAVAAA"],
+                "CDR3_beta": ["CASSBBB"],
+                "VDJ_alpha_aa": ["AAA"],
+                "VDJ_beta_aa": ["BBB"],
+                "alpha_constant_aa": ["CONST_A"],
+                "beta_constant_aa": ["CONST_B"],
+                "alpha_constant_nt": ["AAACCC"],
+                "beta_constant_nt": ["BBBDDD"],
+            }
+        )
+
+        result = assemble_full_sequences(
+            df,
+            alpha_leader=None,
+            beta_leader=None,
+            include_constant=True,
+            constant_source="from-data",
+            linker=None,
+            show_progress=False,
+        )
+
+        assert result["full_alpha_aa"].iloc[0] == "AAA" + "CONST_A"
+        assert result["full_beta_aa"].iloc[0] == "BBB" + "CONST_B"
+
+    def test_single_chain_handles_missing_beta(self):
+        """Missing beta chain should not raise and should yield NaN single_chain_aa."""
+        df = pd.DataFrame(
+            {
+                "full_beta_aa": [float("nan")],
+                "full_alpha_aa": ["ALPHA"],
+            }
+        )
+
+        result = _add_single_chain(df, "T2A")
+
+        assert "single_chain_aa" in result.columns
+        assert pd.isna(result.loc[0, "single_chain_aa"])
 
 
 class TestAssemblyWithMockCellRanger:

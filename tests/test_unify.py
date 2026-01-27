@@ -120,6 +120,30 @@ class TestMergeExperiments:
         with pytest.raises(TCRsiftValidationError, match="missing CDR3_pair column"):
             merge_experiments([(df, "Test")])
 
+    def test_merge_accepts_cdr3ab(self):
+        """merge_experiments should accept CDR3ab when CDR3_pair is missing."""
+        df1 = pd.DataFrame(
+            {
+                "CDR3ab": ["A_B", "C_D"],
+                "CDR3_alpha": ["A", "C"],
+                "CDR3_beta": ["B", "D"],
+                "total_cells.count": [10, 5],
+            }
+        )
+        df2 = pd.DataFrame(
+            {
+                "CDR3ab": ["A_B", "E_F"],
+                "CDR3_alpha": ["A", "E"],
+                "CDR3_beta": ["B", "F"],
+                "total_cells.count": [7, 3],
+            }
+        )
+
+        result = merge_experiments([(df1, "Exp1"), (df2, "Exp2")], verbose=False)
+
+        assert "CDR3_pair" in result.columns
+        assert set(result["CDR3_alpha"].dropna()) == {"A", "C", "E"}
+
 
 class TestAddPhenotypeConfidence:
     """Tests for add_phenotype_confidence function."""

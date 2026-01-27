@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .config import add_config_args, load_config_with_args
 from .validation import (
+    TCRsiftValidationError,
     validate_annotate_gex_args,
     validate_assemble_args,
     validate_file_exists,
@@ -478,9 +479,11 @@ def cmd_run(args):
     # Load config with CLI overrides
     config = load_config_with_args(args)
 
+    # Load sample sheet once (used for auto-detect + TIL loading)
+    sample_sheet = load_sample_sheet(args.sample_sheet)
+
     # Auto-detect TIL samples from sample sheet if not explicitly specified
     if not config.til.til_samples:
-        sample_sheet = load_sample_sheet(args.sample_sheet)
         til_samples = sample_sheet.get_til_samples()
         if til_samples:
             til_sample_names = [s.sample for s in til_samples]
@@ -519,6 +522,21 @@ def cmd_run(args):
     adata.write_h5ad(data_dir / "loaded.h5ad")
     funnel_counts["Raw Cells"] = len(adata)
     print(f"  Loaded {len(adata)} cells")
+
+    # Exclude TIL samples from the main culture pipeline
+    if "source" in adata.obs.columns:
+        non_til_mask = adata.obs["source"] != "til"
+        n_til = (~non_til_mask).sum()
+        if n_til > 0:
+            if non_til_mask.sum() == 0:
+                raise TCRsiftValidationError(
+                    "No non-TIL samples found for culture pipeline",
+                    hint="The run command expects at least one non-TIL sample. "
+                    "Use match-til or load/clonotype commands for TIL-only analysis.",
+                )
+            adata = adata[non_til_mask].copy()
+            funnel_counts["Raw Cells"] = len(adata)
+            print(f"  Excluding {n_til} TIL cells from culture pipeline")
 
     # Count cells with VDJ
     if "CDR3_beta" in adata.obs.columns:
@@ -1032,6 +1050,12 @@ def create_parser():
     p_annot.add_argument("--vdjdb", help="Path to VDJdb")
     p_annot.add_argument("--iedb", help="Path to IEDB")
     p_annot.add_argument("--cedar", help="Path to CEDAR")
+    p_annot.add_argument(
+        "--match-by",
+        choices=["CDR3ab", "CDR3b_only"],
+        default="CDR3ab",
+        help="Matching strategy (default: CDR3ab)",
+    )
     p_annot.add_argument("--exclude-viral", action="store_true", help="Remove viral clones")
     p_annot.add_argument("--flag-only", action="store_true", help="Just flag, don't remove")
     p_annot.add_argument(
