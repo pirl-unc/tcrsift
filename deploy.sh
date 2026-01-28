@@ -11,6 +11,8 @@ UV_AVAILABLE=0
 
 if command -v uv &> /dev/null; then
   UV_AVAILABLE=1
+  export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv_cache}"
+  mkdir -p "${UV_CACHE_DIR}"
 fi
 
 while [[ $# -gt 0 ]]; do
