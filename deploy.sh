@@ -90,14 +90,14 @@ PY
   git push
 fi
 
+rm -rf dist
 if [[ "${UV_AVAILABLE}" -eq 1 ]]; then
-  uv pip install --upgrade build twine
+  uv build --out-dir dist
 else
   python3 -m pip install --upgrade build
   python3 -m pip install --upgrade twine
+  python3 -m build
 fi
-rm -rf dist
-python3 -m build
 git --version
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
@@ -108,6 +108,10 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
   exit 0
 fi
 
-python3 -m twine upload dist/*
+if [[ "${UV_AVAILABLE}" -eq 1 ]]; then
+  uv tool run twine upload dist/*
+else
+  python3 -m twine upload dist/*
+fi
 git tag "v${VERSION}"
 git push --tags

@@ -21,4 +21,4 @@ Use the release script to run lint/tests, optionally bump the version, build, up
 
 - Version is stored in `tcrsift/version.py` as `__version__`.
 - The release script will refuse to run if the working tree is dirty.
-- If `uv` is available, the release script will use it to install build tools; otherwise it falls back to `pip`.
+- If `uv` is available, the release script will use `uv build` and `uv tool run twine`; otherwise it falls back to `pip` and `python -m build/twine`.
