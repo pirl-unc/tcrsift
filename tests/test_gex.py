@@ -10,6 +10,7 @@ from tcrsift.gex import (
     DEFAULT_GENE_GROUPS,
     DEFAULT_GENE_LIST,
     aggregate_gex_by_clonotype,
+    augment_with_gex,
     compute_cd4_cd8_counts,
 )
 
@@ -217,3 +218,132 @@ class TestComputeCd4Cd8Counts:
         )
         result2 = compute_cd4_cd8_counts(df2, verbose=False)
         assert result2["CD4_only.count"].iloc[0] == 1
+
+
+class TestAugmentWithGex:
+    """Tests for augment_with_gex function."""
+
+    def test_augment_with_gex_populates_columns_and_groups(self, tmp_path, monkeypatch):
+        """Augmenting should add expression, QC, and group columns."""
+        import anndata as ad
+        import scanpy as sc
+        import scipy.sparse as sp
+
+        gex_file = tmp_path / "matrix.h5"
+        gex_file.write_bytes(b"fake h5")
+
+        X = sp.csr_matrix(
+            np.array(
+                [
+                    [1, 2, 10, 0, 5],
+                    [3, 4, 0, 0, 8],
+                ]
+            )
+        )
+        adata = ad.AnnData(X)
+        adata.var_names = ["CD4", "CD8A", "MT-CO1", "DUP", "DUP"]
+        adata.obs_names = ["bc1", "bc2"]
+
+        monkeypatch.setattr(sc, "read_10x_h5", lambda _: adata)
+
+        df = pd.DataFrame({"barcode": ["bc1", "bc2", "missing"], "other": [1, 2, 3]})
+
+        result = augment_with_gex(
+            df,
+            gex_file,
+            gene_list=["CD4", "DUP"],
+            gene_groups={"Tcell": ["CD4", "CD8A"]},
+            verbose=True,
+        )
+
+        # Expression columns
+        assert result.loc[0, "gex.CD4"] == 1
+        assert result.loc[1, "gex.CD4"] == 3
+        assert result.loc[0, "gex.DUP"] == 5
+        assert result.loc[1, "gex.DUP"] == 8
+
+        # QC metrics (sparse branch)
+        assert result.loc[0, "gex.n_reads"] == 18
+        assert result.loc[1, "gex.n_reads"] == 15
+        assert result.loc[0, "gex.n_genes"] == 4
+        assert result.loc[1, "gex.n_genes"] == 3
+        assert result.loc[0, "gex.pct_mito"] == pytest.approx(10 / 18 * 100)
+        assert result.loc[1, "gex.pct_mito"] == pytest.approx(0.0)
+
+        # Group signature
+        assert result.loc[0, "gex.Tcell"] == pytest.approx(1.5)
+        assert result.loc[1, "gex.Tcell"] == pytest.approx(3.5)
+
+        # Missing barcode stays NaN
+        assert pd.isna(result.loc[2, "gex.CD4"])
+        assert pd.isna(result.loc[2, "gex.n_reads"])
+
+    def test_augment_with_gex_missing_barcode_column_raises(self, tmp_path):
+        """Missing barcode column should raise a validation error."""
+        from tcrsift.validation import TCRsiftValidationError
+
+        gex_file = tmp_path / "matrix.h5"
+        gex_file.write_bytes(b"fake h5")
+
+        df = pd.DataFrame({"not_barcode": ["bc1"]})
+
+        with pytest.raises(TCRsiftValidationError, match="Barcode column"):
+            augment_with_gex(df, gex_file, gene_list=["CD4"], gene_groups={}, verbose=False)
+
+    def test_augment_with_gex_missing_genes_raises(self, tmp_path, monkeypatch):
+        """Requesting only missing genes should raise a validation error."""
+        from tcrsift.validation import TCRsiftValidationError
+
+        import anndata as ad
+        import scanpy as sc
+
+        gex_file = tmp_path / "matrix.h5"
+        gex_file.write_bytes(b"fake h5")
+
+        X = np.array([[1], [2]])
+        adata = ad.AnnData(X)
+        adata.var_names = ["CD4"]
+        adata.obs_names = ["bc1", "bc2"]
+
+        monkeypatch.setattr(sc, "read_10x_h5", lambda _: adata)
+
+        df = pd.DataFrame({"barcode": ["bc1", "bc2"]})
+
+        with pytest.raises(TCRsiftValidationError, match="None of the requested genes"):
+            augment_with_gex(
+                df,
+                gex_file,
+                gene_list=["NOT_A_GENE"],
+                gene_groups={},
+                verbose=True,
+            )
+
+    def test_augment_with_gex_dense_no_qc(self, tmp_path, monkeypatch):
+        """Dense matrices should work and omit QC columns when disabled."""
+        import anndata as ad
+        import scanpy as sc
+
+        gex_file = tmp_path / "matrix.h5"
+        gex_file.write_bytes(b"fake h5")
+
+        X = np.array([[5], [7]])
+        adata = ad.AnnData(X)
+        adata.var_names = ["CD4"]
+        adata.obs_names = ["bc1", "bc2"]
+
+        monkeypatch.setattr(sc, "read_10x_h5", lambda _: adata)
+
+        df = pd.DataFrame({"barcode": ["bc1", "bc2"]})
+
+        result = augment_with_gex(
+            df,
+            gex_file,
+            gene_list=["CD4"],
+            gene_groups={},
+            include_qc=False,
+            verbose=False,
+        )
+
+        assert result.loc[0, "gex.CD4"] == 5
+        assert result.loc[1, "gex.CD4"] == 7
+        assert "gex.n_reads" not in result.columns
