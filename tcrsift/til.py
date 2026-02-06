@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 from .sample_sheet import Sample, SampleSheet
-from .validation import TCRsiftValidationError, safe_divide, safe_percentage
+from .validation import TCRsiftValidationError, parse_til_sample_spec, safe_divide, safe_percentage
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +213,152 @@ def load_til_samples(
         til_data[sample.sample] = df
 
     return til_data
+
+
+def load_til_specs(
+    specs: list[str],
+) -> dict[str, pd.DataFrame]:
+    """
+    Load TIL data from repeatable --til-sample specs.
+
+    Spec format:
+    - NAME=TYPE:PATH
+    - TYPE:PATH (sample name inferred from PATH stem)
+
+    Example:
+    - T1=csv:/path/to/til_t1.csv
+    - T2=vdj:/path/to/cellranger_vdj_outs
+    """
+    til_data: dict[str, pd.DataFrame] = {}
+
+    for spec in specs:
+        sample_name, source_type, source_path = parse_til_sample_spec(spec)
+        if sample_name in til_data:
+            raise TCRsiftValidationError(
+                f"Duplicate TIL sample name in --til-sample specs: '{sample_name}'",
+                hint="Use unique sample names for each --til-sample entry.",
+            )
+        til_data[sample_name] = load_til_data(source_type, source_path, sample_name)
+
+    return til_data
+
+
+def summarize_til_clonotypes(
+    til_data: ad.AnnData | pd.DataFrame | dict[str, pd.DataFrame],
+    match_by: str = "CDR3ab",
+    min_cells: int = 1,
+) -> pd.DataFrame:
+    """
+    Summarize TIL-only data into clonotype-level counts/frequencies across samples.
+
+    Parameters
+    ----------
+    til_data : AnnData, DataFrame, or dict[str, DataFrame]
+        TIL data source(s)
+    match_by : str
+        "CDR3ab" (alpha+beta) or "CDR3b_only" (beta only)
+    min_cells : int
+        Minimum total cells across all TIL samples to retain a clonotype
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per clonotype with total/per-sample TIL counts and frequencies.
+    """
+    if match_by not in {"CDR3ab", "CDR3b_only"}:
+        raise TCRsiftValidationError(
+            f"Invalid match_by: '{match_by}'",
+            hint="Use one of: CDR3ab, CDR3b_only",
+        )
+
+    if min_cells < 1:
+        raise TCRsiftValidationError(
+            f"min_cells must be >= 1, got {min_cells}",
+            hint="Use min_cells=1 to keep all detected TIL clonotypes.",
+        )
+
+    # Normalize til_data to dict format
+    if isinstance(til_data, ad.AnnData):
+        til_dict = {"TIL": til_data.obs.copy()}
+    elif isinstance(til_data, pd.DataFrame):
+        til_dict = {"TIL": til_data.copy()}
+    elif isinstance(til_data, dict):
+        til_dict = {k: v.copy() for k, v in til_data.items()}
+    else:
+        raise TypeError(f"til_data must be AnnData, DataFrame, or dict, got {type(til_data)}")
+
+    sample_stats = {}
+    for sample_name, df in til_dict.items():
+        if match_by == "CDR3ab":
+            clone_key = (
+                df.get("CDR3_alpha", pd.Series("", index=df.index)).fillna("")
+                + "_"
+                + df.get("CDR3_beta", pd.Series("", index=df.index)).fillna("")
+            )
+        else:
+            clone_key = df.get("CDR3_beta", pd.Series("", index=df.index)).fillna("")
+
+        clone_counts = clone_key.value_counts().to_dict()
+        valid_mask = (clone_key != "_") & (clone_key != "")
+        total_cells = int(valid_mask.sum())
+
+        sample_stats[sample_name] = {
+            "clone_counts": clone_counts,
+            "total_cells": total_cells,
+        }
+
+    total_til_cells = sum(stats["total_cells"] for stats in sample_stats.values())
+    all_clones = sorted(
+        {
+            clone
+            for stats in sample_stats.values()
+            for clone in stats["clone_counts"].keys()
+            if clone not in {"", "_"}
+        }
+    )
+
+    rows = []
+    for clone in all_clones:
+        row = {
+            "CDR3ab": clone,
+            "til_samples": "",
+            "til_cell_count": 0,
+            "til_frequency": 0.0,
+        }
+
+        if match_by == "CDR3ab":
+            parts = clone.split("_", 1)
+            row["CDR3_alpha"] = parts[0] if len(parts) > 0 else ""
+            row["CDR3_beta"] = parts[1] if len(parts) > 1 else ""
+        else:
+            row["CDR3_beta"] = clone
+
+        sample_hits = []
+        total_count = 0
+        for sample_name, stats in sample_stats.items():
+            count = int(stats["clone_counts"].get(clone, 0))
+            row[f"til_cell_count.{sample_name}"] = count
+            row[f"til_frequency.{sample_name}"] = safe_divide(
+                count, stats["total_cells"], default=0.0
+            )
+            if count > 0:
+                sample_hits.append(sample_name)
+                total_count += count
+
+        if total_count < min_cells:
+            continue
+
+        row["til_samples"] = ",".join(sample_hits)
+        row["til_cell_count"] = total_count
+        row["til_frequency"] = safe_divide(total_count, total_til_cells, default=0.0)
+        row["n_til_samples"] = len(sample_hits)
+        rows.append(row)
+
+    result = pd.DataFrame(rows)
+    if len(result) == 0:
+        return result
+
+    return result.sort_values("til_cell_count", ascending=False).reset_index(drop=True)
 
 
 def match_til(

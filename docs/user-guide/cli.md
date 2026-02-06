@@ -35,10 +35,15 @@ tcrsift run \
 | `--vdjdb` | Path to VDJdb |
 | `--iedb` | Path to IEDB |
 | `--cedar` | Path to CEDAR |
+| `--til-samples` | Comma-separated TIL sample names from the sample sheet |
+| `--til-sample` | Repeatable direct TIL sample spec: `NAME=TYPE:PATH` (TYPE: `csv`, `h5ad`, `vdj`) |
+| `--til-match-by` | TIL matching mode: `CDR3ab` or `CDR3b_only` |
 | `--tcell-type` | Filter type: `cd8`, `cd4`, `both` |
 | `--method` | Filter method: `threshold`, `logistic` |
 | `--no-report` | Skip generating summary report |
 | `--skip-plots` | Skip generating plots |
+
+Use either `--til-samples` or `--til-sample`, not both.
 
 ---
 
@@ -137,6 +142,9 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
     --exclude-viral
 ```
 
+If no database paths are provided, `annotate` still succeeds and writes default
+annotation columns (`db_match=False`, `is_viral=False`, etc.).
+
 | Option | Description |
 |--------|-------------|
 | `-i`, `--input` | Input CSV file (required) |
@@ -173,6 +181,15 @@ tcrsift match-til -i clonotypes.csv --til-vdj-dir /path/to/vdj -o matched.csv
 tcrsift match-til -i clonotypes.csv -s til_samples.yaml -o matched.csv
 ```
 
+**Multi-sample TIL matching (direct specs, no sample sheet):**
+
+```bash
+tcrsift match-til -i clonotypes.csv -o matched.csv \
+  --til-sample T1=csv:/path/to/til_t1.csv \
+  --til-sample T2=h5ad:/path/to/til_t2.h5ad \
+  --til-sample T3=vdj:/path/to/til_t3_vdj_outs
+```
+
 Sample sheet format for multiple TIL samples:
 ```yaml
 samples:
@@ -199,6 +216,7 @@ samples:
 | `--til-h5ad` | Single TIL h5ad file |
 | `--til-csv` | Single TIL CSV file (must have CDR3_alpha/CDR3_beta) |
 | `--til-vdj-dir` | Single CellRanger VDJ output directory |
+| `--til-sample` | Repeatable direct sample spec: `NAME=TYPE:PATH` (TYPE: `csv`, `h5ad`, `vdj`) |
 
 **Matching options:**
 
@@ -218,6 +236,34 @@ For all inputs:
 For multi-sample inputs, per-sample columns are added:
 - `til_cell_count.{sample}`: Cells in specific TIL sample
 - `til_frequency.{sample}`: Frequency in specific TIL sample
+
+---
+
+### `tcrsift til-clonotype`
+
+Aggregate TIL-only data into clonotype counts/frequencies across one or more TIL samples.
+
+```bash
+# Single TIL source
+tcrsift til-clonotype -o til_clonotypes.csv --til-csv til.csv
+
+# Multi-sample direct specs (no sample sheet)
+tcrsift til-clonotype -o til_clonotypes.csv \
+  --til-sample T1=csv:/path/to/til_t1.csv \
+  --til-sample T2=h5ad:/path/to/til_t2.h5ad \
+  --til-sample T3=vdj:/path/to/til_t3_vdj_outs
+```
+
+| Option | Description |
+|--------|-------------|
+| `-o`, `--output` | Output CSV file (required) |
+| `-s`, `--sample-sheet` | TIL sample sheet (YAML/CSV) |
+| `--til-h5ad` | Single TIL h5ad file |
+| `--til-csv` | Single TIL CSV file |
+| `--til-vdj-dir` | Single TIL VDJ directory |
+| `--til-sample` | Repeatable direct sample spec: `NAME=TYPE:PATH` |
+| `--match-by` | `CDR3ab` (default) or `CDR3b_only` |
+| `--min-cells` | Minimum total TIL cells per clonotype (default: 1) |
 
 ---
 
@@ -262,7 +308,7 @@ tcrsift assemble -i annotated.csv -o sequences.csv \
 |--------|-------------|
 | `--include-constant` | Add constant regions |
 | `--constant-source` | `ensembl` or `from-data` (use `*_constant_aa/nt` columns if present) |
-| `--single-chain` | Generate single-chain constructs |
+| `--single-chain` | Generate single-chain constructs (beta-linker-alpha) |
 | `--linker` | Linker for single-chain (default: T2A) |
 
 **Output options:**
@@ -346,7 +392,7 @@ tcrsift unify \
 
 | Option | Description |
 |--------|-------------|
-| `-i`, `--input` | Input CSV files (multiple, required) |
+| `-i`, `--inputs` | Input CSV files (multiple, required) |
 | `-o`, `--output` | Output CSV file (required) |
 
 ---
@@ -361,4 +407,4 @@ tcrsift generate-config -o my_config.yaml
 
 | Option | Description |
 |--------|-------------|
-| `-o`, `--output` | Output YAML file (required) |
+| `-o`, `--output` | Output YAML file (optional, default: `tcrsift_config.yaml`) |

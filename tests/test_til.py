@@ -22,7 +22,9 @@ from tcrsift.til import (
     get_til_summary,
     identify_til_specific_clones,
     load_til_data,
+    load_til_specs,
     match_til,
+    summarize_til_clonotypes,
 )
 from tcrsift.validation import TCRsiftValidationError
 
@@ -307,6 +309,83 @@ class TestIdentifyTilSpecificClones:
         result = identify_til_specific_clones(empty_til)
 
         assert len(result) == 0
+
+
+class TestSummarizeTilClonotypes:
+    """Tests for TIL-only clonotype summarization."""
+
+    def test_summarize_multi_sample_counts(self):
+        """Summarization should compute per-sample and total counts."""
+        til_data = {
+            "T1": pd.DataFrame(
+                {
+                    "CDR3_alpha": ["A", "A", "C"],
+                    "CDR3_beta": ["B", "B", "D"],
+                }
+            ),
+            "T2": pd.DataFrame(
+                {
+                    "CDR3_alpha": ["A", "E"],
+                    "CDR3_beta": ["B", "F"],
+                }
+            ),
+        }
+
+        result = summarize_til_clonotypes(til_data, match_by="CDR3ab", min_cells=1)
+        ab_row = result[result["CDR3ab"] == "A_B"].iloc[0]
+
+        assert ab_row["til_cell_count"] == 3
+        assert ab_row["n_til_samples"] == 2
+        assert ab_row["til_cell_count.T1"] == 2
+        assert ab_row["til_cell_count.T2"] == 1
+
+    def test_summarize_min_cells_filter(self):
+        """min_cells should filter low-count clonotypes."""
+        til_data = {
+            "T1": pd.DataFrame(
+                {
+                    "CDR3_alpha": ["A", "A", "C"],
+                    "CDR3_beta": ["B", "B", "D"],
+                }
+            )
+        }
+
+        result = summarize_til_clonotypes(til_data, min_cells=2)
+
+        assert "A_B" in set(result["CDR3ab"])
+        assert "C_D" not in set(result["CDR3ab"])
+
+
+class TestLoadTilSpecs:
+    """Tests for direct --til-sample spec loading."""
+
+    def test_load_til_specs(self, tmp_path):
+        """Should load repeatable specs with explicit/inferred sample names."""
+        csv_path = tmp_path / "til_t1.csv"
+        csv_path.write_text("CDR3_alpha,CDR3_beta\nCAVSD,CASRG\n")
+
+        h5ad_path = tmp_path / "til_t2.h5ad"
+        ad.AnnData(
+            obs=pd.DataFrame(
+                {
+                    "CDR3_alpha": ["CASSL"],
+                    "CDR3_beta": ["CASSF"],
+                },
+                index=["cell1"],
+            )
+        ).write_h5ad(h5ad_path)
+
+        til_data = load_til_specs([f"T1=csv:{csv_path}", f"h5ad:{h5ad_path}"])
+
+        assert "T1" in til_data
+        assert "til_t2" in til_data  # inferred from h5ad stem
+        assert len(til_data["T1"]) == 1
+        assert len(til_data["til_t2"]) == 1
+
+    def test_load_til_specs_invalid_raises(self):
+        """Invalid spec format should raise a validation error."""
+        with pytest.raises(TCRsiftValidationError, match="Invalid --til-sample spec"):
+            load_til_specs(["not_a_valid_spec"])
 
 
 class TestLoadTilData:

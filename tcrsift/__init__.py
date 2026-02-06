@@ -27,7 +27,7 @@ sequencing data, with support for:
 Example usage::
 
     # Run complete pipeline
-    tcrsift run --sample-sheet samples.yaml --output-dir results/ --report
+    tcrsift run --sample-sheet samples.yaml --output-dir results/
 
     # Or run individual steps
     tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
@@ -123,7 +123,9 @@ from .sct import (
 from .til import (
     get_til_summary,
     identify_til_specific_clones,
+    load_til_specs,
     match_til,
+    summarize_til_clonotypes,
 )
 from .unify import (
     add_phenotype_confidence,
@@ -197,6 +199,8 @@ __all__ = [
     "match_til",
     "get_til_summary",
     "identify_til_specific_clones",
+    "load_til_specs",
+    "summarize_til_clonotypes",
     # Unify
     "merge_experiments",
     "add_phenotype_confidence",

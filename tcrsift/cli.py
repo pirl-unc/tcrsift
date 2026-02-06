@@ -287,10 +287,11 @@ def cmd_match_til(args):
 
     from .plots import plot_til
     from .sample_sheet import load_sample_sheet
-    from .til import get_til_summary, load_til_data, load_til_samples, match_til
-    from .validation import TCRsiftValidationError
+    from .til import get_til_summary, load_til_data, load_til_samples, load_til_specs, match_til
+    from .validation import TCRsiftValidationError, validate_match_til_args
 
     setup_logging(args.verbose)
+    validate_match_til_args(args)
 
     clonotypes = pd.read_csv(args.input)
     print(f"Loaded {len(clonotypes)} culture clonotypes from {args.input}")
@@ -298,7 +299,14 @@ def cmd_match_til(args):
     # Determine TIL data source - multiple options supported
     til_data = None
 
-    if args.sample_sheet:
+    if args.til_sample:
+        til_data = load_til_specs(args.til_sample)
+        total_cells = sum(len(df) for df in til_data.values())
+        print(
+            f"Loaded {total_cells} TIL cells from {len(til_data)} sample(s): {list(til_data.keys())}"
+        )
+
+    elif args.sample_sheet:
         # Load TIL samples from sample sheet
         sample_sheet = load_sample_sheet(args.sample_sheet)
         til_samples = sample_sheet.get_til_samples()
@@ -331,7 +339,7 @@ def cmd_match_til(args):
     else:
         raise TCRsiftValidationError(
             "No TIL data source specified",
-            hint="Provide one of: --sample-sheet, --til-h5ad, --til-csv, or --til-vdj-dir",
+            hint="Provide one of: --sample-sheet, --til-h5ad, --til-csv, --til-vdj-dir, or --til-sample",
         )
 
     matched = match_til(
@@ -363,6 +371,66 @@ def cmd_match_til(args):
         )
         plot_til(matched, output_dir)
         print(f"TIL plots saved to {output_dir}")
+
+
+# =============================================================================
+# TIL-Clonotype Command
+# =============================================================================
+
+
+def cmd_til_clonotype(args):
+    """Aggregate TIL-only data into clonotype counts across samples."""
+    from .sample_sheet import load_sample_sheet
+    from .til import load_til_data, load_til_samples, load_til_specs, summarize_til_clonotypes
+    from .validation import TCRsiftValidationError, validate_match_til_args
+
+    setup_logging(args.verbose)
+    validate_match_til_args(args)
+
+    til_data = None
+
+    if args.til_sample:
+        til_data = load_til_specs(args.til_sample)
+        total_cells = sum(len(df) for df in til_data.values())
+        print(
+            f"Loaded {total_cells} TIL cells from {len(til_data)} sample(s): {list(til_data.keys())}"
+        )
+    elif args.sample_sheet:
+        sample_sheet = load_sample_sheet(args.sample_sheet)
+        til_samples = sample_sheet.get_til_samples()
+        if not til_samples:
+            raise TCRsiftValidationError(
+                "No TIL samples found in sample sheet",
+                hint="Make sure your sample sheet has samples with source='til'",
+            )
+        til_data = load_til_samples(til_samples)
+        total_cells = sum(len(df) for df in til_data.values())
+        print(
+            f"Loaded {total_cells} TIL cells from {len(til_data)} sample(s): {list(til_data.keys())}"
+        )
+    elif args.til_h5ad:
+        til_data = load_til_data("h5ad", args.til_h5ad)
+        print(f"Loaded {len(til_data)} TIL cells from h5ad: {args.til_h5ad}")
+    elif args.til_csv:
+        til_data = load_til_data("csv", args.til_csv)
+        print(f"Loaded {len(til_data)} TIL cells from CSV: {args.til_csv}")
+    elif args.til_vdj_dir:
+        til_data = load_til_data("vdj_dir", args.til_vdj_dir)
+        print(f"Loaded {len(til_data)} TIL cells from VDJ directory: {args.til_vdj_dir}")
+    else:
+        raise TCRsiftValidationError(
+            "No TIL data source specified",
+            hint="Provide one of: --sample-sheet, --til-h5ad, --til-csv, --til-vdj-dir, or --til-sample",
+        )
+
+    clonotypes = summarize_til_clonotypes(
+        til_data,
+        match_by=args.match_by,
+        min_cells=args.min_cells,
+    )
+
+    clonotypes.to_csv(args.output, index=False)
+    print(f"Saved {len(clonotypes)} TIL clonotypes to {args.output}")
 
 
 # =============================================================================
@@ -454,8 +522,8 @@ def cmd_run(args):
     from pathlib import Path
 
     from .annotate import annotate_clonotypes
-    from .assemble import assemble_full_sequences
-    from .clonotype import aggregate_clonotypes
+    from .assemble import assemble_full_sequences, export_fasta
+    from .clonotype import aggregate_clonotypes, export_clonotypes_airr
     from .filter import filter_clonotypes, split_by_tier
     from .loader import load_samples
     from .phenotype import filter_by_tcell_type, phenotype_cells
@@ -472,7 +540,7 @@ def cmd_run(args):
         plot_til,
     )
     from .sample_sheet import load_sample_sheet
-    from .til import match_til
+    from .til import load_til_specs, match_til
 
     # Early validation of arguments
     validate_run_args(args)
@@ -632,7 +700,27 @@ def cmd_run(args):
 
     # Step 6: TIL matching (if TIL samples specified)
     til_matched = annotated
-    if config.til.til_samples:
+    if getattr(args, "til_sample", None):
+        print("\n[6/7] Matching against TIL samples from --til-sample...")
+        til_data = load_til_specs(args.til_sample)
+        total_cells = sum(len(df) for df in til_data.values())
+        print(f"  Loaded {total_cells} TIL cells from {len(til_data)} sample(s)")
+
+        if total_cells > 0:
+            til_matched = match_til(
+                annotated,
+                til_data,
+                match_by=config.til.match_by,
+                min_til_cells=config.til.min_til_cells,
+            )
+            til_matched.to_csv(data_dir / "til_matched.csv", index=False)
+            n_til = til_matched["til_match"].sum() if "til_match" in til_matched.columns else 0
+            print(f"  Found {n_til} clonotypes in TILs")
+            if config.output.generate_plots:
+                plot_til(til_matched, plots_dir)
+        else:
+            print("  No TIL cells loaded")
+    elif config.til.til_samples:
         print("\n[6/7] Matching against TIL samples...")
         from .til import load_til_samples as _load_til_samples
 
@@ -693,8 +781,21 @@ def cmd_run(args):
         # Generate sequence PDF
         if config.output.generate_report:
             create_tcr_sequence_pdf(assembled, output_dir / "tcr_sequences.pdf")
+
+        if config.output.output_airr:
+            airr_path = data_dir / "full_sequences.airr.tsv"
+            export_clonotypes_airr(assembled, str(airr_path))
+            print(f"  Exported AIRR table: {airr_path}")
+
+        if config.output.output_fasta:
+            fasta_path = data_dir / "full_sequences.fasta"
+            seq_col = "single_chain_aa" if config.assemble.single_chain else "full_beta_aa"
+            export_fasta(assembled, fasta_path, sequence_col=seq_col)
+            print(f"  Exported FASTA: {fasta_path}")
     else:
         print("\n[7/7] Skipping assembly")
+        if config.output.output_airr or config.output.output_fasta:
+            print("  Skipping AIRR/FASTA export because assembly was skipped")
 
     # Generate funnel plot
     if config.output.generate_plots:
@@ -711,8 +812,17 @@ def cmd_run(args):
     # Generate report
     if config.output.generate_report:
         print("\nGenerating report...")
-        generate_report(plots_dir, format="html")
-        generate_report(plots_dir, format="pdf")
+        report_format = str(config.output.report_format).lower()
+        if report_format == "both":
+            generate_report(plots_dir, format="html")
+            generate_report(plots_dir, format="pdf")
+        elif report_format in {"html", "pdf"}:
+            generate_report(plots_dir, format=report_format)
+        else:
+            raise TCRsiftValidationError(
+                f"Invalid report format: '{config.output.report_format}'",
+                hint="Use report_format: pdf, html, or both in config.",
+            )
 
     print("\n" + "=" * 60)
     print("Pipeline complete!")
@@ -1085,6 +1195,10 @@ TIL DATA SOURCE (provide ONE of the following):
   --til-h5ad       Single TIL AnnData h5ad file
   --til-csv        Single TIL CSV file (must have CDR3_alpha/CDR3_beta columns)
   --til-vdj-dir    Single CellRanger VDJ output directory
+  --til-sample     Repeatable direct TIL sample spec:
+                   NAME=TYPE:PATH (TYPE is csv|h5ad|vdj)
+                   Example: --til-sample T1=csv:/path/t1.csv
+                            --til-sample T2=vdj:/path/vdj_outs
 
 SAMPLE SHEET FORMAT (for multiple TIL samples):
   samples:
@@ -1114,7 +1228,7 @@ OUTPUT:
 
     til_source = p_til.add_argument_group(
         "TIL data source (provide one)",
-        "Multiple input formats supported. For multi-sample TIL matching, use --sample-sheet.",
+        "Multiple input formats supported. For multi-sample TIL matching, use --sample-sheet or repeat --til-sample.",
     )
     til_source.add_argument(
         "--sample-sheet", "-s", metavar="PATH", help="Sample sheet with TIL samples (YAML or CSV)"
@@ -1129,6 +1243,12 @@ OUTPUT:
     )
     til_source.add_argument(
         "--til-vdj-dir", metavar="PATH", help="Single CellRanger VDJ output directory"
+    )
+    til_source.add_argument(
+        "--til-sample",
+        action="append",
+        metavar="NAME=TYPE:PATH",
+        help="Repeatable direct TIL sample spec. TYPE is csv, h5ad, or vdj (alias for vdj_dir).",
     )
 
     til_opts = p_til.add_argument_group("matching options")
@@ -1149,6 +1269,50 @@ OUTPUT:
     )
     til_out.add_argument("--verbose", action="store_true", help="Verbose output")
     p_til.set_defaults(func=cmd_match_til)
+
+    # -------------------------------------------------------------------------
+    # TIL-Clonotype command
+    # -------------------------------------------------------------------------
+    p_til_clono = subparsers.add_parser(
+        "til-clonotype",
+        help="Aggregate TIL-only data into clonotype counts",
+        description="""
+Aggregate TIL-only data into clonotype counts/frequencies across one or more TIL samples.
+
+TIL DATA SOURCE (provide ONE of the following):
+  --sample-sheet   YAML/CSV sample sheet with TIL samples (source='til')
+  --til-h5ad       Single TIL AnnData h5ad file
+  --til-csv        Single TIL CSV file
+  --til-vdj-dir    Single CellRanger VDJ output directory
+  --til-sample     Repeatable direct TIL sample spec:
+                   NAME=TYPE:PATH (TYPE is csv|h5ad|vdj)
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_til_clono.add_argument("--output", "-o", required=True, help="Output CSV path")
+    p_til_clono.add_argument("--sample-sheet", "-s", metavar="PATH", help="TIL sample sheet")
+    p_til_clono.add_argument("--til-h5ad", metavar="PATH", help="Single TIL h5ad file")
+    p_til_clono.add_argument("--til-csv", metavar="PATH", help="Single TIL CSV file")
+    p_til_clono.add_argument(
+        "--til-vdj-dir", metavar="PATH", help="Single CellRanger VDJ output directory"
+    )
+    p_til_clono.add_argument(
+        "--til-sample",
+        action="append",
+        metavar="NAME=TYPE:PATH",
+        help="Repeatable direct TIL sample spec. TYPE is csv, h5ad, or vdj (alias for vdj_dir).",
+    )
+    p_til_clono.add_argument(
+        "--match-by",
+        choices=["CDR3ab", "CDR3b_only"],
+        default="CDR3ab",
+        help="Aggregate by both chains or beta-only (default: CDR3ab)",
+    )
+    p_til_clono.add_argument(
+        "--min-cells", type=int, default=1, help="Minimum total TIL cells per clonotype (default: 1)"
+    )
+    p_til_clono.add_argument("--verbose", action="store_true", help="Verbose output")
+    p_til_clono.set_defaults(func=cmd_til_clonotype)
 
     # -------------------------------------------------------------------------
     # Assemble command
@@ -1233,7 +1397,7 @@ CONDITIONALLY REQUIRED:
     asm_seq.add_argument(
         "--single-chain",
         action="store_true",
-        help="Generate single-chain constructs (alpha-linker-beta)",
+        help="Generate single-chain constructs (beta-linker-alpha)",
     )
     asm_seq.add_argument(
         "--linker", default="T2A", help="Linker peptide for single-chain (default: T2A)"
@@ -1328,6 +1492,12 @@ CONDITIONALLY REQUIRED:
     # TIL step parameters
     til_group = p_run.add_argument_group("TIL matching options")
     til_group.add_argument("--til-samples", help="Comma-separated TIL sample names")
+    til_group.add_argument(
+        "--til-sample",
+        action="append",
+        metavar="NAME=TYPE:PATH",
+        help="Repeatable direct TIL sample spec. TYPE is csv, h5ad, or vdj (alias for vdj_dir).",
+    )
     til_group.add_argument(
         "--til-match-by", choices=["CDR3ab", "CDR3b_only"], help="TIL matching strategy"
     )

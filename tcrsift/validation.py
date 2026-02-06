@@ -728,6 +728,115 @@ def log_validation_summary(
 # =============================================================================
 
 
+def parse_til_sample_spec(spec: str) -> tuple[str, str, Path]:
+    """
+    Parse a --til-sample specification.
+
+    Expected formats
+    ----------------
+    - NAME=TYPE:PATH
+    - TYPE:PATH  (sample name inferred from PATH stem)
+
+    TYPE aliases
+    ------------
+    - csv
+    - h5ad
+    - vdj, vdj_dir, vdj-dir  -> vdj_dir
+    """
+    if not isinstance(spec, str) or not spec.strip():
+        raise TCRsiftValidationError(
+            "Empty --til-sample specification",
+            hint="Use format NAME=TYPE:PATH, e.g. T1=csv:/path/to/til.csv",
+        )
+
+    spec = spec.strip()
+    sample_name = None
+    source_spec = spec
+
+    if "=" in spec:
+        sample_name, source_spec = spec.split("=", 1)
+        sample_name = sample_name.strip()
+        if not sample_name:
+            raise TCRsiftValidationError(
+                f"Invalid --til-sample spec: '{spec}'",
+                hint="Sample name before '=' cannot be empty.",
+            )
+
+    if ":" not in source_spec:
+        raise TCRsiftValidationError(
+            f"Invalid --til-sample spec: '{spec}'",
+            hint="Expected TYPE:PATH after optional NAME=. Example: T1=csv:/path/to/til.csv",
+        )
+
+    source_type_raw, path_raw = source_spec.split(":", 1)
+    source_type_raw = source_type_raw.strip().lower()
+    path_raw = path_raw.strip()
+
+    source_aliases = {
+        "csv": "csv",
+        "h5ad": "h5ad",
+        "vdj": "vdj_dir",
+        "vdj_dir": "vdj_dir",
+        "vdj-dir": "vdj_dir",
+    }
+    source_type = source_aliases.get(source_type_raw)
+    if source_type is None:
+        raise TCRsiftValidationError(
+            f"Invalid TIL source type in --til-sample: '{source_type_raw}'",
+            hint="Use one of: csv, h5ad, vdj (or vdj_dir).",
+        )
+
+    if not path_raw:
+        raise TCRsiftValidationError(
+            f"Missing path in --til-sample spec: '{spec}'",
+            hint="Expected non-empty path after TYPE:.",
+        )
+
+    path = Path(path_raw).expanduser()
+
+    if sample_name is None:
+        sample_name = path.stem if path.suffix else path.name
+        if not sample_name:
+            sample_name = "TIL"
+
+    return sample_name, source_type, path
+
+
+def validate_til_sample_specs(specs: list[str]) -> list[tuple[str, str, Path]]:
+    """
+    Validate and parse --til-sample specifications.
+
+    Returns parsed tuples: (sample_name, source_type, path).
+    """
+    if not specs:
+        raise TCRsiftValidationError(
+            "No --til-sample values provided",
+            hint="Provide at least one spec, e.g. --til-sample T1=csv:/path/to/til.csv",
+        )
+
+    parsed_specs: list[tuple[str, str, Path]] = []
+    seen_names: set[str] = set()
+
+    for spec in specs:
+        sample_name, source_type, path = parse_til_sample_spec(spec)
+
+        if sample_name in seen_names:
+            raise TCRsiftValidationError(
+                f"Duplicate TIL sample name in --til-sample specs: '{sample_name}'",
+                hint="Use unique sample names, e.g. T1=..., T2=...",
+            )
+        seen_names.add(sample_name)
+
+        if source_type in {"csv", "h5ad"}:
+            validate_file_exists(path, f"TIL {source_type} file for sample '{sample_name}'")
+        elif source_type == "vdj_dir":
+            validate_directory_exists(path, f"TIL VDJ directory for sample '{sample_name}'")
+
+        parsed_specs.append((sample_name, source_type, path))
+
+    return parsed_specs
+
+
 def validate_cli_conditional_requirement(
     args,
     required_arg: str,
@@ -936,9 +1045,21 @@ def validate_run_args(args) -> None:
     # Validate sample sheet exists
     validate_file_exists(args.sample_sheet, "sample sheet (--sample-sheet)")
 
+    # Prevent ambiguous TIL source selection in run command
+    if getattr(args, "til_samples", None) and getattr(args, "til_sample", None):
+        raise TCRsiftValidationError(
+            "Conflicting TIL options: --til-samples and --til-sample",
+            hint="Use either --til-samples (sample names from sample sheet) "
+            "or repeat --til-sample (direct source specs), not both.",
+        )
+
     # Validate contigs-dir exists if provided
     if getattr(args, "contigs_dir", None):
         validate_directory_exists(args.contigs_dir, "contigs directory (--contigs-dir)")
+
+    # Validate direct TIL sample specs if provided
+    if getattr(args, "til_sample", None):
+        validate_til_sample_specs(args.til_sample)
 
 
 def validate_match_til_args(args) -> None:
@@ -956,13 +1077,20 @@ def validate_match_til_args(args) -> None:
         If required arguments are missing or invalid
     """
     # Check that at least one TIL data source is provided
-    til_sources = ["sample_sheet", "til_h5ad", "til_csv", "til_vdj_dir"]
-    provided_sources = [src for src in til_sources if getattr(args, src, None)]
+    til_sources = ["sample_sheet", "til_h5ad", "til_csv", "til_vdj_dir", "til_sample"]
+    provided_sources = []
+    for src in til_sources:
+        value = getattr(args, src, None)
+        if src == "til_sample":
+            if value:
+                provided_sources.append(src)
+        elif value:
+            provided_sources.append(src)
 
     if not provided_sources:
         raise TCRsiftValidationError(
             "No TIL data source specified",
-            hint="Provide one of: --sample-sheet, --til-h5ad, --til-csv, or --til-vdj-dir",
+            hint="Provide one of: --sample-sheet, --til-h5ad, --til-csv, --til-vdj-dir, or --til-sample",
         )
 
     # Validate that only one source is provided (to avoid confusion)
@@ -970,7 +1098,7 @@ def validate_match_til_args(args) -> None:
         flags = [f"--{src.replace('_', '-')}" for src in provided_sources]
         raise TCRsiftValidationError(
             f"Multiple TIL data sources specified: {', '.join(flags)}",
-            hint="Provide only one TIL data source. Use --sample-sheet for multiple TIL samples.",
+            hint="Provide only one TIL data source. For multiple TIL samples, use --sample-sheet or repeat --til-sample.",
         )
 
     # Validate the provided source exists
@@ -985,3 +1113,5 @@ def validate_match_til_args(args) -> None:
         validate_file_exists(source_path, "TIL CSV file (--til-csv)")
     elif source == "til_vdj_dir":
         validate_directory_exists(source_path, "TIL VDJ directory (--til-vdj-dir)")
+    elif source == "til_sample":
+        validate_til_sample_specs(source_path)

@@ -67,7 +67,7 @@ The output is an AnnData object with:
 Classifies cells as CD4+ or CD8+ based on gene expression:
 
 ```bash
-tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --ratio 3.0
+tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --cd4-cd8-ratio 3.0
 ```
 
 Classification categories:
@@ -125,6 +125,11 @@ For tumor studies, match culture clonotypes against TIL:
 
 ```bash
 tcrsift match-til -i annotated.csv --til-csv til_clonotypes.csv -o matched.csv
+
+# Multiple TIL samples without a sample sheet:
+tcrsift match-til -i annotated.csv -o matched.csv \
+  --til-sample T1=csv:/path/to/til_t1.csv \
+  --til-sample T2=h5ad:/path/to/til_t2.h5ad
 ```
 
 This identifies clones that:
@@ -134,6 +139,14 @@ This identifies clones that:
 
 TIL samples are excluded from culture aggregation/filtering and only used for matching.
 
+For TIL-only analysis (no culture input), use:
+
+```bash
+tcrsift til-clonotype -o til_clonotypes.csv \
+  --til-sample T1=csv:/path/to/til_t1.csv \
+  --til-sample T2=h5ad:/path/to/til_t2.h5ad
+```
+
 ## 7. Assemble Full Sequences
 
 Build full-length TCR sequences:
@@ -142,7 +155,7 @@ Build full-length TCR sequences:
 tcrsift assemble -i annotated.csv -o sequences.csv \
     --include-constant \
     --linker T2A \
-    --export-fasta sequences.fasta
+    --fasta sequences.fasta
 ```
 
 Output includes:

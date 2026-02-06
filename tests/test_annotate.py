@@ -297,6 +297,19 @@ class TestAnnotateClonotypes:
         # Viral clones should be excluded
         assert not any(result.get("is_viral", pd.Series([False])))
 
+    def test_no_database_paths_returns_default_annotation_columns(self, sample_clonotypes_df):
+        """Annotation should be optional when no database paths are provided."""
+        result = annotate_clonotypes(sample_clonotypes_df)
+
+        assert len(result) == len(sample_clonotypes_df)
+        assert "db_match" in result.columns
+        assert "db_epitope" in result.columns
+        assert "db_species" in result.columns
+        assert "db_database" in result.columns
+        assert "is_viral" in result.columns
+        assert (~result["db_match"]).all()
+        assert (~result["is_viral"]).all()
+
 
 class TestGetAnnotationSummary:
     """Tests for annotation summary."""

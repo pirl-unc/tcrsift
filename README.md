@@ -31,7 +31,7 @@ CellRanger VDJ + GEX  -->  tcrsift run  -->  clonotypes.csv
                               |
         load -> phenotype -> clonotype -> filter -> annotate -> assemble
 
-Supplementary: load-sct, annotate-gex, match-til, unify
+Supplementary: load-sct, annotate-gex, match-til, til-clonotype, unify
 ```
 
 ### Key Data Structures
@@ -227,7 +227,7 @@ tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
 Classifies each cell as CD4+ or CD8+ based on gene expression ratios.
 
 ```bash
-tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --ratio 3.0
+tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --cd4-cd8-ratio 3.0
 ```
 
 **Classification logic:**
@@ -351,6 +351,8 @@ tcrsift run --sample-sheet samples.yaml -o results/
 tcrsift run --sample-sheet samples.yaml -o results/ --til-samples Patient1_TIL
 ```
 
+Use either `--til-samples` or repeat `--til-sample`, not both.
+
 **Output columns added:**
 - `til_match` (bool): Clone found in TIL
 - `til_cell_count`: Number of TIL cells with this TCR
@@ -369,12 +371,36 @@ tcrsift match-til \
     -i culture_clonotypes.csv \
     --til-h5ad til_processed.h5ad \
     -o matched.csv
+
+# Or provide multiple TIL samples directly (no sample sheet):
+tcrsift match-til \
+    -i culture_clonotypes.csv \
+    -o matched.csv \
+    --til-sample T1=csv:/path/to/til_t1.csv \
+    --til-sample T2=h5ad:/path/to/til_t2.h5ad \
+    --til-sample T3=vdj:/path/to/til_t3_vdj_outs
 ```
 
 **When to use:**
 - TIL from a different patient or experiment
 - Retrospective matching against archived TIL data
 - TIL processed with different parameters
+
+### TIL-Only Aggregation
+
+For TIL-only studies (for example, multiple TIL timepoints), aggregate one or
+more TIL sources directly into clonotype-level counts/frequencies:
+
+```bash
+tcrsift til-clonotype -o til_clonotypes.csv \
+    --til-sample T1=csv:/path/to/til_t1.csv \
+    --til-sample T2=h5ad:/path/to/til_t2.h5ad \
+    --til-sample T3=vdj:/path/to/til_t3_vdj_outs
+```
+
+This creates a harmonized clonotype table with:
+- `til_cell_count` and `til_frequency` (combined across all TIL samples)
+- `til_cell_count.{sample}` and `til_frequency.{sample}` (per-sample columns)
 
 ### Annotate with Gene Expression (`annotate-gex`)
 
@@ -521,7 +547,7 @@ When combining data from different sources processed separately:
 
 ```bash
 # Process each source
-tcrsift run --sample-sheet til_samples.yaml -o til_results/
+tcrsift til-clonotype -o til_results/clonotypes.csv --sample-sheet til_samples.yaml
 tcrsift run --sample-sheet culture_samples.yaml -o culture_results/
 tcrsift load-sct -i sct_data.xlsx -o sct_clonotypes.csv --aggregate
 

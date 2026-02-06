@@ -603,6 +603,130 @@ samples:
 
         cmd_run(args)
 
+    def test_run_with_direct_til_sample_specs(self, tmp_path, monkeypatch):
+        """cmd_run should support repeatable --til-sample specs without TIL in sample sheet."""
+        import anndata as ad
+        import pandas as pd
+
+        sample_sheet_path = tmp_path / "samples.yaml"
+        sample_sheet_path.write_text(
+            """
+samples:
+  - sample: "Culture1"
+    vdj_dir: "/data/culture/vdj"
+    source: "culture"
+"""
+        )
+
+        # Create a valid direct TIL CSV path for early validation
+        til_csv = tmp_path / "til.csv"
+        til_csv.write_text("CDR3_alpha,CDR3_beta\nA,B\n")
+
+        obs = pd.DataFrame(
+            {
+                "sample": ["Culture1"],
+                "source": ["culture"],
+            },
+            index=["cell1"],
+        )
+        adata = ad.AnnData(obs=obs)
+
+        def fake_load_samples(*_args, **_kwargs):
+            return adata
+
+        def fake_phenotype_cells(adata_in, *_args, **_kwargs):
+            return adata_in
+
+        def fake_filter_by_tcell_type(adata_in, *_args, **_kwargs):
+            return adata_in
+
+        def fake_aggregate_clonotypes(*_args, **_kwargs):
+            return pd.DataFrame(
+                {
+                    "CDR3ab": ["A_B"],
+                    "CDR3_alpha": ["A"],
+                    "CDR3_beta": ["B"],
+                    "cell_count": [1],
+                }
+            )
+
+        def fake_filter_clonotypes(df, *_args, **_kwargs):
+            return df.assign(tier="tier1")
+
+        def fake_split_by_tier(df, *_args, **_kwargs):
+            return {"tier1": df}
+
+        def fake_load_til_specs(specs):
+            assert specs == [f"T1=csv:{til_csv}"]
+            return {"T1": pd.DataFrame({"CDR3_alpha": ["A"], "CDR3_beta": ["B"], "sample": ["T1"]})}
+
+        def fake_match_til(df, *_args, **_kwargs):
+            return df.assign(
+                til_match=False,
+                til_samples="",
+                til_cell_count=0,
+                til_frequency=0.0,
+            )
+
+        monkeypatch.setattr("tcrsift.loader.load_samples", fake_load_samples)
+        monkeypatch.setattr("tcrsift.phenotype.phenotype_cells", fake_phenotype_cells)
+        monkeypatch.setattr("tcrsift.phenotype.filter_by_tcell_type", fake_filter_by_tcell_type)
+        monkeypatch.setattr("tcrsift.clonotype.aggregate_clonotypes", fake_aggregate_clonotypes)
+        monkeypatch.setattr("tcrsift.filter.filter_clonotypes", fake_filter_clonotypes)
+        monkeypatch.setattr("tcrsift.filter.split_by_tier", fake_split_by_tier)
+        monkeypatch.setattr("tcrsift.til.load_til_specs", fake_load_til_specs)
+        monkeypatch.setattr("tcrsift.til.match_til", fake_match_til)
+
+        output_dir = tmp_path / "out"
+
+        args = argparse.Namespace(
+            sample_sheet=str(sample_sheet_path),
+            output_dir=str(output_dir),
+            config=None,
+            generate_plots=False,
+            generate_report=False,
+            no_leaders=True,
+            include_constant=False,
+            single_chain=False,
+            til_samples=None,
+            til_sample=[f"T1=csv:{til_csv}"],
+            min_genes=None,
+            max_genes=None,
+            min_counts=None,
+            max_counts=None,
+            min_mito_pct=None,
+            max_mito_pct=None,
+            cd4_cd8_ratio=None,
+            min_cd3_reads=None,
+            group_by=None,
+            handle_doublets=None,
+            min_umi=None,
+            tcell_type=None,
+            method=None,
+            min_cells=None,
+            min_frequency=None,
+            require_complete=None,
+            fdr_tiers=None,
+            vdjdb_path=None,
+            iedb_path=None,
+            cedar_path=None,
+            match_by=None,
+            exclude_viral=None,
+            flag_only=None,
+            til_match_by=None,
+            min_til_cells=None,
+            alpha_leader=None,
+            beta_leader=None,
+            leaders_from_contigs=False,
+            contigs_dir=None,
+            linker=None,
+            constant_source=None,
+            skip_plots=None,
+            verbose=False,
+        )
+
+        cmd_run(args)
+
 
 class TestSampleSheetSourceTypes:
     """Additional tests for sample sheet source type detection."""
@@ -927,6 +1051,22 @@ class TestValidateRunArgs:
             validate_run_args(args)
         assert "does not exist" in str(exc_info.value)
 
+    def test_error_conflicting_til_sources(self, sample_sheet_file):
+        """Should fail when both --til-samples and --til-sample are provided."""
+        args = argparse.Namespace(
+            sample_sheet=str(sample_sheet_file),
+            output_dir="/output",
+            alpha_leader=None,
+            beta_leader=None,
+            leaders_from_contigs=False,
+            contigs_dir=None,
+            til_samples="TIL1",
+            til_sample=["TIL1=csv:/tmp/til.csv"],
+        )
+        with pytest.raises(TCRsiftValidationError) as exc_info:
+            validate_run_args(args)
+        assert "Conflicting TIL options" in str(exc_info.value)
+
 
 class TestValidateAnnotateGexArgs:
     """Tests for validate_annotate_gex_args function."""
@@ -1152,6 +1292,25 @@ class TestMatchTilParser:
         )
         assert args4.sample_sheet == "samples.yaml"
 
+        # Test repeatable --til-sample specs
+        args5 = parser.parse_args(
+            [
+                "match-til",
+                "-i",
+                "clonotypes.csv",
+                "-o",
+                "matched.csv",
+                "--til-sample",
+                "T1=csv:/path/to/til_t1.csv",
+                "--til-sample",
+                "T2=vdj:/path/to/til_t2_vdj_outs",
+            ]
+        )
+        assert args5.til_sample == [
+            "T1=csv:/path/to/til_t1.csv",
+            "T2=vdj:/path/to/til_t2_vdj_outs",
+        ]
+
     def test_match_til_matching_options(self):
         """Test matching options parse correctly."""
         parser = create_parser()
@@ -1174,6 +1333,44 @@ class TestMatchTilParser:
         assert args.min_til_cells == 5
 
 
+class TestTilClonotypeParser:
+    """Tests for til-clonotype CLI parser configuration."""
+
+    def test_parser_has_til_clonotype_command(self):
+        """Parser should include til-clonotype command."""
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "til-clonotype",
+                "-o",
+                "til_clonotypes.csv",
+                "--til-csv",
+                "til.csv",
+            ]
+        )
+        assert args.command == "til-clonotype"
+        assert hasattr(args, "func")
+
+    def test_til_clonotype_accepts_repeatable_til_sample(self):
+        """til-clonotype should parse repeatable --til-sample options."""
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "til-clonotype",
+                "-o",
+                "til_clonotypes.csv",
+                "--til-sample",
+                "T1=csv:/path/to/til_t1.csv",
+                "--til-sample",
+                "T2=h5ad:/path/to/til_t2.h5ad",
+            ]
+        )
+        assert args.til_sample == [
+            "T1=csv:/path/to/til_t1.csv",
+            "T2=h5ad:/path/to/til_t2.h5ad",
+        ]
+
+
 class TestValidateMatchTilArgs:
     """Tests for match-til argument validation."""
 
@@ -1187,6 +1384,7 @@ class TestValidateMatchTilArgs:
             til_h5ad=None,
             til_csv=None,
             til_vdj_dir=None,
+            til_sample=None,
         )
 
         with pytest.raises(TCRsiftValidationError, match="No TIL data source specified"):
@@ -1208,6 +1406,7 @@ class TestValidateMatchTilArgs:
             til_h5ad=str(til_h5ad),
             til_csv=str(til_csv),
             til_vdj_dir=None,
+            til_sample=None,
         )
 
         with pytest.raises(TCRsiftValidationError, match="Multiple TIL data sources"):
@@ -1225,6 +1424,7 @@ class TestValidateMatchTilArgs:
             til_h5ad=None,
             til_csv=str(til_csv),
             til_vdj_dir=None,
+            til_sample=None,
         )
 
         # Should not raise
@@ -1239,6 +1439,7 @@ class TestValidateMatchTilArgs:
             til_h5ad=None,
             til_csv=str(tmp_path / "nonexistent.csv"),
             til_vdj_dir=None,
+            til_sample=None,
         )
 
         with pytest.raises(TCRsiftValidationError, match="does not exist"):
@@ -1253,7 +1454,85 @@ class TestValidateMatchTilArgs:
             til_h5ad=None,
             til_csv=None,
             til_vdj_dir=str(tmp_path / "nonexistent_dir"),
+            til_sample=None,
         )
 
         with pytest.raises(TCRsiftValidationError, match="does not exist"):
             validate_match_til_args(args)
+
+    def test_til_sample_specs_valid(self, tmp_path):
+        """Repeatable --til-sample specs should validate."""
+        from tcrsift.validation import validate_match_til_args
+
+        til_csv = tmp_path / "til.csv"
+        til_csv.write_text("CDR3_alpha,CDR3_beta\nCAV,CAS\n")
+        vdj_dir = tmp_path / "vdj_outs"
+        vdj_dir.mkdir()
+
+        args = argparse.Namespace(
+            sample_sheet=None,
+            til_h5ad=None,
+            til_csv=None,
+            til_vdj_dir=None,
+            til_sample=[f"T1=csv:{til_csv}", f"T2=vdj:{vdj_dir}"],
+        )
+
+        validate_match_til_args(args)
+
+    def test_til_sample_specs_invalid_format_raises(self, tmp_path):
+        """Invalid --til-sample format should raise a clear error."""
+        from tcrsift.validation import validate_match_til_args
+
+        args = argparse.Namespace(
+            sample_sheet=None,
+            til_h5ad=None,
+            til_csv=None,
+            til_vdj_dir=None,
+            til_sample=["not_a_valid_spec"],
+        )
+
+        with pytest.raises(TCRsiftValidationError, match="Invalid --til-sample spec"):
+            validate_match_til_args(args)
+
+    def test_til_sample_specs_duplicate_names_raise(self, tmp_path):
+        """Duplicate sample names in --til-sample should raise."""
+        from tcrsift.validation import validate_match_til_args
+
+        til1 = tmp_path / "til1.csv"
+        til2 = tmp_path / "til2.csv"
+        til1.write_text("CDR3_alpha,CDR3_beta\nCAV,CAS\n")
+        til2.write_text("CDR3_alpha,CDR3_beta\nCAV,CAS\n")
+
+        args = argparse.Namespace(
+            sample_sheet=None,
+            til_h5ad=None,
+            til_csv=None,
+            til_vdj_dir=None,
+            til_sample=[f"T1=csv:{til1}", f"T1=csv:{til2}"],
+        )
+
+        with pytest.raises(TCRsiftValidationError, match="Duplicate TIL sample name"):
+            validate_match_til_args(args)
+
+    def test_cmd_match_til_rejects_multiple_source_modes(self, tmp_path):
+        """match-til command should fail early when multiple source modes are provided."""
+        til_csv = tmp_path / "til.csv"
+        til_csv.write_text("CDR3_alpha,CDR3_beta\nCAV,CAS\n")
+
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "match-til",
+                "-i",
+                "clonotypes.csv",
+                "-o",
+                "matched.csv",
+                "--til-csv",
+                str(til_csv),
+                "--til-sample",
+                f"T1=csv:{til_csv}",
+            ]
+        )
+
+        with pytest.raises(TCRsiftValidationError, match="Multiple TIL data sources"):
+            args.func(args)

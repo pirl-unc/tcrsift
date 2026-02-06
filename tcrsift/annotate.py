@@ -444,6 +444,22 @@ def annotate_clonotypes(
     pd.DataFrame
         Annotated clonotypes
     """
+    # Annotation is optional: if no databases are provided, return input with default annotation columns.
+    if not any([vdjdb_path, iedb_path, cedar_path]):
+        logger.info("No annotation database paths provided; returning input with empty annotations")
+        df = clonotypes.copy()
+        if "db_match" not in df.columns:
+            df["db_match"] = False
+        if "db_epitope" not in df.columns:
+            df["db_epitope"] = None
+        if "db_species" not in df.columns:
+            df["db_species"] = None
+        if "db_database" not in df.columns:
+            df["db_database"] = None
+        if "is_viral" not in df.columns:
+            df["is_viral"] = False
+        return df
+
     # Load databases
     database = load_databases(
         vdjdb_path=vdjdb_path,

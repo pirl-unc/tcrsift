@@ -410,6 +410,7 @@ class TCRsiftConfig:
                 "output_dir",
                 "no_leaders",
                 "leaders_from_contigs",
+                "til_sample",
             ):
                 continue
             # Handle special cases
@@ -478,4 +479,3 @@ def generate_example_config(path: str | Path = "tcrsift_config.yaml") -> None:
     """
     config = TCRsiftConfig()
     config.to_yaml(path)
-    print(f"Generated example config: {path}")
