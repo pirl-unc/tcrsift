@@ -434,6 +434,23 @@ def cmd_til_clonotype(args):
 
 
 # =============================================================================
+# TIL-Select Command
+# =============================================================================
+
+
+def cmd_til_select(args):
+    """Prioritize promising TIL clonotypes from multi-timepoint VDJ+GEX data."""
+    from .til_select import run_til_select
+
+    setup_logging(args.verbose)
+    master_df = run_til_select(args)
+    n_final = int(master_df["is_candidate_tumor_reactive"].sum())
+    print(f"Saved harmonized table: {args.out_table}")
+    print(f"Final candidate clonotypes: {n_final}")
+    print(f"Figures/subsets directory: {args.fig_dir}")
+
+
+# =============================================================================
 # Assemble Command
 # =============================================================================
 
@@ -1313,6 +1330,241 @@ TIL DATA SOURCE (provide ONE of the following):
     )
     p_til_clono.add_argument("--verbose", action="store_true", help="Verbose output")
     p_til_clono.set_defaults(func=cmd_til_clonotype)
+
+    # -------------------------------------------------------------------------
+    # TIL-Select command
+    # -------------------------------------------------------------------------
+    p_til_select = subparsers.add_parser(
+        "til-select",
+        help="Select promising TIL clonotypes from multi-timepoint VDJ+GEX inputs",
+        description="""
+Prioritize promising TIL clonotypes from one or more tumor timepoints.
+
+Input model is compatible with legacy v2 scripts:
+  - consensus_annotations.<TP>.csv
+  - clonotypes.<TP>.csv
+  - filtered_contig_annotations.<TP>.csv
+  - sample_filtered_feature_bc_matrix.<TP>.h5
+
+Timepoint mappings can be provided explicitly with:
+  --samples T1=consensus_annotations.T1.csv,clonotypes.T1.csv ...
+or through:
+  --config config.yaml
+or auto-discovered from --data-dir.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_til_select.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Optional YAML mapping timepoints to consensus/clonotypes paths.",
+    )
+    p_til_select.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("data"),
+        help="Directory containing per-timepoint input files (default: ./data).",
+    )
+    p_til_select.add_argument(
+        "--samples",
+        "--inputs",
+        dest="samples",
+        nargs="+",
+        default=None,
+        help=(
+            "Explicit inputs as LABEL=CONSENSUS_PATH,CLONOTYPES_PATH. "
+            "Example: T1=consensus_annotations.T1.csv,clonotypes.T1.csv"
+        ),
+    )
+    p_til_select.add_argument(
+        "--count-column",
+        type=str,
+        default=None,
+        help="Optional clonotype count column; auto-detected when omitted.",
+    )
+    p_til_select.add_argument("--verbose", action="store_true", help="Verbose logging")
+    p_til_select.add_argument("--top-k", type=int, default=20, help="Top-k clones to output/plot")
+    p_til_select.add_argument(
+        "--min-cells-per-clone",
+        type=int,
+        default=2,
+        help="Minimum total cells across timepoints for base filtering (default: 2).",
+    )
+    p_til_select.add_argument(
+        "--min-cd8-cp10k",
+        type=float,
+        default=0.0,
+        help="Minimum CD8 CP10K threshold for base filtering (strict >, default: 0).",
+    )
+    p_til_select.add_argument(
+        "--max-cd4-to-cd8-ratio",
+        type=float,
+        default=1.0,
+        help="Maximum CD4/CD8 ratio threshold for base filtering (strict <, default: 1.0).",
+    )
+    p_til_select.add_argument(
+        "--increase-ratio-nonzero-min",
+        type=float,
+        default=1.5,
+        help="Minimum last-vs-prior nonzero frequency ratio for increasing branch (default: 1.5).",
+    )
+    p_til_select.add_argument(
+        "--increase-ratio-all-timepoints-min",
+        type=float,
+        default=1.5,
+        help="Minimum last-vs-all-timepoints ratio for all-positive branch (default: 1.5).",
+    )
+    p_til_select.add_argument(
+        "--immunogenic-percentile",
+        type=float,
+        default=0.90,
+        help="Percentile threshold for per-gene/panel immunogenic selection (default: 0.90).",
+    )
+    p_til_select.add_argument(
+        "--immunogenic-percentile-slack-frac",
+        type=float,
+        default=0.01,
+        help="Relative slack below percentile threshold for immunogenic selection (default: 0.01).",
+    )
+    p_til_select.add_argument(
+        "--immunogenic-min-cp10k",
+        type=float,
+        default=0.0,
+        help="Minimum CP10K required for immunogenic eligibility (default: 0).",
+    )
+    p_til_select.add_argument(
+        "--immunogenic-require-above-median",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require per-gene/panel score above base-selected median (default: false).",
+    )
+    p_til_select.add_argument(
+        "--cytotoxic-last-min-z",
+        type=float,
+        default=0.25,
+        help="Minimum terminal cytotoxic z-score (default: 0.25).",
+    )
+    p_til_select.add_argument(
+        "--cytotoxic-last-min-cp10k",
+        type=float,
+        default=0.05,
+        help="Minimum terminal cytotoxic CP10K score (default: 0.05).",
+    )
+    p_til_select.add_argument(
+        "--became-cytotoxic-min-delta-z",
+        type=float,
+        default=0.5,
+        help="Minimum cytotoxic z-score increase (last-first) for became-cytotoxic flag.",
+    )
+    p_til_select.add_argument(
+        "--trend-increase-ratio-min",
+        type=float,
+        default=1.5,
+        help="Compatibility option for trend reporting (default: 1.5).",
+    )
+    p_til_select.add_argument(
+        "--trend-decrease-ratio-max",
+        type=float,
+        default=0.5,
+        help="Compatibility option for trend reporting (default: 0.5).",
+    )
+    p_til_select.add_argument(
+        "--marker-genes",
+        type=str,
+        default="CD4,CD8A,CD8B,GZMB,PRF1,IFNG,MKI67,TNFRSF9",
+        help="Comma-separated marker genes for per-clone GEX scoring.",
+    )
+    p_til_select.add_argument(
+        "--immunogenic-genes",
+        type=str,
+        default="GZMB,PRF1,IFNG,MKI67,TNFRSF9",
+        help="Comma-separated genes for immunogenic branch ranking.",
+    )
+    p_til_select.add_argument(
+        "--cytotoxic-genes",
+        type=str,
+        default="GZMB,PRF1,IFNG,MKI67,TNFRSF9",
+        help="Comma-separated genes for cytotoxic aggregate scores.",
+    )
+    p_til_select.add_argument(
+        "--cytolytic-genes",
+        type=str,
+        default="GZMB,PRF1",
+        help="Comma-separated genes for cytolytic score branch.",
+    )
+    p_til_select.add_argument(
+        "--antigen-response-genes",
+        type=str,
+        default="TNFRSF9,MKI67",
+        help="Comma-separated genes for antigen-response score branch.",
+    )
+    p_til_select.add_argument(
+        "--pyensembl-release",
+        type=int,
+        default=110,
+        help="Compatibility option used in selected-clone PDF report metadata.",
+    )
+    p_til_select.add_argument(
+        "--rank-by",
+        type=str,
+        default="mean_frequency",
+        choices=["mean_frequency", "max_frequency", "total_cells", "marker_score_cp10k_mean", "marker_score_z_mean"],
+        help="Ranking metric for top-k outputs.",
+    )
+    p_til_select.add_argument(
+        "--fig-dir",
+        type=Path,
+        default=Path("figures"),
+        help="Output directory for figures/subsets (default: ./figures).",
+    )
+    p_til_select.add_argument(
+        "--out-table",
+        type=Path,
+        default=Path("abTCR_harmonized.csv"),
+        help="Output CSV for harmonized table (default: ./abTCR_harmonized.csv).",
+    )
+    p_til_select.add_argument(
+        "--out-heatmap",
+        type=Path,
+        default=None,
+        help="Output PNG for top-k heatmap (default: FIG_DIR/abTCR_topk_heatmap.png).",
+    )
+    p_til_select.add_argument(
+        "--out-top",
+        type=Path,
+        default=None,
+        help="Output CSV for top-k table (default: FIG_DIR/abTCR_topk.csv).",
+    )
+    p_til_select.add_argument("--vdjdb", type=Path, default=None, help="Path to VDJdb TSV")
+    p_til_select.add_argument("--iedb", type=Path, default=None, help="Path to IEDB TSV")
+    p_til_select.add_argument("--cedar", type=Path, default=None, help="Path to CEDAR TSV")
+    p_til_select.add_argument(
+        "--match-by",
+        type=str,
+        default="CDR3b_only",
+        choices=["CDR3ab", "CDR3b_only"],
+        help="Matching strategy for public DB annotation (default: CDR3b_only).",
+    )
+    p_til_select.add_argument(
+        "--out-annotated",
+        type=Path,
+        default=None,
+        help="Output CSV for annotated table (default: FIG_DIR/abTCR_annotated.csv).",
+    )
+    p_til_select.add_argument(
+        "--out-annotated-heatmap",
+        type=Path,
+        default=None,
+        help="Compatibility output path for annotated heatmap (reserved).",
+    )
+    p_til_select.add_argument(
+        "--out-selected-report",
+        type=Path,
+        default=None,
+        help="Output PDF for selected clone report (default: FIG_DIR/selected_clones_report.pdf).",
+    )
+    p_til_select.set_defaults(func=cmd_til_select)
 
     # -------------------------------------------------------------------------
     # Assemble command

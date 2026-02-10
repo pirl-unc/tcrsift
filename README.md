@@ -31,7 +31,7 @@ CellRanger VDJ + GEX  -->  tcrsift run  -->  clonotypes.csv
                               |
         load -> phenotype -> clonotype -> filter -> annotate -> assemble
 
-Supplementary: load-sct, annotate-gex, match-til, til-clonotype, unify
+Supplementary: load-sct, annotate-gex, match-til, til-clonotype, til-select, unify
 ```
 
 ### Key Data Structures
@@ -402,6 +402,38 @@ This creates a harmonized clonotype table with:
 - `til_cell_count` and `til_frequency` (combined across all TIL samples)
 - `til_cell_count.{sample}` and `til_frequency.{sample}` (per-sample columns)
 
+### TIL-Only Clone Prioritization (`til-select`)
+
+For 10x VDJ + GEX tumor timepoints, use `til-select` to prioritize clones with
+CD8 bias plus enrichment/immunogenic/cytolytic branch signals.
+
+Input layout per timepoint:
+- `consensus_annotations.<TP>.csv`
+- `clonotypes.<TP>.csv`
+- `filtered_contig_annotations.<TP>.csv`
+- `sample_filtered_feature_bc_matrix.<TP>.h5`
+
+Example (compatible with `pfo004/full-length-tcrs-in-TILs/data`):
+
+```bash
+tcrsift til-select \
+  --data-dir ~/code/pfo-analysis/pfo004/full-length-tcrs-in-TILs/data \
+  --vdjdb ~/code/pfo-analysis/pfo004/full-length-tcrs-in-TILs/data/vdjdb.txt \
+  --iedb ~/code/pfo-analysis/pfo004/full-length-tcrs-in-TILs/data/iedb_tcr_full_v3.tsv \
+  --cedar ~/code/pfo-analysis/pfo004/full-length-tcrs-in-TILs/data/cedar_tcr_full_v3.tsv \
+  --rank-by marker_score_z_mean \
+  --verbose
+```
+
+Key outputs in `figures/`:
+- `abTCR_master_table.csv`
+- `abTCR_annotated.csv`
+- `selection_masks.csv`
+- `subset_*.csv`
+- `selection_funnel.png`
+- `selected_clones_report.pdf`
+- `marker_cells_<TP>.csv`, `marker_clonotype_scores_<TP>.csv`
+
 ### Annotate with Gene Expression (`annotate-gex`)
 
 Adds gene expression data from a 10x HDF5 file to TCR DataFrames.
@@ -482,6 +514,7 @@ tcrsift unify \
 |----------|-----|
 | One patient, culture + TIL in same sample sheet | `run` (TIL auto-detected) |
 | One patient, culture + TIL processed separately | `match-til` |
+| TIL-only, one or more tumor timepoints (10x VDJ+GEX) | `til-select` |
 | Multiple patients or experiments | `unify` |
 | Comparing results across different data sources | `unify` |
 

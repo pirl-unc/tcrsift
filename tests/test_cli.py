@@ -1371,6 +1371,53 @@ class TestTilClonotypeParser:
         ]
 
 
+class TestTilSelectParser:
+    """Tests for til-select CLI parser configuration."""
+
+    def test_parser_has_til_select_command(self):
+        """Parser should include til-select command."""
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "til-select",
+                "--data-dir",
+                "data",
+            ]
+        )
+        assert args.command == "til-select"
+        assert hasattr(args, "func")
+
+    def test_til_select_accepts_samples_alias(self):
+        """til-select should accept v2-style --samples mappings."""
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "til-select",
+                "--samples",
+                "T1=consensus_annotations.T1.csv,clonotypes.T1.csv",
+                "T2=consensus_annotations.T2.csv,clonotypes.T2.csv",
+            ]
+        )
+        assert args.samples == [
+            "T1=consensus_annotations.T1.csv,clonotypes.T1.csv",
+            "T2=consensus_annotations.T2.csv,clonotypes.T2.csv",
+        ]
+
+    def test_til_select_accepts_inputs_alias(self):
+        """til-select should treat --inputs as alias for --samples."""
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "til-select",
+                "--inputs",
+                "T1=consensus_annotations.T1.csv,clonotypes.T1.csv",
+            ]
+        )
+        assert args.samples == [
+            "T1=consensus_annotations.T1.csv,clonotypes.T1.csv",
+        ]
+
+
 class TestValidateMatchTilArgs:
     """Tests for match-til argument validation."""
 

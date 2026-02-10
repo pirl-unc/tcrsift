@@ -147,6 +147,20 @@ tcrsift til-clonotype -o til_clonotypes.csv \
   --til-sample T2=h5ad:/path/to/til_t2.h5ad
 ```
 
+For TIL-only 10x VDJ+GEX timepoint prioritization (CD8 + enrichment + immunogenic masks), use:
+
+```bash
+tcrsift til-select \
+  --data-dir /path/to/til_timepoint_data \
+  --rank-by marker_score_z_mean
+```
+
+Expected per-timepoint files in `--data-dir`:
+- `consensus_annotations.<TP>.csv`
+- `clonotypes.<TP>.csv`
+- `filtered_contig_annotations.<TP>.csv`
+- `sample_filtered_feature_bc_matrix.<TP>.h5`
+
 ## 7. Assemble Full Sequences
 
 Build full-length TCR sequences:

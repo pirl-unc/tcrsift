@@ -267,6 +267,61 @@ tcrsift til-clonotype -o til_clonotypes.csv \
 
 ---
 
+### `tcrsift til-select`
+
+Select promising TIL clonotypes from one or more 10x VDJ+GEX tumor timepoints.
+
+This command is designed for TIL-only analyses where you want to:
+- harmonize clonotypes across timepoints,
+- score per-clone marker expression from GEX,
+- apply CD8/enrichment/immunogenic branch masks,
+- export v2-style subset tables and reports.
+
+```bash
+# Auto-discover inputs from data directory:
+tcrsift til-select --data-dir data --rank-by marker_score_z_mean
+
+# Explicit mappings (v2-compatible):
+tcrsift til-select \
+  --samples \
+    T1=consensus_annotations.T1.csv,clonotypes.T1.csv \
+    T2=consensus_annotations.T2.csv,clonotypes.T2.csv \
+    T3=consensus_annotations.T3.csv,clonotypes.T3.csv
+```
+
+Per-timepoint required files for marker scoring:
+- `filtered_contig_annotations.<TP>.csv`
+- `sample_filtered_feature_bc_matrix.<TP>.h5`
+
+| Option | Description |
+|--------|-------------|
+| `--data-dir` | Directory with per-timepoint files (default: `./data`) |
+| `--samples`, `--inputs` | Explicit mappings `LABEL=CONSENSUS,CLONOTYPES` |
+| `--config` | YAML mapping with `timepoints:` block |
+| `--vdjdb`, `--iedb`, `--cedar` | Optional public DB annotation sources |
+| `--match-by` | DB matching mode: `CDR3ab` or `CDR3b_only` (default: `CDR3b_only`) |
+| `--marker-genes` | Marker panel for GEX scoring |
+| `--min-cells-per-clone` | Base selection minimum total cells |
+| `--min-cd8-cp10k` | Base selection CD8 threshold |
+| `--max-cd4-to-cd8-ratio` | Base selection CD4/CD8 ratio ceiling |
+| `--increase-ratio-nonzero-min` | Increasing branch ratio threshold |
+| `--immunogenic-percentile` | Percentile cutoff for immunogenic branch |
+| `--rank-by` | Top-k ranking metric |
+| `--fig-dir` | Output directory for plots/subsets (default: `./figures`) |
+| `--out-table` | Harmonized CSV output (default: `./abTCR_harmonized.csv`) |
+| `--out-selected-report` | Selected-clone PDF report path |
+
+Main outputs include:
+- `abTCR_harmonized.csv`
+- `figures/abTCR_master_table.csv`
+- `figures/abTCR_annotated.csv`
+- `figures/selection_masks.csv`
+- `figures/subset_*.csv`
+- `figures/selection_funnel.png`
+- `figures/selected_clones_report.pdf`
+
+---
+
 ### `tcrsift assemble`
 
 Assemble full-length sequences.

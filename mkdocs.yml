@@ -77,5 +77,6 @@ nav:
     - Filtering: api/filter.md
     - Annotation: api/annotate.md
     - TIL Matching: api/til.md
+    - TIL Selection: api/til_select.md
     - Assembly: api/assemble.md
   - Contributing: contributing.md

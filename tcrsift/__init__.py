@@ -127,6 +127,13 @@ from .til import (
     match_til,
     summarize_til_clonotypes,
 )
+from .til_select import (
+    build_harmonized_table,
+    compute_marker_scores_for_timepoint,
+    load_from_consensus,
+    run_selection_pipeline,
+    run_til_select,
+)
 from .unify import (
     add_phenotype_confidence,
     compute_condition_statistics,
@@ -201,6 +208,12 @@ __all__ = [
     "identify_til_specific_clones",
     "load_til_specs",
     "summarize_til_clonotypes",
+    # TIL selection
+    "load_from_consensus",
+    "compute_marker_scores_for_timepoint",
+    "build_harmonized_table",
+    "run_selection_pipeline",
+    "run_til_select",
     # Unify
     "merge_experiments",
     "add_phenotype_confidence",
