@@ -1472,7 +1472,7 @@ or auto-discovered from --data-dir.
     p_til_select.add_argument(
         "--marker-genes",
         type=str,
-        default="CD4,CD8A,CD8B,GZMB,PRF1,IFNG,MKI67,TNFRSF9",
+        default="CD4,CD8A,CD8B,GZMB,PRF1,IFNG,MKI67,TNFRSF9,CXCL13,ENTPD1",
         help="Comma-separated marker genes for per-clone GEX scoring.",
     )
     p_til_select.add_argument(
@@ -1490,7 +1490,7 @@ or auto-discovered from --data-dir.
     p_til_select.add_argument(
         "--cytolytic-genes",
         type=str,
-        default="GZMB,PRF1",
+        default="PRF1,GZMB",
         help="Comma-separated genes for cytolytic score branch.",
     )
     p_til_select.add_argument(

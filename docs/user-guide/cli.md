@@ -320,6 +320,11 @@ Main outputs include:
 - `figures/selection_funnel.png`
 - `figures/selected_clones_report.pdf`
 
+v2 CSV compatibility mode (default):
+- `til-select` emits v2-compatible CSV column sets and ordering.
+- With identical inputs/options, CSV outputs are expected to match legacy `v2/harmonize_abtcr_timepoints.py`.
+- Plot/PDF artifacts are generated but may differ byte-for-byte across environments.
+
 ---
 
 ### `tcrsift assemble`

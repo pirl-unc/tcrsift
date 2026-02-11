@@ -434,6 +434,11 @@ Key outputs in `figures/`:
 - `selected_clones_report.pdf`
 - `marker_cells_<TP>.csv`, `marker_clonotype_scores_<TP>.csv`
 
+Legacy v2 CSV compatibility:
+- `til-select` writes v2-compatible CSV schemas and column ordering by default.
+- Using the same inputs/options as `v2/harmonize_abtcr_timepoints.py`, CSV outputs are expected to match exactly.
+- Figure files (`.png`, `.pdf`) are not expected to be byte-identical across runs/environments.
+
 ### Annotate with Gene Expression (`annotate-gex`)
 
 Adds gene expression data from a 10x HDF5 file to TCR DataFrames.

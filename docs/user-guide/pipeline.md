@@ -155,6 +155,10 @@ tcrsift til-select \
   --rank-by marker_score_z_mean
 ```
 
+`til-select` runs in v2-compatible CSV mode by default, so with the same data/options
+it reproduces legacy `harmonize_abtcr_timepoints.py` CSV outputs. Figures and PDFs may
+still differ byte-for-byte.
+
 Expected per-timepoint files in `--data-dir`:
 - `consensus_annotations.<TP>.csv`
 - `clonotypes.<TP>.csv`
