@@ -33,3 +33,13 @@ assert callable(load_sample_sheet)
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_root_export_table_drives_public_api():
+    """The lazy export table should stay aligned with __all__ and dir()."""
+    import tcrsift
+
+    expected_exports = list(tcrsift._EXPORT_TO_MODULE)
+
+    assert tcrsift.__all__ == expected_exports
+    assert set(expected_exports).issubset(set(dir(tcrsift)))

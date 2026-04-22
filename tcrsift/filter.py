@@ -16,8 +16,9 @@ Clonotype filtering for TCRsift.
 Implements tiered filtering to identify antigen-specific TCR clones.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -115,7 +116,7 @@ def filter_clonotypes_threshold(
     min_frequency: float = 0.0,
     max_conditions: int = 999,
     require_complete: bool = True,
-    tcell_type: Optional[str] = None,
+    tcell_type: str | None = None,
     exclude_viral: bool = False,
     verbose: bool = True,
 ) -> pd.DataFrame:
@@ -247,8 +248,8 @@ def filter_clonotypes_threshold(
 
 def assign_tiers_threshold(
     clonotypes: pd.DataFrame,
-    tier_definitions: Optional[dict] = None,
-    tcell_type: Optional[str] = None,
+    tier_definitions: dict | None = None,
+    tcell_type: str | None = None,
     exclude_viral: bool = False,
 ) -> pd.DataFrame:
     """
@@ -322,7 +323,7 @@ def assign_tiers_threshold(
 
 def filter_clonotypes_logistic(
     clonotypes: pd.DataFrame,
-    fdr_tiers: Optional[list] = None,
+    fdr_tiers: list | None = None,
     min_freq_threshold: float = 0.09,
     default_freq_threshold: float = 0.5,
     only_avoid_viral: bool = True,
@@ -426,8 +427,8 @@ def filter_clonotypes(
     min_frequency: float = 0.0,
     require_complete: bool = True,
     exclude_viral: bool = False,
-    fdr_tiers: Optional[list] = None,
-    tier_definitions: Optional[dict] = None,
+    fdr_tiers: list | None = None,
+    tier_definitions: dict | None = None,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
