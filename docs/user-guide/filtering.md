@@ -30,7 +30,7 @@ The threshold method applies configurable criteria at each tier:
 
 **Min Frequency**: Higher frequency suggests active expansion.
 
-**Max Conditions**: Antigen-specific clones should be specific to their antigen condition, not appear across many different antigens (which would suggest bystander expansion).
+**Max Conditions**: Antigen-specific clones should stay concentrated within a small number of antigen conditions. TCRsift uses antigen/condition counts when they are available and falls back to sample count otherwise.
 
 ### Using Threshold Filtering
 

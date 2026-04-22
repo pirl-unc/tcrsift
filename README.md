@@ -94,13 +94,19 @@ pip install -e .
 ### Optional Dependencies
 
 ```bash
+# Common add-on bundles
+pip install "tcrsift[reports,assembly,excel]"
+
 # For PDF report generation
-pip install reportlab pdfkit
+pip install "tcrsift[reports]"
 brew install wkhtmltopdf  # macOS
 
 # For constant region sequences from Ensembl
-pip install pyensembl
+pip install "tcrsift[assembly]"
 pyensembl install --release 93 --species human
+
+# For SCT Excel input files
+pip install "tcrsift[excel]"
 ```
 
 ## Quick Start

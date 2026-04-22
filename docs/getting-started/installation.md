@@ -22,12 +22,18 @@ pip install -e .
 
 ## Optional Dependencies
 
+Install all optional feature bundles:
+
+```bash
+pip install "tcrsift[reports,assembly,excel]"
+```
+
 ### PDF Report Generation
 
 For generating PDF reports:
 
 ```bash
-pip install reportlab pdfkit
+pip install "tcrsift[reports]"
 ```
 
 You'll also need wkhtmltopdf:
@@ -50,16 +56,16 @@ You'll also need wkhtmltopdf:
 For assembling full-length TCR sequences with constant regions:
 
 ```bash
-pip install pyensembl
+pip install "tcrsift[assembly]"
 pyensembl install --release 93 --species human
 ```
 
-### Statistical Modeling
+### Excel Support
 
-For logistic regression-based filtering:
+For SCT Excel input files:
 
 ```bash
-pip install statsmodels
+pip install "tcrsift[excel]"
 ```
 
 ## Verify Installation

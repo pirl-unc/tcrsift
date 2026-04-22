@@ -13,238 +13,146 @@
 """
 TCRsift: TCR selection from antigen-specific culture and scRNA/VDJ sequencing data.
 
-A tool for identifying antigen-specific T cell receptor clones from single-cell
-sequencing data, with support for:
-
-- Loading CellRanger VDJ and GEX outputs
-- CD4/CD8 T cell phenotyping from gene expression
-- Clonotype aggregation and frequency analysis
-- Tiered filtering for antigen-specific clones
-- Annotation with public TCR databases (VDJdb, IEDB, CEDAR)
-- TIL (tumor-infiltrating lymphocyte) matching
-- Full-length TCR sequence assembly
-
-Example usage::
-
-    # Run complete pipeline
-    tcrsift run --sample-sheet samples.yaml --output-dir results/
-
-    # Or run individual steps
-    tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
-    tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad
-    tcrsift clonotype -i phenotyped.h5ad -o clonotypes.csv
-    tcrsift filter -i clonotypes.csv -o filtered/
-    tcrsift annotate -i filtered/tier4.csv -o annotated.csv --vdjdb /path/to/vdjdb
-    tcrsift assemble -i annotated.csv -o full_sequences.csv --include-constant
-
+The public API is resolved lazily so light-weight imports such as
+`tcrsift.sample_sheet` or `from tcrsift import load_sample_sheet` do not pull in
+heavy optional runtime dependencies like Scanpy unless they are actually needed.
 """
 
-from .annotate import (
-    annotate_clonotypes,
-    get_annotation_summary,
-    load_cedar,
-    load_iedb,
-    load_vdjdb,
-)
-from .assemble import (
-    DEFAULT_LEADERS,
-    LINKERS,
-    assemble_full_sequences,
-    export_fasta,
-    translate_dna,
-    validate_sequences,
-)
-from .clonotype import (
-    aggregate_clonotypes,
-    export_clonotypes_airr,
-    get_clonotype_summary,
-)
-from .config import (
-    AssembleConfig,
-    GEXConfig,
-    LoadConfig,
-    SCTConfig,
-    TCRsiftConfig,
-    UnifyConfig,
-)
-from .filter import (
-    assign_tiers_threshold,
-    filter_clonotypes,
-    filter_clonotypes_threshold,
-    get_filter_summary,
-    split_by_tier,
-)
-from .gex import (
-    DEFAULT_GENE_GROUPS,
-    DEFAULT_GENE_LIST,
-    aggregate_gex_by_clonotype,
-    augment_with_gex,
-    compute_cd4_cd8_counts,
-)
-from .loader import (
-    load_cellranger_gex,
-    load_cellranger_vdj,
-    load_sample,
-    load_samples,
-)
-from .mnemonic import tcr_name
-from .phenotype import (
-    classify_tcell_type,
-    filter_by_tcell_type,
-    get_phenotype_summary,
-    phenotype_cells,
-)
-from .plots import (
-    create_pipeline_funnel,
-    create_tcr_sequence_pdf,
-    plot_funnel,
-)
-from .qc import (
-    QCReport,
-    QCResult,
-    find_repeated_kmers,
-    get_qc_summary,
-    validate_clonotypes,
-    validate_sequence,
-)
+from __future__ import annotations
 
-# Core modules
-from .sample_sheet import (
-    Sample,
-    SampleSheet,
-    load_sample_sheet,
-    validate_sample_sheet,
-)
-from .sct import (
-    aggregate_sct,
-    get_sct_specificities,
-    load_sct,
-)
-from .til import (
-    get_til_summary,
-    identify_til_specific_clones,
-    load_til_specs,
-    match_til,
-    summarize_til_clonotypes,
-)
-from .til_select import (
-    build_harmonized_table,
-    compute_marker_scores_for_timepoint,
-    load_from_consensus,
-    run_selection_pipeline,
-    run_til_select,
-)
-from .unify import (
-    add_phenotype_confidence,
-    compute_condition_statistics,
-    find_top_condition,
-    get_unify_summary,
-    merge_experiments,
-)
-from .validation import (
-    TCRsiftValidationError,
-    safe_divide,
-    safe_mode,
-    safe_percentage,
-    validate_cdr3_dataframe,
-    validate_cdr3_sequence,
-)
-from .version import __version__
+from importlib import import_module
 
-__all__ = [
-    # Version
-    "__version__",
-    # Configuration
-    "TCRsiftConfig",
-    "LoadConfig",
-    "AssembleConfig",
-    "SCTConfig",
-    "GEXConfig",
-    "UnifyConfig",
-    # Sample sheet
-    "Sample",
-    "SampleSheet",
-    "load_sample_sheet",
-    "validate_sample_sheet",
-    # Loading
-    "load_cellranger_vdj",
-    "load_cellranger_gex",
-    "load_sample",
-    "load_samples",
-    # SCT (single-cell TCR platform)
-    "load_sct",
-    "aggregate_sct",
-    "get_sct_specificities",
-    # GEX
-    "augment_with_gex",
-    "aggregate_gex_by_clonotype",
-    "compute_cd4_cd8_counts",
-    "DEFAULT_GENE_LIST",
-    "DEFAULT_GENE_GROUPS",
-    # Phenotyping
-    "phenotype_cells",
-    "classify_tcell_type",
-    "filter_by_tcell_type",
-    "get_phenotype_summary",
-    # Clonotyping
-    "aggregate_clonotypes",
-    "get_clonotype_summary",
-    "export_clonotypes_airr",
-    # Filtering
-    "filter_clonotypes",
-    "filter_clonotypes_threshold",
-    "assign_tiers_threshold",
-    "split_by_tier",
-    "get_filter_summary",
-    # Annotation
-    "load_vdjdb",
-    "load_iedb",
-    "load_cedar",
-    "annotate_clonotypes",
-    "get_annotation_summary",
-    # TIL
-    "match_til",
-    "get_til_summary",
-    "identify_til_specific_clones",
-    "load_til_specs",
-    "summarize_til_clonotypes",
-    # TIL selection
-    "load_from_consensus",
-    "compute_marker_scores_for_timepoint",
-    "build_harmonized_table",
-    "run_selection_pipeline",
-    "run_til_select",
-    # Unify
-    "merge_experiments",
-    "add_phenotype_confidence",
-    "compute_condition_statistics",
-    "find_top_condition",
-    "get_unify_summary",
-    # Assembly
-    "DEFAULT_LEADERS",
-    "LINKERS",
-    "assemble_full_sequences",
-    "translate_dna",
-    "validate_sequences",
-    "export_fasta",
-    # Plots
-    "plot_funnel",
-    "create_pipeline_funnel",
-    "create_tcr_sequence_pdf",
-    # QC
-    "QCReport",
-    "QCResult",
-    "find_repeated_kmers",
-    "validate_sequence",
-    "validate_clonotypes",
-    "get_qc_summary",
-    # Utilities
-    "tcr_name",
-    # Validation
-    "TCRsiftValidationError",
-    "validate_cdr3_sequence",
-    "validate_cdr3_dataframe",
-    "safe_divide",
-    "safe_percentage",
-    "safe_mode",
-]
+_MODULE_EXPORTS = {
+    ".version": ("__version__",),
+    ".config": (
+        "TCRsiftConfig",
+        "LoadConfig",
+        "AssembleConfig",
+        "SCTConfig",
+        "GEXConfig",
+        "UnifyConfig",
+    ),
+    ".sample_sheet": (
+        "Sample",
+        "SampleSheet",
+        "load_sample_sheet",
+        "validate_sample_sheet",
+    ),
+    ".loader": (
+        "load_cellranger_vdj",
+        "load_cellranger_gex",
+        "load_sample",
+        "load_samples",
+    ),
+    ".sct": (
+        "load_sct",
+        "aggregate_sct",
+        "get_sct_specificities",
+    ),
+    ".gex": (
+        "augment_with_gex",
+        "aggregate_gex_by_clonotype",
+        "compute_cd4_cd8_counts",
+        "DEFAULT_GENE_LIST",
+        "DEFAULT_GENE_GROUPS",
+    ),
+    ".phenotype": (
+        "phenotype_cells",
+        "classify_tcell_type",
+        "filter_by_tcell_type",
+        "get_phenotype_summary",
+    ),
+    ".clonotype": (
+        "aggregate_clonotypes",
+        "get_clonotype_summary",
+        "export_clonotypes_airr",
+    ),
+    ".filter": (
+        "filter_clonotypes",
+        "filter_clonotypes_threshold",
+        "assign_tiers_threshold",
+        "split_by_tier",
+        "get_filter_summary",
+    ),
+    ".annotate": (
+        "load_vdjdb",
+        "load_iedb",
+        "load_cedar",
+        "annotate_clonotypes",
+        "get_annotation_summary",
+    ),
+    ".til": (
+        "match_til",
+        "get_til_summary",
+        "identify_til_specific_clones",
+        "load_til_specs",
+        "summarize_til_clonotypes",
+    ),
+    ".til_select": (
+        "load_from_consensus",
+        "compute_marker_scores_for_timepoint",
+        "build_harmonized_table",
+        "run_selection_pipeline",
+        "run_til_select",
+    ),
+    ".unify": (
+        "merge_experiments",
+        "add_phenotype_confidence",
+        "compute_condition_statistics",
+        "find_top_condition",
+        "get_unify_summary",
+    ),
+    ".assemble": (
+        "DEFAULT_LEADERS",
+        "LINKERS",
+        "assemble_full_sequences",
+        "translate_dna",
+        "validate_sequences",
+        "export_fasta",
+    ),
+    ".plots": (
+        "plot_funnel",
+        "create_pipeline_funnel",
+        "create_tcr_sequence_pdf",
+    ),
+    ".qc": (
+        "QCReport",
+        "QCResult",
+        "find_repeated_kmers",
+        "validate_sequence",
+        "validate_clonotypes",
+        "get_qc_summary",
+    ),
+    ".mnemonic": ("tcr_name",),
+    ".validation": (
+        "TCRsiftValidationError",
+        "validate_cdr3_sequence",
+        "validate_cdr3_dataframe",
+        "safe_divide",
+        "safe_percentage",
+        "safe_mode",
+    ),
+}
+
+_EXPORT_TO_MODULE = {
+    export_name: module_name
+    for module_name, export_names in _MODULE_EXPORTS.items()
+    for export_name in export_names
+}
+
+__all__ = list(_EXPORT_TO_MODULE)
+
+
+def __getattr__(name: str):
+    module_name = _EXPORT_TO_MODULE.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module = import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

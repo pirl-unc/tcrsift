@@ -300,7 +300,9 @@ class TestAggregateClonotypesExtended:
 
         assert "antigens" in clonotypes.columns
         assert "n_antigens" in clonotypes.columns
+        assert "n_conditions" in clonotypes.columns
         assert "TestAntigen" in clonotypes["antigens"].iloc[0]
+        assert clonotypes["n_conditions"].iloc[0] == clonotypes["n_antigens"].iloc[0]
 
     def test_aggregate_with_source_info(self, adata_with_vdj_genes):
         """Test aggregation includes source information."""

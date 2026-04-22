@@ -12,11 +12,13 @@
 
 """Tests for model threshold calculation module."""
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
 
 from tcrsift.model import (
+    annotate_plot_with_thresholds_and_counts,
     calc_threshold,
     calc_thresholds_and_counts,
     count_at_threshold,
@@ -248,3 +250,29 @@ class TestCalcThresholdsAndCounts:
 
         # Model should have params
         assert hasattr(model, "params")
+
+
+class TestAnnotatePlotWithThresholdsAndCounts:
+    """Tests for threshold annotation plotting."""
+
+    def test_plot_draws_one_curve_and_one_marker_per_threshold(self, sample_clonotype_df):
+        """Plot annotation should not duplicate the curve or threshold markers."""
+        fig, ax = plt.subplots()
+        try:
+            fdr_to_threshold, threshold_to_count, model = calc_thresholds_and_counts(
+                sample_clonotype_df,
+                fdrs=[0.1, 0.01],
+            )
+
+            annotate_plot_with_thresholds_and_counts(
+                sample_clonotype_df,
+                ax,
+                model,
+                fdr_to_threshold,
+                threshold_to_count,
+            )
+
+            assert len(ax.lines) == 3  # 1 probability curve + 2 threshold lines
+            assert len(ax.texts) == 2
+        finally:
+            plt.close(fig)
