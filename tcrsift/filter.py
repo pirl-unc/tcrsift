@@ -22,6 +22,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from .model import fit_frequency_logistic_model
 from .validation import (
     TCRsiftValidationError,
     safe_percentage,
@@ -41,8 +42,9 @@ logger = logging.getLogger(__name__)
 # Criteria:
 #   - min_cells: Minimum number of cells sharing this clonotype
 #   - min_frequency: Minimum frequency within any single sample
-#   - max_conditions: Maximum number of samples/conditions the clone appears in
-#     (lower values favor condition-specific clones)
+#   - max_conditions: Maximum number of antigen conditions the clone appears in
+#     when that information is available, otherwise sample count is used as a
+#     proxy (lower values favor condition-specific clones)
 #
 # To customize, pass your own tier_definitions dict to assign_tiers_threshold()
 # or filter_clonotypes().
@@ -79,6 +81,34 @@ DEFAULT_THRESHOLD_TIERS = {
 DEFAULT_FDR_TIERS = [0.0001, 0.001, 0.01, 0.1, 0.15]
 
 
+def _get_condition_count_info(clonotypes: pd.DataFrame) -> tuple[pd.Series | None, str | None]:
+    """Return the best available condition-count series and its column name."""
+    for col in ("n_conditions", "n_antigens", "n_samples"):
+        if col in clonotypes.columns:
+            return clonotypes[col], col
+    return None, None
+
+
+def _assign_logistic_tiers_from_thresholds(
+    clonotypes: pd.DataFrame,
+    fdr_to_threshold: dict[float, float],
+) -> pd.DataFrame:
+    """Assign logistic tiers from precomputed FDR thresholds."""
+    df = clonotypes.copy()
+    df["tier"] = None
+
+    sorted_fdrs = sorted(fdr_to_threshold, reverse=True)  # Highest FDR (lowest tier) first
+
+    for i, fdr in enumerate(sorted_fdrs):
+        tier_name = f"tier{len(sorted_fdrs) - i}"
+        threshold = fdr_to_threshold[fdr]
+        mask = df["max_frequency"] >= threshold
+        df.loc[mask, "tier"] = tier_name
+        df.loc[mask, "fdr_threshold"] = fdr
+
+    return df
+
+
 def filter_clonotypes_threshold(
     clonotypes: pd.DataFrame,
     min_cells: int = 2,
@@ -101,7 +131,8 @@ def filter_clonotypes_threshold(
     min_frequency : float
         Minimum frequency in any condition
     max_conditions : int
-        Maximum number of conditions clone can appear in
+        Maximum number of conditions clone can appear in. Uses antigen/condition
+        counts when available, otherwise sample count is used as a proxy.
     require_complete : bool
         Require both alpha and beta chains
     tcell_type : str, optional
@@ -155,12 +186,14 @@ def filter_clonotypes_threshold(
             )
 
     # Condition specificity filter
-    if max_conditions < 999 and "n_samples" in df.columns:
+    condition_counts, condition_count_col = _get_condition_count_info(df)
+    if max_conditions < 999 and condition_counts is not None:
         before = len(df)
-        df = df[df["n_samples"] <= max_conditions]
+        df = df[condition_counts <= max_conditions]
         if verbose:
             logger.info(
-                f"  max_conditions <= {max_conditions}: {before:,} -> {len(df):,} ({before - len(df):,} removed)"
+                f"  max_conditions <= {max_conditions} using {condition_count_col}: "
+                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
             )
 
     # Complete TCR filter
@@ -271,8 +304,9 @@ def assign_tiers_threshold(
         else:
             freq_mask = pd.Series(True, index=df.index)
 
-        if "n_samples" in df.columns:
-            cond_mask = df["n_samples"] <= tier_def["max_conditions"]
+        condition_counts, _ = _get_condition_count_info(df)
+        if condition_counts is not None:
+            cond_mask = condition_counts <= tier_def["max_conditions"]
         else:
             cond_mask = pd.Series(True, index=df.index)
 
@@ -317,12 +351,6 @@ def filter_clonotypes_logistic(
     pd.DataFrame
         Clonotypes with tier assignments and threshold information
     """
-    try:
-        import statsmodels.api as sm
-    except ImportError:
-        logger.warning("statsmodels not installed, falling back to threshold method")
-        return assign_tiers_threshold(clonotypes)
-
     if fdr_tiers is None:
         fdr_tiers = DEFAULT_FDR_TIERS
 
@@ -337,28 +365,43 @@ def filter_clonotypes_logistic(
 
     if only_avoid_viral and "is_viral" in df.columns:
         target = target_above_min & (~df["is_viral"]).values
-    elif "n_samples" in df.columns:
-        # Single-culture specificity
-        target = target_above_min & (df["n_samples"] == 1).values
     else:
-        target = target_above_min
+        condition_counts, _ = _get_condition_count_info(df)
+        if condition_counts is not None:
+            # Single-condition specificity
+            target = target_above_min & (condition_counts == 1).values
+        else:
+            target = target_above_min
 
     # Fit logistic regression
     try:
-        model = sm.Logit(target.astype(float), df["max_frequency"].values)
-        result = model.fit(disp=False)
-        weight = result.params[0]
+        model = fit_frequency_logistic_model(df["max_frequency"].values, target.astype(float))
+        weight = float(model.params[0])
     except Exception as e:
-        logger.warning(f"Model fitting failed: {e}. Falling back to threshold method.")
-        return assign_tiers_threshold(df)
+        logger.warning(
+            f"Model fitting failed: {e}. Falling back to default frequency threshold."
+        )
+        fallback_thresholds = {float(fdr): float(default_freq_threshold) for fdr in fdr_tiers}
+        result_df = _assign_logistic_tiers_from_thresholds(df, fallback_thresholds)
+        result_df.attrs["logistic_model_weight"] = 0.0
+        result_df.attrs["fdr_to_threshold"] = fallback_thresholds
+        result_df.attrs["logistic_fallback_reason"] = "fit_failed"
+        return result_df
 
     if weight < 0:
-        logger.warning("Data too noisy for adaptive thresholds, falling back to threshold method")
-        return assign_tiers_threshold(df)
+        logger.warning(
+            "Data too noisy for adaptive thresholds, falling back to default frequency threshold"
+        )
+        fallback_thresholds = {float(fdr): float(default_freq_threshold) for fdr in fdr_tiers}
+        result_df = _assign_logistic_tiers_from_thresholds(df, fallback_thresholds)
+        result_df.attrs["logistic_model_weight"] = weight
+        result_df.attrs["fdr_to_threshold"] = fallback_thresholds
+        result_df.attrs["logistic_fallback_reason"] = "negative_weight"
+        return result_df
 
     # Calculate thresholds for each FDR level
     x_range = np.linspace(df["max_frequency"].min(), df["max_frequency"].max(), 10000)
-    y_pred = result.predict(x_range)
+    y_pred = model.predict(x_range)
 
     fdr_to_threshold = {}
     for fdr in fdr_tiers:
@@ -366,15 +409,7 @@ def filter_clonotypes_logistic(
         threshold_idx = np.argmin(np.abs(y_pred - y_target))
         fdr_to_threshold[fdr] = max(min_freq_threshold, x_range[threshold_idx])
 
-    # Assign tiers based on thresholds
-    df["tier"] = None
-    sorted_fdrs = sorted(fdr_tiers, reverse=True)  # Highest FDR (lowest tier) first
-
-    for i, fdr in enumerate(sorted_fdrs):
-        tier_name = f"tier{len(sorted_fdrs) - i}"
-        threshold = fdr_to_threshold[fdr]
-        df.loc[df["max_frequency"] >= threshold, "tier"] = tier_name
-        df.loc[df["max_frequency"] >= threshold, "fdr_threshold"] = fdr
+    df = _assign_logistic_tiers_from_thresholds(df, fdr_to_threshold)
 
     # Store model info
     df.attrs["logistic_model_weight"] = weight

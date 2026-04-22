@@ -233,6 +233,7 @@ def _aggregate_clone_data(
         # Sample and condition information
         record["samples"] = ";".join(clone_df["sample"].unique())
         record["n_samples"] = clone_df["sample"].nunique()
+        record["n_conditions"] = record["n_samples"]
 
         # Antigen information if available
         if "antigen_description" in clone_df.columns or "antigen_name" in clone_df.columns:
@@ -252,6 +253,7 @@ def _aggregate_clone_data(
             antigens = antigens_series.dropna().unique()
             record["antigens"] = ";".join(str(a) for a in antigens)
             record["n_antigens"] = len(antigens)
+            record["n_conditions"] = record["n_antigens"]
 
         # Source information
         if "source" in clone_df.columns:

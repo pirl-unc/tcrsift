@@ -2,6 +2,7 @@
 Tests for clonotype filtering.
 """
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -13,6 +14,7 @@ from tcrsift.filter import (
     get_filter_summary,
     split_by_tier,
 )
+from tcrsift.model import LogisticFrequencyModel
 
 
 class TestFilterClonotypesThreshold:
@@ -39,6 +41,17 @@ class TestFilterClonotypesThreshold:
         # With min_cells=0, should exclude first clone (n_samples=2)
         result = filter_clonotypes_threshold(sample_clonotypes_df, max_conditions=1, min_cells=0)
         assert len(result) == 4  # Exclude first clone with n_samples=2
+
+    def test_filter_max_conditions_prefers_n_conditions(self, sample_clonotypes_df):
+        """True condition counts should be preferred over sample count proxies."""
+        df = sample_clonotypes_df.copy()
+        df["n_samples"] = [3, 1, 1, 1, 1]
+        df["n_conditions"] = [1, 2, 1, 1, 1]
+
+        result = filter_clonotypes_threshold(df, max_conditions=1, min_cells=0)
+
+        assert "CAVSDGGSQGNLIF_CASSLGQAYEQYF" in set(result["CDR3ab"])
+        assert "CAVSAGGSQGNLIF_CASSLGQAYEQYF" not in set(result["CDR3ab"])
 
     def test_filter_require_complete(self, sample_clonotypes_df):
         """Filter to require complete TCR."""
@@ -117,6 +130,22 @@ class TestAssignTiersThreshold:
             other_tiers = result[(result["CDR3ab"] == CDR3ab) & (result["tier"] != "tier1")]
             assert len(other_tiers) == 0
 
+    def test_tier_assignment_prefers_n_conditions(self, sample_clonotypes_df):
+        """Tier assignment should use condition counts when available."""
+        df = sample_clonotypes_df.copy()
+        df["n_samples"] = [3, 1, 1, 1, 1]
+        df["n_conditions"] = [1, 2, 1, 1, 1]
+        custom_tiers = {
+            "tier1": {"min_cells": 5, "min_frequency": 0.05, "max_conditions": 1},
+            "tier2": {"min_cells": 1, "min_frequency": 0.0, "max_conditions": 2},
+        }
+
+        result = assign_tiers_threshold(df, tier_definitions=custom_tiers)
+        by_cdr3 = result.set_index("CDR3ab")["tier"].to_dict()
+
+        assert by_cdr3["CAVSDGGSQGNLIF_CASSLGQAYEQYF"] == "tier1"
+        assert by_cdr3["CAVSAGGSQGNLIF_CASSLGQAYEQYF"] == "tier2"
+
 
 class TestFilterClonotypesLogistic:
     """Tests for logistic regression filtering."""
@@ -148,12 +177,49 @@ class TestFilterClonotypesLogistic:
         unique_tiers = result["tier"].dropna().unique()
         assert len(unique_tiers) <= len(custom_fdr)
 
-    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.PerfectSeparationWarning")
-    @pytest.mark.filterwarnings("ignore::statsmodels.tools.sm_exceptions.ConvergenceWarning")
+    def test_logistic_uses_default_threshold_on_fit_failure(self, clonotypes_for_logistic, monkeypatch):
+        """Fit failures should fall back to the documented default frequency threshold."""
+
+        def fail_fit(*_args, **_kwargs):
+            raise ValueError("synthetic fit failure")
+
+        monkeypatch.setattr("tcrsift.filter.fit_frequency_logistic_model", fail_fit)
+
+        result = filter_clonotypes_logistic(
+            clonotypes_for_logistic,
+            fdr_tiers=[0.05, 0.1, 0.2],
+            default_freq_threshold=0.4,
+        )
+
+        assert result.attrs["logistic_fallback_reason"] == "fit_failed"
+        assert result.attrs["fdr_to_threshold"] == {0.05: 0.4, 0.1: 0.4, 0.2: 0.4}
+        assert result.loc[result["max_frequency"] >= 0.4, "tier"].eq("tier1").all()
+
+    def test_logistic_prefers_n_conditions_for_target(self, clonotypes_for_logistic, monkeypatch):
+        """Strict logistic mode should use condition counts when available."""
+        df = clonotypes_for_logistic.copy()
+        df["n_samples"] = 3
+        df["n_conditions"] = np.where(np.arange(len(df)) % 2 == 0, 1, 2)
+        captured = {}
+
+        def fake_fit(x, y, **_kwargs):
+            captured["target"] = np.asarray(y)
+            return LogisticFrequencyModel(
+                params=np.asarray([10.0], dtype=float),
+                converged=True,
+                n_iter=2,
+            )
+
+        monkeypatch.setattr("tcrsift.filter.fit_frequency_logistic_model", fake_fit)
+
+        filter_clonotypes_logistic(df, only_avoid_viral=False)
+
+        expected_target = ((df["max_frequency"] > 0.09) & (df["n_conditions"] == 1)).values
+        assert np.array_equal(captured["target"].astype(bool), expected_target)
+
     def test_logistic_fallback_on_small_data(self, sample_clonotypes_df):
         """Logistic method should gracefully handle small/degenerate data."""
         # Small dataset will cause model fitting issues - test that it falls back gracefully
-        # Warnings are suppressed because they're expected behavior for degenerate input
         result = filter_clonotypes_logistic(sample_clonotypes_df)
         assert "tier" in result.columns
 
