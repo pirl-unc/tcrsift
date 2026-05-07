@@ -21,6 +21,7 @@ import logging
 from pathlib import Path
 
 import anndata as ad
+import numpy as np
 import pandas as pd
 import scanpy as sc
 from tqdm.auto import tqdm
@@ -124,7 +125,14 @@ def load_cellranger_vdj(
     # Log summary statistics
     n_contigs = len(df)
     n_cells = df["barcode"].nunique()
-    n_productive = df["productive"].sum() if "productive" in df.columns else "unknown"
+    if "productive" in df.columns:
+        productive = df["productive"]
+        if productive.dtype == bool:
+            n_productive = int(productive.sum())
+        else:
+            n_productive = int((productive.astype(str) == "True").sum())
+    else:
+        n_productive = "unknown"
     if verbose:
         logger.info(
             f"  Loaded {n_contigs:,} contigs from {n_cells:,} cells ({n_productive} productive)"
@@ -400,10 +408,20 @@ def combine_gex_and_vdj(
                     barcode_to_vdj[bc] = candidates[0]
 
         # Add VDJ columns to adata.obs using the mapping
+        mapped_barcodes = [barcode_to_vdj.get(bc) for bc in adata.obs_names]
         for col in vdj_pivoted.columns:
-            # Map GEX barcodes to VDJ barcodes and get values
-            mapped_barcodes = [barcode_to_vdj.get(bc) for bc in adata.obs_names]
-            adata.obs[col] = vdj_pivoted[col].reindex(mapped_barcodes).values
+            src = vdj_pivoted[col]
+            reindexed = src.reindex(mapped_barcodes)
+            values = reindexed.values
+            # reindex upcasts bool/int to object when missing barcodes introduce NaN,
+            # which then breaks h5ad serialization. Restore the original dtype with
+            # the natural "absent" fill value.
+            missing = pd.isna(values)
+            if src.dtype == bool:
+                values = np.where(missing, False, values).astype(bool)
+            elif pd.api.types.is_integer_dtype(src.dtype):
+                values = np.where(missing, 0, values).astype(src.dtype)
+            adata.obs[col] = values
 
     return adata
 
