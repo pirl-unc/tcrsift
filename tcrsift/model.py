@@ -12,11 +12,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_FDRS = (0.15, 0.1, 0.01, 0.001, 0.0001)
 DEFAULT_THRESHOLD_COLORS = (
@@ -89,6 +92,13 @@ def fit_frequency_logistic_model(
             break
 
         if abs(hessian) < tol:
+            logger.warning(
+                "Logistic fit aborting at iter %d: near-singular Hessian (%.3g); "
+                "weight=%.6g may be unconverged.",
+                n_iter,
+                hessian,
+                weight,
+            )
             break
 
         step = gradient / hessian

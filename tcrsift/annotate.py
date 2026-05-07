@@ -319,6 +319,7 @@ def match_clonotypes(
 
     # Initialize annotation columns
     df["db_match"] = False
+    df["db_match_partial"] = False
     df["db_epitope"] = None
     df["db_species"] = None
     df["db_database"] = None
