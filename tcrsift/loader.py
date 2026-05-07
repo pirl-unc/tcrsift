@@ -546,19 +546,26 @@ def load_sample(
         adata = ad.AnnData(obs=vdj_pivoted)
         adata.obs["sample"] = sample.sample
 
-    # Add sample metadata
+    # Add sample metadata. Skip fields the user didn't supply: an all-None
+    # object column survives concat but breaks anndata.write_h5ad, and
+    # downstream readers already guard with `if col in adata.obs.columns`.
     if adata is not None:
-        adata.obs["antigen_type"] = sample.antigen_type
-        adata.obs["antigen_description"] = sample.antigen_description
-        adata.obs["antigen_name"] = sample.antigen_name
-        adata.obs["antigen_sequence"] = sample.antigen_sequence
-        adata.obs["epitope_sequence"] = sample.epitope_sequence
-        adata.obs["mhc_allele"] = sample.mhc_allele
-        adata.obs["antigen_names"] = sample.antigen_names
-        adata.obs["antigen_sequences"] = sample.antigen_sequences
-        adata.obs["epitope_sequences"] = sample.epitope_sequences
-        adata.obs["source"] = sample.source
-        adata.obs["expected_tcell_type"] = sample.get_expected_tcell_type()
+        metadata = [
+            ("antigen_type", sample.antigen_type),
+            ("antigen_description", sample.antigen_description),
+            ("antigen_name", sample.antigen_name),
+            ("antigen_sequence", sample.antigen_sequence),
+            ("epitope_sequence", sample.epitope_sequence),
+            ("mhc_allele", sample.mhc_allele),
+            ("antigen_names", sample.antigen_names),
+            ("antigen_sequences", sample.antigen_sequences),
+            ("epitope_sequences", sample.epitope_sequences),
+            ("source", sample.source),
+            ("expected_tcell_type", sample.get_expected_tcell_type()),
+        ]
+        for col, val in metadata:
+            if val is not None:
+                adata.obs[col] = val
 
     return adata
 

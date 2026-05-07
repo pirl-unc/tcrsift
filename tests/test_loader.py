@@ -1047,6 +1047,40 @@ class TestLoadSample:
         assert adata.obs["antigen_description"].iloc[0] == "Test antigen"
         assert adata.obs["source"].iloc[0] == "culture"
 
+    def test_load_sample_omits_unset_metadata_and_writes_h5ad(
+        self, mock_sample_dirs, tmp_path
+    ):
+        """Unset metadata fields should be omitted entirely so the resulting
+        AnnData can be written to h5ad (regression for issue #5)."""
+        from tcrsift.loader import load_sample
+        from tcrsift.sample_sheet import Sample
+
+        sample = Sample(
+            sample="test_sample",
+            vdj_dir=str(mock_sample_dirs["vdj_dir"]),
+            gex_dir=str(mock_sample_dirs["gex_dir"]),
+            source="culture",
+        )
+
+        adata = load_sample(sample, min_genes=1, min_counts=1, min_mito_pct=0)
+
+        for absent in (
+            "antigen_type",
+            "antigen_description",
+            "antigen_name",
+            "antigen_sequence",
+            "epitope_sequence",
+            "mhc_allele",
+            "antigen_names",
+            "antigen_sequences",
+            "epitope_sequences",
+        ):
+            assert absent not in adata.obs.columns
+        assert "source" in adata.obs.columns
+
+        # The all-None columns from the old code path crashed h5py here.
+        adata.write_h5ad(tmp_path / "out.h5ad")
+
 
 class TestCombineGexAndVdjBugs:
     """Tests for bugs in combine_gex_and_vdj function."""
