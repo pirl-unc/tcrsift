@@ -16,6 +16,7 @@ Clonotype aggregation for TCRsift.
 Groups cells by TCR CDR3 sequences to identify clonal populations.
 """
 
+import json
 import logging
 
 import anndata as ad
@@ -240,6 +241,44 @@ def _aggregate_clone_data(
         record["samples"] = ";".join(clone_df["sample"].unique())
         record["n_samples"] = clone_df["sample"].nunique()
         record["n_conditions"] = record["n_samples"]
+
+        # Donor / enrichment-method aggregations (#8). Only populated when
+        # the corresponding sample-sheet fields were supplied.
+        has_donor = "patient_id" in clone_df.columns
+        has_method = "enrichment_method" in clone_df.columns
+
+        if has_donor:
+            donors = sorted(clone_df["patient_id"].dropna().astype(str).unique())
+            record["donors"] = ";".join(donors)
+            record["n_donors"] = len(donors)
+
+        if has_method:
+            methods = sorted(
+                clone_df["enrichment_method"].dropna().astype(str).unique()
+            )
+            record["methods"] = ";".join(methods)
+            record["n_methods"] = len(methods)
+
+        if has_donor and has_method:
+            # methods_per_donor is the dict-shape view from #8/#9:
+            # {donor: sorted list of distinct methods seen for this clone in
+            # that donor}. Stored as a JSON string for clean h5ad/CSV
+            # serialization. max_methods_per_donor is the derived scalar
+            # used by the planned --min-methods-per-donor filter.
+            methods_per_donor: dict[str, list[str]] = {}
+            grouped_dm = clone_df.dropna(subset=["patient_id", "enrichment_method"])
+            for donor, group in grouped_dm.groupby("patient_id"):
+                donor_methods = sorted(
+                    group["enrichment_method"].astype(str).unique()
+                )
+                if donor_methods:
+                    methods_per_donor[str(donor)] = donor_methods
+            record["methods_per_donor"] = json.dumps(
+                methods_per_donor, sort_keys=True
+            )
+            record["max_methods_per_donor"] = max(
+                (len(m) for m in methods_per_donor.values()), default=0
+            )
 
         # Antigen information if available
         if "antigen_description" in clone_df.columns or "antigen_name" in clone_df.columns:
