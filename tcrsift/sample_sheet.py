@@ -70,6 +70,10 @@ class Sample:
     # Other metadata
     tissue: str | None = None
     patient_id: str | None = None
+    # Free-form enrichment / selection method label. Distinct from `source`
+    # (which is a fixed pipeline-source enum); used to stratify clones across
+    # selection strategies within a donor (e.g. AIMpos, IFNpos, tetpos).
+    enrichment_method: str | None = None
     # Experiment grouping for multi-source unification
     experiment: str | None = None  # experiment name for unification (e.g., "TIL", "Culture", "SCT")
     # SCT-specific fields
@@ -278,6 +282,8 @@ class SampleSheet:
                 "pre_sorted": s.pre_sorted,
                 "mhc_blocking": s.mhc_blocking,
                 "source": s.source,
+                "patient_id": s.patient_id,
+                "enrichment_method": s.enrichment_method,
                 "expected_tcell_type": s.get_expected_tcell_type(),
             }
             records.append(record)

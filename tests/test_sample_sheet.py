@@ -321,6 +321,38 @@ class TestSampleSheet:
         assert "expected_tcell_type" in df.columns
         assert df.loc[0, "expected_tcell_type"] == "CD8"
 
+    def test_to_dataframe_includes_donor_and_method(self):
+        """patient_id and enrichment_method round-trip through to_dataframe (#8)."""
+        ss = SampleSheet(
+            samples=[
+                Sample(
+                    sample="B1-2_AIMpos",
+                    vdj_dir="/path1",
+                    patient_id="B1-2",
+                    enrichment_method="AIMpos",
+                ),
+                Sample(
+                    sample="B1-2_tetpos",
+                    vdj_dir="/path2",
+                    patient_id="B1-2",
+                    enrichment_method="tetpos",
+                ),
+            ]
+        )
+        df = ss.to_dataframe()
+        assert df.loc[0, "patient_id"] == "B1-2"
+        assert df.loc[0, "enrichment_method"] == "AIMpos"
+        assert df.loc[1, "enrichment_method"] == "tetpos"
+
+    def test_enrichment_method_is_free_form(self):
+        """enrichment_method takes arbitrary strings (no enum validation)."""
+        s = Sample(
+            sample="X",
+            vdj_dir="/p",
+            enrichment_method="AIMpos_CTYneg",
+        )
+        assert s.enrichment_method == "AIMpos_CTYneg"
+
 
 class TestLoadSampleSheet:
     """Tests for loading sample sheets."""
@@ -349,6 +381,38 @@ class TestLoadSampleSheet:
         bad_file.write_text("{}")
         with pytest.raises(ValueError, match="Unsupported sample sheet format"):
             load_sample_sheet(bad_file)
+
+    def test_csv_loader_accepts_donor_and_method(self, temp_dir):
+        """CSV sheets can supply patient_id and enrichment_method (#8)."""
+        csv_path = temp_dir / "donor_method.csv"
+        csv_path.write_text(
+            "sample,vdj_dir,patient_id,enrichment_method\n"
+            "B1-2_AIMpos,/p/aim,B1-2,AIMpos\n"
+            "B1-2_tetpos,/p/tet,B1-2,tetpos\n"
+        )
+        ss = load_sample_sheet(csv_path)
+        assert ss[0].patient_id == "B1-2"
+        assert ss[0].enrichment_method == "AIMpos"
+        assert ss[1].enrichment_method == "tetpos"
+
+    def test_yaml_loader_accepts_donor_and_method(self, temp_dir):
+        """YAML sheets can supply patient_id and enrichment_method (#8)."""
+        yaml_path = temp_dir / "donor_method.yaml"
+        yaml_path.write_text(
+            "samples:\n"
+            "  - sample: B1-2_AIMpos\n"
+            "    vdj_dir: /p/aim\n"
+            "    patient_id: B1-2\n"
+            "    enrichment_method: AIMpos\n"
+            "  - sample: B1-2_tetpos\n"
+            "    vdj_dir: /p/tet\n"
+            "    patient_id: B1-2\n"
+            "    enrichment_method: tetpos\n"
+        )
+        ss = load_sample_sheet(yaml_path)
+        assert ss[0].patient_id == "B1-2"
+        assert ss[0].enrichment_method == "AIMpos"
+        assert ss[1].enrichment_method == "tetpos"
 
 
 class TestValidateSampleSheet:
