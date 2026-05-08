@@ -84,6 +84,22 @@ class TestRehydrateObs:
         out = rehydrate_obs(adata)
         assert out is adata
 
+    def test_axis_string_columns_repinned(self):
+        """timepoint, apc_type (and existing axis fields) survive an h5ad-style
+        Categorical roundtrip cleanly (#9)."""
+        adata = _make_adata(
+            {
+                "patient_id": pd.Categorical(["B1-2", "B1-3"]),
+                "enrichment_method": pd.Categorical(["AIMpos", "tetpos"]),
+                "timepoint": pd.Categorical(["D7", "D14"]),
+                "apc_type": pd.Categorical(["mDC", "B-LCL"]),
+                "tissue": pd.Categorical(["blood", "tumor"]),
+            }
+        )
+        rehydrate_obs(adata)
+        for col in ("patient_id", "enrichment_method", "timepoint", "apc_type", "tissue"):
+            assert adata.obs[col].dtype == object, col
+
     def test_h5ad_roundtrip_then_aggregate(self, tmp_path):
         """End-to-end: write h5ad → read back → rehydrate → aggregate works.
         Anchors the helper to the actual #11 failure path."""

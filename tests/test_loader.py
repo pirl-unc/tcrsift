@@ -486,6 +486,32 @@ class TestLoadSampleMetadata:
         assert "patient_id" not in adata.obs.columns
         assert "enrichment_method" not in adata.obs.columns
 
+    def test_load_sample_propagates_timepoint_apc_tissue(
+        self, mock_cellranger_vdj_dir
+    ):
+        """timepoint, apc_type, and tissue should land in adata.obs (#9)."""
+        sample = Sample(
+            sample="D7_mDC",
+            vdj_dir=str(mock_cellranger_vdj_dir),
+            timepoint="D7",
+            apc_type="mDC",
+            tissue="blood",
+        )
+
+        adata = load_sample(sample)
+
+        assert adata.obs["timepoint"].iloc[0] == "D7"
+        assert adata.obs["apc_type"].iloc[0] == "mDC"
+        assert adata.obs["tissue"].iloc[0] == "blood"
+
+    def test_load_sample_omits_unset_axes(self, mock_cellranger_vdj_dir):
+        """When axis fields aren't set, the columns should be absent."""
+        sample = Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir))
+        adata = load_sample(sample)
+        assert "timepoint" not in adata.obs.columns
+        assert "apc_type" not in adata.obs.columns
+        assert "tissue" not in adata.obs.columns
+
 
 class TestLoadCellrangerVdj:
     """Tests for load_cellranger_vdj function."""

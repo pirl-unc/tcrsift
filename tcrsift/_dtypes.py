@@ -44,6 +44,8 @@ _STRING_COLS: frozenset[str] = frozenset(
         "sample",
         "patient_id",
         "enrichment_method",
+        "timepoint",
+        "apc_type",
         "antigen_type",
         "antigen_description",
         "antigen_name",

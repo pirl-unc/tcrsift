@@ -74,6 +74,15 @@ class Sample:
     # (which is a fixed pipeline-source enum); used to stratify clones across
     # selection strategies within a donor (e.g. AIMpos, IFNpos, tetpos).
     enrichment_method: str | None = None
+    # Free-form timepoint label for longitudinal designs (e.g. "D7", "D14",
+    # "baseline", "post-IL2"). Distinct from `culture_days` (a single int);
+    # used to group samples that are different timepoints of the same study
+    # arm. (#9)
+    timepoint: str | None = None
+    # Free-form APC label for multi-APC stim designs (e.g. "mDC", "B-LCL",
+    # "autologous_PBMC", "K562-A2-CD80"). Distinct from `tissue`
+    # (anatomical) and `antigen_type` (what was presented). (#9)
+    apc_type: str | None = None
     # Experiment grouping for multi-source unification
     experiment: str | None = None  # experiment name for unification (e.g., "TIL", "Culture", "SCT")
     # SCT-specific fields
@@ -284,6 +293,9 @@ class SampleSheet:
                 "source": s.source,
                 "patient_id": s.patient_id,
                 "enrichment_method": s.enrichment_method,
+                "timepoint": s.timepoint,
+                "apc_type": s.apc_type,
+                "tissue": s.tissue,
                 "expected_tcell_type": s.get_expected_tcell_type(),
             }
             records.append(record)

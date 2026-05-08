@@ -563,6 +563,9 @@ def load_sample(
             ("source", sample.source),
             ("patient_id", sample.patient_id),
             ("enrichment_method", sample.enrichment_method),
+            ("timepoint", sample.timepoint),
+            ("apc_type", sample.apc_type),
+            ("tissue", sample.tissue),
             ("expected_tcell_type", sample.get_expected_tcell_type()),
         ]
         for col, val in metadata:

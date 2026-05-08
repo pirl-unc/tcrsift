@@ -353,6 +353,44 @@ class TestSampleSheet:
         )
         assert s.enrichment_method == "AIMpos_CTYneg"
 
+    def test_to_dataframe_includes_timepoint_apc_tissue(self):
+        """timepoint, apc_type, and tissue round-trip through to_dataframe (#9)."""
+        ss = SampleSheet(
+            samples=[
+                Sample(
+                    sample="D7_mDC",
+                    vdj_dir="/p1",
+                    timepoint="D7",
+                    apc_type="mDC",
+                    tissue="blood",
+                ),
+                Sample(
+                    sample="D14_BLCL",
+                    vdj_dir="/p2",
+                    timepoint="D14",
+                    apc_type="B-LCL",
+                    tissue="blood",
+                ),
+            ]
+        )
+        df = ss.to_dataframe()
+        assert df.loc[0, "timepoint"] == "D7"
+        assert df.loc[0, "apc_type"] == "mDC"
+        assert df.loc[0, "tissue"] == "blood"
+        assert df.loc[1, "timepoint"] == "D14"
+        assert df.loc[1, "apc_type"] == "B-LCL"
+
+    def test_timepoint_and_apc_are_free_form(self):
+        """Both fields take arbitrary strings."""
+        s = Sample(
+            sample="X",
+            vdj_dir="/p",
+            timepoint="post-IL2-day3",
+            apc_type="K562-A2-CD80",
+        )
+        assert s.timepoint == "post-IL2-day3"
+        assert s.apc_type == "K562-A2-CD80"
+
 
 class TestLoadSampleSheet:
     """Tests for loading sample sheets."""
@@ -413,6 +451,39 @@ class TestLoadSampleSheet:
         assert ss[0].patient_id == "B1-2"
         assert ss[0].enrichment_method == "AIMpos"
         assert ss[1].enrichment_method == "tetpos"
+
+    def test_csv_loader_accepts_timepoint_and_apc(self, temp_dir):
+        """CSV sheets can supply timepoint and apc_type (#9)."""
+        csv_path = temp_dir / "tp_apc.csv"
+        csv_path.write_text(
+            "sample,vdj_dir,timepoint,apc_type\n"
+            "S1,/p1,D7,mDC\n"
+            "S2,/p2,D14,B-LCL\n"
+        )
+        ss = load_sample_sheet(csv_path)
+        assert ss[0].timepoint == "D7"
+        assert ss[0].apc_type == "mDC"
+        assert ss[1].timepoint == "D14"
+        assert ss[1].apc_type == "B-LCL"
+
+    def test_yaml_loader_accepts_timepoint_and_apc(self, temp_dir):
+        """YAML sheets can supply timepoint and apc_type (#9)."""
+        yaml_path = temp_dir / "tp_apc.yaml"
+        yaml_path.write_text(
+            "samples:\n"
+            "  - sample: S1\n"
+            "    vdj_dir: /p1\n"
+            "    timepoint: D7\n"
+            "    apc_type: mDC\n"
+            "  - sample: S2\n"
+            "    vdj_dir: /p2\n"
+            "    timepoint: D14\n"
+            "    apc_type: B-LCL\n"
+        )
+        ss = load_sample_sheet(yaml_path)
+        assert ss[0].timepoint == "D7"
+        assert ss[0].apc_type == "mDC"
+        assert ss[1].timepoint == "D14"
 
 
 class TestValidateSampleSheet:
