@@ -561,6 +561,8 @@ def load_sample(
             ("antigen_sequences", sample.antigen_sequences),
             ("epitope_sequences", sample.epitope_sequences),
             ("source", sample.source),
+            ("patient_id", sample.patient_id),
+            ("enrichment_method", sample.enrichment_method),
             ("expected_tcell_type", sample.get_expected_tcell_type()),
         ]
         for col, val in metadata:

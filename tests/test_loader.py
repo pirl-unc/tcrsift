@@ -460,6 +460,32 @@ class TestLoadSampleMetadata:
         assert "antigen_name" in adata.obs.columns
         assert adata.obs["antigen_name"].iloc[0] == "CMV_pp65"
 
+    def test_load_sample_propagates_patient_id_and_enrichment_method(
+        self, mock_cellranger_vdj_dir
+    ):
+        """patient_id and enrichment_method should land in adata.obs (issue #8)."""
+        sample = Sample(
+            sample="B1-2_AIMpos",
+            vdj_dir=str(mock_cellranger_vdj_dir),
+            patient_id="B1-2",
+            enrichment_method="AIMpos",
+        )
+
+        adata = load_sample(sample)
+
+        assert adata.obs["patient_id"].iloc[0] == "B1-2"
+        assert adata.obs["enrichment_method"].iloc[0] == "AIMpos"
+
+    def test_load_sample_omits_unset_donor_method(self, mock_cellranger_vdj_dir):
+        """When donor/method are not set, columns should be absent (consistent
+        with the #5 fix for other optional metadata)."""
+        sample = Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir))
+
+        adata = load_sample(sample)
+
+        assert "patient_id" not in adata.obs.columns
+        assert "enrichment_method" not in adata.obs.columns
+
 
 class TestLoadCellrangerVdj:
     """Tests for load_cellranger_vdj function."""
