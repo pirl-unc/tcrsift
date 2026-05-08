@@ -139,6 +139,47 @@ class TestAggregateClonotypes:
         with pytest.raises(TCRsiftValidationError, match="No complete clones found"):
             aggregate_clonotypes(sample_adata, group_by="CDR3ab")
 
+    def test_aggregate_handles_categorical_cdr3_columns(self, adata_with_tcr):
+        """After an h5ad round-trip CDR3 columns return as Categorical;
+        aggregate_clonotypes must still work (regression for issue #11)."""
+        # Simulate the post-roundtrip state by converting to Categorical
+        # (no "" in categories — that's exactly the failing condition).
+        adata_with_tcr.obs["CDR3_alpha"] = pd.Categorical(
+            adata_with_tcr.obs["CDR3_alpha"].astype(object)
+        )
+        adata_with_tcr.obs["CDR3_beta"] = pd.Categorical(
+            adata_with_tcr.obs["CDR3_beta"].astype(object)
+        )
+
+        clonotypes = aggregate_clonotypes(adata_with_tcr, group_by="CDR3ab")
+        assert len(clonotypes) > 0
+        assert "CDR3ab" in clonotypes.columns
+
+    def test_aggregate_handles_categorical_cdr3_with_nan(self, adata_with_tcr):
+        """Same as above but with some NaN entries — `.fillna('')` must not
+        raise on the resulting Categorical (issue #11)."""
+        # Drop alpha for the last 10 cells, then categoricalize.
+        alpha = adata_with_tcr.obs["CDR3_alpha"].astype(object).copy()
+        alpha.iloc[-10:] = None
+        adata_with_tcr.obs["CDR3_alpha"] = pd.Categorical(alpha)
+        adata_with_tcr.obs["CDR3_beta"] = pd.Categorical(
+            adata_with_tcr.obs["CDR3_beta"].astype(object)
+        )
+
+        # Without the fix this raised:
+        #   TypeError: Cannot setitem on a Categorical with a new category ()
+        clonotypes = aggregate_clonotypes(adata_with_tcr, group_by="CDR3ab")
+        assert len(clonotypes) > 0
+
+    def test_aggregate_b_only_handles_categorical_cdr3(self, adata_with_tcr):
+        """CDR3b_only mode — same Categorical-fillna concern at clonotype.py:148."""
+        adata_with_tcr.obs["CDR3_beta"] = pd.Categorical(
+            adata_with_tcr.obs["CDR3_beta"].astype(object)
+        )
+
+        clonotypes = aggregate_clonotypes(adata_with_tcr, group_by="CDR3b_only")
+        assert len(clonotypes) > 0
+
 
 class TestGetClonotypeSummary:
     """Tests for get_clonotype_summary function."""
