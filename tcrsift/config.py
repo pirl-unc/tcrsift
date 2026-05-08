@@ -75,6 +75,12 @@ class FilterConfig:
     min_methods_per_donor: int = 0
     min_cells_per_method: int = 0
     min_frequency_per_method: float = 0.0
+    # Timepoint / APC axis knobs (#9 chunk 3). No-op when their underlying
+    # clonotype-table columns aren't present.
+    min_timepoints: int = 0
+    min_timepoints_per_donor: int = 0
+    min_apcs: int = 0
+    min_apcs_per_donor: int = 0
 
 
 @dataclass
@@ -249,6 +255,10 @@ class TCRsiftConfig:
             "min_methods_per_donor": ("filter", "min_methods_per_donor"),
             "min_cells_per_method": ("filter", "min_cells_per_method"),
             "min_frequency_per_method": ("filter", "min_frequency_per_method"),
+            "min_timepoints": ("filter", "min_timepoints"),
+            "min_timepoints_per_donor": ("filter", "min_timepoints_per_donor"),
+            "min_apcs": ("filter", "min_apcs"),
+            "min_apcs_per_donor": ("filter", "min_apcs_per_donor"),
             # Annotate
             "vdjdb_path": ("annotate", "vdjdb_path"),
             "iedb_path": ("annotate", "iedb_path"),
