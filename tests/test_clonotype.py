@@ -181,6 +181,138 @@ class TestAggregateClonotypes:
         assert len(clonotypes) > 0
 
 
+class TestAggregateDonorMethodColumns:
+    """#8 chunk 2 — per-clone donor/method aggregations."""
+
+    def _make_donor_method_adata(self):
+        """A clone shared across two donors and several methods within each:
+        - Clone A: B1-2 (AIMpos, IFNpos, tetpos), B1-3 (AIMpos)
+        - Clone B: B1-2 (tetpos)
+        """
+        import anndata as ad
+        import numpy as np
+
+        rows = (
+            [("B1-2", "AIMpos", "CAVA", "CASS_A")] * 3
+            + [("B1-2", "IFNpos", "CAVA", "CASS_A")] * 2
+            + [("B1-2", "tetpos", "CAVA", "CASS_A")] * 2
+            + [("B1-3", "AIMpos", "CAVA", "CASS_A")] * 2
+            + [("B1-2", "tetpos", "CAVB", "CASS_B")] * 1
+        )
+        n = len(rows)
+        adata = ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": [f"{r[0]}_{r[1]}" for r in rows],
+                    "patient_id": [r[0] for r in rows],
+                    "enrichment_method": [r[1] for r in rows],
+                    "CDR3_alpha": [r[2] for r in rows],
+                    "CDR3_beta": [r[3] for r in rows],
+                }
+            ),
+        )
+        return adata
+
+    def test_donor_columns_present_when_patient_id_set(self):
+        adata = self._make_donor_method_adata()
+        clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
+
+        assert "n_donors" in clonotypes.columns
+        assert "donors" in clonotypes.columns
+
+        clone_a = clonotypes[clonotypes["CDR3ab"] == "CAVA_CASS_A"].iloc[0]
+        assert clone_a["n_donors"] == 2
+        assert set(clone_a["donors"].split(";")) == {"B1-2", "B1-3"}
+
+        clone_b = clonotypes[clonotypes["CDR3ab"] == "CAVB_CASS_B"].iloc[0]
+        assert clone_b["n_donors"] == 1
+
+    def test_method_columns_present_when_enrichment_method_set(self):
+        adata = self._make_donor_method_adata()
+        clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
+
+        assert "n_methods" in clonotypes.columns
+        clone_a = clonotypes[clonotypes["CDR3ab"] == "CAVA_CASS_A"].iloc[0]
+        # AIMpos seen in both donors, IFNpos+tetpos in B1-2 only -> 3 distinct
+        assert clone_a["n_methods"] == 3
+        assert set(clone_a["methods"].split(";")) == {"AIMpos", "IFNpos", "tetpos"}
+
+    def test_methods_per_donor_dict_and_max(self):
+        import json
+
+        adata = self._make_donor_method_adata()
+        clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
+
+        assert "methods_per_donor" in clonotypes.columns
+        assert "max_methods_per_donor" in clonotypes.columns
+
+        clone_a = clonotypes[clonotypes["CDR3ab"] == "CAVA_CASS_A"].iloc[0]
+        d = json.loads(clone_a["methods_per_donor"])
+        assert sorted(d["B1-2"]) == ["AIMpos", "IFNpos", "tetpos"]
+        assert d["B1-3"] == ["AIMpos"]
+        # Filter knob (planned --min-methods-per-donor) reads this:
+        assert clone_a["max_methods_per_donor"] == 3
+
+        clone_b = clonotypes[clonotypes["CDR3ab"] == "CAVB_CASS_B"].iloc[0]
+        d_b = json.loads(clone_b["methods_per_donor"])
+        assert d_b == {"B1-2": ["tetpos"]}
+        assert clone_b["max_methods_per_donor"] == 1
+
+    def _make_minimal_adata_no_donor_method(self):
+        import anndata as ad
+        import numpy as np
+
+        n = 4
+        return ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": ["A", "A", "B", "B"],
+                    "CDR3_alpha": ["CAVA"] * n,
+                    "CDR3_beta": ["CASS_A"] * n,
+                }
+            ),
+        )
+
+    def test_donor_method_columns_absent_when_neither_set(self):
+        adata = self._make_minimal_adata_no_donor_method()
+        clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
+        for col in (
+            "donors",
+            "n_donors",
+            "methods",
+            "n_methods",
+            "methods_per_donor",
+            "max_methods_per_donor",
+        ):
+            assert col not in clonotypes.columns
+
+    def test_methods_per_donor_dropped_when_only_one_axis_set(self):
+        """methods_per_donor / max_methods_per_donor only appear when BOTH
+        patient_id and enrichment_method are present."""
+        import anndata as ad
+        import numpy as np
+
+        # patient_id present, enrichment_method missing
+        n = 4
+        adata = ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": ["A", "A", "B", "B"],
+                    "patient_id": ["B1-2", "B1-2", "B1-3", "B1-3"],
+                    "CDR3_alpha": ["CAVA"] * n,
+                    "CDR3_beta": ["CASS_A"] * n,
+                }
+            ),
+        )
+        clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
+        assert "n_donors" in clonotypes.columns
+        assert "methods_per_donor" not in clonotypes.columns
+        assert "max_methods_per_donor" not in clonotypes.columns
+
+
 class TestGetClonotypeSummary:
     """Tests for get_clonotype_summary function."""
 
