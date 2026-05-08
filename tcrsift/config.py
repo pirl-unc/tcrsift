@@ -81,6 +81,7 @@ class FilterConfig:
     min_timepoints_per_donor: int = 0
     min_apcs: int = 0
     min_apcs_per_donor: int = 0
+    min_til_cells_per_donor: int = 0
 
 
 @dataclass
@@ -259,6 +260,7 @@ class TCRsiftConfig:
             "min_timepoints_per_donor": ("filter", "min_timepoints_per_donor"),
             "min_apcs": ("filter", "min_apcs"),
             "min_apcs_per_donor": ("filter", "min_apcs_per_donor"),
+            "min_til_cells_per_donor": ("filter", "min_til_cells_per_donor"),
             # Annotate
             "vdjdb_path": ("annotate", "vdjdb_path"),
             "iedb_path": ("annotate", "iedb_path"),

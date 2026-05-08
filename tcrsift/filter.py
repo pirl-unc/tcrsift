@@ -181,6 +181,7 @@ def filter_clonotypes_threshold(
     min_timepoints_per_donor: int = 0,
     min_apcs: int = 0,
     min_apcs_per_donor: int = 0,
+    min_til_cells_per_donor: int = 0,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
@@ -334,6 +335,18 @@ def filter_clonotypes_threshold(
         if verbose:
             logger.info(
                 f"  min_apcs_per_donor >= {min_apcs_per_donor}: "
+                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
+
+    # TIL-overlap-per-donor filter (#9 chunk 4). Reads the column
+    # match_til populates when TIL data carries patient_id. No-op
+    # otherwise.
+    if min_til_cells_per_donor > 0 and "max_til_cells_per_donor" in df.columns:
+        before = len(df)
+        df = df[df["max_til_cells_per_donor"] >= min_til_cells_per_donor]
+        if verbose:
+            logger.info(
+                f"  min_til_cells_per_donor >= {min_til_cells_per_donor}: "
                 f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
             )
 
@@ -577,6 +590,7 @@ def filter_clonotypes(
     min_timepoints_per_donor: int = 0,
     min_apcs: int = 0,
     min_apcs_per_donor: int = 0,
+    min_til_cells_per_donor: int = 0,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -647,6 +661,7 @@ def filter_clonotypes(
         min_timepoints_per_donor=min_timepoints_per_donor,
         min_apcs=min_apcs,
         min_apcs_per_donor=min_apcs_per_donor,
+        min_til_cells_per_donor=min_til_cells_per_donor,
         verbose=verbose,
     )
 

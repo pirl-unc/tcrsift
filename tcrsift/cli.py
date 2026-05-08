@@ -212,6 +212,7 @@ def cmd_filter(args):
         "min_timepoints_per_donor": args.min_timepoints_per_donor,
         "min_apcs": args.min_apcs,
         "min_apcs_per_donor": args.min_apcs_per_donor,
+        "min_til_cells_per_donor": args.min_til_cells_per_donor,
     }
     mode_kwargs = resolve_filter_mode_kwargs(mode, user_kwargs)
 
@@ -728,6 +729,7 @@ def cmd_run(args):
         "min_timepoints_per_donor": config.filter.min_timepoints_per_donor,
         "min_apcs": config.filter.min_apcs,
         "min_apcs_per_donor": config.filter.min_apcs_per_donor,
+        "min_til_cells_per_donor": config.filter.min_til_cells_per_donor,
     }
     mode_kwargs = resolve_filter_mode_kwargs(
         config.filter.filter_mode, user_filter_kwargs
@@ -1299,6 +1301,10 @@ def create_parser():
     p_filter.add_argument(
         "--min-apcs-per-donor", type=int, default=0,
         help="Min distinct APCs within at least one donor (#9)",
+    )
+    p_filter.add_argument(
+        "--min-til-cells-per-donor", type=int, default=0,
+        help="Min TIL cells of the same donor in which the clone appears (#9)",
     )
     p_filter.add_argument("--plot-filter", action="store_true", help="Generate filter plots")
     p_filter.add_argument("--output-dir", help="Output directory for plots")
@@ -1897,6 +1903,10 @@ CONDITIONALLY REQUIRED:
     filter_group.add_argument(
         "--min-apcs-per-donor", type=int,
         help="Min distinct APCs within at least one donor",
+    )
+    filter_group.add_argument(
+        "--min-til-cells-per-donor", type=int,
+        help="Min TIL cells of the same donor in which the clone appears",
     )
 
     # Annotate step parameters
