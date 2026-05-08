@@ -646,6 +646,31 @@ def split_by_tier(clonotypes: pd.DataFrame) -> dict[str, pd.DataFrame]:
     return result
 
 
+def bucket_by_donor_sharing(
+    clonotypes: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    """Split clonotypes into private-to-donor and public-across-donors buckets.
+
+    "private_to_donor" = ``n_donors == 1`` (or unset / NaN treated as 1).
+    "public_across_donors" = ``n_donors >= 2``.
+
+    Returns an empty dict if the ``n_donors`` column isn't on the table; the
+    caller should treat that as "no bucketing applicable for this design"
+    rather than as an error. Empty buckets are dropped from the result so
+    downstream callers can skip writing zero-row CSVs for irrelevant
+    designs (single-donor cohorts, etc).
+    """
+    if "n_donors" not in clonotypes.columns:
+        return {}
+
+    n_donors = clonotypes["n_donors"].fillna(1).astype(int)
+    buckets = {
+        "private_to_donor": clonotypes[n_donors <= 1].copy(),
+        "public_across_donors": clonotypes[n_donors >= 2].copy(),
+    }
+    return {name: df for name, df in buckets.items() if len(df) > 0}
+
+
 def get_filter_summary(clonotypes: pd.DataFrame) -> dict:
     """
     Get summary of filtering results.
