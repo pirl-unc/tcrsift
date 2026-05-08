@@ -23,6 +23,7 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
+from ._dtypes import rehydrate_obs
 from .validation import (
     TCRsiftValidationError,
     validate_anndata,
@@ -115,6 +116,9 @@ def phenotype_cells(
     adata = validate_anndata(adata, "input AnnData", min_cells=1)
     validate_numeric_param(cd4_cd8_ratio, "cd4_cd8_ratio", min_value=1.0)
     validate_numeric_param(min_cd3_reads, "min_cd3_reads", min_value=0)
+
+    # Re-pin obs dtypes after any prior h5ad round-trip.
+    rehydrate_obs(adata)
 
     logger.info(f"Phenotyping {len(adata):,} cells with CD4/CD8 ratio threshold {cd4_cd8_ratio}")
 

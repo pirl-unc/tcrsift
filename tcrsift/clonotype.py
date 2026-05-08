@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
+from ._dtypes import rehydrate_obs
 from .validation import (
     TCRsiftValidationError,
     safe_divide,
@@ -68,6 +69,11 @@ def aggregate_clonotypes(
     # Validate inputs
     adata = validate_anndata(adata, "input AnnData", min_cells=1)
     validate_numeric_param(min_umi, "min_umi", min_value=0)
+
+    # Re-pin obs dtypes — h5ad round-trips can return string columns as
+    # Categorical, bool as object, etc., which breaks downstream `.fillna`
+    # and string concat. Idempotent.
+    rehydrate_obs(adata)
 
     valid_group_by = ["CDR3ab", "CDR3b_only"]
     if group_by not in valid_group_by:
@@ -132,26 +138,22 @@ def aggregate_clonotypes(
         df["TRA_pass_umi"] = True
         df["TRB_pass_umi"] = True
 
-    # Build clone identifier. Cast to object first: after an h5ad round-trip
-    # anndata returns string obs columns as Categorical, and `.fillna("")` on
-    # a Categorical without "" in its categories raises (issue #11).
+    # Build clone identifier. CDR3_alpha/CDR3_beta have been re-pinned to
+    # object by rehydrate_obs above, so .fillna("") is safe.
     if group_by == "CDR3ab":
-        cdr3_alpha = df["CDR3_alpha"].astype(object)
-        cdr3_beta = df["CDR3_beta"].astype(object)
-        df["CDR3ab"] = cdr3_alpha.fillna("") + "_" + cdr3_beta.fillna("")
+        df["CDR3ab"] = df["CDR3_alpha"].fillna("") + "_" + df["CDR3_beta"].fillna("")
         df["is_complete_clone"] = (
-            cdr3_alpha.notna()
-            & (cdr3_alpha != "")
-            & cdr3_beta.notna()
-            & (cdr3_beta != "")
+            df["CDR3_alpha"].notna()
+            & (df["CDR3_alpha"] != "")
+            & df["CDR3_beta"].notna()
+            & (df["CDR3_beta"] != "")
             & df["TRA_pass_umi"]
             & df["TRB_pass_umi"]
         )
     elif group_by == "CDR3b_only":
-        cdr3_beta = df["CDR3_beta"].astype(object)
-        df["CDR3ab"] = cdr3_beta.fillna("")
+        df["CDR3ab"] = df["CDR3_beta"].fillna("")
         df["is_complete_clone"] = (
-            cdr3_beta.notna() & (cdr3_beta != "") & df["TRB_pass_umi"]
+            df["CDR3_beta"].notna() & (df["CDR3_beta"] != "") & df["TRB_pass_umi"]
         )
     else:
         raise ValueError(f"Invalid group_by: {group_by}. Use 'CDR3ab' or 'CDR3b_only'")
