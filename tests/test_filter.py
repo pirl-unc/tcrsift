@@ -270,6 +270,46 @@ class TestTimepointApcFilters:
         assert len(result) == 5
 
 
+class TestTilOverlapFilter:
+    """#9 chunk 4 — per-donor TIL-overlap filter knob."""
+
+    def test_min_til_cells_per_donor(self):
+        df = pd.DataFrame(
+            {
+                "CDR3ab": ["A", "B", "C", "D"],
+                "CDR3_alpha": ["CAVA", "CAVB", "CAVC", "CAVD"],
+                "CDR3_beta": ["CASS_A", "CASS_B", "CASS_C", "CASS_D"],
+                "cell_count": [10, 10, 10, 10],
+                "max_til_cells_per_donor": [0, 1, 5, 12],
+            }
+        )
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_til_cells_per_donor=5,
+        )
+        assert len(result) == 2
+        assert set(result["CDR3ab"]) == {"C", "D"}
+
+    def test_no_op_when_til_column_absent(self):
+        df = pd.DataFrame(
+            {
+                "CDR3ab": ["A", "B"],
+                "CDR3_alpha": ["CAV1", "CAV2"],
+                "CDR3_beta": ["CASS_1", "CASS_2"],
+                "cell_count": [10, 10],
+            }
+        )
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_til_cells_per_donor=5,
+        )
+        assert len(result) == 2
+
+
 class TestBucketByDonorSharing:
     """#15 chunk 4 — private/public bucketing helper."""
 

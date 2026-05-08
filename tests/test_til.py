@@ -524,6 +524,56 @@ class TestMultiSampleTilMatching:
         assert "TIL_Sample1" in first_row["til_samples"]
         assert "TIL_Sample2" in first_row["til_samples"]
 
+    def test_match_til_per_donor_aggregation(self, sample_culture_clonotypes):
+        """#9 chunk 4 — per-donor TIL counts when patient_id is on TIL data.
+
+        Clone CASSL_CASSF should be present in donor B1-2's TIL (3 cells)
+        and donor B1-3's TIL (1 cell). The aggregator should produce a
+        til_cells_per_donor JSON dict and max_til_cells_per_donor=3."""
+        til_dict = {
+            "TIL_B1-2": pd.DataFrame(
+                {
+                    "CDR3_alpha": ["CASSL", "CASSL", "CASSL", "CAVOTHER"],
+                    "CDR3_beta": ["CASSF", "CASSF", "CASSF", "CASSOTHER"],
+                    "patient_id": ["B1-2", "B1-2", "B1-2", "B1-2"],
+                }
+            ),
+            "TIL_B1-3": pd.DataFrame(
+                {
+                    "CDR3_alpha": ["CASSL", "CAVOTHER"],
+                    "CDR3_beta": ["CASSF", "CASSOTHER"],
+                    "patient_id": ["B1-3", "B1-3"],
+                }
+            ),
+        }
+
+        result = match_til(sample_culture_clonotypes, til_dict)
+
+        assert "til_cells_per_donor" in result.columns
+        assert "max_til_cells_per_donor" in result.columns
+
+        import json
+        first = result.iloc[0]  # CASSL_CASSF
+        per_donor = json.loads(first["til_cells_per_donor"])
+        assert per_donor == {"B1-2": 3, "B1-3": 1}
+        assert first["max_til_cells_per_donor"] == 3
+
+        second = result.iloc[1]  # NOMATCH_NOMATCH
+        assert json.loads(second["til_cells_per_donor"]) == {}
+        assert second["max_til_cells_per_donor"] == 0
+
+    def test_match_til_no_per_donor_when_patient_id_absent(
+        self, sample_culture_clonotypes
+    ):
+        """If TIL data has no patient_id column, the per-donor aggregation
+        is skipped (backwards-compat for existing TIL workflows)."""
+        til_df = pd.DataFrame(
+            {"CDR3_alpha": ["CASSL"], "CDR3_beta": ["CASSF"]}
+        )
+        result = match_til(sample_culture_clonotypes, til_df)
+        assert "til_cells_per_donor" not in result.columns
+        assert "max_til_cells_per_donor" not in result.columns
+
     def test_match_til_single_sample_no_per_sample_columns(
         self, sample_til_data, sample_culture_clonotypes
     ):

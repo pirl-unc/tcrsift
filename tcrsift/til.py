@@ -22,6 +22,7 @@ Supports loading TIL data from multiple formats:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -495,6 +496,39 @@ def match_til(
         for sample_name in til_dict.keys():
             sample_matches = (df[f"til_cell_count.{sample_name}"] > 0).sum()
             logger.info(f"  - {sample_name}: {sample_matches} matches")
+
+    # Per-donor TIL-overlap aggregation (#9 chunk 4). Only fires when at
+    # least one TIL sample has a patient_id column populated. Each clone
+    # gets a {donor: cell_count} JSON dict capturing how many TIL cells of
+    # that donor it shows up in, plus a max_til_cells_per_donor scalar
+    # used by the --min-til-cells-per-donor filter knob.
+    donor_clone_counts: dict[str, dict[str, int]] = {}
+    for sample_name, til_df in til_dict.items():
+        if "patient_id" not in til_df.columns:
+            continue
+        # Note til_df["CDR3ab"] was set above; reuse it.
+        for donor, group in til_df.dropna(subset=["patient_id"]).groupby("patient_id"):
+            counts = group["CDR3ab"].value_counts().to_dict()
+            counts.pop("", None)
+            counts.pop("_", None)
+            bucket = donor_clone_counts.setdefault(str(donor), {})
+            for clone, n in counts.items():
+                bucket[clone] = bucket.get(clone, 0) + n
+
+    if donor_clone_counts:
+        til_cells_per_donor = []
+        max_per_donor = []
+        for _, row in df.iterrows():
+            cdr3ab = row.get("CDR3ab", "") if match_by == "CDR3ab" else row.get("CDR3_beta", "")
+            per_donor = {
+                d: counts[cdr3ab]
+                for d, counts in donor_clone_counts.items()
+                if cdr3ab and cdr3ab in counts
+            }
+            til_cells_per_donor.append(json.dumps(per_donor, sort_keys=True))
+            max_per_donor.append(max(per_donor.values(), default=0))
+        df["til_cells_per_donor"] = til_cells_per_donor
+        df["max_til_cells_per_donor"] = max_per_donor
 
     return df
 
