@@ -179,6 +179,59 @@ class TestDonorMethodFilters:
         assert len(result) == 5
 
 
+class TestBucketByDonorSharing:
+    """#15 chunk 4 — private/public bucketing helper."""
+
+    def test_returns_empty_when_n_donors_absent(self):
+        from tcrsift.filter import bucket_by_donor_sharing
+
+        df = pd.DataFrame({"CDR3ab": ["A", "B"], "cell_count": [10, 5]})
+        assert bucket_by_donor_sharing(df) == {}
+
+    def test_splits_on_n_donors(self):
+        from tcrsift.filter import bucket_by_donor_sharing
+
+        df = pd.DataFrame(
+            {
+                "CDR3ab": ["A", "B", "C", "D"],
+                "n_donors": [1, 1, 2, 3],
+                "cell_count": [1, 1, 1, 1],
+            }
+        )
+        out = bucket_by_donor_sharing(df)
+        assert set(out) == {"private_to_donor", "public_across_donors"}
+        assert len(out["private_to_donor"]) == 2
+        assert len(out["public_across_donors"]) == 2
+        assert set(out["public_across_donors"]["CDR3ab"]) == {"C", "D"}
+
+    def test_single_donor_only_emits_private_bucket(self):
+        """Single-donor cohorts shouldn't get an empty public CSV."""
+        from tcrsift.filter import bucket_by_donor_sharing
+
+        df = pd.DataFrame({"CDR3ab": ["A", "B"], "n_donors": [1, 1]})
+        out = bucket_by_donor_sharing(df)
+        assert "public_across_donors" not in out
+        assert len(out["private_to_donor"]) == 2
+
+    def test_all_public_only_emits_public_bucket(self):
+        from tcrsift.filter import bucket_by_donor_sharing
+
+        df = pd.DataFrame({"CDR3ab": ["A"], "n_donors": [3]})
+        out = bucket_by_donor_sharing(df)
+        assert "private_to_donor" not in out
+        assert len(out["public_across_donors"]) == 1
+
+    def test_nan_treated_as_one_donor(self):
+        from tcrsift.filter import bucket_by_donor_sharing
+
+        df = pd.DataFrame(
+            {"CDR3ab": ["A", "B"], "n_donors": [np.nan, 2]}
+        )
+        out = bucket_by_donor_sharing(df)
+        assert set(out["private_to_donor"]["CDR3ab"]) == {"A"}
+        assert set(out["public_across_donors"]["CDR3ab"]) == {"B"}
+
+
 class TestResolveFilterModeKwargs:
     """#15 chunk 3 — named filter mode resolver."""
 

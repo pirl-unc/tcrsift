@@ -252,6 +252,21 @@ def cmd_filter(args):
     # Also save combined
     filtered.to_csv(output_dir / "all_filtered.csv", index=False)
 
+    # Mode-named output (#15 chunk 4)
+    if mode == "shared-high-freq":
+        filtered.to_csv(output_dir / "all_shared_high_freq.csv", index=False)
+    elif mode == "cross-donor-public":
+        filtered.to_csv(output_dir / "all_cross_donor_public.csv", index=False)
+
+    # Public/private bucketing (#15 chunk 4)
+    from .filter import bucket_by_donor_sharing
+
+    sharing_buckets = bucket_by_donor_sharing(filtered)
+    for bucket, bucket_df in sharing_buckets.items():
+        bpath = output_dir / f"{bucket}.csv"
+        bucket_df.to_csv(bpath, index=False)
+        print(f"Saved {len(bucket_df)} {bucket} clonotypes to {bpath}")
+
     # Generate plots if requested
     if args.plot_filter:
         plot_dir = Path(args.output_dir) if args.output_dir else output_dir / "plots"
@@ -735,6 +750,29 @@ def cmd_run(args):
         tier_df.to_csv(data_dir / f"filtered_{tier}.csv", index=False)
         tier_counts[tier] = len(tier_df)
         print(f"  {tier}: {len(tier_df)} clonotypes")
+
+    # Mode-named output for non-FDR modes (#15 chunk 4). Lets users find the
+    # "shared-high-freq passes" set without having to read tier CSVs that
+    # don't really mean tiers under that mode.
+    if config.filter.filter_mode == "shared-high-freq":
+        path = data_dir / "filtered_shared_high_freq.csv"
+        filtered.to_csv(path, index=False)
+        print(f"  shared-high-freq: {len(filtered)} clonotypes -> {path.name}")
+    elif config.filter.filter_mode == "cross-donor-public":
+        path = data_dir / "filtered_cross_donor_public.csv"
+        filtered.to_csv(path, index=False)
+        print(f"  cross-donor-public: {len(filtered)} clonotypes -> {path.name}")
+
+    # Public/private bucketing (#15 chunk 4). Written when n_donors info is
+    # present. Empty buckets are skipped so single-donor cohorts don't get
+    # a 0-row public_across_donors.csv.
+    from .filter import bucket_by_donor_sharing
+
+    sharing_buckets = bucket_by_donor_sharing(filtered)
+    for bucket, bucket_df in sharing_buckets.items():
+        path = data_dir / f"filtered_{bucket}.csv"
+        bucket_df.to_csv(path, index=False)
+        print(f"  {bucket}: {len(bucket_df)} clonotypes -> {path.name}")
 
     funnel_counts["Filtered"] = len(filtered)
 
