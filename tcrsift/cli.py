@@ -208,6 +208,10 @@ def cmd_filter(args):
         "min_methods_per_donor": args.min_methods_per_donor,
         "min_cells_per_method": args.min_cells_per_method,
         "min_frequency_per_method": args.min_frequency_per_method,
+        "min_timepoints": args.min_timepoints,
+        "min_timepoints_per_donor": args.min_timepoints_per_donor,
+        "min_apcs": args.min_apcs,
+        "min_apcs_per_donor": args.min_apcs_per_donor,
     }
     mode_kwargs = resolve_filter_mode_kwargs(mode, user_kwargs)
 
@@ -720,6 +724,10 @@ def cmd_run(args):
         "min_methods_per_donor": config.filter.min_methods_per_donor,
         "min_cells_per_method": config.filter.min_cells_per_method,
         "min_frequency_per_method": config.filter.min_frequency_per_method,
+        "min_timepoints": config.filter.min_timepoints,
+        "min_timepoints_per_donor": config.filter.min_timepoints_per_donor,
+        "min_apcs": config.filter.min_apcs,
+        "min_apcs_per_donor": config.filter.min_apcs_per_donor,
     }
     mode_kwargs = resolve_filter_mode_kwargs(
         config.filter.filter_mode, user_filter_kwargs
@@ -1275,6 +1283,22 @@ def create_parser():
     p_filter.add_argument(
         "--min-frequency-per-method", type=float, default=0.0,
         help="Min frequency within a single enrichment method (#15)",
+    )
+    p_filter.add_argument(
+        "--min-timepoints", type=int, default=0,
+        help="Min distinct timepoints clone must appear in (#9)",
+    )
+    p_filter.add_argument(
+        "--min-timepoints-per-donor", type=int, default=0,
+        help="Min distinct timepoints within at least one donor (#9)",
+    )
+    p_filter.add_argument(
+        "--min-apcs", type=int, default=0,
+        help="Min distinct APCs clone must appear across (#9)",
+    )
+    p_filter.add_argument(
+        "--min-apcs-per-donor", type=int, default=0,
+        help="Min distinct APCs within at least one donor (#9)",
     )
     p_filter.add_argument("--plot-filter", action="store_true", help="Generate filter plots")
     p_filter.add_argument("--output-dir", help="Output directory for plots")
@@ -1857,6 +1881,22 @@ CONDITIONALLY REQUIRED:
     filter_group.add_argument(
         "--min-frequency-per-method", type=float,
         help="Min frequency within a single enrichment method",
+    )
+    filter_group.add_argument(
+        "--min-timepoints", type=int,
+        help="Min distinct timepoints clone must appear in",
+    )
+    filter_group.add_argument(
+        "--min-timepoints-per-donor", type=int,
+        help="Min distinct timepoints within at least one donor",
+    )
+    filter_group.add_argument(
+        "--min-apcs", type=int,
+        help="Min distinct APCs clone must appear across",
+    )
+    filter_group.add_argument(
+        "--min-apcs-per-donor", type=int,
+        help="Min distinct APCs within at least one donor",
     )
 
     # Annotate step parameters

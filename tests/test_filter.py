@@ -179,6 +179,97 @@ class TestDonorMethodFilters:
         assert len(result) == 5
 
 
+class TestTimepointApcFilters:
+    """#9 chunk 3 — per-axis timepoint/APC filter knobs."""
+
+    def _make_df(self):
+        return pd.DataFrame(
+            {
+                "CDR3ab": [f"C{i}" for i in range(5)],
+                "CDR3_alpha": [f"CAV{i}" for i in range(5)],
+                "CDR3_beta": [f"CASS{i}" for i in range(5)],
+                "cell_count": [10, 10, 10, 10, 10],
+                "n_timepoints": [1, 2, 3, 1, 2],
+                "max_timepoints_per_donor": [1, 2, 3, 1, 1],
+                "n_apcs": [1, 2, 3, 1, 2],
+                "max_apcs_per_donor": [1, 2, 1, 3, 1],
+            }
+        )
+
+    def test_min_timepoints(self):
+        df = self._make_df()
+        result = filter_clonotypes_threshold(
+            df, min_cells=0, require_complete=False, min_timepoints=2
+        )
+        # n_timepoints >= 2: rows 1, 2, 4
+        assert len(result) == 3
+
+    def test_min_timepoints_per_donor(self):
+        df = self._make_df()
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_timepoints_per_donor=2,
+        )
+        # max_timepoints_per_donor >= 2: rows 1, 2
+        assert len(result) == 2
+
+    def test_min_apcs(self):
+        df = self._make_df()
+        result = filter_clonotypes_threshold(
+            df, min_cells=0, require_complete=False, min_apcs=3
+        )
+        # n_apcs >= 3: row 2
+        assert len(result) == 1
+
+    def test_min_apcs_per_donor(self):
+        df = self._make_df()
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_apcs_per_donor=2,
+        )
+        # max_apcs_per_donor >= 2: rows 1, 3
+        assert len(result) == 2
+
+    def test_compose_with_donor(self):
+        """Per-axis knobs compose with the existing #15 donor filter."""
+        df = self._make_df()
+        df["n_donors"] = [1, 2, 1, 2, 1]
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_donors=2,
+            min_timepoints_per_donor=2,
+        )
+        # n_donors >= 2 AND max_timepoints_per_donor >= 2: row 1
+        assert len(result) == 1
+        assert result.iloc[0]["CDR3ab"] == "C1"
+
+    def test_no_op_when_axis_columns_absent(self):
+        df = self._make_df().drop(
+            columns=[
+                "n_timepoints",
+                "max_timepoints_per_donor",
+                "n_apcs",
+                "max_apcs_per_donor",
+            ]
+        )
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_timepoints=2,
+            min_timepoints_per_donor=2,
+            min_apcs=2,
+            min_apcs_per_donor=2,
+        )
+        assert len(result) == 5
+
+
 class TestBucketByDonorSharing:
     """#15 chunk 4 — private/public bucketing helper."""
 

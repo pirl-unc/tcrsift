@@ -177,6 +177,10 @@ def filter_clonotypes_threshold(
     min_methods_per_donor: int = 0,
     min_cells_per_method: int = 0,
     min_frequency_per_method: float = 0.0,
+    min_timepoints: int = 0,
+    min_timepoints_per_donor: int = 0,
+    min_apcs: int = 0,
+    min_apcs_per_donor: int = 0,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
@@ -292,6 +296,44 @@ def filter_clonotypes_threshold(
         if verbose:
             logger.info(
                 f"  min_frequency_per_method >= {min_frequency_per_method}: "
+                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
+
+    # Per-axis timepoint / APC filters (#9 chunk 3). Same no-op-when-absent
+    # convention as the donor/method knobs above.
+    if min_timepoints > 0 and "n_timepoints" in df.columns:
+        before = len(df)
+        df = df[df["n_timepoints"] >= min_timepoints]
+        if verbose:
+            logger.info(
+                f"  min_timepoints >= {min_timepoints}: "
+                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
+
+    if min_timepoints_per_donor > 0 and "max_timepoints_per_donor" in df.columns:
+        before = len(df)
+        df = df[df["max_timepoints_per_donor"] >= min_timepoints_per_donor]
+        if verbose:
+            logger.info(
+                f"  min_timepoints_per_donor >= {min_timepoints_per_donor}: "
+                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
+
+    if min_apcs > 0 and "n_apcs" in df.columns:
+        before = len(df)
+        df = df[df["n_apcs"] >= min_apcs]
+        if verbose:
+            logger.info(
+                f"  min_apcs >= {min_apcs}: "
+                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
+
+    if min_apcs_per_donor > 0 and "max_apcs_per_donor" in df.columns:
+        before = len(df)
+        df = df[df["max_apcs_per_donor"] >= min_apcs_per_donor]
+        if verbose:
+            logger.info(
+                f"  min_apcs_per_donor >= {min_apcs_per_donor}: "
                 f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
             )
 
@@ -531,6 +573,10 @@ def filter_clonotypes(
     min_methods_per_donor: int = 0,
     min_cells_per_method: int = 0,
     min_frequency_per_method: float = 0.0,
+    min_timepoints: int = 0,
+    min_timepoints_per_donor: int = 0,
+    min_apcs: int = 0,
+    min_apcs_per_donor: int = 0,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -597,6 +643,10 @@ def filter_clonotypes(
         min_methods_per_donor=min_methods_per_donor,
         min_cells_per_method=min_cells_per_method,
         min_frequency_per_method=min_frequency_per_method,
+        min_timepoints=min_timepoints,
+        min_timepoints_per_donor=min_timepoints_per_donor,
+        min_apcs=min_apcs,
+        min_apcs_per_donor=min_apcs_per_donor,
         verbose=verbose,
     )
 
