@@ -305,6 +305,62 @@ def _aggregate_clone_data(
             else:
                 record["max_frequency_per_method"] = 0.0
 
+        # Timepoint / APC / tissue axis aggregations (#9 chunk 2). Each block
+        # only fires when the corresponding sample-sheet field was supplied
+        # — same conditional-emission convention as the donor/method block
+        # above so designs that don't use these axes don't get NaN columns.
+        has_timepoint = "timepoint" in clone_df.columns
+        has_apc = "apc_type" in clone_df.columns
+        has_tissue = "tissue" in clone_df.columns
+
+        if has_timepoint:
+            timepoints = sorted(
+                clone_df["timepoint"].dropna().astype(str).unique()
+            )
+            record["timepoints"] = ";".join(timepoints)
+            record["n_timepoints"] = len(timepoints)
+
+        if has_apc:
+            apcs = sorted(clone_df["apc_type"].dropna().astype(str).unique())
+            record["apcs"] = ";".join(apcs)
+            record["n_apcs"] = len(apcs)
+
+        if has_tissue:
+            tissues = sorted(clone_df["tissue"].dropna().astype(str).unique())
+            record["tissues"] = ";".join(tissues)
+            record["n_tissues"] = len(tissues)
+
+        # Nested timepoint-per-donor aggregation (mirrors methods_per_donor).
+        # Backs the planned --min-timepoints-per-donor filter knob.
+        if has_donor and has_timepoint:
+            timepoints_per_donor: dict[str, list[str]] = {}
+            grouped_td = clone_df.dropna(subset=["patient_id", "timepoint"])
+            for donor, group in grouped_td.groupby("patient_id"):
+                donor_tps = sorted(group["timepoint"].astype(str).unique())
+                if donor_tps:
+                    timepoints_per_donor[str(donor)] = donor_tps
+            record["timepoints_per_donor"] = json.dumps(
+                timepoints_per_donor, sort_keys=True
+            )
+            record["max_timepoints_per_donor"] = max(
+                (len(t) for t in timepoints_per_donor.values()), default=0
+            )
+
+        # Nested apc-per-donor aggregation. Backs --min-apcs-per-donor.
+        if has_donor and has_apc:
+            apcs_per_donor: dict[str, list[str]] = {}
+            grouped_ad = clone_df.dropna(subset=["patient_id", "apc_type"])
+            for donor, group in grouped_ad.groupby("patient_id"):
+                donor_apcs = sorted(group["apc_type"].astype(str).unique())
+                if donor_apcs:
+                    apcs_per_donor[str(donor)] = donor_apcs
+            record["apcs_per_donor"] = json.dumps(
+                apcs_per_donor, sort_keys=True
+            )
+            record["max_apcs_per_donor"] = max(
+                (len(a) for a in apcs_per_donor.values()), default=0
+            )
+
         # Antigen information if available
         if "antigen_description" in clone_df.columns or "antigen_name" in clone_df.columns:
             antigen_desc = (

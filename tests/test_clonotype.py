@@ -288,6 +288,124 @@ class TestAggregateDonorMethodColumns:
         ):
             assert col not in clonotypes.columns
 
+    def test_timepoint_apc_tissue_aggregations(self):
+        """#9 chunk 2 — per-axis timepoint/apc/tissue aggregations."""
+        import anndata as ad
+        import numpy as np
+
+        # Clone A: B1-2 across (D7,mDC), (D14,mDC), (D14,B-LCL); B1-3 at (D7,mDC).
+        # Clone B: B1-2 only at (D7,mDC).
+        rows = (
+            [("B1-2", "D7", "mDC", "blood", "CAVA", "CASS_A")] * 3
+            + [("B1-2", "D14", "mDC", "blood", "CAVA", "CASS_A")] * 2
+            + [("B1-2", "D14", "B-LCL", "blood", "CAVA", "CASS_A")] * 2
+            + [("B1-3", "D7", "mDC", "blood", "CAVA", "CASS_A")] * 2
+            + [("B1-2", "D7", "mDC", "blood", "CAVB", "CASS_B")] * 1
+        )
+        n = len(rows)
+        adata = ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": [f"{r[0]}_{r[1]}_{r[2]}" for r in rows],
+                    "patient_id": [r[0] for r in rows],
+                    "timepoint": [r[1] for r in rows],
+                    "apc_type": [r[2] for r in rows],
+                    "tissue": [r[3] for r in rows],
+                    "CDR3_alpha": [r[4] for r in rows],
+                    "CDR3_beta": [r[5] for r in rows],
+                }
+            ),
+        )
+
+        clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
+
+        # Single-axis lists / counts
+        for col in (
+            "timepoints", "n_timepoints",
+            "apcs", "n_apcs",
+            "tissues", "n_tissues",
+        ):
+            assert col in clonotypes.columns, col
+
+        clone_a = clonotypes[clonotypes["CDR3ab"] == "CAVA_CASS_A"].iloc[0]
+        assert set(clone_a["timepoints"].split(";")) == {"D7", "D14"}
+        assert clone_a["n_timepoints"] == 2
+        assert set(clone_a["apcs"].split(";")) == {"mDC", "B-LCL"}
+        assert clone_a["n_apcs"] == 2
+        assert clone_a["n_tissues"] == 1
+
+        # Nested per-donor
+        import json
+        for col in ("timepoints_per_donor", "max_timepoints_per_donor",
+                    "apcs_per_donor", "max_apcs_per_donor"):
+            assert col in clonotypes.columns, col
+
+        tp_pd = json.loads(clone_a["timepoints_per_donor"])
+        assert sorted(tp_pd["B1-2"]) == ["D14", "D7"]
+        assert tp_pd["B1-3"] == ["D7"]
+        assert clone_a["max_timepoints_per_donor"] == 2
+
+        apc_pd = json.loads(clone_a["apcs_per_donor"])
+        assert sorted(apc_pd["B1-2"]) == ["B-LCL", "mDC"]
+        assert apc_pd["B1-3"] == ["mDC"]
+        assert clone_a["max_apcs_per_donor"] == 2
+
+        clone_b = clonotypes[clonotypes["CDR3ab"] == "CAVB_CASS_B"].iloc[0]
+        assert clone_b["max_timepoints_per_donor"] == 1
+        assert clone_b["max_apcs_per_donor"] == 1
+
+    def test_per_donor_axis_columns_only_when_both_axes_set(self):
+        """timepoints_per_donor only appears if both patient_id and timepoint
+        are populated; same for apcs_per_donor."""
+        import anndata as ad
+        import numpy as np
+
+        # patient_id + apc_type but no timepoint
+        n = 4
+        adata = ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": ["S1", "S1", "S2", "S2"],
+                    "patient_id": ["B1-2", "B1-2", "B1-3", "B1-3"],
+                    "apc_type": ["mDC", "mDC", "B-LCL", "B-LCL"],
+                    "CDR3_alpha": ["CAVA"] * n,
+                    "CDR3_beta": ["CASS_A"] * n,
+                }
+            ),
+        )
+        clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
+        assert "apcs_per_donor" in clonotypes.columns
+        assert "timepoints_per_donor" not in clonotypes.columns
+        assert "max_timepoints_per_donor" not in clonotypes.columns
+
+    def test_axis_columns_absent_when_unset(self):
+        """No timepoint/apc/tissue columns when neither sample-sheet field set."""
+        import anndata as ad
+        import numpy as np
+
+        n = 4
+        adata = ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": ["S1"] * n,
+                    "CDR3_alpha": ["CAVA"] * n,
+                    "CDR3_beta": ["CASS_A"] * n,
+                }
+            ),
+        )
+        clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
+        for col in (
+            "timepoints", "n_timepoints",
+            "apcs", "n_apcs",
+            "tissues", "n_tissues",
+            "timepoints_per_donor", "max_timepoints_per_donor",
+            "apcs_per_donor", "max_apcs_per_donor",
+        ):
+            assert col not in clonotypes.columns, col
+
     def test_methods_per_donor_dropped_when_only_one_axis_set(self):
         """methods_per_donor / max_methods_per_donor only appear when BOTH
         patient_id and enrichment_method are present."""
