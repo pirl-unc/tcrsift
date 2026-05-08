@@ -707,8 +707,16 @@ def load_samples(
             keys=[a.obs["sample"].iloc[0] for a in adatas],
         )
 
-    # Store sample sheet as uns
-    combined.uns["sample_sheet"] = sample_sheet.to_dataframe().to_dict()
+    # Store sample sheet as uns as a JSON string. The previous form,
+    # `to_dataframe().to_dict()`, produced `{col: {row_idx: val}}` whose
+    # int row-index keys break h5ad serialization. Other structured forms
+    # (DataFrame directly, `to_dict(orient="list")`) hit anndata/h5py
+    # mixed-None-object-column limitations. JSON is unambiguous about
+    # None and stores as a single string. Read back with
+    # `pd.read_json(io.StringIO(adata.uns["sample_sheet"]), orient="records")`.
+    combined.uns["sample_sheet"] = sample_sheet.to_dataframe().to_json(
+        orient="records"
+    )
 
     logger.info(f"Successfully loaded {combined.n_obs:,} cells from {len(adatas)} samples")
 

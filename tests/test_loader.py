@@ -424,6 +424,25 @@ class TestLoadSamplesWithSampleSheet:
         assert "sample" in adata.obs.columns
         assert adata.obs["sample"].iloc[0] == "S1"
 
+    def test_load_samples_uns_sample_sheet_round_trips_h5ad(
+        self, mock_cellranger_vdj_dir, tmp_path
+    ):
+        """uns['sample_sheet'] must survive write_h5ad round-trip even when
+        optional fields are unset (regression for the int-keyed-dict bug)."""
+        import json
+
+        sample = Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir))
+        sheet = SampleSheet(samples=[sample])
+
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+        path = tmp_path / "loaded.h5ad"
+        adata.write_h5ad(path)
+
+        reloaded = ad.read_h5ad(path)
+        assert "sample_sheet" in reloaded.uns
+        records = json.loads(reloaded.uns["sample_sheet"])
+        assert any(r.get("sample") == "S1" for r in records)
+
 
 class TestLoadSampleMetadata:
     """Tests for sample metadata propagation."""
