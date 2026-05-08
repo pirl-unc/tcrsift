@@ -95,6 +95,133 @@ class TestFilterClonotypesThreshold:
         assert len(result) == 5  # All included
 
 
+class TestDonorMethodFilters:
+    """#15 chunk 3 — donor / method filter knobs."""
+
+    def _make_df(self):
+        # 5 clones with varying donor/method profiles
+        return pd.DataFrame(
+            {
+                "CDR3ab": [f"C{i}" for i in range(5)],
+                "CDR3_alpha": [f"CAV{i}" for i in range(5)],
+                "CDR3_beta": [f"CASS{i}" for i in range(5)],
+                "cell_count": [10, 10, 10, 10, 10],
+                "n_donors": [1, 1, 2, 2, 2],
+                "max_methods_per_donor": [1, 3, 1, 4, 2],
+                "max_cells_per_method": [2, 8, 5, 9, 3],
+                "max_frequency_per_method": [0.001, 0.02, 0.005, 0.05, 0.008],
+            }
+        )
+
+    def test_min_donors(self):
+        df = self._make_df()
+        result = filter_clonotypes_threshold(
+            df, min_cells=0, require_complete=False, min_donors=2
+        )
+        assert len(result) == 3
+        assert (result["n_donors"] >= 2).all()
+
+    def test_min_methods_per_donor(self):
+        df = self._make_df()
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_methods_per_donor=3,
+        )
+        # Clones with max_methods_per_donor >= 3 are #1 (3) and #3 (4)
+        assert len(result) == 2
+        assert (result["max_methods_per_donor"] >= 3).all()
+
+    def test_min_cells_per_method(self):
+        df = self._make_df()
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_cells_per_method=5,
+        )
+        # max_cells_per_method >= 5: clones #1 (8), #2 (5), #3 (9)
+        assert len(result) == 3
+
+    def test_min_frequency_per_method(self):
+        df = self._make_df()
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_frequency_per_method=0.01,
+        )
+        # max_frequency_per_method >= 0.01: clones #1 (0.02), #3 (0.05)
+        assert len(result) == 2
+
+    def test_no_op_when_columns_absent(self):
+        """Filters silently no-op when their source columns aren't on
+        the table — preserves backwards compat."""
+        # Same df but stripped of donor/method columns
+        df = self._make_df().drop(
+            columns=[
+                "n_donors",
+                "max_methods_per_donor",
+                "max_cells_per_method",
+                "max_frequency_per_method",
+            ]
+        )
+        result = filter_clonotypes_threshold(
+            df,
+            min_cells=0,
+            require_complete=False,
+            min_donors=2,
+            min_methods_per_donor=3,
+            min_cells_per_method=5,
+            min_frequency_per_method=0.01,
+        )
+        assert len(result) == 5
+
+
+class TestResolveFilterModeKwargs:
+    """#15 chunk 3 — named filter mode resolver."""
+
+    def test_fdr_default(self):
+        from tcrsift.filter import resolve_filter_mode_kwargs
+
+        assert resolve_filter_mode_kwargs("fdr") == {}
+
+    def test_shared_high_freq_defaults(self):
+        from tcrsift.filter import resolve_filter_mode_kwargs
+
+        out = resolve_filter_mode_kwargs("shared-high-freq")
+        # Per #15: K=2 methods per donor, F=0.01 frequency floor
+        assert out == {"min_methods_per_donor": 2, "min_frequency_per_method": 0.01}
+
+    def test_cross_donor_public_defaults(self):
+        from tcrsift.filter import resolve_filter_mode_kwargs
+
+        out = resolve_filter_mode_kwargs("cross-donor-public")
+        assert out["min_donors"] == 2
+        assert out["min_methods_per_donor"] == 1
+        assert out["min_frequency_per_method"] == 0.005
+
+    def test_user_overrides_layer_on_top(self):
+        from tcrsift.filter import resolve_filter_mode_kwargs
+
+        out = resolve_filter_mode_kwargs(
+            "shared-high-freq",
+            {"min_methods_per_donor": 3, "min_donors": 0},
+        )
+        # User raised K to 3; min_donors=0 means "unset" so it doesn't appear.
+        assert out["min_methods_per_donor"] == 3
+        assert out["min_frequency_per_method"] == 0.01
+        assert "min_donors" not in out
+
+    def test_unknown_mode_raises(self):
+        from tcrsift.filter import resolve_filter_mode_kwargs
+        from tcrsift.validation import TCRsiftValidationError
+
+        with pytest.raises(TCRsiftValidationError):
+            resolve_filter_mode_kwargs("nonsense")
+
+
 class TestAssignTiersThreshold:
     """Tests for tier assignment using thresholds."""
 
