@@ -132,22 +132,26 @@ def aggregate_clonotypes(
         df["TRA_pass_umi"] = True
         df["TRB_pass_umi"] = True
 
-    # Build clone identifier
+    # Build clone identifier. Cast to object first: after an h5ad round-trip
+    # anndata returns string obs columns as Categorical, and `.fillna("")` on
+    # a Categorical without "" in its categories raises (issue #11).
     if group_by == "CDR3ab":
-        # Require both chains for complete clone
-        df["CDR3ab"] = df["CDR3_alpha"].fillna("") + "_" + df["CDR3_beta"].fillna("")
+        cdr3_alpha = df["CDR3_alpha"].astype(object)
+        cdr3_beta = df["CDR3_beta"].astype(object)
+        df["CDR3ab"] = cdr3_alpha.fillna("") + "_" + cdr3_beta.fillna("")
         df["is_complete_clone"] = (
-            df["CDR3_alpha"].notna()
-            & (df["CDR3_alpha"] != "")
-            & df["CDR3_beta"].notna()
-            & (df["CDR3_beta"] != "")
+            cdr3_alpha.notna()
+            & (cdr3_alpha != "")
+            & cdr3_beta.notna()
+            & (cdr3_beta != "")
             & df["TRA_pass_umi"]
             & df["TRB_pass_umi"]
         )
     elif group_by == "CDR3b_only":
-        df["CDR3ab"] = df["CDR3_beta"].fillna("")
+        cdr3_beta = df["CDR3_beta"].astype(object)
+        df["CDR3ab"] = cdr3_beta.fillna("")
         df["is_complete_clone"] = (
-            df["CDR3_beta"].notna() & (df["CDR3_beta"] != "") & df["TRB_pass_umi"]
+            cdr3_beta.notna() & (cdr3_beta != "") & df["TRB_pass_umi"]
         )
     else:
         raise ValueError(f"Invalid group_by: {group_by}. Use 'CDR3ab' or 'CDR3b_only'")
