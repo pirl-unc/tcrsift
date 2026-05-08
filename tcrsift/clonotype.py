@@ -203,6 +203,13 @@ def _aggregate_clone_data(
 
     clone_data = []
 
+    # Per-method total cell counts (denominator for max_frequency_per_method).
+    # Computed once outside the per-clone loop. Only meaningful when
+    # enrichment_method was populated in the sample sheet (#8).
+    method_cell_totals: pd.Series | None = None
+    if "enrichment_method" in df.columns:
+        method_cell_totals = df["enrichment_method"].value_counts()
+
     # Create iterator with optional progress bar
     grouped = df.groupby("CDR3ab")
     if show_progress:
@@ -279,6 +286,24 @@ def _aggregate_clone_data(
             record["max_methods_per_donor"] = max(
                 (len(m) for m in methods_per_donor.values()), default=0
             )
+
+        # Per-method cell counts and frequencies (#15 chunk 3).
+        # max_cells_per_method backs --min-cells-per-method;
+        # max_frequency_per_method backs --min-frequency-per-method.
+        if has_method:
+            method_cell_counts = clone_df["enrichment_method"].value_counts()
+            record["max_cells_per_method"] = (
+                int(method_cell_counts.max()) if len(method_cell_counts) else 0
+            )
+            if method_cell_totals is not None and len(method_cell_counts):
+                # Align by method, divide. Methods present in this clone are
+                # guaranteed to exist in method_cell_totals (same source df).
+                freqs = method_cell_counts / method_cell_totals.reindex(
+                    method_cell_counts.index
+                )
+                record["max_frequency_per_method"] = float(freqs.max())
+            else:
+                record["max_frequency_per_method"] = 0.0
 
         # Antigen information if available
         if "antigen_description" in clone_df.columns or "antigen_name" in clone_df.columns:

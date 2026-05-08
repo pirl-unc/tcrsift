@@ -178,12 +178,20 @@ def cmd_clonotype(args):
 
 def cmd_filter(args):
     """Filter clonotypes with tiered confidence levels."""
+    import logging
+
     import pandas as pd
 
-    from .filter import filter_clonotypes, get_filter_summary, split_by_tier
+    from .filter import (
+        filter_clonotypes,
+        get_filter_summary,
+        resolve_filter_mode_kwargs,
+        split_by_tier,
+    )
     from .plots import plot_filter
 
     setup_logging(args.verbose)
+    logger = logging.getLogger(__name__)
 
     clonotypes = pd.read_csv(args.input)
     print(f"Loaded {len(clonotypes)} clonotypes from {args.input}")
@@ -192,6 +200,26 @@ def cmd_filter(args):
     fdr_tiers = None
     if args.fdr_tiers:
         fdr_tiers = [float(x) for x in args.fdr_tiers.split(",")]
+
+    # Resolve named filter mode preset, then layer user-supplied knobs.
+    mode = getattr(args, "filter_mode", "fdr")
+    user_kwargs = {
+        "min_donors": args.min_donors,
+        "min_methods_per_donor": args.min_methods_per_donor,
+        "min_cells_per_method": args.min_cells_per_method,
+        "min_frequency_per_method": args.min_frequency_per_method,
+    }
+    mode_kwargs = resolve_filter_mode_kwargs(mode, user_kwargs)
+
+    # `cross-donor-public` only makes sense for multi-donor cohorts. Per
+    # #15: warn rather than error when n_donors == 1 across all clones.
+    if mode == "cross-donor-public" and "n_donors" in clonotypes.columns:
+        if (clonotypes["n_donors"] >= 2).sum() == 0:
+            logger.warning(
+                "filter_mode='cross-donor-public' requested but no clone has "
+                "n_donors >= 2. Result will be empty. Did you mean to set "
+                "donors_share_antigen / supply patient_id across donors?"
+            )
 
     filtered = filter_clonotypes(
         clonotypes,
@@ -202,6 +230,7 @@ def cmd_filter(args):
         require_complete=args.require_complete,
         exclude_viral=args.exclude_viral,
         fdr_tiers=fdr_tiers,
+        **mode_kwargs,
     )
 
     # Print summary
@@ -668,6 +697,26 @@ def cmd_run(args):
 
     # Step 4: Filter
     print("\n[4/7] Filtering clonotypes...")
+    # Resolve named filter mode preset, then layer user-supplied knobs.
+    from .filter import resolve_filter_mode_kwargs
+
+    user_filter_kwargs = {
+        "min_donors": config.filter.min_donors,
+        "min_methods_per_donor": config.filter.min_methods_per_donor,
+        "min_cells_per_method": config.filter.min_cells_per_method,
+        "min_frequency_per_method": config.filter.min_frequency_per_method,
+    }
+    mode_kwargs = resolve_filter_mode_kwargs(
+        config.filter.filter_mode, user_filter_kwargs
+    )
+
+    if config.filter.filter_mode == "cross-donor-public" and "n_donors" in clonotypes.columns:
+        if (clonotypes["n_donors"] >= 2).sum() == 0:
+            print(
+                "  WARNING: filter_mode='cross-donor-public' requested but no clone "
+                "has n_donors >= 2. Result will likely be empty."
+            )
+
     filtered = filter_clonotypes(
         clonotypes,
         method=config.filter.method,
@@ -676,6 +725,7 @@ def cmd_run(args):
         min_frequency=config.filter.min_frequency,
         require_complete=config.filter.require_complete,
         fdr_tiers=config.filter.fdr_tiers,
+        **mode_kwargs,
     )
 
     # Save by tier
@@ -1164,6 +1214,30 @@ def create_parser():
         "--fdr-tiers", default="0.15,0.1,0.01,0.001,0.0001", help="FDR tiers (comma-separated)"
     )
     p_filter.add_argument("--exclude-viral", action="store_true", help="Exclude viral clones")
+    p_filter.add_argument(
+        "--filter-mode",
+        choices=["fdr", "shared-high-freq", "cross-donor-public"],
+        default="fdr",
+        help="Named filter preset (default: fdr). 'shared-high-freq' applies "
+        "min-methods-per-donor=2 and min-frequency-per-method=0.01. "
+        "'cross-donor-public' adds min-donors=2.",
+    )
+    p_filter.add_argument(
+        "--min-donors", type=int, default=0,
+        help="Min distinct donors clone must appear in (#8/#15)",
+    )
+    p_filter.add_argument(
+        "--min-methods-per-donor", type=int, default=0,
+        help="Min distinct enrichment methods within at least one donor (#8/#15)",
+    )
+    p_filter.add_argument(
+        "--min-cells-per-method", type=int, default=0,
+        help="Min cells in at least one enrichment method (#15)",
+    )
+    p_filter.add_argument(
+        "--min-frequency-per-method", type=float, default=0.0,
+        help="Min frequency within a single enrichment method (#15)",
+    )
     p_filter.add_argument("--plot-filter", action="store_true", help="Generate filter plots")
     p_filter.add_argument("--output-dir", help="Output directory for plots")
     p_filter.add_argument("--verbose", action="store_true", help="Verbose output")
@@ -1724,6 +1798,27 @@ CONDITIONALLY REQUIRED:
     )
     filter_group.add_argument(
         "--fdr-tiers", help="FDR tiers comma-separated (default: 0.15,0.1,0.01,0.001,0.0001)"
+    )
+    filter_group.add_argument(
+        "--filter-mode",
+        choices=["fdr", "shared-high-freq", "cross-donor-public"],
+        help="Named filter preset (default: fdr). 'shared-high-freq' applies "
+        "min-methods-per-donor=2 and min-frequency-per-method=0.01.",
+    )
+    filter_group.add_argument(
+        "--min-donors", type=int, help="Min distinct donors per clone",
+    )
+    filter_group.add_argument(
+        "--min-methods-per-donor", type=int,
+        help="Min distinct enrichment methods within at least one donor",
+    )
+    filter_group.add_argument(
+        "--min-cells-per-method", type=int,
+        help="Min cells in at least one enrichment method",
+    )
+    filter_group.add_argument(
+        "--min-frequency-per-method", type=float,
+        help="Min frequency within a single enrichment method",
     )
 
     # Annotate step parameters

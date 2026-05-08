@@ -67,6 +67,14 @@ class FilterConfig:
     min_frequency: float = 0.0
     require_complete: bool = True
     fdr_tiers: list[float] = field(default_factory=lambda: [0.15, 0.1, 0.01, 0.001, 0.0001])
+    # Donor / method knobs (#15). Each is no-op when its source column isn't
+    # on the clonotype table — preserves backwards compat for designs that
+    # don't supply patient_id / enrichment_method.
+    filter_mode: str = "fdr"
+    min_donors: int = 0
+    min_methods_per_donor: int = 0
+    min_cells_per_method: int = 0
+    min_frequency_per_method: float = 0.0
 
 
 @dataclass
@@ -236,6 +244,11 @@ class TCRsiftConfig:
             "min_frequency": ("filter", "min_frequency"),
             "require_complete": ("filter", "require_complete"),
             "fdr_tiers": ("filter", "fdr_tiers"),
+            "filter_mode": ("filter", "filter_mode"),
+            "min_donors": ("filter", "min_donors"),
+            "min_methods_per_donor": ("filter", "min_methods_per_donor"),
+            "min_cells_per_method": ("filter", "min_cells_per_method"),
+            "min_frequency_per_method": ("filter", "min_frequency_per_method"),
             # Annotate
             "vdjdb_path": ("annotate", "vdjdb_path"),
             "iedb_path": ("annotate", "iedb_path"),

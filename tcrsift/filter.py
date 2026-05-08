@@ -82,6 +82,61 @@ DEFAULT_THRESHOLD_TIERS = {
 DEFAULT_FDR_TIERS = [0.0001, 0.001, 0.01, 0.1, 0.15]
 
 
+# Named filter modes (#15). Pre-canned compositions of the donor/method
+# knobs that match common multi-donor / multi-method study designs.
+# `fdr` is the existing default and is documented here for completeness;
+# the named-mode resolver below ignores it and lets normal dispatch run.
+#
+# `shared-high-freq` defaults: K=2, F=0.01 — calibrated against the canonical
+# 2-donor x 7-method MART-1 study where the FDR-tier filter's tier 1
+# happened to produce exactly this set (issue #15).
+#
+# `cross-donor-public` requires ≥2 donors and ≥1 method within each, with
+# a frequency floor; per #15 it warns rather than errors when the cohort
+# isn't multi-donor, since blocking valid analyses is worse than a flag.
+VALID_FILTER_MODES = ("fdr", "shared-high-freq", "cross-donor-public")
+
+NAMED_FILTER_MODE_DEFAULTS: dict[str, dict] = {
+    "shared-high-freq": {
+        "min_methods_per_donor": 2,
+        "min_frequency_per_method": 0.01,
+    },
+    "cross-donor-public": {
+        "min_donors": 2,
+        "min_methods_per_donor": 1,
+        "min_frequency_per_method": 0.005,
+    },
+}
+
+
+def resolve_filter_mode_kwargs(
+    mode: str,
+    user_kwargs: dict | None = None,
+) -> dict:
+    """Map a named filter mode to a kwargs dict for `filter_clonotypes`.
+
+    Returns an empty dict for `fdr` (the default mode — no override). For
+    named modes, applies the mode's preset thresholds, then layers any
+    explicit user_kwargs on top so users can override individual knobs
+    while keeping the rest of the preset.
+
+    Raises TCRsiftValidationError on an unknown mode.
+    """
+    if mode not in VALID_FILTER_MODES:
+        raise TCRsiftValidationError(
+            f"Invalid filter_mode: '{mode}'",
+            hint=f"Valid modes: {VALID_FILTER_MODES}",
+        )
+    resolved = dict(NAMED_FILTER_MODE_DEFAULTS.get(mode, {}))
+    if user_kwargs:
+        # Strip None / 0 / 0.0 from user_kwargs so unset CLI flags don't
+        # clobber preset values.
+        for k, v in user_kwargs.items():
+            if v not in (None, 0, 0.0):
+                resolved[k] = v
+    return resolved
+
+
 def _get_condition_count_info(clonotypes: pd.DataFrame) -> tuple[pd.Series | None, str | None]:
     """Return the best available condition-count series and its column name."""
     for col in ("n_conditions", "n_antigens", "n_samples"):
@@ -118,6 +173,10 @@ def filter_clonotypes_threshold(
     require_complete: bool = True,
     tcell_type: str | None = None,
     exclude_viral: bool = False,
+    min_donors: int = 0,
+    min_methods_per_donor: int = 0,
+    min_cells_per_method: int = 0,
+    min_frequency_per_method: float = 0.0,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
@@ -194,6 +253,45 @@ def filter_clonotypes_threshold(
         if verbose:
             logger.info(
                 f"  max_conditions <= {max_conditions} using {condition_count_col}: "
+                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
+
+    # Donor / method axis filters (#15). Each is a no-op when the underlying
+    # column isn't on the clonotype table — preserves backwards compat for
+    # designs that don't supply patient_id / enrichment_method.
+    if min_donors > 0 and "n_donors" in df.columns:
+        before = len(df)
+        df = df[df["n_donors"] >= min_donors]
+        if verbose:
+            logger.info(
+                f"  min_donors >= {min_donors}: {before:,} -> {len(df):,} "
+                f"({before - len(df):,} removed)"
+            )
+
+    if min_methods_per_donor > 0 and "max_methods_per_donor" in df.columns:
+        before = len(df)
+        df = df[df["max_methods_per_donor"] >= min_methods_per_donor]
+        if verbose:
+            logger.info(
+                f"  min_methods_per_donor >= {min_methods_per_donor}: "
+                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
+
+    if min_cells_per_method > 0 and "max_cells_per_method" in df.columns:
+        before = len(df)
+        df = df[df["max_cells_per_method"] >= min_cells_per_method]
+        if verbose:
+            logger.info(
+                f"  min_cells_per_method >= {min_cells_per_method}: "
+                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
+            )
+
+    if min_frequency_per_method > 0 and "max_frequency_per_method" in df.columns:
+        before = len(df)
+        df = df[df["max_frequency_per_method"] >= min_frequency_per_method]
+        if verbose:
+            logger.info(
+                f"  min_frequency_per_method >= {min_frequency_per_method}: "
                 f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
             )
 
@@ -429,6 +527,10 @@ def filter_clonotypes(
     exclude_viral: bool = False,
     fdr_tiers: list | None = None,
     tier_definitions: dict | None = None,
+    min_donors: int = 0,
+    min_methods_per_donor: int = 0,
+    min_cells_per_method: int = 0,
+    min_frequency_per_method: float = 0.0,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -491,6 +593,10 @@ def filter_clonotypes(
         require_complete=require_complete,
         tcell_type=tcell_type if tcell_type != "both" else None,
         exclude_viral=exclude_viral,
+        min_donors=min_donors,
+        min_methods_per_donor=min_methods_per_donor,
+        min_cells_per_method=min_cells_per_method,
+        min_frequency_per_method=min_frequency_per_method,
         verbose=verbose,
     )
 
