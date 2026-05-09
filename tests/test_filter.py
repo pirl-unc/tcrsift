@@ -310,6 +310,71 @@ class TestTilOverlapFilter:
         assert len(result) == 2
 
 
+class TestFilterKnobNoOpWarnings:
+    """Audit gap #5 — knobs that silently no-op on missing columns now warn."""
+
+    def test_min_donors_warns_when_n_donors_absent(self, caplog):
+        import logging
+
+        df = pd.DataFrame(
+            {
+                "CDR3ab": ["A", "B"],
+                "CDR3_alpha": ["CAV1", "CAV2"],
+                "CDR3_beta": ["CASS_1", "CASS_2"],
+                "cell_count": [10, 10],
+            }
+        )
+        with caplog.at_level(logging.WARNING, logger="tcrsift.filter"):
+            filter_clonotypes_threshold(
+                df, min_cells=0, require_complete=False, min_donors=2
+            )
+        assert any(
+            "min_donors" in r.message and "n_donors" in r.message
+            for r in caplog.records
+        ), [r.message for r in caplog.records]
+
+    def test_no_warning_when_knob_unset(self, caplog):
+        """Default-zero knobs shouldn't produce warnings."""
+        import logging
+
+        df = pd.DataFrame(
+            {
+                "CDR3ab": ["A"],
+                "CDR3_alpha": ["CAV1"],
+                "CDR3_beta": ["CASS_1"],
+                "cell_count": [10],
+            }
+        )
+        with caplog.at_level(logging.WARNING, logger="tcrsift.filter"):
+            filter_clonotypes_threshold(
+                df, min_cells=0, require_complete=False
+            )
+        # No "requested but column ... not on" warnings.
+        assert not any(
+            "requested but column" in r.message for r in caplog.records
+        ), [r.message for r in caplog.records]
+
+    def test_no_warning_when_column_present(self, caplog):
+        import logging
+
+        df = pd.DataFrame(
+            {
+                "CDR3ab": ["A", "B"],
+                "CDR3_alpha": ["CAV1", "CAV2"],
+                "CDR3_beta": ["CASS_1", "CASS_2"],
+                "cell_count": [10, 10],
+                "n_donors": [1, 2],
+            }
+        )
+        with caplog.at_level(logging.WARNING, logger="tcrsift.filter"):
+            filter_clonotypes_threshold(
+                df, min_cells=0, require_complete=False, min_donors=2
+            )
+        assert not any(
+            "requested but column" in r.message for r in caplog.records
+        )
+
+
 class TestBucketByDonorSharing:
     """#15 chunk 4 — private/public bucketing helper."""
 
