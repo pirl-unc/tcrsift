@@ -715,6 +715,25 @@ def cmd_run(args):
     if config.output.generate_plots:
         plot_clonotypes(clonotypes, plots_dir)
 
+    # Long-format per-(clone, sample) companion table (#20 chunk 1). Default
+    # 'auto' = emit when the run has >=2 samples; this is the regime where
+    # the long view is most useful and reconstructing it from the semicolon
+    # delimited `samples` string is annoying.
+    emit_long = config.output.emit_clone_sample_long
+    n_samples_in_run = adata.obs["sample"].nunique() if "sample" in adata.obs.columns else 0
+    should_emit_long = (
+        emit_long == "always"
+        or (emit_long == "auto" and n_samples_in_run >= 2)
+    )
+    if should_emit_long:
+        from .clonotype import build_clone_sample_long
+        long_df = build_clone_sample_long(adata)
+        long_df.to_csv(data_dir / "clone_sample_long.csv", index=False)
+        print(
+            f"  Wrote clone_sample_long.csv: {len(long_df)} rows "
+            f"({long_df['CDR3ab'].nunique()} clones x {n_samples_in_run} samples)"
+        )
+
     # Step 4: Filter
     print("\n[4/7] Filtering clonotypes...")
     # Resolve named filter mode preset, then layer user-supplied knobs.
@@ -2006,6 +2025,12 @@ CONDITIONALLY REQUIRED:
         action="store_false",
         default=None,
         help="Skip report generation",
+    )
+    out_group.add_argument(
+        "--emit-clone-sample-long",
+        choices=["auto", "always", "never"],
+        help="Emit data/clone_sample_long.csv: 'auto' (default) writes it "
+        "when the sheet has >=2 samples; 'always' / 'never' force.",
     )
     out_group.add_argument("--verbose", action="store_true", help="Verbose output")
 

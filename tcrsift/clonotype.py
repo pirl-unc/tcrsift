@@ -512,6 +512,105 @@ def calculate_clone_frequencies(
     return clonotypes
 
 
+def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
+    """Build a long-format (clone, sample) DataFrame from adata.obs.
+
+    One row per (CDR3ab, sample) pair where the clone has at least one
+    cell in that sample. Includes ``donor`` and ``method`` columns when
+    ``patient_id`` and ``enrichment_method`` are populated; same for
+    ``timepoint`` and ``apc_type``. UMI sums (``n_alpha_umis`` /
+    ``n_beta_umis``) are emitted when the per-chain UMI columns are
+    present.
+
+    The frequency denominator is total complete-clone cells in the
+    sample, mirroring the convention used by ``max_frequency`` in
+    ``aggregate_clonotypes`` so the two are directly comparable.
+
+    Implements #20 chunk 1 — surfaces the per-(clone, sample) view that
+    users were previously reconstructing by parsing the semicolon-
+    delimited ``samples`` string on ``clonotypes.csv``.
+    """
+    rehydrate_obs(adata)
+    obs = adata.obs.copy()
+
+    if "sample" not in obs.columns:
+        raise TCRsiftValidationError(
+            "adata.obs missing 'sample' column",
+            hint="Run load_samples first.",
+        )
+
+    # Build CDR3ab if not already present (aggregate_clonotypes works on a
+    # copy and doesn't write CDR3ab back to adata.obs).
+    if "CDR3ab" not in obs.columns:
+        if "CDR3_alpha" in obs.columns and "CDR3_beta" in obs.columns:
+            obs["CDR3ab"] = (
+                obs["CDR3_alpha"].fillna("") + "_" + obs["CDR3_beta"].fillna("")
+            )
+        elif "CDR3_beta" in obs.columns:
+            obs["CDR3ab"] = obs["CDR3_beta"].fillna("")
+        else:
+            raise TCRsiftValidationError(
+                "adata.obs missing CDR3 columns; cannot build long table",
+                hint="Make sure VDJ data was loaded.",
+            )
+
+    valid = obs[(obs["CDR3ab"] != "") & (obs["CDR3ab"] != "_")].copy()
+
+    # Frequency denominator: total cells per sample passing the same
+    # validity filter. For consistency with max_frequency, restrict to
+    # complete clones when the marker is available.
+    if "is_complete_clone" in valid.columns:
+        denom_subset = valid[valid["is_complete_clone"]]
+    else:
+        denom_subset = valid
+    sample_totals = denom_subset.groupby("sample").size()
+
+    # Cell counts and UMI sums per (clone, sample).
+    grouped = valid.groupby(["CDR3ab", "sample"])
+    out = grouped.size().rename("cells").reset_index()
+
+    if "TRA_1_umis" in valid.columns:
+        out["n_alpha_umis"] = (
+            grouped["TRA_1_umis"].sum().fillna(0).astype(int).values
+        )
+    if "TRB_1_umis" in valid.columns:
+        out["n_beta_umis"] = (
+            grouped["TRB_1_umis"].sum().fillna(0).astype(int).values
+        )
+
+    out["frequency"] = out.apply(
+        lambda r: safe_divide(r["cells"], sample_totals.get(r["sample"], 0), default=0.0),
+        axis=1,
+    )
+
+    # Propagate per-sample axis metadata (one value per sample).
+    axis_to_short = {
+        "patient_id": "donor",
+        "enrichment_method": "method",
+        "timepoint": "timepoint",
+        "apc_type": "apc",
+    }
+    sample_meta_cols = [c for c in axis_to_short if c in valid.columns]
+    if sample_meta_cols:
+        sample_meta = valid.groupby("sample")[sample_meta_cols].first()
+        for col in sample_meta_cols:
+            out[axis_to_short[col]] = out["sample"].map(sample_meta[col])
+
+    # Column order matches the issue spec, with optional axes inserted.
+    leading = ["CDR3ab", "sample"]
+    for col in ("donor", "method", "timepoint", "apc"):
+        if col in out.columns:
+            leading.append(col)
+    leading.extend(["cells", "frequency"])
+    for col in ("n_alpha_umis", "n_beta_umis"):
+        if col in out.columns:
+            leading.append(col)
+    extra = [c for c in out.columns if c not in leading]
+    out = out[leading + extra]
+
+    return out.sort_values(["CDR3ab", "sample"]).reset_index(drop=True)
+
+
 def get_clonotype_summary(clonotypes: pd.DataFrame) -> dict:
     """
     Get summary statistics for clonotypes.
