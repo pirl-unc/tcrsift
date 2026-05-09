@@ -160,6 +160,10 @@ class OutputConfig:
     # Long-format (clone, sample) CSV (#20 chunk 1). 'auto' = emit when the
     # run has >=2 samples; 'always' = always; 'never' = skip.
     emit_clone_sample_long: str = "auto"
+    # Per-method ranked CSVs (#20 chunk 2). Top-N clones per (donor, method)
+    # ranked by within-bucket frequency. Skipped when enrichment_method
+    # axis isn't populated.
+    per_method_top_n: int = 100
 
 
 @dataclass
@@ -304,6 +308,7 @@ class TCRsiftConfig:
             # Output
             "generate_plots": ("output", "generate_plots"),
             "emit_clone_sample_long": ("output", "emit_clone_sample_long"),
+            "per_method_top_n": ("output", "per_method_top_n"),
             "generate_report": ("output", "generate_report"),
             "report_format": ("output", "report_format"),
             "output_airr": ("output", "output_airr"),
