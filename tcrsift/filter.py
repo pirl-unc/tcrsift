@@ -261,93 +261,41 @@ def filter_clonotypes_threshold(
                 f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
             )
 
-    # Donor / method axis filters (#15). Each is a no-op when the underlying
-    # column isn't on the clonotype table — preserves backwards compat for
-    # designs that don't supply patient_id / enrichment_method.
-    if min_donors > 0 and "n_donors" in df.columns:
+    # Donor / method / timepoint / APC / TIL axis filters (#15, #9, #20).
+    # Each is a no-op when its underlying column isn't on the clonotype
+    # table — preserves backwards compat for designs that don't supply
+    # the relevant axis. Previously fully silent; now emits a logger.warning
+    # so a user passing --min-donors 2 against a sheet without patient_id
+    # discovers the mismatch instead of seeing all clones pass through.
+    axis_filters: list[tuple[float, str, str]] = [
+        (min_donors, "n_donors", "min_donors"),
+        (min_methods_per_donor, "max_methods_per_donor", "min_methods_per_donor"),
+        (min_cells_per_method, "max_cells_per_method", "min_cells_per_method"),
+        (min_frequency_per_method, "max_frequency_per_method", "min_frequency_per_method"),
+        (min_timepoints, "n_timepoints", "min_timepoints"),
+        (min_timepoints_per_donor, "max_timepoints_per_donor", "min_timepoints_per_donor"),
+        (min_apcs, "n_apcs", "min_apcs"),
+        (min_apcs_per_donor, "max_apcs_per_donor", "min_apcs_per_donor"),
+        (min_til_cells_per_donor, "max_til_cells_per_donor", "min_til_cells_per_donor"),
+    ]
+    for value, column, label in axis_filters:
+        if value <= 0:
+            continue
+        if column not in df.columns:
+            logger.warning(
+                "%s=%s requested but column %r is not on the clonotype "
+                "table; skipping. Check that the relevant sample-sheet axis "
+                "(patient_id / enrichment_method / timepoint / apc_type / "
+                "TIL data with patient_id) is populated.",
+                label, value, column,
+            )
+            continue
         before = len(df)
-        df = df[df["n_donors"] >= min_donors]
+        df = df[df[column] >= value]
         if verbose:
             logger.info(
-                f"  min_donors >= {min_donors}: {before:,} -> {len(df):,} "
+                f"  {label} >= {value}: {before:,} -> {len(df):,} "
                 f"({before - len(df):,} removed)"
-            )
-
-    if min_methods_per_donor > 0 and "max_methods_per_donor" in df.columns:
-        before = len(df)
-        df = df[df["max_methods_per_donor"] >= min_methods_per_donor]
-        if verbose:
-            logger.info(
-                f"  min_methods_per_donor >= {min_methods_per_donor}: "
-                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
-            )
-
-    if min_cells_per_method > 0 and "max_cells_per_method" in df.columns:
-        before = len(df)
-        df = df[df["max_cells_per_method"] >= min_cells_per_method]
-        if verbose:
-            logger.info(
-                f"  min_cells_per_method >= {min_cells_per_method}: "
-                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
-            )
-
-    if min_frequency_per_method > 0 and "max_frequency_per_method" in df.columns:
-        before = len(df)
-        df = df[df["max_frequency_per_method"] >= min_frequency_per_method]
-        if verbose:
-            logger.info(
-                f"  min_frequency_per_method >= {min_frequency_per_method}: "
-                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
-            )
-
-    # Per-axis timepoint / APC filters (#9 chunk 3). Same no-op-when-absent
-    # convention as the donor/method knobs above.
-    if min_timepoints > 0 and "n_timepoints" in df.columns:
-        before = len(df)
-        df = df[df["n_timepoints"] >= min_timepoints]
-        if verbose:
-            logger.info(
-                f"  min_timepoints >= {min_timepoints}: "
-                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
-            )
-
-    if min_timepoints_per_donor > 0 and "max_timepoints_per_donor" in df.columns:
-        before = len(df)
-        df = df[df["max_timepoints_per_donor"] >= min_timepoints_per_donor]
-        if verbose:
-            logger.info(
-                f"  min_timepoints_per_donor >= {min_timepoints_per_donor}: "
-                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
-            )
-
-    if min_apcs > 0 and "n_apcs" in df.columns:
-        before = len(df)
-        df = df[df["n_apcs"] >= min_apcs]
-        if verbose:
-            logger.info(
-                f"  min_apcs >= {min_apcs}: "
-                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
-            )
-
-    if min_apcs_per_donor > 0 and "max_apcs_per_donor" in df.columns:
-        before = len(df)
-        df = df[df["max_apcs_per_donor"] >= min_apcs_per_donor]
-        if verbose:
-            logger.info(
-                f"  min_apcs_per_donor >= {min_apcs_per_donor}: "
-                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
-            )
-
-    # TIL-overlap-per-donor filter (#9 chunk 4). Reads the column
-    # match_til populates when TIL data carries patient_id. No-op
-    # otherwise.
-    if min_til_cells_per_donor > 0 and "max_til_cells_per_donor" in df.columns:
-        before = len(df)
-        df = df[df["max_til_cells_per_donor"] >= min_til_cells_per_donor]
-        if verbose:
-            logger.info(
-                f"  min_til_cells_per_donor >= {min_til_cells_per_donor}: "
-                f"{before:,} -> {len(df):,} ({before - len(df):,} removed)"
             )
 
     # Complete TCR filter
