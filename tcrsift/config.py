@@ -157,6 +157,9 @@ class OutputConfig:
     report_format: str = "pdf"
     output_airr: bool = False
     output_fasta: bool = False
+    # Long-format (clone, sample) CSV (#20 chunk 1). 'auto' = emit when the
+    # run has >=2 samples; 'always' = always; 'never' = skip.
+    emit_clone_sample_long: str = "auto"
 
 
 @dataclass
@@ -300,6 +303,7 @@ class TCRsiftConfig:
             "single_chain": ("assemble", "single_chain"),
             # Output
             "generate_plots": ("output", "generate_plots"),
+            "emit_clone_sample_long": ("output", "emit_clone_sample_long"),
             "generate_report": ("output", "generate_report"),
             "report_format": ("output", "report_format"),
             "output_airr": ("output", "output_airr"),

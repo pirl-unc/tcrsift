@@ -7,6 +7,7 @@ import pytest
 
 from tcrsift.clonotype import (
     aggregate_clonotypes,
+    build_clone_sample_long,
     calculate_clone_frequencies,
     export_clonotypes_airr,
     get_clonotype_summary,
@@ -775,3 +776,136 @@ class TestClonotypeSummaryRealistic:
         # Count clones with n_samples > 1
         expected_multi = (sample_clonotypes_df["n_samples"] > 1).sum()
         assert summary["n_multi_sample"] == expected_multi
+
+
+class TestBuildCloneSampleLong:
+    """#20 chunk 1 — long-format (clone, sample) companion table."""
+
+    def _make_adata(self, with_donor=True, with_method=True, with_umis=True):
+        """Two clones across two samples (different donors + methods)."""
+        import anndata as ad
+        import numpy as np
+
+        rows = (
+            # (sample, donor, method, alpha, beta, tra_umis, trb_umis)
+            [("B1-2_AIM", "B1-2", "AIMpos", "CAVA", "CASS_A", 5, 7)] * 4
+            + [("B1-2_tet", "B1-2", "tetpos", "CAVA", "CASS_A", 6, 8)] * 2
+            + [("B1-3_AIM", "B1-3", "AIMpos", "CAVB", "CASS_B", 4, 6)] * 3
+            + [("B1-2_AIM", "B1-2", "AIMpos", "CAVB", "CASS_B", 5, 7)] * 1
+        )
+        n = len(rows)
+        obs_data = {
+            "sample": [r[0] for r in rows],
+            "CDR3_alpha": [r[3] for r in rows],
+            "CDR3_beta": [r[4] for r in rows],
+        }
+        if with_donor:
+            obs_data["patient_id"] = [r[1] for r in rows]
+        if with_method:
+            obs_data["enrichment_method"] = [r[2] for r in rows]
+        if with_umis:
+            obs_data["TRA_1_umis"] = [r[5] for r in rows]
+            obs_data["TRB_1_umis"] = [r[6] for r in rows]
+        return ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(obs_data),
+        )
+
+    def test_basic_long_table_shape(self):
+        adata = self._make_adata()
+        long = build_clone_sample_long(adata)
+        # 4 (clone, sample) pairs:
+        # CAVA_CASS_A in B1-2_AIM, CAVA_CASS_A in B1-2_tet,
+        # CAVB_CASS_B in B1-3_AIM, CAVB_CASS_B in B1-2_AIM
+        assert len(long) == 4
+        assert set(long.columns) >= {
+            "CDR3ab", "sample", "donor", "method",
+            "cells", "frequency", "n_alpha_umis", "n_beta_umis",
+        }
+
+    def test_cell_counts_match_input(self):
+        adata = self._make_adata()
+        long = build_clone_sample_long(adata)
+        row_a_aim = long[
+            (long["CDR3ab"] == "CAVA_CASS_A") & (long["sample"] == "B1-2_AIM")
+        ].iloc[0]
+        assert row_a_aim["cells"] == 4
+        row_a_tet = long[
+            (long["CDR3ab"] == "CAVA_CASS_A") & (long["sample"] == "B1-2_tet")
+        ].iloc[0]
+        assert row_a_tet["cells"] == 2
+
+    def test_donor_method_propagation(self):
+        adata = self._make_adata()
+        long = build_clone_sample_long(adata)
+        for _, row in long.iterrows():
+            sample = row["sample"]
+            if sample.startswith("B1-2"):
+                assert row["donor"] == "B1-2"
+            else:
+                assert row["donor"] == "B1-3"
+            if "AIM" in sample:
+                assert row["method"] == "AIMpos"
+            elif "tet" in sample:
+                assert row["method"] == "tetpos"
+
+    def test_umi_sums(self):
+        adata = self._make_adata()
+        long = build_clone_sample_long(adata)
+        row = long[
+            (long["CDR3ab"] == "CAVA_CASS_A") & (long["sample"] == "B1-2_AIM")
+        ].iloc[0]
+        # 4 cells x 5 alpha umis each = 20
+        assert row["n_alpha_umis"] == 20
+        assert row["n_beta_umis"] == 28
+
+    def test_frequency_uses_complete_clones_when_available(self):
+        adata = self._make_adata()
+        # Mark some cells incomplete; frequency denominator should drop them
+        adata.obs["is_complete_clone"] = True
+        long = build_clone_sample_long(adata)
+        # B1-2_AIM has 5 complete cells (4 of clone A + 1 of clone B)
+        # Clone A in B1-2_AIM: 4 / 5 = 0.8
+        row = long[
+            (long["CDR3ab"] == "CAVA_CASS_A") & (long["sample"] == "B1-2_AIM")
+        ].iloc[0]
+        assert abs(row["frequency"] - 4 / 5) < 1e-9
+
+    def test_axis_columns_optional(self):
+        """donor/method should not appear when axis fields aren't on obs."""
+        adata = self._make_adata(with_donor=False, with_method=False)
+        long = build_clone_sample_long(adata)
+        assert "donor" not in long.columns
+        assert "method" not in long.columns
+
+    def test_skips_empty_cdr3(self):
+        """Cells with empty CDR3ab are excluded from the long table."""
+        import anndata as ad
+        import numpy as np
+
+        adata = ad.AnnData(
+            X=np.zeros((4, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": ["S1", "S1", "S2", "S2"],
+                    "CDR3_alpha": ["CAVA", "", None, "CAVB"],
+                    "CDR3_beta": ["CASS_A", "", None, "CASS_B"],
+                }
+            ),
+        )
+        long = build_clone_sample_long(adata)
+        # Only the two non-empty cells survive.
+        assert len(long) == 2
+        assert set(long["CDR3ab"]) == {"CAVA_CASS_A", "CAVB_CASS_B"}
+
+    def test_raises_when_no_cdr3_columns(self):
+        from tcrsift.validation import TCRsiftValidationError
+        import anndata as ad
+        import numpy as np
+
+        adata = ad.AnnData(
+            X=np.zeros((2, 1), dtype=np.float32),
+            obs=pd.DataFrame({"sample": ["S1", "S2"]}),
+        )
+        with pytest.raises(TCRsiftValidationError, match="CDR3"):
+            build_clone_sample_long(adata)
