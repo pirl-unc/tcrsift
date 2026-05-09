@@ -611,6 +611,80 @@ def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
     return out.sort_values(["CDR3ab", "sample"]).reset_index(drop=True)
 
 
+def build_per_method_rankings(
+    filtered: pd.DataFrame,
+    long_df: pd.DataFrame,
+    top_n: int = 100,
+) -> dict[tuple[str, str], pd.DataFrame]:
+    """Build per-(donor, method) ranked clone tables.
+
+    For each populated ``(donor, method)`` pair in ``long_df``, returns up
+    to ``top_n`` clones (those that survived filtering) ranked by their
+    max within-(donor, method) frequency descending. Each row is annotated
+    with the clone's tier (when ``filter_mode='fdr'``) and a derived
+    ``sharing`` label ("private" / "public" based on ``n_donors``) so
+    output CSVs are self-describing regardless of which filter mode
+    produced ``filtered``.
+
+    Returns ``{}`` when the long table doesn't carry a ``method`` axis —
+    designs that don't supply ``enrichment_method`` get no per-method
+    output. Implements #20 chunk 2.
+    """
+    # The long table uses the short-name 'donor' / 'method' columns from
+    # build_clone_sample_long, not the upstream patient_id /
+    # enrichment_method.
+    if "method" not in long_df.columns:
+        return {}
+    if "donor" not in long_df.columns:
+        # Method axis present but no donor info — fold a synthetic "all"
+        # donor key so file naming stays uniform and downstream consumers
+        # don't need a special case.
+        long_df = long_df.copy()
+        long_df["donor"] = "all"
+
+    if filtered is None or len(filtered) == 0:
+        return {}
+
+    # Aggregate to one row per (donor, method, CDR3ab): max freq across
+    # any sample replicates within that (donor, method) bucket; sum cells.
+    grouped = (
+        long_df.groupby(["donor", "method", "CDR3ab"], as_index=False)
+        .agg(cells=("cells", "sum"), frequency=("frequency", "max"))
+    )
+
+    # Pull useful annotation columns from `filtered`.
+    annot_cols = ["CDR3ab"]
+    for col in ("tier", "max_frequency", "cell_count", "n_donors", "n_methods"):
+        if col in filtered.columns:
+            annot_cols.append(col)
+    annot = filtered[annot_cols].drop_duplicates("CDR3ab").copy()
+
+    # Derive a private/public sharing label when n_donors is on the
+    # filtered table; mode-agnostic.
+    if "n_donors" in annot.columns:
+        annot["sharing"] = (
+            annot["n_donors"].fillna(1).astype(int).apply(
+                lambda n: "public" if n >= 2 else "private"
+            )
+        )
+
+    grouped = grouped.merge(annot, on="CDR3ab", how="inner")
+
+    rankings: dict[tuple[str, str], pd.DataFrame] = {}
+    for (donor, method), group in grouped.groupby(["donor", "method"]):
+        ranked = (
+            group.sort_values("frequency", ascending=False)
+            .head(top_n)
+            .reset_index(drop=True)
+        )
+        # Drop donor/method from the row schema since they're encoded in
+        # the file name.
+        ranked = ranked.drop(columns=["donor", "method"])
+        rankings[(str(donor), str(method))] = ranked
+
+    return rankings
+
+
 def get_clonotype_summary(clonotypes: pd.DataFrame) -> dict:
     """
     Get summary statistics for clonotypes.

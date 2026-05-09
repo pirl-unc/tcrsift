@@ -715,19 +715,24 @@ def cmd_run(args):
     if config.output.generate_plots:
         plot_clonotypes(clonotypes, plots_dir)
 
-    # Long-format per-(clone, sample) companion table (#20 chunk 1). Default
-    # 'auto' = emit when the run has >=2 samples; this is the regime where
-    # the long view is most useful and reconstructing it from the semicolon
-    # delimited `samples` string is annoying.
+    # Long-format per-(clone, sample) companion table (#20 chunk 1). Built
+    # whenever it'll be consumed downstream — the chunk-1 CSV emission OR
+    # the chunk-2 per-method rankings (which need long_df even when the
+    # CSV is suppressed). Disk emission is gated by --emit-clone-sample-long.
     emit_long = config.output.emit_clone_sample_long
     n_samples_in_run = adata.obs["sample"].nunique() if "sample" in adata.obs.columns else 0
     should_emit_long = (
         emit_long == "always"
         or (emit_long == "auto" and n_samples_in_run >= 2)
     )
-    if should_emit_long:
+    have_method_axis = "enrichment_method" in adata.obs.columns
+
+    long_df = None
+    if should_emit_long or have_method_axis:
         from .clonotype import build_clone_sample_long
         long_df = build_clone_sample_long(adata)
+
+    if should_emit_long and long_df is not None:
         long_df.to_csv(data_dir / "clone_sample_long.csv", index=False)
         print(
             f"  Wrote clone_sample_long.csv: {len(long_df)} rows "
@@ -802,6 +807,33 @@ def cmd_run(args):
         path = data_dir / f"filtered_{bucket}.csv"
         bucket_df.to_csv(path, index=False)
         print(f"  {bucket}: {len(bucket_df)} clonotypes -> {path.name}")
+
+    # Per-method ranked CSVs (#20 chunk 2). One file per (donor, method)
+    # under data/filtered_by_method/, top-N clones ranked by within-bucket
+    # frequency. Skipped when enrichment_method axis isn't populated.
+    if long_df is not None:
+        from .clonotype import build_per_method_rankings
+
+        rankings = build_per_method_rankings(
+            filtered, long_df, top_n=config.output.per_method_top_n
+        )
+        if rankings:
+            method_dir = data_dir / "filtered_by_method"
+            method_dir.mkdir(parents=True, exist_ok=True)
+            for (donor, method), ranked in rankings.items():
+                # Sanitize the filename — encoding/method labels may have
+                # path-unfriendly characters (slashes etc.); replace with
+                # underscores defensively.
+                safe_donor = donor.replace("/", "_").replace(" ", "_")
+                safe_method = method.replace("/", "_").replace(" ", "_")
+                ranked.to_csv(
+                    method_dir / f"{safe_donor}__{safe_method}.csv",
+                    index=False,
+                )
+            print(
+                f"  Wrote {len(rankings)} per-method ranked CSVs to "
+                f"{method_dir.name}/"
+            )
 
     funnel_counts["Filtered"] = len(filtered)
 
@@ -2031,6 +2063,12 @@ CONDITIONALLY REQUIRED:
         choices=["auto", "always", "never"],
         help="Emit data/clone_sample_long.csv: 'auto' (default) writes it "
         "when the sheet has >=2 samples; 'always' / 'never' force.",
+    )
+    out_group.add_argument(
+        "--per-method-top-n",
+        type=int,
+        help="Per-(donor, method) ranked CSVs: top-N clones each. "
+        "Default 100. Skipped when enrichment_method axis isn't populated.",
     )
     out_group.add_argument("--verbose", action="store_true", help="Verbose output")
 

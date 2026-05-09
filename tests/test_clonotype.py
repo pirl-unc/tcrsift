@@ -909,3 +909,141 @@ class TestBuildCloneSampleLong:
         )
         with pytest.raises(TCRsiftValidationError, match="CDR3"):
             build_clone_sample_long(adata)
+
+
+class TestBuildPerMethodRankings:
+    """#20 chunk 2 — per-(donor, method) ranked CSVs."""
+
+    def _setup(self):
+        from tcrsift.clonotype import build_clone_sample_long
+        import anndata as ad
+        import numpy as np
+
+        # Two donors, three methods. Clone A is shared across both donors;
+        # clone B is private to B1-2; clone C is private to B1-3.
+        rows = (
+            # (sample, donor, method, alpha, beta)
+            [("B1-2_AIM", "B1-2", "AIMpos", "CAVA", "CASS_A")] * 10
+            + [("B1-2_tet", "B1-2", "tetpos", "CAVA", "CASS_A")] * 4
+            + [("B1-2_IFN", "B1-2", "IFNpos", "CAVA", "CASS_A")] * 2
+            + [("B1-3_AIM", "B1-3", "AIMpos", "CAVA", "CASS_A")] * 6
+            + [("B1-2_AIM", "B1-2", "AIMpos", "CAVB", "CASS_B")] * 8
+            + [("B1-3_AIM", "B1-3", "AIMpos", "CAVC", "CASS_C")] * 5
+        )
+        n = len(rows)
+        adata = ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": [r[0] for r in rows],
+                    "patient_id": [r[1] for r in rows],
+                    "enrichment_method": [r[2] for r in rows],
+                    "CDR3_alpha": [r[3] for r in rows],
+                    "CDR3_beta": [r[4] for r in rows],
+                }
+            ),
+        )
+        long_df = build_clone_sample_long(adata)
+        # Synthetic filtered table — A and B pass; C does not.
+        filtered = pd.DataFrame(
+            {
+                "CDR3ab": ["CAVA_CASS_A", "CAVB_CASS_B"],
+                "tier": ["tier1", "tier2"],
+                "n_donors": [2, 1],
+                "cell_count": [22, 8],
+                "max_frequency": [0.5, 0.4],
+            }
+        )
+        return filtered, long_df
+
+    def test_emits_one_table_per_donor_method(self):
+        from tcrsift.clonotype import build_per_method_rankings
+
+        filtered, long_df = self._setup()
+        rankings = build_per_method_rankings(filtered, long_df, top_n=100)
+
+        # Filtered has clones A and B. A appears in (B1-2,AIM/tet/IFN) and
+        # (B1-3, AIM); B appears in (B1-2, AIM). So expected keys:
+        expected_keys = {
+            ("B1-2", "AIMpos"),
+            ("B1-2", "tetpos"),
+            ("B1-2", "IFNpos"),
+            ("B1-3", "AIMpos"),
+        }
+        assert set(rankings.keys()) == expected_keys
+
+    def test_per_table_content(self):
+        from tcrsift.clonotype import build_per_method_rankings
+
+        filtered, long_df = self._setup()
+        rankings = build_per_method_rankings(filtered, long_df, top_n=100)
+
+        b12_aim = rankings[("B1-2", "AIMpos")]
+        # Clones A and B both appear in (B1-2, AIMpos)
+        assert set(b12_aim["CDR3ab"]) == {"CAVA_CASS_A", "CAVB_CASS_B"}
+        # Tier and sharing should be carried through
+        assert "tier" in b12_aim.columns
+        assert "sharing" in b12_aim.columns
+        a_row = b12_aim[b12_aim["CDR3ab"] == "CAVA_CASS_A"].iloc[0]
+        assert a_row["tier"] == "tier1"
+        assert a_row["sharing"] == "public"  # n_donors == 2
+        b_row = b12_aim[b12_aim["CDR3ab"] == "CAVB_CASS_B"].iloc[0]
+        assert b_row["sharing"] == "private"  # n_donors == 1
+        # Donor / method shouldn't appear in row data — encoded in dict key
+        assert "donor" not in b12_aim.columns
+        assert "method" not in b12_aim.columns
+
+    def test_only_filtered_clones_appear(self):
+        from tcrsift.clonotype import build_per_method_rankings
+
+        filtered, long_df = self._setup()
+        rankings = build_per_method_rankings(filtered, long_df, top_n=100)
+
+        # Clone C wasn't in `filtered`, so should not appear in any output
+        for key, df in rankings.items():
+            assert "CAVC_CASS_C" not in set(df["CDR3ab"]), key
+
+    def test_top_n_truncation(self):
+        from tcrsift.clonotype import build_per_method_rankings
+
+        filtered, long_df = self._setup()
+        rankings = build_per_method_rankings(filtered, long_df, top_n=1)
+        for key, df in rankings.items():
+            assert len(df) <= 1
+
+    def test_returns_empty_when_method_axis_absent(self):
+        """No method column on long_df -> empty dict."""
+        from tcrsift.clonotype import build_per_method_rankings
+
+        long_df = pd.DataFrame(
+            {"CDR3ab": ["CAVA_CASS_A"], "sample": ["S1"], "cells": [10], "frequency": [1.0]}
+        )
+        filtered = pd.DataFrame({"CDR3ab": ["CAVA_CASS_A"]})
+        rankings = build_per_method_rankings(filtered, long_df)
+        assert rankings == {}
+
+    def test_returns_empty_when_filtered_is_empty(self):
+        from tcrsift.clonotype import build_per_method_rankings
+
+        _, long_df = self._setup()
+        rankings = build_per_method_rankings(pd.DataFrame(), long_df)
+        assert rankings == {}
+
+    def test_no_donor_axis_uses_synthetic_all(self):
+        """When method is on long_df but donor isn't, fold under
+        donor='all' so file naming stays uniform."""
+        from tcrsift.clonotype import build_per_method_rankings
+
+        long_df = pd.DataFrame(
+            {
+                "CDR3ab": ["CAVA_CASS_A", "CAVB_CASS_B"],
+                "sample": ["S1", "S2"],
+                "method": ["AIMpos", "tetpos"],
+                "cells": [10, 5],
+                "frequency": [0.1, 0.05],
+            }
+        )
+        filtered = pd.DataFrame({"CDR3ab": ["CAVA_CASS_A", "CAVB_CASS_B"]})
+        rankings = build_per_method_rankings(filtered, long_df)
+        assert ("all", "AIMpos") in rankings
+        assert ("all", "tetpos") in rankings
