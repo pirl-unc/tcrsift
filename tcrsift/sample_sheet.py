@@ -369,9 +369,17 @@ def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
         samples.append(Sample(**sample_data))
 
     sheet = SampleSheet(samples=samples)
-    # Sheet-level flags (#26).
-    if data.get("donors_share_antigen") is True:
-        sheet.donors_share_antigen = True
+    # Sheet-level flags (#26). Accept any truthy YAML value — bare `true`
+    # parses to bool, but quoted forms like "true" / "yes" parse to
+    # strings; users shouldn't have their flag silently ignored over
+    # quoting style.
+    raw_dsa = data.get("donors_share_antigen")
+    if isinstance(raw_dsa, str):
+        sheet.donors_share_antigen = raw_dsa.strip().lower() in (
+            "true", "yes", "y", "1", "on",
+        )
+    else:
+        sheet.donors_share_antigen = bool(raw_dsa)
     return sheet
 
 

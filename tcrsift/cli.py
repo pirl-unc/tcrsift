@@ -832,7 +832,11 @@ def cmd_run(args):
                 continue
             try:
                 sub_filtered = _filter_one(sub_clonotypes)
-            except Exception as exc:  # noqa: BLE001
+            except TCRsiftValidationError as exc:
+                # Narrow exception: filter_clonotypes_threshold raises this
+                # when the subset is empty after filtering. Other exceptions
+                # (real bugs, OOM, dtype mismatches) propagate so they're not
+                # masked under a benign "no clones" message.
                 print(
                     f"  WARNING: no clones survived filtering for "
                     f"{label}={key}: {exc}"

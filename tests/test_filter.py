@@ -475,6 +475,37 @@ class TestSampleSheetDonorsShareAntigen:
         sheet = load_sample_sheet(path)
         assert sheet.donors_share_antigen is False
 
+    def test_yaml_truthy_string_values_accepted(self, tmp_path):
+        """Review fix: quoted forms like "true" / "yes" should also flip
+        the flag — users shouldn't have it silently ignored over YAML
+        quoting style."""
+        from tcrsift.sample_sheet import load_sample_sheet
+
+        for i, value in enumerate(('"true"', '"yes"', '"YES"', '"1"', '"on"')):
+            path = tmp_path / f"sheet_truthy_{i}.yaml"
+            path.write_text(
+                f"donors_share_antigen: {value}\n"
+                "samples:\n"
+                "  - sample: S1\n"
+                "    vdj_dir: /p\n"
+            )
+            sheet = load_sample_sheet(path)
+            assert sheet.donors_share_antigen is True, value
+
+    def test_yaml_falsy_string_values_rejected(self, tmp_path):
+        from tcrsift.sample_sheet import load_sample_sheet
+
+        for i, value in enumerate(('"false"', '"no"', '"0"', '"off"', '""')):
+            path = tmp_path / f"sheet_falsy_{i}.yaml"
+            path.write_text(
+                f"donors_share_antigen: {value}\n"
+                "samples:\n"
+                "  - sample: S1\n"
+                "    vdj_dir: /p\n"
+            )
+            sheet = load_sample_sheet(path)
+            assert sheet.donors_share_antigen is False, value
+
 
 class TestBucketByDonorSharing:
     """#15 chunk 4 — private/public bucketing helper."""
