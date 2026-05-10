@@ -803,11 +803,15 @@ def build_method_recovery_table(
     rows = []
     for donor in sorted(long_df["donor"].dropna().astype(str).unique()):
         # Total per donor: target clones that appear at all in this donor.
+        # If a donor has zero target clones, total is 0 and fraction is 0 —
+        # don't fall back to the cohort-wide target count, which would
+        # produce misleading "0/N" denominators that imply the donor was
+        # supposed to recover a target it never had access to.
         donor_clones_total = set(
             long_df[long_df["donor"].astype(str) == donor]["CDR3ab"]
         )
         donor_target = target_clones & donor_clones_total
-        donor_total = len(donor_target) or len(target_clones)
+        donor_total = len(donor_target)
         for method in sorted(
             long_df["method"].dropna().astype(str).unique()
         ):
