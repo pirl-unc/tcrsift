@@ -210,6 +210,12 @@ class SampleSheet:
     """Collection of samples with their metadata."""
 
     samples: list[Sample] = field(default_factory=list)
+    # Cohort-level flag (#26): set true when donors share antigen + MHC +
+    # cohort and a unified FDR ranking across donors is biologically valid.
+    # Read from the top-level YAML key `donors_share_antigen: true`.
+    # Drives the auto-resolution of `--fdr-scope` to `global` instead of
+    # `per-donor` for multi-donor cohorts.
+    donors_share_antigen: bool = False
 
     def __len__(self):
         return len(self.samples)
@@ -362,7 +368,11 @@ def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
 
         samples.append(Sample(**sample_data))
 
-    return SampleSheet(samples=samples)
+    sheet = SampleSheet(samples=samples)
+    # Sheet-level flags (#26).
+    if data.get("donors_share_antigen") is True:
+        sheet.donors_share_antigen = True
+    return sheet
 
 
 def _load_csv_sample_sheet(path: Path, sep: str = ",") -> SampleSheet:

@@ -82,6 +82,14 @@ class FilterConfig:
     min_apcs: int = 0
     min_apcs_per_donor: int = 0
     min_til_cells_per_donor: int = 0
+    # FDR scope (#26): {auto, global, per-donor, per-sample}.
+    # 'auto' resolves to 'per-donor' when n_donors>1 and the sheet does
+    # NOT set donors_share_antigen, else 'global'.
+    fdr_scope: str = "auto"
+    # Cohort-level signal that pooling across donors is biologically valid;
+    # may be set explicitly via --donors-share-antigen or read from the YAML
+    # sheet root.
+    donors_share_antigen: bool = False
 
 
 @dataclass
@@ -271,6 +279,8 @@ class TCRsiftConfig:
             "min_apcs": ("filter", "min_apcs"),
             "min_apcs_per_donor": ("filter", "min_apcs_per_donor"),
             "min_til_cells_per_donor": ("filter", "min_til_cells_per_donor"),
+            "fdr_scope": ("filter", "fdr_scope"),
+            "donors_share_antigen": ("filter", "donors_share_antigen"),
             # Annotate
             "vdjdb_path": ("annotate", "vdjdb_path"),
             "iedb_path": ("annotate", "iedb_path"),
