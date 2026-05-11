@@ -18,12 +18,15 @@ Handles loading CellRanger VDJ and GEX outputs into unified data structures.
 from __future__ import annotations
 
 import logging
+import tempfile
 from pathlib import Path
 
 import anndata as ad
 import numpy as np
 import pandas as pd
 import scanpy as sc
+from anndata.experimental import concat_on_disk
+from scipy.sparse import csr_matrix
 from tqdm.auto import tqdm
 
 from .genes import TCELL_MARKERS, find_column_for_gene
@@ -575,6 +578,22 @@ def load_sample(
     return adata
 
 
+def _ensure_x(adata: ad.AnnData) -> None:
+    """Give `adata` an empty (n_obs, 0) sparse X if it has none.
+
+    `concat_on_disk` requires every input store to have an X group, but a
+    VDJ-only AnnData has no expression matrix. A zero-column placeholder
+    lets the merge handle GEX, VDJ-only, and mixed sample sheets through a
+    single code path.
+
+    The placeholder is stripped post-merge in `load_samples` when the
+    resulting `combined.n_vars == 0`, preserving the contract that
+    VDJ-only loads have `X is None`.
+    """
+    if adata.X is None:
+        adata.X = csr_matrix((adata.n_obs, 0))
+
+
 def load_samples(
     sample_sheet_path: str | Path | SampleSheet,
     min_genes: int = 250,
@@ -585,6 +604,7 @@ def load_samples(
     min_mito_pct: float = 2.0,
     verbose: bool = True,
     show_progress: bool = True,
+    tmpdir: str | Path | None = None,
 ) -> ad.AnnData:
     """
     Load all samples from a sample sheet into a single AnnData object.
@@ -592,18 +612,40 @@ def load_samples(
     Parameters
     ----------
     sample_sheet_path : str or Path or SampleSheet
-        Path to sample sheet (CSV or YAML), or a SampleSheet instance
+        Path to sample sheet (CSV or YAML), or a SampleSheet instance.
     min_genes, max_genes, min_counts, max_counts, max_mito_pct, min_mito_pct
-        QC filter parameters
+        QC filter parameters.
     verbose : bool
-        Print detailed progress information
+        Print detailed progress information.
     show_progress : bool
-        Show progress bar
+        Show progress bar.
+    tmpdir : str or Path or None
+        Parent directory for the spill tempdir (see Notes). Defaults to the
+        system temp location ($TMPDIR / /tmp). Pass an explicit disk-backed
+        directory when the system temp is on tmpfs.
 
     Returns
     -------
     ad.AnnData
-        Combined AnnData with all samples
+        Combined AnnData with all samples. `X` is None when every input was
+        VDJ-only, otherwise it carries the outer-joined expression matrix.
+
+    Notes
+    -----
+    Memory: each per-sample AnnData is spilled to a tempfile h5ad after
+    load and the in-memory copy is freed, then merged with
+    `anndata.experimental.concat_on_disk`, which streams inputs and output
+    in bounded chunks (~400 MB default). The merged file is read back into
+    memory once. Peak memory ≈ max(one sample, output), versus the prior
+    in-memory `ad.concat` peak of ~2 × Σ(samples).
+
+    Temp disk: spilled per-sample h5ads plus the merged output, so ~2× the
+    total sparse dataset size. Redirect with `tmpdir=` when $TMPDIR is on
+    tmpfs.
+
+    VDJ-only samples: see `_ensure_x` — a zero-column placeholder is
+    synthesized to keep the merge path uniform, then stripped after the
+    merge so `combined.X` is None for VDJ-only loads.
     """
     # Load sample sheet (path or object)
     if isinstance(sample_sheet_path, SampleSheet):
@@ -641,12 +683,12 @@ def load_samples(
             hint="Check that all paths in the sample sheet are correct and accessible.",
         )
 
-    adatas = []
+    sample_keys: list[str] = []
+    spill_paths: list[Path] = []
     total_cells = 0
 
-    # Create progress bar iterator
-    sample_iter = sample_sheet
-    if show_progress:
+    with tempfile.TemporaryDirectory(prefix="tcrsift_load_", dir=tmpdir) as spill_dir_str:
+        spill_dir = Path(spill_dir_str)
         sample_iter = tqdm(
             sample_sheet,
             desc="Loading samples",
@@ -654,63 +696,72 @@ def load_samples(
             disable=not show_progress,
         )
 
-    for sample in sample_iter:
-        if show_progress:
+        for sample in sample_iter:
             sample_iter.set_postfix(sample=sample.sample[:20])
 
-        if verbose:
-            logger.info(f"Loading sample: {sample.sample}")
+            if verbose:
+                logger.info(f"Loading sample: {sample.sample}")
 
-        try:
-            adata = load_sample(
-                sample,
-                min_genes=min_genes,
-                max_genes=max_genes,
-                min_counts=min_counts,
-                max_counts=max_counts,
-                max_mito_pct=max_mito_pct,
-                min_mito_pct=min_mito_pct,
-            )
-            if adata is not None:
-                adatas.append(adata)
-                total_cells += adata.n_obs
-                if verbose:
-                    logger.info(f"  Sample {sample.sample}: {adata.n_obs:,} cells")
-        except TCRsiftValidationError:
-            raise
-        except Exception as e:
+            try:
+                adata = load_sample(
+                    sample,
+                    min_genes=min_genes,
+                    max_genes=max_genes,
+                    min_counts=min_counts,
+                    max_counts=max_counts,
+                    max_mito_pct=max_mito_pct,
+                    min_mito_pct=min_mito_pct,
+                )
+            except TCRsiftValidationError:
+                raise
+            except Exception as e:
+                raise TCRsiftValidationError(
+                    f"Failed to load sample '{sample.sample}': {e}",
+                    hint="Check that the CellRanger output directories are valid and complete. "
+                    f"VDJ: {sample.vdj_dir}, GEX: {sample.gex_dir}",
+                ) from e
+
+            if adata is None:
+                continue
+
+            _ensure_x(adata)
+            sample_keys.append(adata.obs["sample"].iloc[0])
+            total_cells += adata.n_obs
+
+            # Number files by the load order of successful samples (skipped
+            # samples don't leave gaps), so the spill dir is easy to inspect.
+            path = spill_dir / f"sample_{len(spill_paths):04d}.h5ad"
+            adata.write_h5ad(path)
+            spill_paths.append(path)
+
+            if verbose:
+                logger.info(f"  Sample {sample.sample}: {adata.n_obs:,} cells")
+            del adata  # release the in-memory copy now that it's on disk
+
+        if not sample_keys:
             raise TCRsiftValidationError(
-                f"Failed to load sample '{sample.sample}': {e}",
-                hint="Check that the CellRanger output directories are valid and complete. "
-                f"VDJ: {sample.vdj_dir}, GEX: {sample.gex_dir}",
-            ) from e
-
-    if not adatas:
-        raise TCRsiftValidationError(
-            "No samples loaded successfully",
-            hint="Check that at least one sample has valid VDJ or GEX data.",
-        )
-
-    # Concatenate all samples
-    logger.info(f"Concatenating {len(adatas)} samples ({total_cells:,} total cells)")
-
-    if show_progress:
-        # Show progress for concatenation (can be slow for large datasets)
-        with tqdm(total=1, desc="Concatenating samples", unit="step") as pbar:
-            combined = ad.concat(
-                adatas,
-                join="outer",
-                label="sample",
-                keys=[a.obs["sample"].iloc[0] for a in adatas],
+                "No samples loaded successfully",
+                hint="Check that at least one sample has valid VDJ or GEX data.",
             )
+
+        logger.info(f"Concatenating {len(sample_keys)} samples ({total_cells:,} total cells)")
+        out_path = spill_dir / "combined.h5ad"
+        with tqdm(
+            total=1, desc="Concatenating samples", unit="step", disable=not show_progress
+        ) as pbar:
+            concat_on_disk(
+                spill_paths, out_path,
+                join="outer", label="sample", keys=sample_keys,
+            )
+            combined = ad.read_h5ad(out_path)
             pbar.update(1)
-    else:
-        combined = ad.concat(
-            adatas,
-            join="outer",
-            label="sample",
-            keys=[a.obs["sample"].iloc[0] for a in adatas],
-        )
+
+    # Tempdir is cleaned up here; `combined` is fully in-memory.
+    # Inverse of `_ensure_x`: an all-VDJ-only sheet produces n_vars == 0,
+    # in which case the synthesized empty placeholders should look like the
+    # original no-X state to downstream callers.
+    if combined.n_vars == 0:
+        combined.X = None
 
     # Store sample sheet as uns as a JSON string. The previous form,
     # `to_dataframe().to_dict()`, produced `{col: {row_idx: val}}` whose
@@ -723,6 +774,6 @@ def load_samples(
         orient="records"
     )
 
-    logger.info(f"Successfully loaded {combined.n_obs:,} cells from {len(adatas)} samples")
+    logger.info(f"Successfully loaded {combined.n_obs:,} cells from {len(sample_keys)} samples")
 
     return combined

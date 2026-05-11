@@ -12,6 +12,8 @@
 
 """Tests for loader module."""
 
+from pathlib import Path
+
 import anndata as ad
 import numpy as np
 import pandas as pd
@@ -442,6 +444,154 @@ class TestLoadSamplesWithSampleSheet:
         assert "sample_sheet" in reloaded.uns
         records = json.loads(reloaded.uns["sample_sheet"])
         assert any(r.get("sample") == "S1" for r in records)
+
+    def test_load_samples_concats_multiple_vdj_samples(self, mock_cellranger_vdj_dir):
+        """Integration test: two VDJ-only samples loaded end-to-end via the
+        real CellRanger loader merge into a single AnnData with the union of
+        obs rows and the expected sample labels."""
+        sheet = SampleSheet(
+            samples=[
+                Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir)),
+                Sample(sample="S2", vdj_dir=str(mock_cellranger_vdj_dir)),
+            ]
+        )
+
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert adata.n_obs > 0
+        assert set(adata.obs["sample"]) == {"S1", "S2"}
+
+    def test_load_samples_merges_gex_samples_via_concat_on_disk(
+        self, mock_cellranger_vdj_dir, monkeypatch
+    ):
+        """Per-sample AnnData with a real GEX matrix should be spilled and
+        merged via concat_on_disk — this is the load-bearing memory-bounded
+        path (issue #30)."""
+        from tcrsift import loader as loader_module
+
+        n_cells, n_genes = 30, 50
+        rng = np.random.default_rng(42)
+
+        def fake_load_sample(sample, **_kwargs):
+            X = sp.random(
+                n_cells, n_genes, density=0.2, format="csr", random_state=rng
+            )
+            a = ad.AnnData(X=X)
+            a.var_names = [f"G{i}" for i in range(n_genes)]
+            a.obs_names = [f"{sample.sample}_cell{i}" for i in range(n_cells)]
+            a.obs["sample"] = sample.sample
+            return a
+
+        monkeypatch.setattr(loader_module, "load_sample", fake_load_sample)
+
+        sheet = SampleSheet(
+            samples=[
+                Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir)),
+                Sample(sample="S2", vdj_dir=str(mock_cellranger_vdj_dir)),
+            ]
+        )
+
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert adata.n_obs == 2 * n_cells
+        assert adata.n_vars == n_genes
+        assert adata.X is not None
+        assert set(adata.obs["sample"]) == {"S1", "S2"}
+
+    def test_load_samples_mixed_modality_merges_uniformly(
+        self, mock_cellranger_vdj_dir, monkeypatch
+    ):
+        """A sample sheet mixing one GEX-bearing and one VDJ-only sample should
+        merge through the same concat_on_disk path. The combined AnnData carries
+        the GEX vars; the VDJ-only sample's rows are present but their X entries
+        are zero (outer-join fill)."""
+        from tcrsift import loader as loader_module
+
+        n_cells_per_sample = 10
+        n_genes = 20
+
+        def fake_load_sample(sample, **_kwargs):
+            if sample.sample == "GEX":
+                X = sp.random(
+                    n_cells_per_sample, n_genes, density=0.3, format="csr",
+                    random_state=0,
+                )
+                a = ad.AnnData(X=X)
+                a.var_names = [f"G{i}" for i in range(n_genes)]
+            else:
+                a = ad.AnnData(shape=(n_cells_per_sample, 0))
+            a.obs_names = [f"{sample.sample}_c{i}" for i in range(n_cells_per_sample)]
+            a.obs["sample"] = sample.sample
+            return a
+
+        monkeypatch.setattr(loader_module, "load_sample", fake_load_sample)
+
+        sheet = SampleSheet(
+            samples=[
+                Sample(sample="GEX", vdj_dir=str(mock_cellranger_vdj_dir)),
+                Sample(sample="VDJ", vdj_dir=str(mock_cellranger_vdj_dir)),
+            ]
+        )
+
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert adata.n_obs == 2 * n_cells_per_sample
+        assert adata.n_vars == n_genes
+        assert adata.X is not None
+        assert set(adata.obs["sample"]) == {"GEX", "VDJ"}
+
+        # Outer-join fill: the VDJ-only rows have zero X entries in the GEX
+        # vars (no overlap means concat_on_disk fills with zeros, not NaN, for
+        # the sparse case).
+        vdj_rows = adata.obs["sample"] == "VDJ"
+        vdj_block = adata[vdj_rows].X
+        assert vdj_block.nnz == 0, "VDJ-only rows should have no expression entries"
+
+    def test_load_samples_vdj_only_result_has_x_none(
+        self, mock_cellranger_vdj_dir
+    ):
+        """When every sample is VDJ-only, combined.X should be None (the empty
+        placeholders synthesized for concat_on_disk are stripped after merge)."""
+        sheet = SampleSheet(
+            samples=[
+                Sample(sample="V1", vdj_dir=str(mock_cellranger_vdj_dir)),
+                Sample(sample="V2", vdj_dir=str(mock_cellranger_vdj_dir)),
+            ]
+        )
+
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert adata.X is None
+        assert adata.n_vars == 0
+
+    def test_load_samples_respects_tmpdir_kwarg(
+        self, mock_cellranger_vdj_dir, monkeypatch, tmp_path
+    ):
+        """The tmpdir kwarg should redirect the spill location off the system
+        tempdir (relevant when $TMPDIR is on tmpfs)."""
+        from tcrsift import loader as loader_module
+
+        # Intercept concat_on_disk to capture the in_files paths it sees.
+        seen_paths: list[Path] = []
+        real_concat_on_disk = loader_module.concat_on_disk
+
+        def tracking_concat_on_disk(in_files, out_file, **kwargs):
+            seen_paths.extend(Path(p) for p in in_files)
+            return real_concat_on_disk(in_files, out_file, **kwargs)
+
+        monkeypatch.setattr(loader_module, "concat_on_disk", tracking_concat_on_disk)
+
+        spill_root = tmp_path / "spill"
+        spill_root.mkdir()
+        sheet = SampleSheet(samples=[Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir))])
+
+        adata = load_samples(
+            sheet, show_progress=False, verbose=False, tmpdir=spill_root
+        )
+
+        assert adata.n_obs > 0
+        assert len(seen_paths) == 1
+        assert spill_root in seen_paths[0].parents
 
 
 class TestLoadSampleMetadata:
