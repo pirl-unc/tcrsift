@@ -126,14 +126,14 @@ def _write_timepoint_inputs(data_dir: Path, tp: str, clonotype_counts: dict[str,
 
 def _make_mock_adata(barcodes: list[str]) -> ad.AnnData:
     """Create small AnnData for marker scoring tests."""
-    genes = ["CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG", "MKI67", "TNFRSF9"]
+    genes = ["CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG", "MKI67", "TNFRSF9", "CXCL13", "ENTPD1"]
     X = []
     for i, _bc in enumerate(barcodes):
         # Alternate higher CD8 and low CD4 to ensure at least some base-selected clones
         if i % 2 == 0:
-            X.append([0.0, 8.0, 7.0, 2.0, 2.0, 1.0, 1.0, 1.0])
+            X.append([0.0, 8.0, 7.0, 2.0, 2.0, 1.0, 1.0, 1.0, 3.0, 2.5])
         else:
-            X.append([2.0, 1.0, 1.0, 0.5, 0.5, 0.2, 0.2, 0.2])
+            X.append([2.0, 1.0, 1.0, 0.5, 0.5, 0.2, 0.2, 0.2, 0.1, 0.1])
     adata = ad.AnnData(sp.csr_matrix(np.array(X, dtype=float)))
     adata.var_names = genes
     adata.obs_names = barcodes
@@ -238,6 +238,8 @@ class TestTilSelectCore:
                 "score_cp10k_IFNG_mean": [0.8, 0.0, 0.0],
                 "score_cp10k_MKI67_mean": [0.5, 0.0, 0.0],
                 "score_cp10k_TNFRSF9_mean": [0.4, 0.0, 0.0],
+                "score_cp10k_CXCL13_mean": [3.0, 0.1, 0.0],
+                "score_cp10k_ENTPD1_mean": [2.5, 0.1, 0.0],
                 "score_z_GZMB_T1": [0.5, -0.2, 0.0],
                 "score_z_GZMB_T2": [1.1, -0.3, 0.0],
                 "score_z_PRF1_T1": [0.6, -0.2, 0.0],
@@ -248,12 +250,15 @@ class TestTilSelectCore:
         out_df, subsets, _seq, _ind, _branch = run_selection_pipeline(
             df,
             timepoint_order=["T1", "T2"],
-            marker_genes=["CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG", "MKI67", "TNFRSF9"],
+            marker_genes=["CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG", "MKI67", "TNFRSF9", "CXCL13", "ENTPD1"],
         )
 
         assert "is_base_selected" in out_df.columns
         assert "is_candidate_tumor_reactive" in out_df.columns
+        assert "is_branch_enrichment_markers" in out_df.columns
+        assert "is_top_enrichment_score" in out_df.columns
         assert "subset_candidate_tumor_reactive" in subsets
+        assert "subset_top_enrichment_score" in subsets
 
 
 class TestTilSelectEndToEnd:
@@ -303,11 +308,12 @@ class TestTilSelectEndToEnd:
             became_cytotoxic_min_delta_z=0.0,
             trend_increase_ratio_min=1.2,
             trend_decrease_ratio_max=0.8,
-            marker_genes="CD4,CD8A,CD8B,GZMB,PRF1,IFNG,MKI67,TNFRSF9",
+            marker_genes="CD4,CD8A,CD8B,GZMB,PRF1,IFNG,MKI67,TNFRSF9,CXCL13,ENTPD1",
             immunogenic_genes="GZMB,PRF1,IFNG,MKI67,TNFRSF9",
             cytotoxic_genes="GZMB,PRF1,IFNG,MKI67,TNFRSF9",
             cytolytic_genes="GZMB,PRF1",
             antigen_response_genes="TNFRSF9,MKI67",
+            enrichment_genes="CXCL13,ENTPD1",
             pyensembl_release=110,
             rank_by="mean_frequency",
             fig_dir=fig_dir,
@@ -330,6 +336,7 @@ class TestTilSelectEndToEnd:
         assert (fig_dir / "abTCR_annotated.csv").exists()
         assert (fig_dir / "selection_masks.csv").exists()
         assert (fig_dir / "subset_candidate_tumor_reactive.csv").exists()
+        assert (fig_dir / "subset_top_enrichment_score.csv").exists()
         assert (fig_dir / "marker_cells_T1.csv").exists()
         assert (fig_dir / "marker_clonotype_scores_T1.csv").exists()
         assert (fig_dir / "abTCR_topk.csv").exists()

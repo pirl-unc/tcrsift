@@ -1693,6 +1693,12 @@ or auto-discovered from --data-dir.
         help="Comma-separated genes for antigen-response score branch.",
     )
     p_til_select.add_argument(
+        "--enrichment-genes",
+        type=str,
+        default="CXCL13,ENTPD1",
+        help="Comma-separated genes for exhaustion/tumor-reactivity enrichment branch.",
+    )
+    p_til_select.add_argument(
         "--pyensembl-release",
         type=int,
         default=110,

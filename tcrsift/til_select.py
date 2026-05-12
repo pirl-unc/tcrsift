@@ -90,6 +90,7 @@ VDJ_SEGMENT_COLS = list(TCR_SEGMENTS_AA)
 VDJ_SEGMENT_NT_COLS = list(TCR_SEGMENTS_NT)
 CYTOLYTIC_GENES_DEFAULT = ("PRF1", "GZMB")
 ANTIGEN_RESPONSE_GENES_DEFAULT = ("TNFRSF9", "MKI67")
+ENRICHMENT_GENES_DEFAULT = ("CXCL13", "ENTPD1")
 RANK_METRICS = (
     "mean_frequency",
     "max_frequency",
@@ -1368,6 +1369,7 @@ def run_selection_pipeline(
     cytotoxic_genes_preferred: list[str] | None = None,
     cytolytic_genes_preferred: list[str] | None = None,
     antigen_response_genes_preferred: list[str] | None = None,
+    enrichment_genes_preferred: list[str] | None = None,
 ) -> tuple[
     pd.DataFrame,
     dict[str, pd.DataFrame],
@@ -1506,6 +1508,13 @@ def run_selection_pipeline(
     )
     antigen_response_genes = _dedupe_valid(antigen_seed, ANTIGEN_RESPONSE_GENES_DEFAULT)
 
+    enrichment_seed = (
+        [g.strip().upper() for g in enrichment_genes_preferred if g.strip()]
+        if enrichment_genes_preferred
+        else list(ENRICHMENT_GENES_DEFAULT)
+    )
+    enrichment_genes = _dedupe_valid(enrichment_seed, ENRICHMENT_GENES_DEFAULT)
+
     for tp in timepoint_order:
         z_cols = [f"score_z_{g}_{tp}" for g in cytotoxic_genes if f"score_z_{g}_{tp}" in df.columns]
         cp10k_cols = [
@@ -1551,6 +1560,7 @@ def run_selection_pipeline(
 
     _add_panel_scores("cytolytic", cytolytic_genes)
     _add_panel_scores("antigen_response", antigen_response_genes)
+    _add_panel_scores("enrichment", enrichment_genes)
 
     first_z = pd.to_numeric(df.get(f"cytotoxic_score_z_{first_tp}", 0.0), errors="coerce").fillna(0.0)
     last_z = pd.to_numeric(df.get(f"cytotoxic_score_z_{last_tp}", 0.0), errors="coerce").fillna(0.0)
@@ -1635,16 +1645,27 @@ def run_selection_pipeline(
         immunogenic_min_cp10k,
         immunogenic_require_above_median,
     )
+    n_top_enrichment = _select_top_panel_score(
+        df,
+        "enrichment_score_cp10k_mean",
+        "is_top_enrichment_score",
+        immunogenic_percentile,
+        immunogenic_percentile_slack_frac,
+        immunogenic_min_cp10k,
+        immunogenic_require_above_median,
+    )
 
     df["is_branch_top_immunogenic"] = df["is_top_immunogenic_any"]
     df["is_branch_cytolytic"] = df["is_top_cytolytic_score"]
     df["is_branch_antigen_response"] = df["is_top_antigen_response_score"]
+    df["is_branch_enrichment_markers"] = df["is_top_enrichment_score"]
     df["is_branch_enriched"] = df["is_increasing_nonzero"]
     df["is_branch_increasing"] = df["is_increasing_all_timepoints"]
     df["is_branch_any"] = (
         df["is_branch_top_immunogenic"]
         | df["is_branch_cytolytic"]
         | df["is_branch_antigen_response"]
+        | df["is_branch_enrichment_markers"]
         | df["is_branch_enriched"]
         | df["is_branch_increasing"]
     )
@@ -1652,6 +1673,7 @@ def run_selection_pipeline(
         df["is_top_immunogenic_any"]
         | df["is_top_cytolytic_score"]
         | df["is_top_antigen_response_score"]
+        | df["is_top_enrichment_score"]
     )
     df["is_candidate_tumor_reactive"] = df["is_base_selected"] & df["is_branch_any"]
     df["is_branch_union_within_base"] = df["is_candidate_tumor_reactive"]
@@ -1668,6 +1690,7 @@ def run_selection_pipeline(
         "subset_top_immunogenic_any": df[df["is_top_immunogenic_any"]].copy(),
         "subset_top_cytolytic_score": df[df["is_top_cytolytic_score"]].copy(),
         "subset_top_antigen_response_score": df[df["is_top_antigen_response_score"]].copy(),
+        "subset_top_enrichment_score": df[df["is_top_enrichment_score"]].copy(),
         "subset_enriched": df[df["is_enriched"]].copy(),
         "subset_increasing": df[df["is_increasing_nonzero"]].copy(),
         "subset_increasing_positive": df[df["is_increasing_all_timepoints"]].copy(),
@@ -1713,6 +1736,7 @@ def run_selection_pipeline(
         *immunogenic_branch_rows,
         ("Cytolytic", n_top_cytolytic),
         ("AgResp", n_top_antigen_response),
+        ("Enrich", n_top_enrichment),
         (f"Inc>={increase_ratio_nonzero_min:g}x", int((df["is_base_selected"] & df["is_branch_enriched"]).sum())),
         ("Union", int(df["is_branch_union_within_base"].sum())),
         ("Final", int(df["is_candidate_tumor_reactive"].sum())),
@@ -1728,6 +1752,7 @@ def run_selection_pipeline(
         ("ImmAny", int(df["is_top_immunogenic_any"].sum())),
         ("Cytolytic", int(df["is_top_cytolytic_score"].sum())),
         ("AgResp", int(df["is_top_antigen_response_score"].sum())),
+        ("Enrich", int(df["is_top_enrichment_score"].sum())),
         *immunogenic_independent_rows,
         (f"Inc>={increase_ratio_nonzero_min:g}x", int(df["is_increasing_nonzero"].sum())),
         ("Inc+Cyto", int(df["is_increasing_and_became_cytotoxic"].sum())),
@@ -2075,6 +2100,9 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
     antigen_response_genes = [
         g.strip().upper() for g in str(args.antigen_response_genes).split(",") if g.strip()
     ]
+    enrichment_genes = [
+        g.strip().upper() for g in str(args.enrichment_genes).split(",") if g.strip()
+    ]
 
     fig_dir = Path(args.fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -2151,6 +2179,7 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
         cytotoxic_genes_preferred=cytotoxic_genes,
         cytolytic_genes_preferred=cytolytic_genes,
         antigen_response_genes_preferred=antigen_response_genes,
+        enrichment_genes_preferred=enrichment_genes,
     )
 
     _write_subset_tables(subset_dfs, fig_dir)
