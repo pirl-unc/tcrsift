@@ -289,6 +289,7 @@ def cmd_annotate(args):
     import pandas as pd
 
     from .annotate import annotate_clonotypes, get_annotation_summary
+    from .datacache import cached_path
     from .plots import plot_annotations
 
     setup_logging(args.verbose)
@@ -296,11 +297,12 @@ def cmd_annotate(args):
     clonotypes = pd.read_csv(args.input)
     print(f"Loaded {len(clonotypes)} clonotypes from {args.input}")
 
+    cache_dir = getattr(args, "cache_dir", None)
     annotated = annotate_clonotypes(
         clonotypes,
-        vdjdb_path=args.vdjdb,
-        iedb_path=args.iedb,
-        cedar_path=args.cedar,
+        vdjdb_path=args.vdjdb or cached_path("vdjdb", cache_dir),
+        iedb_path=args.iedb or cached_path("iedb", cache_dir),
+        cedar_path=args.cedar or cached_path("cedar", cache_dir),
         match_by=args.match_by if hasattr(args, "match_by") else "CDR3ab",
         exclude_viral=args.exclude_viral,
         flag_only=args.flag_only,
@@ -576,6 +578,84 @@ def cmd_assemble(args):
         )
         plot_assembly(assembled, output_dir)
         print(f"Assembly plots saved to {output_dir}")
+
+
+# =============================================================================
+# Data Command (Reference-database cache)
+# =============================================================================
+
+
+def _format_size(n: int) -> str:
+    """Human-friendly byte count, e.g. '12 MB', '4.2 GB'."""
+    if n == 0:
+        return "-"
+    units = ("B", "KB", "MB", "GB", "TB")
+    size = float(n)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.0f} {unit}" if size >= 10 or unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{n} B"
+
+
+def cmd_data_list(args):
+    """List managed reference databases and their cache state."""
+    from .datacache import inspect_cache, resolve_cache_dir
+
+    cache_dir = resolve_cache_dir(args.cache_dir)
+    entries = inspect_cache(args.cache_dir)
+
+    print(f"Cache directory: {cache_dir}")
+    print()
+    print(f"{'database':<10} {'status':<8} {'size':>10}  path")
+    print("-" * 80)
+    total = 0
+    for e in entries:
+        status = "present" if e.present else "missing"
+        size = _format_size(e.size_bytes)
+        print(f"{e.name:<10} {status:<8} {size:>10}  {e.path}")
+        total += e.size_bytes
+    print("-" * 80)
+    print(f"{'total':<10} {'':<8} {_format_size(total):>10}")
+
+    missing = [e for e in entries if not e.present]
+    if missing:
+        print()
+        print("Missing databases — download manually and place under the cache:")
+        for e in missing:
+            print(f"  {e.name}: {e.source} → {e.path}")
+
+
+def cmd_data_clear(args):
+    """Remove cached files for one or all managed databases."""
+    from .datacache import clear_cache
+
+    removed = clear_cache(db=args.db, data_dir=args.cache_dir)
+    if not removed:
+        print("Nothing to remove.")
+        return
+    for path in removed:
+        print(f"Removed {path}")
+
+
+def cmd_data_download(args):
+    """Download one or all supported reference databases into the cache."""
+    from .datacache import DATABASES, DownloadError, download_database
+
+    setup_logging(verbose=True)
+    targets = [args.db] if args.db else [
+        name for name, spec in DATABASES.items() if spec.download_url is not None
+    ]
+    failures: list[tuple[str, str]] = []
+    for db in targets:
+        try:
+            path = download_database(db, data_dir=args.cache_dir, force=args.force)
+            print(f"  {db}: cached at {path}")
+        except DownloadError as e:
+            failures.append((db, str(e)))
+            print(f"  {db}: FAILED — {e}")
+    if failures:
+        raise SystemExit(1)
 
 
 # =============================================================================
@@ -970,18 +1050,24 @@ def cmd_run(args):
     if config.output.generate_plots:
         plot_filter(filtered, plots_dir)
 
-    # Step 5: Annotate (if databases provided)
+    # Step 5: Annotate (if databases provided or cached).
+    # Explicit config paths win; otherwise fall back to the data cache
+    # (`tcrsift data list` shows what's available).
+    from .datacache import cached_path
+
+    cache_dir = getattr(args, "cache_dir", None)
+    vdjdb_path = config.annotate.vdjdb_path or cached_path("vdjdb", cache_dir)
+    iedb_path = config.annotate.iedb_path or cached_path("iedb", cache_dir)
+    cedar_path = config.annotate.cedar_path or cached_path("cedar", cache_dir)
     annotated = filtered
-    has_annotation = (
-        config.annotate.vdjdb_path or config.annotate.iedb_path or config.annotate.cedar_path
-    )
+    has_annotation = vdjdb_path or iedb_path or cedar_path
     if has_annotation:
         print("\n[5/7] Annotating with public databases...")
         annotated = annotate_clonotypes(
             filtered,
-            vdjdb_path=config.annotate.vdjdb_path,
-            iedb_path=config.annotate.iedb_path,
-            cedar_path=config.annotate.cedar_path,
+            vdjdb_path=vdjdb_path,
+            iedb_path=iedb_path,
+            cedar_path=cedar_path,
             match_by=config.annotate.match_by,
             exclude_viral=config.annotate.exclude_viral,
             flag_only=config.annotate.flag_only,
@@ -1498,9 +1584,14 @@ def create_parser():
     p_annot = subparsers.add_parser("annotate", help="Annotate with public databases")
     p_annot.add_argument("--input", "-i", required=True, help="Input filtered CSV")
     p_annot.add_argument("--output", "-o", required=True, help="Output annotated CSV")
-    p_annot.add_argument("--vdjdb", help="Path to VDJdb")
-    p_annot.add_argument("--iedb", help="Path to IEDB")
-    p_annot.add_argument("--cedar", help="Path to CEDAR")
+    p_annot.add_argument("--vdjdb", help="Path to VDJdb (overrides cache)")
+    p_annot.add_argument("--iedb", help="Path to IEDB (overrides cache)")
+    p_annot.add_argument("--cedar", help="Path to CEDAR (overrides cache)")
+    p_annot.add_argument(
+        "--cache-dir",
+        help="Reference-database cache directory (default: $TCRSIFT_DATA_DIR or "
+        "$XDG_CACHE_HOME/tcrsift or ~/.cache/tcrsift). See `tcrsift data list`.",
+    )
     p_annot.add_argument(
         "--match-by",
         choices=["CDR3ab", "CDR3b_only"],
@@ -1515,6 +1606,56 @@ def create_parser():
     p_annot.add_argument("--output-dir", help="Output directory for plots")
     p_annot.add_argument("--verbose", action="store_true", help="Verbose output")
     p_annot.set_defaults(func=cmd_annotate)
+
+    # -------------------------------------------------------------------------
+    # Data command (reference-database cache management)
+    # -------------------------------------------------------------------------
+    from .datacache import DATABASES
+
+    p_data = subparsers.add_parser(
+        "data", help="Manage cached reference databases (VDJdb, IEDB, CEDAR)"
+    )
+    p_data_sub = p_data.add_subparsers(dest="subcommand", required=True)
+
+    p_data_list = p_data_sub.add_parser(
+        "list", help="Show cached database status and disk usage"
+    )
+    p_data_list.add_argument(
+        "--cache-dir", help="Override the default cache directory"
+    )
+    p_data_list.set_defaults(func=cmd_data_list)
+
+    p_data_clear = p_data_sub.add_parser(
+        "clear", help="Remove cached files for one or all databases"
+    )
+    p_data_clear.add_argument(
+        "--db",
+        choices=sorted(DATABASES),
+        help="Database to clear (default: clear all)",
+    )
+    p_data_clear.add_argument(
+        "--cache-dir", help="Override the default cache directory"
+    )
+    p_data_clear.set_defaults(func=cmd_data_clear)
+
+    p_data_download = p_data_sub.add_parser(
+        "download",
+        help="Download supported databases (VDJdb, IEDB). CEDAR is manual-only.",
+    )
+    p_data_download.add_argument(
+        "--db",
+        choices=sorted(DATABASES),
+        help="Database to download (default: all DBs with a download URL)",
+    )
+    p_data_download.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download even if the database is already cached",
+    )
+    p_data_download.add_argument(
+        "--cache-dir", help="Override the default cache directory"
+    )
+    p_data_download.set_defaults(func=cmd_data_download)
 
     # -------------------------------------------------------------------------
     # Match-TIL command
@@ -2112,9 +2253,14 @@ CONDITIONALLY REQUIRED:
 
     # Annotate step parameters
     annot_group = p_run.add_argument_group("Annotation options")
-    annot_group.add_argument("--vdjdb", dest="vdjdb_path", help="Path to VDJdb")
-    annot_group.add_argument("--iedb", dest="iedb_path", help="Path to IEDB")
-    annot_group.add_argument("--cedar", dest="cedar_path", help="Path to CEDAR")
+    annot_group.add_argument("--vdjdb", dest="vdjdb_path", help="Path to VDJdb (overrides cache)")
+    annot_group.add_argument("--iedb", dest="iedb_path", help="Path to IEDB (overrides cache)")
+    annot_group.add_argument("--cedar", dest="cedar_path", help="Path to CEDAR (overrides cache)")
+    annot_group.add_argument(
+        "--cache-dir",
+        help="Reference-database cache dir (default: $TCRSIFT_DATA_DIR or "
+        "$XDG_CACHE_HOME/tcrsift or ~/.cache/tcrsift). See `tcrsift data list`.",
+    )
     annot_group.add_argument(
         "--match-by", choices=["CDR3ab", "CDR3b_only"], help="Matching strategy (default: CDR3ab)"
     )
