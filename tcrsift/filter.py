@@ -96,6 +96,78 @@ DEFAULT_FDR_TIERS = [0.0001, 0.001, 0.01, 0.1, 0.15]
 # isn't multi-donor, since blocking valid analyses is worse than a flag.
 VALID_FILTER_MODES = ("fdr", "shared-high-freq", "cross-donor-public")
 
+# FDR scope (#26): controls the null distribution the FDR-tier filter
+# computes against.
+VALID_FDR_SCOPES = ("auto", "global", "per-donor", "per-sample")
+
+
+def resolve_fdr_scope(
+    requested: str,
+    n_donors: int,
+    donors_share_antigen: bool,
+) -> str:
+    """Resolve `auto` to a concrete scope based on cohort metadata.
+
+    Auto-resolution: ``per-donor`` when ``n_donors > 1`` and the sheet
+    does not set ``donors_share_antigen``, else ``global``. Explicit
+    values (``global``/``per-donor``/``per-sample``) pass through
+    unchanged. Raises on unknown values.
+    """
+    if requested not in VALID_FDR_SCOPES:
+        raise TCRsiftValidationError(
+            f"Invalid fdr_scope: {requested!r}",
+            hint=f"Valid options: {VALID_FDR_SCOPES}",
+        )
+    if requested != "auto":
+        return requested
+    if n_donors > 1 and not donors_share_antigen:
+        return "per-donor"
+    return "global"
+
+
+def split_clonotypes_by_donor(
+    clonotypes: pd.DataFrame,
+    long_df: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    """Partition the clonotype table into per-donor subsets.
+
+    Each donor gets every clone present in any of that donor's samples
+    (so a public clone appears under both donors). When ``long_df`` lacks
+    a ``donor`` column, returns ``{"all": clonotypes}`` so callers can
+    treat per-donor scope uniformly.
+
+    Used by ``--fdr-scope per-donor`` to run the FDR filter against each
+    donor's own pooled-across-methods null.
+    """
+    if "donor" not in long_df.columns:
+        return {"all": clonotypes.copy()}
+    out: dict[str, pd.DataFrame] = {}
+    for donor, group in long_df.groupby("donor"):
+        donor_clones = set(group["CDR3ab"].astype(str).unique())
+        out[str(donor)] = clonotypes[
+            clonotypes["CDR3ab"].astype(str).isin(donor_clones)
+        ].copy()
+    return out
+
+
+def split_clonotypes_by_sample(
+    clonotypes: pd.DataFrame,
+    long_df: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    """Partition the clonotype table into per-sample subsets.
+
+    Used by ``--fdr-scope per-sample`` — each sample gets its own FDR null.
+    """
+    if "sample" not in long_df.columns:
+        return {"all": clonotypes.copy()}
+    out: dict[str, pd.DataFrame] = {}
+    for sample, group in long_df.groupby("sample"):
+        sample_clones = set(group["CDR3ab"].astype(str).unique())
+        out[str(sample)] = clonotypes[
+            clonotypes["CDR3ab"].astype(str).isin(sample_clones)
+        ].copy()
+    return out
+
 NAMED_FILTER_MODE_DEFAULTS: dict[str, dict] = {
     "shared-high-freq": {
         "min_methods_per_donor": 2,

@@ -587,6 +587,8 @@ def cmd_run(args):
     """Run the complete TCRsift pipeline."""
     from pathlib import Path
 
+    import pandas as pd
+
     from .annotate import annotate_clonotypes
     from .assemble import assemble_full_sequences, export_fasta
     from .clonotype import aggregate_clonotypes, export_clonotypes_airr
@@ -766,24 +768,101 @@ def cmd_run(args):
                 "has n_donors >= 2. Result will likely be empty."
             )
 
-    filtered = filter_clonotypes(
-        clonotypes,
-        method=config.filter.method,
-        tcell_type=tcell_type,
-        min_cells=config.filter.min_cells,
-        min_frequency=config.filter.min_frequency,
-        require_complete=config.filter.require_complete,
-        fdr_tiers=config.filter.fdr_tiers,
-        **mode_kwargs,
+    # FDR scope resolution (#26). 'auto' resolves to 'per-donor' for
+    # multi-donor cohorts that don't share antigen, else 'global'.
+    from .filter import (
+        resolve_fdr_scope,
+        split_clonotypes_by_donor,
+        split_clonotypes_by_sample,
     )
 
-    # Save by tier
-    tier_dfs = split_by_tier(filtered)
-    tier_counts = {}
-    for tier, tier_df in tier_dfs.items():
-        tier_df.to_csv(data_dir / f"filtered_{tier}.csv", index=False)
-        tier_counts[tier] = len(tier_df)
-        print(f"  {tier}: {len(tier_df)} clonotypes")
+    n_donors_in_run = (
+        int(clonotypes["n_donors"].max())
+        if "n_donors" in clonotypes.columns and len(clonotypes)
+        else 1
+    )
+    sheet_shares_antigen = getattr(sample_sheet, "donors_share_antigen", False)
+    donors_share_antigen = (
+        config.filter.donors_share_antigen or sheet_shares_antigen
+    )
+    resolved_scope = resolve_fdr_scope(
+        config.filter.fdr_scope,
+        n_donors=n_donors_in_run,
+        donors_share_antigen=donors_share_antigen,
+    )
+    print(f"  FDR scope: {resolved_scope}")
+
+    def _filter_one(df_in):
+        return filter_clonotypes(
+            df_in,
+            method=config.filter.method,
+            tcell_type=tcell_type,
+            min_cells=config.filter.min_cells,
+            min_frequency=config.filter.min_frequency,
+            require_complete=config.filter.require_complete,
+            fdr_tiers=config.filter.fdr_tiers,
+            **mode_kwargs,
+        )
+
+    if resolved_scope == "global":
+        filtered = _filter_one(clonotypes)
+        # Save by tier (existing behavior)
+        tier_dfs = split_by_tier(filtered)
+        tier_counts = {}
+        for tier, tier_df in tier_dfs.items():
+            tier_df.to_csv(data_dir / f"filtered_{tier}.csv", index=False)
+            tier_counts[tier] = len(tier_df)
+            print(f"  {tier}: {len(tier_df)} clonotypes")
+    else:
+        # Per-donor or per-sample scope. Build long_df if not already.
+        if long_df is None:
+            from .clonotype import build_clone_sample_long
+            long_df = build_clone_sample_long(adata)
+        if resolved_scope == "per-donor":
+            subsets = split_clonotypes_by_donor(clonotypes, long_df)
+            label = "donor"
+        else:
+            subsets = split_clonotypes_by_sample(clonotypes, long_df)
+            label = "sample"
+
+        per_subset_filtered = []
+        tier_counts = {}
+        for key, sub_clonotypes in subsets.items():
+            if len(sub_clonotypes) == 0:
+                continue
+            try:
+                sub_filtered = _filter_one(sub_clonotypes)
+            except TCRsiftValidationError as exc:
+                # Narrow exception: filter_clonotypes_threshold raises this
+                # when the subset is empty after filtering. Other exceptions
+                # (real bugs, OOM, dtype mismatches) propagate so they're not
+                # masked under a benign "no clones" message.
+                print(
+                    f"  WARNING: no clones survived filtering for "
+                    f"{label}={key}: {exc}"
+                )
+                continue
+            sub_filtered = sub_filtered.copy()
+            sub_filtered[f"scope_{label}"] = key
+            per_subset_filtered.append(sub_filtered)
+
+            # Per-subset tier files alongside the existing global naming
+            # convention (e.g. filtered_tier1_B1-2.csv for per-donor scope).
+            sub_tier_dfs = split_by_tier(sub_filtered)
+            safe_key = str(key).replace("/", "_").replace(" ", "_")
+            for tier, tier_df in sub_tier_dfs.items():
+                tier_df.to_csv(
+                    data_dir / f"filtered_{tier}_{safe_key}.csv",
+                    index=False,
+                )
+                tier_counts[f"{tier}_{safe_key}"] = len(tier_df)
+                print(f"  {label}={key} {tier}: {len(tier_df)} clonotypes")
+
+        filtered = (
+            pd.concat(per_subset_filtered, ignore_index=True)
+            if per_subset_filtered
+            else pd.DataFrame()
+        )
 
     # Mode-named output for non-FDR modes (#15 chunk 4). Lets users find the
     # "shared-high-freq passes" set without having to read tier CSVs that
@@ -2015,6 +2094,20 @@ CONDITIONALLY REQUIRED:
     filter_group.add_argument(
         "--min-til-cells-per-donor", type=int,
         help="Min TIL cells of the same donor in which the clone appears",
+    )
+    filter_group.add_argument(
+        "--fdr-scope",
+        choices=["auto", "global", "per-donor", "per-sample"],
+        help="FDR null scope (default: auto). 'auto' = per-donor when "
+        "n_donors>1 and the sheet doesn't set donors_share_antigen, "
+        "else global. (#26)",
+    )
+    filter_group.add_argument(
+        "--donors-share-antigen",
+        action="store_true",
+        default=None,
+        help="Mark the cohort as having donors that share antigen + MHC + "
+        "cohort. Locks fdr_scope='auto' resolution to 'global'.",
     )
 
     # Annotate step parameters

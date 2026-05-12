@@ -375,6 +375,138 @@ class TestFilterKnobNoOpWarnings:
         )
 
 
+class TestResolveFdrScope:
+    """#26 — fdr_scope auto-resolution."""
+
+    def test_explicit_values_pass_through(self):
+        from tcrsift.filter import resolve_fdr_scope
+
+        assert resolve_fdr_scope("global", n_donors=2, donors_share_antigen=False) == "global"
+        assert resolve_fdr_scope("per-donor", n_donors=1, donors_share_antigen=True) == "per-donor"
+        assert resolve_fdr_scope("per-sample", n_donors=2, donors_share_antigen=False) == "per-sample"
+
+    def test_auto_per_donor_when_multidonor_unrelated(self):
+        from tcrsift.filter import resolve_fdr_scope
+
+        assert resolve_fdr_scope("auto", n_donors=2, donors_share_antigen=False) == "per-donor"
+        assert resolve_fdr_scope("auto", n_donors=5, donors_share_antigen=False) == "per-donor"
+
+    def test_auto_global_when_single_donor(self):
+        from tcrsift.filter import resolve_fdr_scope
+
+        assert resolve_fdr_scope("auto", n_donors=1, donors_share_antigen=False) == "global"
+
+    def test_auto_global_when_donors_share_antigen(self):
+        from tcrsift.filter import resolve_fdr_scope
+
+        assert resolve_fdr_scope("auto", n_donors=3, donors_share_antigen=True) == "global"
+
+    def test_invalid_value_raises(self):
+        from tcrsift.filter import resolve_fdr_scope
+        from tcrsift.validation import TCRsiftValidationError
+
+        with pytest.raises(TCRsiftValidationError, match="fdr_scope"):
+            resolve_fdr_scope("nonsense", n_donors=2, donors_share_antigen=False)
+
+
+class TestSplitClonotypesByDonor:
+    """#26 — splitting clonotypes by donor for per-donor scope."""
+
+    def test_split_includes_clones_per_donor(self):
+        from tcrsift.filter import split_clonotypes_by_donor
+
+        long_df = pd.DataFrame(
+            {
+                "CDR3ab": ["A", "A", "B", "C"],
+                "donor": ["B1-2", "B1-3", "B1-2", "B1-3"],
+                "sample": ["S1", "S2", "S1", "S2"],
+                "method": ["AIM"] * 4,
+                "cells": [1, 1, 1, 1],
+                "frequency": [0.1] * 4,
+            }
+        )
+        clonotypes = pd.DataFrame(
+            {"CDR3ab": ["A", "B", "C"], "cell_count": [10, 5, 3]}
+        )
+        out = split_clonotypes_by_donor(clonotypes, long_df)
+        assert set(out.keys()) == {"B1-2", "B1-3"}
+        # B1-2 has clones A, B; B1-3 has clones A, C
+        assert set(out["B1-2"]["CDR3ab"]) == {"A", "B"}
+        assert set(out["B1-3"]["CDR3ab"]) == {"A", "C"}
+
+    def test_no_donor_returns_all_bucket(self):
+        from tcrsift.filter import split_clonotypes_by_donor
+
+        long_df = pd.DataFrame(
+            {"CDR3ab": ["A"], "sample": ["S1"], "cells": [1], "frequency": [0.1]}
+        )
+        clonotypes = pd.DataFrame({"CDR3ab": ["A"]})
+        out = split_clonotypes_by_donor(clonotypes, long_df)
+        assert set(out.keys()) == {"all"}
+
+
+class TestSampleSheetDonorsShareAntigen:
+    """#26 — donors_share_antigen sheet-level flag."""
+
+    def test_default_false(self):
+        from tcrsift.sample_sheet import Sample, SampleSheet
+
+        s = SampleSheet(samples=[Sample(sample="X", vdj_dir="/p")])
+        assert s.donors_share_antigen is False
+
+    def test_yaml_root_key_picked_up(self, tmp_path):
+        from tcrsift.sample_sheet import load_sample_sheet
+
+        path = tmp_path / "sheet.yaml"
+        path.write_text(
+            "donors_share_antigen: true\n"
+            "samples:\n"
+            "  - sample: S1\n"
+            "    vdj_dir: /p\n"
+        )
+        sheet = load_sample_sheet(path)
+        assert sheet.donors_share_antigen is True
+
+    def test_yaml_root_key_default_false(self, tmp_path):
+        from tcrsift.sample_sheet import load_sample_sheet
+
+        path = tmp_path / "sheet.yaml"
+        path.write_text("samples:\n  - sample: S1\n    vdj_dir: /p\n")
+        sheet = load_sample_sheet(path)
+        assert sheet.donors_share_antigen is False
+
+    def test_yaml_truthy_string_values_accepted(self, tmp_path):
+        """Review fix: quoted forms like "true" / "yes" should also flip
+        the flag — users shouldn't have it silently ignored over YAML
+        quoting style."""
+        from tcrsift.sample_sheet import load_sample_sheet
+
+        for i, value in enumerate(('"true"', '"yes"', '"YES"', '"1"', '"on"')):
+            path = tmp_path / f"sheet_truthy_{i}.yaml"
+            path.write_text(
+                f"donors_share_antigen: {value}\n"
+                "samples:\n"
+                "  - sample: S1\n"
+                "    vdj_dir: /p\n"
+            )
+            sheet = load_sample_sheet(path)
+            assert sheet.donors_share_antigen is True, value
+
+    def test_yaml_falsy_string_values_rejected(self, tmp_path):
+        from tcrsift.sample_sheet import load_sample_sheet
+
+        for i, value in enumerate(('"false"', '"no"', '"0"', '"off"', '""')):
+            path = tmp_path / f"sheet_falsy_{i}.yaml"
+            path.write_text(
+                f"donors_share_antigen: {value}\n"
+                "samples:\n"
+                "  - sample: S1\n"
+                "    vdj_dir: /p\n"
+            )
+            sheet = load_sample_sheet(path)
+            assert sheet.donors_share_antigen is False, value
+
+
 class TestBucketByDonorSharing:
     """#15 chunk 4 — private/public bucketing helper."""
 
