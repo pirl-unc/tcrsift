@@ -498,6 +498,46 @@ class TestLoadSamplesWithSampleSheet:
         assert adata.X is not None
         assert set(adata.obs["sample"]) == {"S1", "S2"}
 
+    def test_load_samples_handles_csc_inputs(
+        self, mock_cellranger_vdj_dir, monkeypatch
+    ):
+        """CellRanger's filtered_feature_bc_matrix writes CSC, but
+        concat_on_disk only supports CSR along the obs axis. _ensure_x
+        must convert CSC→CSR before the spill or the merge raises
+        NotImplementedError (issue #37 — regression from PR #31)."""
+        from tcrsift import loader as loader_module
+
+        n_cells, n_genes = 20, 15
+        rng = np.random.default_rng(7)
+
+        def fake_load_sample(sample, **_kwargs):
+            X = sp.random(
+                n_cells, n_genes, density=0.2, format="csc", random_state=rng
+            )
+            assert isinstance(X, sp.csc_matrix), "fixture must produce CSC"
+            a = ad.AnnData(X=X)
+            a.var_names = [f"G{i}" for i in range(n_genes)]
+            a.obs_names = [f"{sample.sample}_c{i}" for i in range(n_cells)]
+            a.obs["sample"] = sample.sample
+            return a
+
+        monkeypatch.setattr(loader_module, "load_sample", fake_load_sample)
+
+        sheet = SampleSheet(
+            samples=[
+                Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir)),
+                Sample(sample="S2", vdj_dir=str(mock_cellranger_vdj_dir)),
+            ]
+        )
+
+        # Pre-fix this raised
+        # NotImplementedError: Concat of following not supported: ['csc', 'csc']
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert adata.n_obs == 2 * n_cells
+        assert adata.n_vars == n_genes
+        assert adata.X is not None
+
     def test_load_samples_mixed_modality_merges_uniformly(
         self, mock_cellranger_vdj_dir, monkeypatch
     ):
