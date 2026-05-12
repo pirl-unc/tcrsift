@@ -812,7 +812,11 @@ def cmd_run(args):
     # under data/filtered_by_method/, top-N clones ranked by within-bucket
     # frequency. Skipped when enrichment_method axis isn't populated.
     if long_df is not None:
-        from .clonotype import build_per_method_rankings
+        from .clonotype import (
+            build_method_overlap_matrices,
+            build_method_recovery_table,
+            build_per_method_rankings,
+        )
 
         rankings = build_per_method_rankings(
             filtered, long_df, top_n=config.output.per_method_top_n
@@ -833,6 +837,53 @@ def cmd_run(args):
             print(
                 f"  Wrote {len(rankings)} per-method ranked CSVs to "
                 f"{method_dir.name}/"
+            )
+
+        # Method × method overlap matrix per donor (#27 chunk 3). CSV +
+        # heatmap PNG. Skipped when method axis isn't populated.
+        similarity = config.output.method_overlap_similarity
+        overlap_matrices = build_method_overlap_matrices(
+            filtered, long_df, similarity=similarity
+        )
+        if overlap_matrices:
+            for donor, mat in overlap_matrices.items():
+                safe_donor = donor.replace("/", "_").replace(" ", "_")
+                mat.to_csv(data_dir / f"method_overlap_{safe_donor}.csv")
+                if config.output.generate_plots:
+                    from .plots import plot_method_overlap
+
+                    plot_method_overlap(
+                        mat,
+                        plots_dir / f"method_overlap_{safe_donor}.png",
+                        similarity=similarity,
+                        donor=donor,
+                    )
+            print(
+                f"  Method overlap ({similarity}): "
+                f"{len(overlap_matrices)} donor matrices"
+            )
+
+        # Method-recovery table + bar plot (#27 chunk 4). Targets the
+        # strictest tier present on `filtered`; falls back to '*' (all
+        # filtered clones) under non-FDR modes.
+        target_tier = "tier1" if "tier" in filtered.columns else "*"
+        recovery = build_method_recovery_table(
+            filtered, long_df, tier=target_tier
+        )
+        if not recovery.empty:
+            recovery.to_csv(data_dir / "method_recovery.csv", index=False)
+            if config.output.generate_plots:
+                from .plots import plot_method_recovery
+
+                plot_method_recovery(
+                    recovery,
+                    plots_dir / "method_recovery.png",
+                    tier_label=target_tier,
+                )
+            print(
+                f"  Method recovery ({target_tier}): "
+                f"{recovery['method'].nunique()} methods × "
+                f"{recovery['donor'].nunique()} donors"
             )
 
     funnel_counts["Filtered"] = len(filtered)
@@ -2075,6 +2126,12 @@ CONDITIONALLY REQUIRED:
         type=int,
         help="Per-(donor, method) ranked CSVs: top-N clones each. "
         "Default 100. Skipped when enrichment_method axis isn't populated.",
+    )
+    out_group.add_argument(
+        "--method-overlap-similarity",
+        choices=["jaccard", "dice", "count"],
+        help="Similarity metric for the method × method overlap matrix "
+        "(default: jaccard).",
     )
     out_group.add_argument("--verbose", action="store_true", help="Verbose output")
 

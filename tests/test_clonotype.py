@@ -1047,3 +1047,301 @@ class TestBuildPerMethodRankings:
         rankings = build_per_method_rankings(filtered, long_df)
         assert ("all", "AIMpos") in rankings
         assert ("all", "tetpos") in rankings
+
+
+class TestBuildMethodOverlapMatrices:
+    """#27 chunk 3 — method × method overlap matrices per donor."""
+
+    def _setup(self):
+        from tcrsift.clonotype import build_clone_sample_long
+        import anndata as ad
+        import numpy as np
+
+        # B1-2: clone A in (AIM, tet, IFN); clone B in (AIM, tet);
+        # clone C in (IFN). B1-3: clone A in (AIM); clone D in (AIM, tet).
+        rows = (
+            [("B1-2_AIM", "B1-2", "AIMpos", "CAVA", "CASS_A")] * 4
+            + [("B1-2_tet", "B1-2", "tetpos", "CAVA", "CASS_A")] * 2
+            + [("B1-2_IFN", "B1-2", "IFNpos", "CAVA", "CASS_A")] * 2
+            + [("B1-2_AIM", "B1-2", "AIMpos", "CAVB", "CASS_B")] * 3
+            + [("B1-2_tet", "B1-2", "tetpos", "CAVB", "CASS_B")] * 2
+            + [("B1-2_IFN", "B1-2", "IFNpos", "CAVC", "CASS_C")] * 2
+            + [("B1-3_AIM", "B1-3", "AIMpos", "CAVA", "CASS_A")] * 4
+            + [("B1-3_AIM", "B1-3", "AIMpos", "CAVD", "CASS_D")] * 3
+            + [("B1-3_tet", "B1-3", "tetpos", "CAVD", "CASS_D")] * 2
+        )
+        n = len(rows)
+        adata = ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": [r[0] for r in rows],
+                    "patient_id": [r[1] for r in rows],
+                    "enrichment_method": [r[2] for r in rows],
+                    "CDR3_alpha": [r[3] for r in rows],
+                    "CDR3_beta": [r[4] for r in rows],
+                }
+            ),
+        )
+        long_df = build_clone_sample_long(adata)
+        # All four clones pass.
+        filtered = pd.DataFrame(
+            {
+                "CDR3ab": [
+                    "CAVA_CASS_A",
+                    "CAVB_CASS_B",
+                    "CAVC_CASS_C",
+                    "CAVD_CASS_D",
+                ]
+            }
+        )
+        return filtered, long_df
+
+    def test_jaccard_default(self):
+        from tcrsift.clonotype import build_method_overlap_matrices
+
+        filtered, long_df = self._setup()
+        out = build_method_overlap_matrices(filtered, long_df, similarity="jaccard")
+        assert set(out.keys()) == {"B1-2", "B1-3"}
+
+        b12 = out["B1-2"]
+        # B1-2 methods: AIMpos, IFNpos, tetpos -> sorted lex order
+        assert list(b12.index) == ["AIMpos", "IFNpos", "tetpos"]
+        # AIMpos has {A, B}; tetpos has {A, B}; IFNpos has {A, C}.
+        # AIM ∩ tet = {A, B} = 2 ; AIM ∪ tet = {A, B} = 2 -> 1.0
+        assert abs(b12.loc["AIMpos", "tetpos"] - 1.0) < 1e-9
+        # AIM ∩ IFN = {A} = 1 ; AIM ∪ IFN = {A, B, C} = 3 -> 1/3
+        assert abs(b12.loc["AIMpos", "IFNpos"] - 1 / 3) < 1e-9
+        # tet ∩ IFN = {A} = 1 ; tet ∪ IFN = {A, B, C} = 3 -> 1/3
+        assert abs(b12.loc["tetpos", "IFNpos"] - 1 / 3) < 1e-9
+        # diagonals are 1.0
+        for m in b12.index:
+            assert b12.loc[m, m] == 1.0
+        # symmetric
+        for i in b12.index:
+            for j in b12.columns:
+                assert b12.loc[i, j] == b12.loc[j, i]
+
+    def test_count_metric(self):
+        from tcrsift.clonotype import build_method_overlap_matrices
+
+        filtered, long_df = self._setup()
+        out = build_method_overlap_matrices(filtered, long_df, similarity="count")
+        b12 = out["B1-2"]
+        # AIM has {A, B} -> diagonal = 2
+        assert int(b12.loc["AIMpos", "AIMpos"]) == 2
+        # AIM ∩ IFN = 1
+        assert int(b12.loc["AIMpos", "IFNpos"]) == 1
+
+    def test_dice_metric(self):
+        from tcrsift.clonotype import build_method_overlap_matrices
+
+        filtered, long_df = self._setup()
+        out = build_method_overlap_matrices(filtered, long_df, similarity="dice")
+        b12 = out["B1-2"]
+        # AIM = {A, B}, IFN = {A, C}; dice = 2*1 / (2+2) = 0.5
+        assert abs(b12.loc["AIMpos", "IFNpos"] - 0.5) < 1e-9
+
+    def test_invalid_similarity_raises(self):
+        from tcrsift.clonotype import build_method_overlap_matrices
+        from tcrsift.validation import TCRsiftValidationError
+
+        with pytest.raises(TCRsiftValidationError, match="similarity"):
+            build_method_overlap_matrices(
+                pd.DataFrame({"CDR3ab": ["A"]}),
+                pd.DataFrame({"CDR3ab": ["A"], "method": ["X"], "donor": ["D"]}),
+                similarity="cosine",
+            )
+
+    def test_returns_empty_when_method_axis_absent(self):
+        from tcrsift.clonotype import build_method_overlap_matrices
+
+        long_df = pd.DataFrame({"CDR3ab": ["A"], "sample": ["S1"]})
+        filtered = pd.DataFrame({"CDR3ab": ["A"]})
+        assert build_method_overlap_matrices(filtered, long_df) == {}
+
+    def test_returns_empty_when_filtered_empty(self):
+        from tcrsift.clonotype import build_method_overlap_matrices
+
+        _, long_df = self._setup()
+        assert build_method_overlap_matrices(pd.DataFrame(), long_df) == {}
+
+    def test_no_donor_axis_uses_synthetic_all(self):
+        from tcrsift.clonotype import build_method_overlap_matrices
+
+        long_df = pd.DataFrame(
+            {
+                "CDR3ab": ["A", "A", "B"],
+                "sample": ["S1", "S2", "S1"],
+                "method": ["AIM", "tet", "AIM"],
+                "cells": [1, 1, 1],
+                "frequency": [0.1, 0.1, 0.1],
+            }
+        )
+        filtered = pd.DataFrame({"CDR3ab": ["A", "B"]})
+        out = build_method_overlap_matrices(filtered, long_df)
+        assert "all" in out
+
+
+class TestBuildMethodRecoveryTable:
+    """#27 chunk 4 — per-(donor, method) recovery of a target tier."""
+
+    def _setup(self):
+        from tcrsift.clonotype import build_clone_sample_long
+        import anndata as ad
+        import numpy as np
+
+        # 5 tier-1 target clones; B1-2's AIMpos catches all 5; B1-2's tetpos
+        # catches only 2; B1-3's AIMpos catches 4; B1-3's tetpos catches 0.
+        rows = []
+        for cdr3 in ["A", "B", "C", "D", "E"]:
+            rows.append(("B1-2_AIM", "B1-2", "AIMpos", f"CAV{cdr3}", f"CASS_{cdr3}"))
+        for cdr3 in ["A", "B"]:
+            rows.append(("B1-2_tet", "B1-2", "tetpos", f"CAV{cdr3}", f"CASS_{cdr3}"))
+        for cdr3 in ["A", "B", "C", "D"]:
+            rows.append(("B1-3_AIM", "B1-3", "AIMpos", f"CAV{cdr3}", f"CASS_{cdr3}"))
+        # B1-3 tetpos sees only a non-target clone (Z); so recovery == 0.
+        rows.append(("B1-3_tet", "B1-3", "tetpos", "CAVZ", "CASS_Z"))
+
+        n = len(rows)
+        adata = ad.AnnData(
+            X=np.zeros((n, 1), dtype=np.float32),
+            obs=pd.DataFrame(
+                {
+                    "sample": [r[0] for r in rows],
+                    "patient_id": [r[1] for r in rows],
+                    "enrichment_method": [r[2] for r in rows],
+                    "CDR3_alpha": [r[3] for r in rows],
+                    "CDR3_beta": [r[4] for r in rows],
+                }
+            ),
+        )
+        long_df = build_clone_sample_long(adata)
+        filtered = pd.DataFrame(
+            {
+                "CDR3ab": [f"CAV{c}_CASS_{c}" for c in "ABCDE"],
+                "tier": ["tier1"] * 5,
+            }
+        )
+        return filtered, long_df
+
+    def test_recovery_counts(self):
+        from tcrsift.clonotype import build_method_recovery_table
+
+        filtered, long_df = self._setup()
+        out = build_method_recovery_table(filtered, long_df, tier="tier1")
+        assert set(out["donor"].unique()) == {"B1-2", "B1-3"}
+        # B1-2 / AIMpos: all 5 of B1-2's target clones recovered.
+        b12_aim = out[(out["donor"] == "B1-2") & (out["method"] == "AIMpos")].iloc[0]
+        assert b12_aim["recovered"] == 5
+        assert b12_aim["total"] == 5
+        # B1-2 / tetpos: 2 recovered out of 5.
+        b12_tet = out[(out["donor"] == "B1-2") & (out["method"] == "tetpos")].iloc[0]
+        assert b12_tet["recovered"] == 2
+        assert abs(b12_tet["fraction"] - 2 / 5) < 1e-9
+        # B1-3 / AIMpos: 4 recovered.
+        b13_aim = out[(out["donor"] == "B1-3") & (out["method"] == "AIMpos")].iloc[0]
+        assert b13_aim["recovered"] == 4
+        # B1-3 / tetpos: 0 recovered.
+        b13_tet = out[(out["donor"] == "B1-3") & (out["method"] == "tetpos")].iloc[0]
+        assert b13_tet["recovered"] == 0
+        assert b13_tet["fraction"] == 0.0
+
+    def test_returns_empty_when_method_absent(self):
+        from tcrsift.clonotype import build_method_recovery_table
+
+        long_df = pd.DataFrame({"CDR3ab": ["A"], "sample": ["S1"]})
+        filtered = pd.DataFrame({"CDR3ab": ["A"], "tier": ["tier1"]})
+        out = build_method_recovery_table(filtered, long_df)
+        assert out.empty
+
+    def test_falls_back_to_all_filtered_when_no_tier_column(self):
+        from tcrsift.clonotype import build_method_recovery_table
+
+        filtered, long_df = self._setup()
+        # Strip tier; recovery should still target the full filtered set.
+        filtered_no_tier = filtered.drop(columns=["tier"])
+        out = build_method_recovery_table(
+            filtered_no_tier, long_df, tier="tier1"
+        )
+        # B1-2 / AIMpos still recovers all 5
+        b12_aim = out[(out["donor"] == "B1-2") & (out["method"] == "AIMpos")].iloc[0]
+        assert b12_aim["recovered"] == 5
+
+    def test_donor_total_does_not_fall_back_to_cohort_target(self):
+        """Review fix: when a donor has zero target clones in its long_df,
+        `total` is 0 (not the cohort-wide target count). Prevents
+        misleading "0/N" denominators that imply the donor was supposed
+        to recover targets it never had access to."""
+        from tcrsift.clonotype import build_method_recovery_table
+
+        # Two donors. B1-2 has all 5 target clones; B1-3 has none of them
+        # (only a non-target clone Z).
+        long_df = pd.DataFrame(
+            {
+                "CDR3ab": [
+                    "CAVA_CASS_A", "CAVB_CASS_B", "CAVC_CASS_C",
+                    "CAVD_CASS_D", "CAVE_CASS_E",
+                    "CAVZ_CASS_Z",
+                ],
+                "sample": ["S1"] * 5 + ["S2"],
+                "donor": ["B1-2"] * 5 + ["B1-3"],
+                "method": ["AIMpos"] * 5 + ["AIMpos"],
+                "cells": [1] * 6,
+                "frequency": [0.1] * 6,
+            }
+        )
+        filtered = pd.DataFrame(
+            {
+                "CDR3ab": [f"CAV{c}_CASS_{c}" for c in "ABCDE"],
+                "tier": ["tier1"] * 5,
+            }
+        )
+        out = build_method_recovery_table(filtered, long_df, tier="tier1")
+        b13 = out[out["donor"] == "B1-3"]
+        # B1-3 has zero target clones in its long table -> total should be 0,
+        # not 5.
+        assert all(b13["total"] == 0)
+        assert all(b13["recovered"] == 0)
+        assert all(b13["fraction"] == 0.0)
+
+
+class TestSingleMethodMethodOverlap:
+    """Review polish: cover n_methods == 1 case for build_method_overlap_matrices."""
+
+    def test_single_method_returns_one_by_one_diagonal_one(self):
+        from tcrsift.clonotype import build_method_overlap_matrices
+
+        long_df = pd.DataFrame(
+            {
+                "CDR3ab": ["A", "B"],
+                "sample": ["S1", "S1"],
+                "donor": ["B1-2", "B1-2"],
+                "method": ["AIMpos", "AIMpos"],
+                "cells": [1, 1],
+                "frequency": [0.1, 0.1],
+            }
+        )
+        filtered = pd.DataFrame({"CDR3ab": ["A", "B"]})
+        out = build_method_overlap_matrices(filtered, long_df, similarity="jaccard")
+        assert "B1-2" in out
+        m = out["B1-2"]
+        assert m.shape == (1, 1)
+        assert m.iat[0, 0] == 1.0
+
+    def test_single_method_count_metric_returns_clone_count(self):
+        from tcrsift.clonotype import build_method_overlap_matrices
+
+        long_df = pd.DataFrame(
+            {
+                "CDR3ab": ["A", "B", "C"],
+                "sample": ["S1", "S1", "S1"],
+                "donor": ["B1-2", "B1-2", "B1-2"],
+                "method": ["AIMpos", "AIMpos", "AIMpos"],
+                "cells": [1, 1, 1],
+                "frequency": [0.1, 0.1, 0.1],
+            }
+        )
+        filtered = pd.DataFrame({"CDR3ab": ["A", "B", "C"]})
+        out = build_method_overlap_matrices(filtered, long_df, similarity="count")
+        assert int(out["B1-2"].iat[0, 0]) == 3

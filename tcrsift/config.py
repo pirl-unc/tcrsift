@@ -164,6 +164,9 @@ class OutputConfig:
     # ranked by within-bucket frequency. Skipped when enrichment_method
     # axis isn't populated.
     per_method_top_n: int = 100
+    # Method × method overlap matrix similarity metric (#27 chunk 3).
+    # 'jaccard' / 'dice' / 'count'.
+    method_overlap_similarity: str = "jaccard"
 
 
 @dataclass
@@ -309,6 +312,7 @@ class TCRsiftConfig:
             "generate_plots": ("output", "generate_plots"),
             "emit_clone_sample_long": ("output", "emit_clone_sample_long"),
             "per_method_top_n": ("output", "per_method_top_n"),
+            "method_overlap_similarity": ("output", "method_overlap_similarity"),
             "generate_report": ("output", "generate_report"),
             "report_format": ("output", "report_format"),
             "output_airr": ("output", "output_airr"),

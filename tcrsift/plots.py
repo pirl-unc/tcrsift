@@ -455,6 +455,121 @@ def plot_til(matched_clonotypes: pd.DataFrame, output_dir: str | Path):
 
 
 # =============================================================================
+# Method-stratified plots (#27)
+# =============================================================================
+
+
+def plot_method_overlap(
+    matrix: pd.DataFrame,
+    output_path: str | Path,
+    similarity: str = "jaccard",
+    donor: str | None = None,
+):
+    """Heatmap of method × method overlap for a single donor.
+
+    ``matrix`` is a square DataFrame from ``build_method_overlap_matrices``.
+    For ``similarity == 'count'`` cell labels show integer intersection
+    counts; for ``jaccard`` / ``dice`` they show two-decimal floats.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    n = len(matrix)
+    fig, ax = plt.subplots(figsize=(max(6, 0.7 * n + 2), max(5, 0.7 * n + 1)))
+    vmax = float(matrix.values.max()) if matrix.size else 1.0
+    fmt = "d" if similarity == "count" else ".2f"
+    sns.heatmap(
+        matrix,
+        annot=True,
+        fmt=fmt,
+        cmap="viridis",
+        ax=ax,
+        cbar_kws={"label": similarity},
+        square=True,
+        vmin=0,
+        vmax=vmax if similarity == "count" else 1.0,
+    )
+    title = f"Method × method overlap ({similarity})"
+    if donor:
+        title += f" — donor {donor}"
+    ax.set_title(title)
+    ax.set_xlabel("method")
+    ax.set_ylabel("method")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_method_recovery(
+    recovery: pd.DataFrame,
+    output_path: str | Path,
+    tier_label: str = "tier1",
+):
+    """Bar plot of per-method recovery of a target tier, paired by donor.
+
+    ``recovery`` is the long-form DataFrame from
+    ``build_method_recovery_table`` with columns
+    ``[donor, method, recovered, total, fraction]``.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if recovery.empty:
+        return
+
+    # Sort methods by overall (across-donor) recovery fraction so the worst
+    # / best methods read off the chart at a glance.
+    method_order = (
+        recovery.groupby("method")["fraction"].mean().sort_values(ascending=False).index.tolist()
+    )
+    donor_order = sorted(recovery["donor"].astype(str).unique())
+
+    n_methods = len(method_order)
+    n_donors = len(donor_order)
+    width = 0.8 / max(n_donors, 1)
+    x = np.arange(n_methods)
+
+    fig, ax = plt.subplots(figsize=(max(6, 0.6 * n_methods + 2), 4.5))
+    palette = sns.color_palette("Set2", n_colors=max(n_donors, 1))
+    for i, donor in enumerate(donor_order):
+        sub = recovery[recovery["donor"].astype(str) == donor].set_index("method")
+        sub = sub.reindex(method_order)
+        offsets = (i - (n_donors - 1) / 2) * width
+        ax.bar(
+            x + offsets,
+            sub["fraction"].fillna(0).values,
+            width,
+            label=str(donor),
+            color=palette[i % len(palette)],
+        )
+        # Annotate "recovered/total" above each bar.
+        for j, (_, row) in enumerate(sub.iterrows()):
+            if pd.isna(row.get("total")):
+                continue
+            ax.text(
+                x[j] + offsets,
+                (row.get("fraction") or 0) + 0.02,
+                f"{int(row['recovered'])}/{int(row['total'])}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(method_order, rotation=30, ha="right")
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel(f"fraction of {tier_label} clones recovered")
+    ax.set_xlabel("method")
+    ax.set_title(f"Method recovery of {tier_label} clones (per donor)")
+    if n_donors > 1:
+        ax.legend(title="donor", loc="best")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# =============================================================================
 # Assembly Plots
 # =============================================================================
 

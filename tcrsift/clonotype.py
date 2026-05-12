@@ -685,6 +685,155 @@ def build_per_method_rankings(
     return rankings
 
 
+def build_method_overlap_matrices(
+    filtered: pd.DataFrame,
+    long_df: pd.DataFrame,
+    similarity: str = "jaccard",
+) -> dict[str, pd.DataFrame]:
+    """Per-donor method × method overlap matrices over filter-passing clones.
+
+    For each donor that has at least two distinct methods in ``long_df``,
+    builds a symmetric (n_methods × n_methods) DataFrame whose off-diagonal
+    cells are pairwise overlap of selected-clone sets and whose diagonal is
+    the per-method count.
+
+    ``similarity`` ∈ {``"jaccard"``, ``"dice"``, ``"count"``}:
+      - ``jaccard``: ``|A ∩ B| / |A ∪ B|`` — defaults to 0 when both empty.
+        Diagonal = 1.0.
+      - ``dice``:    ``2|A ∩ B| / (|A| + |B|)`` — defaults to 0 when both
+        empty. Diagonal = 1.0.
+      - ``count``:   raw intersection counts. Diagonal = per-method clone
+        count for clarity.
+
+    Returns ``{}`` when ``long_df`` lacks the method axis or ``filtered``
+    is empty. Implements #27 chunk 3.
+    """
+    if similarity not in ("jaccard", "dice", "count"):
+        raise TCRsiftValidationError(
+            f"Invalid similarity: {similarity!r}",
+            hint="Valid options: 'jaccard', 'dice', 'count'.",
+        )
+
+    if "method" not in long_df.columns:
+        return {}
+    if filtered is None or len(filtered) == 0:
+        return {}
+
+    # Restrict long_df to filter-passing clones.
+    selected = long_df[long_df["CDR3ab"].isin(set(filtered["CDR3ab"]))]
+    if "donor" not in selected.columns:
+        # Fold under a synthetic 'all' donor so output naming stays uniform.
+        selected = selected.assign(donor="all")
+
+    matrices: dict[str, pd.DataFrame] = {}
+    for donor, donor_df in selected.groupby("donor"):
+        method_to_clones: dict[str, set[str]] = {
+            str(m): set(g["CDR3ab"].unique())
+            for m, g in donor_df.groupby("method")
+        }
+        methods = sorted(method_to_clones)
+        n = len(methods)
+        if n == 0:
+            continue
+
+        dtype = int if similarity == "count" else float
+        mat = pd.DataFrame(
+            np.zeros((n, n), dtype=dtype), index=methods, columns=methods
+        )
+        for i, mi in enumerate(methods):
+            ci = method_to_clones[mi]
+            for j, mj in enumerate(methods):
+                cj = method_to_clones[mj]
+                if i == j:
+                    mat.iat[i, j] = len(ci) if similarity == "count" else 1.0
+                    continue
+                inter = len(ci & cj)
+                if similarity == "count":
+                    mat.iat[i, j] = inter
+                elif similarity == "jaccard":
+                    union = len(ci | cj)
+                    mat.iat[i, j] = inter / union if union else 0.0
+                else:  # dice
+                    denom = len(ci) + len(cj)
+                    mat.iat[i, j] = (2 * inter) / denom if denom else 0.0
+        matrices[str(donor)] = mat
+    return matrices
+
+
+def build_method_recovery_table(
+    filtered: pd.DataFrame,
+    long_df: pd.DataFrame,
+    tier: str = "tier1",
+) -> pd.DataFrame:
+    """Per-(donor, method) recovery of ``tier``-level filtered clones.
+
+    Returns a long DataFrame ``[donor, method, recovered, total, fraction]``
+    where ``total`` is the number of clones in ``filtered`` carrying
+    ``tier`` for that donor (or all of ``filtered`` when ``tier=='*'``),
+    and ``recovered`` is how many of those clones appear in ``long_df`` for
+    that ``(donor, method)`` bucket.
+
+    Implements #27 chunk 4 — backs the method-recovery report panel.
+    """
+    if "method" not in long_df.columns or filtered is None or len(filtered) == 0:
+        return pd.DataFrame(
+            columns=["donor", "method", "recovered", "total", "fraction"]
+        )
+    if "donor" not in long_df.columns:
+        long_df = long_df.assign(donor="all")
+
+    if tier == "*":
+        target = filtered
+    elif "tier" in filtered.columns:
+        target = filtered[filtered["tier"] == tier]
+    else:
+        # No tier annotation; fall back to the full filtered set (so the
+        # panel still works under non-FDR filter modes).
+        target = filtered
+
+    if len(target) == 0:
+        return pd.DataFrame(
+            columns=["donor", "method", "recovered", "total", "fraction"]
+        )
+
+    target_clones = set(target["CDR3ab"])
+
+    # Restrict long_df to those clones; group by (donor, method).
+    selected = long_df[long_df["CDR3ab"].isin(target_clones)]
+    rows = []
+    for donor in sorted(long_df["donor"].dropna().astype(str).unique()):
+        # Total per donor: target clones that appear at all in this donor.
+        # If a donor has zero target clones, total is 0 and fraction is 0 —
+        # don't fall back to the cohort-wide target count, which would
+        # produce misleading "0/N" denominators that imply the donor was
+        # supposed to recover a target it never had access to.
+        donor_clones_total = set(
+            long_df[long_df["donor"].astype(str) == donor]["CDR3ab"]
+        )
+        donor_target = target_clones & donor_clones_total
+        donor_total = len(donor_target)
+        for method in sorted(
+            long_df["method"].dropna().astype(str).unique()
+        ):
+            sub = selected[
+                (selected["donor"].astype(str) == donor)
+                & (selected["method"].astype(str) == method)
+            ]
+            recovered = sub["CDR3ab"].nunique()
+            rows.append(
+                {
+                    "donor": donor,
+                    "method": method,
+                    "recovered": int(recovered),
+                    "total": int(donor_total),
+                    "fraction": (
+                        recovered / donor_total if donor_total else 0.0
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def get_clonotype_summary(clonotypes: pd.DataFrame) -> dict:
     """
     Get summary statistics for clonotypes.
