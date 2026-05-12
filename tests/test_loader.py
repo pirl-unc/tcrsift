@@ -498,23 +498,40 @@ class TestLoadSamplesWithSampleSheet:
         assert adata.X is not None
         assert set(adata.obs["sample"]) == {"S1", "S2"}
 
-    def test_load_samples_handles_csc_inputs(
-        self, mock_cellranger_vdj_dir, monkeypatch
+    @pytest.mark.parametrize(
+        "x_format",
+        # Production data hits us in formats that synthetic CSR-only tests
+        # never exercise: CellRanger writes CSC (#37), scipy 1.11+ ships a
+        # separate `sparse_array` family that `isinstance(X, csc_matrix)`
+        # would miss. concat_on_disk only accepts CSR or dense along obs;
+        # _ensure_x normalizes everything else. CSC is the real production
+        # shape; CSR is the synthetic happy path; dense is exercised when
+        # dask is available (the dense concat code path uses dask).
+        ["csr", "csc", "dense"],
+    )
+    def test_load_samples_handles_all_x_formats(
+        self, mock_cellranger_vdj_dir, monkeypatch, x_format
     ):
-        """CellRanger's filtered_feature_bc_matrix writes CSC, but
-        concat_on_disk only supports CSR along the obs axis. _ensure_x
-        must convert CSC→CSR before the spill or the merge raises
-        NotImplementedError (issue #37 — regression from PR #31)."""
+        """Every input X format that anndata accepts should survive the
+        spill → concat_on_disk → read-back round-trip."""
+        if x_format == "dense":
+            # anndata.experimental.concat_on_disk delegates dense concat to
+            # dask, which is not a hard tcrsift dependency. CellRanger never
+            # produces dense X so this is a synthetic-only path.
+            pytest.importorskip("dask")
         from tcrsift import loader as loader_module
 
-        n_cells, n_genes = 20, 15
-        rng = np.random.default_rng(7)
+        n_cells, n_genes = 15, 12
+        rng = np.random.default_rng(11)
 
         def fake_load_sample(sample, **_kwargs):
-            X = sp.random(
-                n_cells, n_genes, density=0.2, format="csc", random_state=rng
-            )
-            assert isinstance(X, sp.csc_matrix), "fixture must produce CSC"
+            if x_format == "dense":
+                X = rng.poisson(2, (n_cells, n_genes)).astype(np.float32)
+            else:
+                X = sp.random(
+                    n_cells, n_genes, density=0.25, format=x_format,
+                    random_state=rng,
+                )
             a = ad.AnnData(X=X)
             a.var_names = [f"G{i}" for i in range(n_genes)]
             a.obs_names = [f"{sample.sample}_c{i}" for i in range(n_cells)]
@@ -530,8 +547,6 @@ class TestLoadSamplesWithSampleSheet:
             ]
         )
 
-        # Pre-fix this raised
-        # NotImplementedError: Concat of following not supported: ['csc', 'csc']
         adata = load_samples(sheet, show_progress=False, verbose=False)
 
         assert adata.n_obs == 2 * n_cells
@@ -1216,10 +1231,64 @@ class TestLoadCellrangerGex:
             "QC filter should drop cells with n_genes < 12; "
             f"got n_obs={filtered.n_obs} == unfiltered {unfiltered.n_obs}"
         )
+        # Defense: empty result would let later assertions vacuously pass.
+        assert filtered.n_obs > 0
         # Every surviving cell satisfies the bound.
         assert (filtered.obs["n_genes"] >= 12).all()
         # The pass_qc flag is all True on the survivors.
         assert filtered.obs["filter:pass_qc"].all()
+
+    # Self-calibrating thresholds derived from the mock fixture's actual
+    # per-cell QC distribution: each bound is set to that bound's median
+    # over the unfiltered cells. This guarantees a non-trivial cut
+    # (cells both above and below) without coupling the test to fixture
+    # randomness — a fixture re-seeding still leaves a median to bisect.
+    @pytest.mark.parametrize(
+        "param,direction,obs_col",
+        [
+            ("min_genes", "drop_below", "n_genes"),
+            ("max_genes", "drop_above", "n_genes"),
+            ("min_counts", "drop_below", "n_counts"),
+            ("max_counts", "drop_above", "n_counts"),
+            ("min_mito_pct", "drop_below", "percent_mt"),
+            ("max_mito_pct", "drop_above", "percent_mt"),
+        ],
+    )
+    def test_each_qc_bound_actually_filters(
+        self, mock_gex_dir, param, direction, obs_col
+    ):
+        """Contract test: every documented QC bound must produce a smaller
+        cell pool when tightened past the fixture's median. Catches the
+        #39 class of bug (parameter exists in signature, gets recorded as
+        an obs flag, but never filters) for any future bound."""
+        from tcrsift.loader import load_cellranger_gex
+
+        unfiltered = load_cellranger_gex(
+            mock_gex_dir, "test_sample", verbose=False, **self._PERMISSIVE_QC
+        )
+        median = float(unfiltered.obs[obs_col].median())
+
+        # Set this one bound past the median; keep everything else
+        # permissive. For "drop_below" bounds (min_*) we set the bound to
+        # the median, which drops cells below it. For "drop_above" bounds
+        # (max_*) we set the bound to the median, which drops cells above.
+        kwargs = dict(self._PERMISSIVE_QC)
+        kwargs[param] = median
+        filtered = load_cellranger_gex(
+            mock_gex_dir, "test_sample", verbose=False, **kwargs
+        )
+
+        assert filtered.n_obs < unfiltered.n_obs, (
+            f"Bound {param}={median} should drop cells "
+            f"({direction} median {obs_col}={median}); "
+            f"got n_obs={filtered.n_obs} == unfiltered {unfiltered.n_obs}"
+        )
+        # Surviving cells satisfy the bound (inclusive on both sides per
+        # load_cellranger_gex's `>=` / `<=` semantics).
+        if direction == "drop_below":
+            assert (filtered.obs[obs_col] >= median).all()
+        else:
+            assert (filtered.obs[obs_col] <= median).all()
 
     def test_load_gex_invalid_dir_raises(self, tmp_path):
         """Test that invalid directory raises error."""
