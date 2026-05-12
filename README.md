@@ -197,8 +197,33 @@ Patient1_TIL,/data/patient1_til/vdj,,,til
 | `vdj_dir` | Yes* | Path to CellRanger VDJ output |
 | `gex_dir` | No | Path to CellRanger GEX output |
 | `source` | No | Sample type: `culture`, `til`, `tetramer`, `sct` |
+| `patient_id` | No | Donor / patient identifier — enables per-donor analysis |
+| `enrichment_method` | No | Free-form method label (e.g. `AIMpos`, `tetpos`) — enables per-method outputs |
+| `timepoint` | No | Free-form timepoint label (e.g. `D7`, `D14`) — enables per-timepoint filtering |
+| `apc_type` | No | APC identity (e.g. `mDC`, `B-LCL`) — enables per-APC filtering |
 
 *At least one of `vdj_dir` or `gex_dir` is required.
+
+### Multi-donor / multi-method designs
+
+When `patient_id` and `enrichment_method` are populated, several behaviors light up automatically:
+
+- Per-(donor, method) aggregations on clonotypes (e.g. `n_methods_per_donor`, `max_methods_per_donor`)
+- Per-(donor, method) ranked CSVs under `data/filtered_by_method/`
+- Per-donor method × method overlap matrices + recovery panel (see [Filter Clonotypes](#4-filter-clonotypes))
+- Per-donor FDR scope as the default when donors are unrelated (see `--fdr-scope` below)
+
+For cohorts where donors share antigen + MHC + experimental cohort and a unified FDR ranking is biologically valid, set the YAML root-level flag:
+
+```yaml
+donors_share_antigen: true
+samples:
+  - sample: ...
+    patient_id: ...
+    enrichment_method: ...
+```
+
+This locks `--fdr-scope auto` resolution to `global` instead of `per-donor`.
 
 ### Antigen Types
 
@@ -280,6 +305,44 @@ tcrsift filter -i clonotypes.csv -o filtered/ --method threshold --tcell-type cd
 | 4 | 2 | 0.05% | 10 |
 | 5 | 2 | 0% | unlimited |
 
+#### FDR scope (`--fdr-scope`)
+
+Controls the null distribution the FDR-tier filter computes against:
+
+| Value | Behavior | Output |
+|---|---|---|
+| `auto` (default) | Resolves to `per-donor` for multi-donor cohorts unless `donors_share_antigen` is set, else `global` | depends on resolution |
+| `global` | Single FDR ranking pooled across all samples (pre-0.8.2 behavior) | `filtered_tier{1..5}.csv` |
+| `per-donor` | Each donor gets its own FDR null from its own pooled-across-methods samples | `filtered_tier{1..5}_<donor>.csv` |
+| `per-sample` | Each sample gets its own FDR null | `filtered_tier{1..5}_<sample>.csv` |
+
+**Default flip (0.8.2):** Multi-donor cohorts now get **per-donor scope by default**. Without `donors_share_antigen: true` on the sheet, pooling unrelated donors into one FDR ranking silently biases the result — a clone abundant in one donor and absent from another is ranked against the wrong distribution. Users running v0.7.x → v0.8.x against multi-donor sheets will see different tier files.
+
+```bash
+# Multi-donor unrelated → per-donor by default
+tcrsift run --sample-sheet sheet.yaml -o results/
+
+# Force the old behavior:
+tcrsift run --sample-sheet sheet.yaml -o results/ --fdr-scope global
+# or on the sheet:
+# donors_share_antigen: true
+```
+
+#### Method × method overlap + recovery (multi-method designs)
+
+When `enrichment_method` is populated, `tcrsift run` emits additional outputs that surface per-(donor, method) performance without users reconstructing it from delimited strings:
+
+```
+data/clone_sample_long.csv                  # long-format (clone, sample) table
+data/filtered_by_method/<donor>__<m>.csv    # top-N clones per (donor, method)
+data/method_overlap_<donor>.csv             # method × method overlap matrix
+plots/method_overlap_<donor>.png            # heatmap
+data/method_recovery.csv                    # per-(donor, method) recovery of tier1
+plots/method_recovery.png                   # paired-by-donor bar chart
+```
+
+Overlap similarity metric is configurable: `--method-overlap-similarity {jaccard,dice,count}` (default `jaccard`). All blocks are no-ops when `enrichment_method` isn't populated — backwards-compatible with single-method designs.
+
 ### 5. Annotate Clonotypes
 
 Matches against public TCR databases to identify known specificities.
@@ -296,6 +359,34 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
 - **CEDAR**: Cancer Epitope Database and Analysis Resource
 
 **Viral flagging:** Clones matching CMV, EBV, HIV, Influenza, etc. are flagged as `is_viral=True` for review.
+
+#### Reference-database cache (`tcrsift data`)
+
+When `--vdjdb` / `--iedb` / `--cedar` are omitted, `tcrsift annotate` and `tcrsift run` auto-discover databases from a managed cache directory. Resolution order (first wins):
+
+1. explicit `--cache-dir` flag
+2. `TCRSIFT_DATA_DIR` env var
+3. `$XDG_CACHE_HOME/tcrsift`
+4. `~/.cache/tcrsift`
+
+Manage the cache with the `tcrsift data` subcommand:
+
+```bash
+tcrsift data list                  # show cached DBs, sizes, paths
+tcrsift data download              # auto-fetch supported DBs (VDJdb + IEDB)
+tcrsift data download --db iedb    # fetch one DB
+tcrsift data download --force      # refresh
+tcrsift data clear --db iedb       # remove one DB
+tcrsift data clear                 # remove all
+```
+
+VDJdb is fetched via the GitHub releases API for the latest version; IEDB uses the stable receptor-full-v3 download. **CEDAR has no automated download** — `tcrsift data list` shows where to drop it manually. Every downloaded DB gets a `_meta.json` sidecar with source URL, timestamp, size, and sha256.
+
+```bash
+# Fresh install: cache the DBs once, then forget about paths.
+tcrsift data download
+tcrsift run --sample-sheet samples.yaml -o results/    # cache picked up automatically
+```
 
 ### 6. Assemble Full Sequences
 
@@ -751,6 +842,21 @@ export_fasta(assembled, "sequences.fasta", sequence_col="single_chain_aa")
 | `tier` | Quality tier (1-5) |
 | `db_match` | Matched in public database |
 | `is_viral` | Viral specificity flag |
+| `n_donors`, `n_methods_per_donor`, `max_methods_per_donor` | Multi-donor / multi-method aggregations (populated when `patient_id` + `enrichment_method` are set) |
+
+### Multi-donor / multi-method outputs
+
+Emitted by `tcrsift run` when the corresponding sheet fields are populated:
+
+| File | When | Description |
+|---|---|---|
+| `data/clone_sample_long.csv` | always | One row per (clone, sample) pair — easier to pivot than the semicolon-delimited `samples` column |
+| `data/filtered_by_method/<donor>__<method>.csv` | `enrichment_method` set | Top-N clones ranked within each (donor, method); `--per-method-top-n N` |
+| `data/method_overlap_<donor>.csv` | `enrichment_method` set, ≥2 methods/donor | method × method overlap matrix; metric via `--method-overlap-similarity` |
+| `plots/method_overlap_<donor>.png` | as above, with plots enabled | seaborn heatmap |
+| `data/method_recovery.csv` | `enrichment_method` set | Long `[donor, method, recovered, total, fraction]` — "how does each method perform" |
+| `plots/method_recovery.png` | as above, with plots enabled | Paired-by-donor bar chart, methods sorted by cross-donor mean recovery |
+| `data/filtered_tier{N}_<donor>.csv` | `--fdr-scope per-donor` (default for multi-donor) | Tier files split by donor instead of global tiered files |
 
 ### full_sequences.csv
 
