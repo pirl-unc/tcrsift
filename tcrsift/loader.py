@@ -325,6 +325,18 @@ def load_cellranger_gex(
         & adata.obs["filter:max_mito"]
     )
 
+    # Apply the QC mask. Prior to issue #39 these flags were advisory only —
+    # the column was computed but cells failing QC were not dropped, so the
+    # user-facing --min-mito/--max-mito/--min-genes/etc. parameters were
+    # silently no-ops.
+    n_before = adata.n_obs
+    adata = adata[adata.obs["filter:pass_qc"]].copy()
+    if verbose:
+        logger.info(
+            f"  QC: {n_before:,} -> {adata.n_obs:,} cells pass "
+            f"(dropped {n_before - adata.n_obs:,})"
+        )
+
     return adata
 
 
