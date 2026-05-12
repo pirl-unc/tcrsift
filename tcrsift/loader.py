@@ -334,17 +334,47 @@ def _extract_tcell_markers(adata: ad.AnnData) -> pd.DataFrame:
 
     Returns DataFrame with CD3, CD4, CD8 expression per cell.
     Uses version-robust ENSEMBL ID matching from genes.py.
+
+    Resolves all present markers via a single column slice on `adata`
+    rather than N per-marker slices — one anndata-view creation and one
+    sparse-to-dense conversion instead of N (issue #35, finding #2).
     """
-    marker_df = pd.DataFrame(index=adata.obs_names)
     var_names = list(adata.var_names)
 
+    present_cols: list[str] = []
+    present_symbols: list[str] = []
+    missing_symbols: list[str] = []
     for gene in TCELL_MARKERS:
         col = find_column_for_gene(gene, var_names)
         if col is not None:
-            marker_df[gene.symbol] = adata[:, col].X.toarray().flatten()
+            present_cols.append(col)
+            present_symbols.append(gene.symbol)
         else:
-            marker_df[gene.symbol] = 0
-            logger.warning(f"T cell marker {gene.symbol} not found in gene expression data")
+            missing_symbols.append(gene.symbol)
+
+    for sym in missing_symbols:
+        logger.warning(f"T cell marker {sym} not found in gene expression data")
+
+    if present_cols:
+        block = adata[:, present_cols].X
+        if hasattr(block, "toarray"):
+            block = block.toarray()
+        # asarray is defensive: covers the h5py-dataset path under backed
+        # mode where .X is neither sparse nor an ndarray.
+        block = np.asarray(block)
+        marker_df = pd.DataFrame(
+            block, index=adata.obs_names, columns=present_symbols
+        )
+        # Drop the local handle regardless of whether pandas shares or
+        # copies its backing. If shared, harmless (marker_df still holds
+        # the array); if copied (e.g. later re-blocked when we add
+        # missing-marker columns below), this frees the source so peak
+        # memory stays at ~n_obs*n_present, not 2x.
+        del block
+    else:
+        marker_df = pd.DataFrame(index=adata.obs_names)
+    for sym in missing_symbols:
+        marker_df[sym] = 0
 
     return marker_df
 
