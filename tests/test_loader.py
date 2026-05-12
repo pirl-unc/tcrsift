@@ -896,6 +896,25 @@ class TestExtractTcellMarkers:
         assert "CD8B" in markers.columns
         assert (markers["CD8B"] == 0).all()
 
+    def test_extract_markers_all_missing(self):
+        """Exercise the no-markers-present branch (empty present_cols).
+
+        Structurally distinct from the mixed case: skips the column slice +
+        DataFrame construction from a 2D block entirely, falls through to
+        the empty-DataFrame path with all columns added as zeros (#35)."""
+        n_cells = 10
+        X = sp.random(n_cells, 3, density=0.3, format="csr")
+        adata = ad.AnnData(X)
+        adata.var_names = ["GeneX", "GeneY", "GeneZ"]
+        adata.obs_names = [f"c{i}" for i in range(n_cells)]
+
+        markers = _extract_tcell_markers(adata)
+
+        for sym in ["CD3D", "CD3E", "CD3G", "CD4", "CD8A", "CD8B"]:
+            assert sym in markers.columns
+            assert (markers[sym] == 0).all()
+        assert len(markers) == n_cells
+
 
 class TestCombineGexAndVdj:
     """Tests for combine_gex_and_vdj function."""
