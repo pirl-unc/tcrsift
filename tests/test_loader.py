@@ -1134,11 +1134,25 @@ class TestLoadCellrangerGex:
 
         return gex_dir
 
+    # Permissive QC bounds for the 20-cell × 30-gene mock fixture, which is
+    # smaller than any real CellRanger sample and can't survive production
+    # defaults (min_genes=250, min_counts=500). #39 made QC actually filter.
+    _PERMISSIVE_QC = dict(
+        min_genes=1,
+        max_genes=100,
+        min_counts=1,
+        max_counts=10000,
+        min_mito_pct=0,
+        max_mito_pct=100,
+    )
+
     def test_load_gex_basic(self, mock_gex_dir):
         """Test basic GEX loading."""
         from tcrsift.loader import load_cellranger_gex
 
-        adata = load_cellranger_gex(mock_gex_dir, "test_sample", verbose=False)
+        adata = load_cellranger_gex(
+            mock_gex_dir, "test_sample", verbose=False, **self._PERMISSIVE_QC
+        )
 
         assert isinstance(adata, ad.AnnData)
         assert adata.n_obs == 20
@@ -1150,7 +1164,9 @@ class TestLoadCellrangerGex:
         """Test that QC metrics are added."""
         from tcrsift.loader import load_cellranger_gex
 
-        adata = load_cellranger_gex(mock_gex_dir, "test_sample", verbose=False)
+        adata = load_cellranger_gex(
+            mock_gex_dir, "test_sample", verbose=False, **self._PERMISSIVE_QC
+        )
 
         # QC columns should be present
         assert "n_genes" in adata.obs.columns
@@ -1162,21 +1178,48 @@ class TestLoadCellrangerGex:
         from tcrsift.loader import load_cellranger_gex
 
         adata = load_cellranger_gex(
-            mock_gex_dir,
-            "test_sample",
-            min_genes=1,
-            max_genes=100,
-            min_counts=1,
-            max_counts=10000,
-            min_mito_pct=0,
-            max_mito_pct=50,
-            verbose=False,
+            mock_gex_dir, "test_sample", verbose=False, **self._PERMISSIVE_QC
         )
 
         # Filter flag columns should be present
         assert "filter:min_genes" in adata.obs.columns
         assert "filter:max_genes" in adata.obs.columns
         assert "filter:pass_qc" in adata.obs.columns
+
+    def test_load_gex_applies_qc_filter(self, mock_gex_dir):
+        """QC parameters should actually drop cells that fail the bounds,
+        not just be advisory flags (#39 — regression cover)."""
+        from tcrsift.loader import load_cellranger_gex
+
+        # Read with permissive bounds to learn the unfiltered cell pool.
+        unfiltered = load_cellranger_gex(
+            mock_gex_dir, "test_sample", verbose=False, **self._PERMISSIVE_QC
+        )
+        assert unfiltered.n_obs == 20
+
+        # Now tighten min_genes to a value that cuts most cells. The mock
+        # fixture's cells have n_genes ≈ 9 (30 genes × 0.3 density), so
+        # min_genes=12 will drop the lower half.
+        filtered = load_cellranger_gex(
+            mock_gex_dir,
+            "test_sample",
+            verbose=False,
+            min_genes=12,
+            max_genes=100,
+            min_counts=1,
+            max_counts=10000,
+            min_mito_pct=0,
+            max_mito_pct=100,
+        )
+
+        assert filtered.n_obs < unfiltered.n_obs, (
+            "QC filter should drop cells with n_genes < 12; "
+            f"got n_obs={filtered.n_obs} == unfiltered {unfiltered.n_obs}"
+        )
+        # Every surviving cell satisfies the bound.
+        assert (filtered.obs["n_genes"] >= 12).all()
+        # The pass_qc flag is all True on the survivors.
+        assert filtered.obs["filter:pass_qc"].all()
 
     def test_load_gex_invalid_dir_raises(self, tmp_path):
         """Test that invalid directory raises error."""
