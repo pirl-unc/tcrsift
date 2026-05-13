@@ -17,6 +17,7 @@ from tcrsift.annotate import (
     load_vdjdb,
     match_clonotypes,
 )
+from tcrsift.validation import TCRsiftValidationError
 
 
 class TestFlagViral:
@@ -105,6 +106,33 @@ class TestClassifyCategory:
             pd.Series(["CSP"]),
         )
         assert (cats == "other").all()
+
+    def test_tumor_self_patterns_use_word_boundaries(self):
+        """Short tumor-self tokens (her2, tert, psa, wt1) are matched at
+        word boundaries — substrings inside unrelated names must not
+        trigger the tumor_self override."""
+        # Antigens that *contain* the short tokens as substrings but are
+        # not actually tumor-self antigens. They should fall through to
+        # "self" (Homo sapiens) rather than getting overridden.
+        cats = classify_category(
+            pd.Series(["Homo sapiens"] * 4),
+            pd.Series([
+                "interterritorial protein",  # contains "tert"
+                "altered self",              # contains "tert" inside "altered"
+                "lipase A",                  # nothing tumor-related
+                "phosphatase",               # contains "psa" as substring
+            ]),
+        )
+        assert (cats == "self").all()
+
+    def test_tumor_self_patterns_match_standalone(self):
+        """The same short tokens *do* fire when they appear as standalone
+        antigen names (the actual VDJdb/IEDB convention)."""
+        cats = classify_category(
+            pd.Series(["Homo sapiens"] * 4),
+            pd.Series(["HER2", "TERT", "PSA", "WT1"]),
+        )
+        assert (cats == "tumor_self").all()
 
 
 class TestLoadVdjdb:
@@ -388,14 +416,36 @@ class TestMatchClonotypes:
         assert any("missing required columns" in m for m in warnings)
         assert any("cdr3_alpha" in m for m in warnings)
 
-    def test_structured_columns_present(self, sample_clonotypes_df, sample_database_df):
-        """match_clonotypes always emits the structured-annotation columns
-        added in #48 (db_protein, db_mhc, db_category, db_match_strength)."""
-        result = match_clonotypes(
-            sample_clonotypes_df, sample_database_df, match_by="CDR3ab"
+    def test_structured_columns_present_and_populated(self, sample_clonotypes_df):
+        """match_clonotypes emits the structured-annotation columns added
+        in #48 and populates them with the matched values, not just placeholders."""
+        sample = sample_clonotypes_df.iloc[0]
+        db = pd.DataFrame(
+            {
+                "cdr3_beta": [sample["CDR3_beta"]],
+                "cdr3_alpha": [sample["CDR3_alpha"]],
+                "epitope": ["NLVPMVATV"],
+                "antigen_gene": ["pp65"],
+                "species": ["Human cytomegalovirus"],
+                "mhc_allele": ["HLA-A*02:01"],
+                "database": ["VDJdb"],
+                "is_viral": [True],
+            }
         )
+
+        result = match_clonotypes(sample_clonotypes_df, db, match_by="CDR3ab")
+
         for col in ("db_protein", "db_mhc", "db_category", "db_match_strength"):
             assert col in result.columns
+
+        matched = result[result["db_match"]]
+        assert len(matched) >= 1
+        first = matched.iloc[0]
+        assert first["db_protein"] == "pp65"
+        assert first["db_mhc"] == "HLA-A*02:01"
+        assert first["db_epitope"] == "NLVPMVATV"
+        assert first["db_category"] == "viral"
+        assert first["db_match_strength"] == "ab"
 
     def test_match_strictness_strict_ab_no_fallback(self, sample_clonotypes_df):
         """strict_ab should *not* fall back to β-only matching. A clone
@@ -460,14 +510,40 @@ class TestMatchClonotypes:
 
     def test_match_strictness_invalid_raises(self, sample_clonotypes_df, sample_database_df):
         """An unknown strictness should produce a clear validation error."""
-        from tcrsift.validation import TCRsiftValidationError
-
         with pytest.raises(TCRsiftValidationError, match="match_strictness"):
             match_clonotypes(
                 sample_clonotypes_df,
                 sample_database_df,
                 match_strictness="bogus",
             )
+
+    def test_match_strictness_overrides_match_by(self, sample_clonotypes_df):
+        """When both knobs are set, ``match_strictness`` wins over the
+        legacy ``match_by``. Locking this in so the precedence branch in
+        match_clonotypes can't quietly regress."""
+        # DB has only a β CDR3 match — α doesn't match.
+        db = pd.DataFrame(
+            {
+                "cdr3_beta": ["CASSLGQAYEQYF"],
+                "cdr3_alpha": ["CAVDIFFERENT"],
+                "epitope": ["NLV"],
+                "antigen_gene": ["pp65"],
+                "species": ["Human cytomegalovirus"],
+                "mhc_allele": ["HLA-A*02:01"],
+                "database": ["VDJdb"],
+                "is_viral": [True],
+            }
+        )
+        # match_by="CDR3ab" (legacy) would fall back to β-only; pair it
+        # with match_strictness="strict_ab" and the explicit param must
+        # win → no match.
+        result = match_clonotypes(
+            sample_clonotypes_df,
+            db,
+            match_by="CDR3ab",
+            match_strictness="strict_ab",
+        )
+        assert result["db_match"].sum() == 0
 
     def test_db_category_populated_from_species_and_protein(self, sample_clonotypes_df):
         """db_category should derive from species + antigen, with tumor-self
@@ -551,15 +627,28 @@ class TestAnnotateClonotypes:
         assert not any(result.get("is_viral", pd.Series([False])))
 
     def test_no_database_paths_returns_default_annotation_columns(self, sample_clonotypes_df):
-        """Annotation should be optional when no database paths are provided."""
+        """Annotation should be optional when no database paths are provided.
+
+        The short-circuit must produce the *full* annotation column set
+        (legacy + structured columns from #48) so downstream code can
+        rely on column presence regardless of whether annotation ran.
+        """
         result = annotate_clonotypes(sample_clonotypes_df)
 
         assert len(result) == len(sample_clonotypes_df)
-        assert "db_match" in result.columns
-        assert "db_epitope" in result.columns
-        assert "db_species" in result.columns
-        assert "db_database" in result.columns
-        assert "is_viral" in result.columns
+        expected_columns = {
+            "db_match",
+            "db_match_partial",
+            "db_match_strength",
+            "db_epitope",
+            "db_protein",
+            "db_species",
+            "db_mhc",
+            "db_category",
+            "db_database",
+            "is_viral",
+        }
+        assert expected_columns.issubset(result.columns)
         assert (~result["db_match"]).all()
         assert (~result["is_viral"]).all()
 

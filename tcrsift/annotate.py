@@ -57,38 +57,38 @@ VIRAL_SPECIES_PATTERNS = [
     "yellow fever",
 ]
 
-# Tumor-associated self antigens. Matched as case-insensitive substrings
-# against the antigen_gene/Source Molecule field. Independent of species
-# (these are all Homo sapiens) — the override exists so that e.g. MART-1
-# doesn't end up bucketed as plain "self".
+# Tumor-associated self antigens. Patterns are case-insensitive regex
+# fragments matched against antigen_gene / Source Molecule, anchored at
+# word boundaries (``\b``) so short tokens like ``wt1`` / ``her2`` /
+# ``tert`` / ``psa`` only fire on standalone occurrences. Without that,
+# 4-letter substrings would false-positive on unrelated gene names that
+# happen to contain the fragment (``interterritorial`` → ``tert``, etc.).
+# Multi-word patterns embed an explicit ``[- _]`` so they match
+# ``ny-eso-1`` / ``ny eso 1`` / ``ny_eso_1`` uniformly.
 TUMOR_SELF_ANTIGEN_PATTERNS = [
-    "mart-1",
-    "mart1",
-    "mlana",
-    "melan-a",
-    "ny-eso-1",
-    "ny eso",
-    "ctag1b",
-    "cancer/testis",
-    "mage-a",
-    "magea",
-    "gp100",
-    "pmel",
-    "tyrosinase",
-    "ceacam5",
-    "carcinoembryonic",
-    "wt1",
-    "wilms",
-    "telomerase",
-    "tert",
-    "ny-br-1",
-    "nybr1",
-    "her2",
-    "erbb2",
-    "survivin",
-    "birc5",
-    "psa ",
-    "prostate-specific antigen",
+    r"\bmart-?1\b",
+    r"\bmlana\b",
+    r"\bmelan-?a\b",
+    r"\bny[- _]eso[- _]?1?\b",
+    r"\bctag1b\b",
+    r"\bcancer[/-]?testis\b",
+    r"\bmage-?a\d*\b",
+    r"\bgp100\b",
+    r"\bpmel\b",
+    r"\btyrosinase\b",
+    r"\bceacam5\b",
+    r"\bcarcinoembryonic\b",
+    r"\bwt1\b",
+    r"\bwilms\b",
+    r"\btelomerase\b",
+    r"\bh?tert\b",
+    r"\bny-?br-?1\b",
+    r"\bher2\b",
+    r"\berbb2\b",
+    r"\bsurvivin\b",
+    r"\bbirc5\b",
+    r"\bpsa\b",
+    r"\bprostate[- ]specific antigen\b",
 ]
 
 # Bacterial species patterns — used to derive db_category="bacterial".
@@ -119,8 +119,8 @@ CATEGORY_OTHER = "other"
 CATEGORY_UNKNOWN = "unknown"
 
 
-# Valid strictness modes for match_clonotypes. Translated to the internal
-# (do_ab_match, do_beta_fallback) tuple inside the function.
+# Valid strictness modes for match_clonotypes. The function dispatches
+# on this string directly — there's no further internal translation.
 MATCH_STRICTNESS_MODES = ("strict_ab", "ab_with_partial", "b_only")
 
 
@@ -373,10 +373,13 @@ def _flag_viral(df: pd.DataFrame) -> pd.Series:
 def classify_category(species: pd.Series, antigen_gene: pd.Series) -> pd.Series:
     """Classify each entry into a coarse specificity category.
 
-    Categories: ``viral``, ``bacterial``, ``tumor_self``, ``self``,
-    ``other``, ``unknown``. Tumor-associated self antigens override the
-    species-derived category so MART-1 / NY-ESO-1 / MAGE etc. don't
-    appear as plain ``self``.
+    Categories (precedence, low → high): ``unknown`` < ``other`` <
+    ``viral`` / ``bacterial`` < ``self`` < ``tumor_self``. The tumor-self
+    bucket is the last assignment and overrides *every* other category —
+    a curated antigen-name match (MART-1, NY-ESO-1, MAGE, etc.) wins
+    over whatever the species column says. In practice tumor antigens
+    are Homo sapiens so this only overrides ``self``, but the rule is
+    "trust the antigen name when it's on the curated list".
 
     Parameters
     ----------
@@ -405,26 +408,26 @@ def classify_category(species: pd.Series, antigen_gene: pd.Series) -> pd.Series:
 
     is_viral = pd.Series(False, index=species.index)
     for pattern in VIRAL_SPECIES_PATTERNS:
-        is_viral |= species_lower.str.contains(pattern, na=False)
+        is_viral |= species_lower.str.contains(pattern, na=False, regex=False)
     category[is_viral] = CATEGORY_VIRAL
 
     is_bacterial = pd.Series(False, index=species.index)
     for pattern in BACTERIAL_SPECIES_PATTERNS:
-        is_bacterial |= species_lower.str.contains(pattern, na=False)
+        is_bacterial |= species_lower.str.contains(pattern, na=False, regex=False)
     category[is_bacterial & ~is_viral] = CATEGORY_BACTERIAL
 
     # "Homo sapiens", "Homo sapiens (human)", "human" all bucket as self.
-    is_self = species_lower.str.contains("homo sapiens", na=False) | (
+    is_self = species_lower.str.contains("homo sapiens", na=False, regex=False) | (
         species_lower == "human"
     )
     category[is_self & ~is_viral & ~is_bacterial] = CATEGORY_SELF
 
-    # Tumor-self override: applies independent of species. A handful of
-    # IEDB rows store tumor peptides under a viral alias; here we trust
-    # the antigen name over the species field.
+    # Tumor-self override: regex patterns anchored at word boundaries so
+    # short tokens (her2, tert, psa, wt1) don't false-positive on
+    # unrelated gene names containing them as substrings.
     is_tumor_self = pd.Series(False, index=species.index)
     for pattern in TUMOR_SELF_ANTIGEN_PATTERNS:
-        is_tumor_self |= antigen_lower.str.contains(pattern, na=False)
+        is_tumor_self |= antigen_lower.str.contains(pattern, na=False, regex=True)
     category[is_tumor_self] = CATEGORY_TUMOR_SELF
 
     return category
@@ -580,6 +583,26 @@ def match_clonotypes(
         )
         return df
 
+    # Pre-classify the entire database once so the per-clone match path
+    # picks db_category as a mode like any other field — avoids
+    # invoking classify_category with a 1-row Series per match (#48
+    # follow-up). `database.assign` returns a copy so the caller's df
+    # isn't mutated.
+    if "db_category" not in database.columns:
+        species_col = (
+            database["species"]
+            if "species" in database.columns
+            else pd.Series([""] * len(database), index=database.index)
+        )
+        antigen_col = (
+            database["antigen_gene"]
+            if "antigen_gene" in database.columns
+            else pd.Series([""] * len(database), index=database.index)
+        )
+        database = database.assign(
+            db_category=classify_category(species_col, antigen_col)
+        )
+
     # Build lookup sets for fast matching
     if strictness in ("strict_ab", "ab_with_partial"):
         allow_b_fallback = strictness == "ab_with_partial"
@@ -646,9 +669,9 @@ def _annotate_match(
     """Annotate a single clonotype with match information.
 
     For multi-row matches, picks the most common value per field
-    (``.mode().iloc[0]``). Category is derived from the picked
-    species/protein so it stays internally consistent with what's
-    surfaced in ``db_species`` / ``db_protein``.
+    (``.mode().iloc[0]``). ``db_category`` is expected to have been
+    pre-computed on ``matches`` (see ``match_clonotypes``); the mode of
+    the pre-classified category is what gets surfaced.
     """
     if len(matches) == 0:
         return
@@ -660,30 +683,25 @@ def _annotate_match(
     if len(epitopes) > 0:
         df.loc[idx, "db_epitope"] = epitopes.mode().iloc[0]
 
-    species_val = None
-    species = matches["species"].dropna() if "species" in matches.columns else pd.Series(dtype=object)
-    if len(species) > 0:
-        species_val = species.mode().iloc[0]
-        df.loc[idx, "db_species"] = species_val
+    if "species" in matches.columns:
+        species = matches["species"].dropna()
+        if len(species) > 0:
+            df.loc[idx, "db_species"] = species.mode().iloc[0]
 
-    protein_val = None
     if "antigen_gene" in matches.columns:
         proteins = matches["antigen_gene"].dropna()
         if len(proteins) > 0:
-            protein_val = proteins.mode().iloc[0]
-            df.loc[idx, "db_protein"] = protein_val
+            df.loc[idx, "db_protein"] = proteins.mode().iloc[0]
 
     if "mhc_allele" in matches.columns:
         mhcs = matches["mhc_allele"].dropna()
         if len(mhcs) > 0:
             df.loc[idx, "db_mhc"] = mhcs.mode().iloc[0]
 
-    if species_val is not None or protein_val is not None:
-        category = classify_category(
-            pd.Series([species_val or ""]),
-            pd.Series([protein_val or ""]),
-        ).iloc[0]
-        df.loc[idx, "db_category"] = category
+    if "db_category" in matches.columns:
+        cats = matches["db_category"].dropna()
+        if len(cats) > 0:
+            df.loc[idx, "db_category"] = cats.mode().iloc[0]
 
     df.loc[idx, "db_database"] = ";".join(matches["database"].unique())
     df.loc[idx, "is_viral"] = matches["is_viral"].any()
