@@ -181,6 +181,94 @@ class TestLoadVdjdb:
         # CMV and EBV are both viral
         assert all(result["is_viral"])
 
+    def test_load_picks_vdjdb_full_over_meta_sidecar(self, temp_dir):
+        """When the directory contains the real VDJdb release layout
+        (vdjdb_full.txt + vdjdb.meta.txt + other sidecars), the loader
+        must pick `vdjdb_full.txt` — not `vdjdb.meta.txt`, which
+        alphabetically sorts first but is a columns-of-columns
+        metadata file with no CDR3 data (#45 bug 1)."""
+        # The real data file uses the full-export schema (cdr3.beta).
+        full = pd.DataFrame(
+            {
+                "cdr3.alpha": ["CAVSDGGSQGNLIF"],
+                "cdr3.beta": ["CASSLGQAYEQYF"],
+                "antigen.epitope": ["NLVPMVATV"],
+                "antigen.gene": ["pp65"],
+                "antigen.species": ["CMV"],
+                "species": ["HomoSapiens"],  # donor — should be ignored
+                "mhc.a": ["HLA-A*02:01"],
+            }
+        )
+        full.to_csv(temp_dir / "vdjdb_full.txt", sep="\t", index=False)
+
+        # Sidecar metadata file that would win alphabetical glob order.
+        meta = pd.DataFrame(
+            {"name": ["complex.id"], "type": ["txt"], "comment": ["..."]}
+        )
+        meta.to_csv(temp_dir / "vdjdb.meta.txt", sep="\t", index=False)
+
+        result = load_vdjdb(temp_dir)
+        assert len(result) == 1
+        assert result.iloc[0]["cdr3_alpha"] == "CAVSDGGSQGNLIF"
+        assert result.iloc[0]["cdr3_beta"] == "CASSLGQAYEQYF"
+
+    def test_load_maps_cdr3_dot_beta_to_cdr3_beta(self, temp_dir):
+        """`vdjdb_full.txt` uses `cdr3.beta` (paired-chain row format),
+        not `cdr3` (slim/long format). The mapping must cover both.
+        Without this, `match_clonotypes` crashes with KeyError when
+        the user explicitly points at the full file (#45 bug 1)."""
+        path = temp_dir / "vdjdb_full.txt"
+        pd.DataFrame(
+            {
+                "cdr3.alpha": ["CAVSDGGSQGNLIF"],
+                "cdr3.beta": ["CASSLGQAYEQYF"],
+                "antigen.epitope": ["NLV"],
+                "antigen.species": ["CMV"],
+            }
+        ).to_csv(path, sep="\t", index=False)
+
+        result = load_vdjdb(path)
+        assert "cdr3_beta" in result.columns
+        assert result["cdr3_beta"].iloc[0] == "CASSLGQAYEQYF"
+
+    def test_donor_species_does_not_collide_with_antigen_species(self, temp_dir):
+        """VDJdb's full export carries both a donor `species` column
+        (T-cell origin, usually `HomoSapiens`) and `antigen.species`
+        (the epitope source organism, e.g. `CMV`). The loader uses the
+        latter for matching/category, so the former must not leak
+        through as a same-name column collision (#45 bug 1).
+        """
+        path = temp_dir / "vdjdb_full.txt"
+        pd.DataFrame(
+            {
+                "cdr3.alpha": ["CAVSDGGSQGNLIF"],
+                "cdr3.beta": ["CASSLGQAYEQYF"],
+                "antigen.epitope": ["NLV"],
+                "antigen.species": ["CMV"],
+                "species": ["HomoSapiens"],
+            }
+        ).to_csv(path, sep="\t", index=False)
+
+        result = load_vdjdb(path)
+        # Only one column named `species`, and it carries the antigen
+        # source organism — not the donor species.
+        assert (result.columns == "species").sum() == 1
+        assert result["species"].iloc[0] == "CMV"
+
+    def test_load_raises_with_helpful_hint_when_only_sidecars_present(self, temp_dir):
+        """A directory that *only* has sidecar files (vdjdb.meta.txt
+        and friends) should surface a clear error rather than silently
+        picking the metadata file (#45 bug 1)."""
+        pd.DataFrame({"name": ["foo"]}).to_csv(
+            temp_dir / "vdjdb.meta.txt", sep="\t", index=False
+        )
+        pd.DataFrame({"name": ["bar"]}).to_csv(
+            temp_dir / "vdjdb.slim.meta.txt", sep="\t", index=False
+        )
+
+        with pytest.raises(TCRsiftValidationError, match="No VDJdb data file"):
+            load_vdjdb(temp_dir)
+
 
 class TestLoadIedb:
     """Tests for loading IEDB."""

@@ -128,31 +128,31 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     """
     Load VDJdb database.
 
+    Accepts either a single VDJdb file or the directory the release zip
+    expands into (~18 files including metadata sidecars and broken/slim
+    views). When given a directory, prefers ``vdjdb_full.txt`` — the
+    full export with one row per clonotype carrying both α and β CDR3s.
+    Falls back to ``vdjdb.txt`` (slim/long, β-only practical), then to
+    a filtered glob that skips sidecars.
+
     Parameters
     ----------
     path : str or Path
-        Path to VDJdb directory or file
+        Path to VDJdb directory or single file.
     verbose : bool
-        Print progress information
+        Print progress information.
 
     Returns
     -------
     pd.DataFrame
-        VDJdb entries with standardized columns
+        VDJdb entries with standardized columns (``cdr3_alpha``,
+        ``cdr3_beta``, ``epitope``, ``antigen_gene``, ``species``,
+        ``mhc_allele``, ``database``, ``is_viral``).
     """
     path = Path(path)
 
     if path.is_dir():
-        # Look for the main database file
-        candidates = list(path.glob("vdjdb*.txt")) + list(path.glob("vdjdb*.tsv"))
-        if not candidates:
-            available = [f.name for f in path.iterdir()][:15]
-            raise TCRsiftValidationError(
-                f"No VDJdb files found in directory: {path}",
-                hint=f"Expected files matching 'vdjdb*.txt' or 'vdjdb*.tsv'. "
-                f"Available files: {available}",
-            )
-        db_file = candidates[0]
+        db_file = _pick_vdjdb_file(path)
     else:
         db_file = validate_file_exists(path, "VDJdb database file")
 
@@ -173,21 +173,37 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
             hint="Download a fresh copy from https://vdjdb.cdr3.net/",
         )
 
-    # Standardize columns
+    # Standardize columns. Both formats land in the same loop:
+    #   - vdjdb_full.txt: paired-chain rows → cdr3.alpha + cdr3.beta
+    #   - vdjdb.txt:      one-chain-per-row → cdr3 (β only, by gene)
+    # The full file is what `tcrsift annotate` actually wants for αβ
+    # matching; the slim file leaves cdr3_alpha unpopulated.
     column_mapping = {
-        "cdr3": "cdr3_beta",
         "cdr3.alpha": "cdr3_alpha",
+        "cdr3.beta": "cdr3_beta",
+        "cdr3": "cdr3_beta",
         "antigen.epitope": "epitope",
         "antigen.gene": "antigen_gene",
-        "antigen.species": "species",
         "mhc.a": "mhc_allele",
         "mhc.class": "mhc_class",
         "reference.id": "reference",
     }
 
+    # The full export carries TWO species-like columns: ``species`` is
+    # the donor T-cell species, ``antigen.species`` is the source
+    # organism of the epitope. We use the latter for viral/category
+    # classification, so drop the donor species before renaming to
+    # avoid a same-name column collision (reported in #45). The donor
+    # species isn't used anywhere downstream.
+    if "species" in df.columns and "antigen.species" in df.columns:
+        df = df.drop(columns=["species"])
+
     for old, new in column_mapping.items():
         if old in df.columns:
             df[new] = df[old]
+
+    if "antigen.species" in df.columns:
+        df["species"] = df["antigen.species"]
 
     df["database"] = "VDJdb"
 
@@ -197,6 +213,44 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     if verbose:
         logger.info(f"  Loaded {len(df):,} VDJdb entries ({df['is_viral'].sum():,} viral)")
     return df
+
+
+def _pick_vdjdb_file(dir_path: Path) -> Path:
+    """Choose the canonical VDJdb data file from an extracted release dir.
+
+    Priority:
+
+    1. ``vdjdb_full.txt`` — paired αβ-per-row, the format needed for
+       αβ matching.
+    2. ``vdjdb.txt`` — slim/long, one chain per row (β-only useful).
+    3. Any other ``vdjdb*.txt``/``.tsv`` that isn't an obvious sidecar.
+
+    Avoids picking ``vdjdb.meta.txt`` (a columns-of-columns metadata
+    file that alphabetically beats the real data file), as well as
+    the ``*broken*`` / ``*scored*`` / motif / cluster-member views
+    that ship in the same zip (#45).
+    """
+    for preferred in ("vdjdb_full.txt", "vdjdb.txt"):
+        candidate = dir_path / preferred
+        if candidate.is_file():
+            return candidate
+
+    SIDECAR_TOKENS = (".meta.", ".slim.", "broken", "motif", "cluster_members", "summary_embed", "scored")
+    all_candidates = sorted(dir_path.glob("vdjdb*.txt")) + sorted(dir_path.glob("vdjdb*.tsv"))
+    real = [c for c in all_candidates if not any(tok in c.name for tok in SIDECAR_TOKENS)]
+    if real:
+        return real[0]
+
+    available = [f.name for f in dir_path.iterdir()][:15]
+    raise TCRsiftValidationError(
+        f"No VDJdb data file found in directory: {dir_path}",
+        hint=(
+            "Expected `vdjdb_full.txt` or `vdjdb.txt`. The directory "
+            "contains only metadata/sidecar files. "
+            f"Available files: {available}. "
+            "Re-run `tcrsift data download --db vdjdb` to refresh."
+        ),
+    )
 
 
 def load_iedb(path: str | Path) -> pd.DataFrame:
