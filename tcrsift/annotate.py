@@ -57,6 +57,72 @@ VIRAL_SPECIES_PATTERNS = [
     "yellow fever",
 ]
 
+# Tumor-associated self antigens. Matched as case-insensitive substrings
+# against the antigen_gene/Source Molecule field. Independent of species
+# (these are all Homo sapiens) — the override exists so that e.g. MART-1
+# doesn't end up bucketed as plain "self".
+TUMOR_SELF_ANTIGEN_PATTERNS = [
+    "mart-1",
+    "mart1",
+    "mlana",
+    "melan-a",
+    "ny-eso-1",
+    "ny eso",
+    "ctag1b",
+    "cancer/testis",
+    "mage-a",
+    "magea",
+    "gp100",
+    "pmel",
+    "tyrosinase",
+    "ceacam5",
+    "carcinoembryonic",
+    "wt1",
+    "wilms",
+    "telomerase",
+    "tert",
+    "ny-br-1",
+    "nybr1",
+    "her2",
+    "erbb2",
+    "survivin",
+    "birc5",
+    "psa ",
+    "prostate-specific antigen",
+]
+
+# Bacterial species patterns — used to derive db_category="bacterial".
+# Kept separate from VIRAL_SPECIES_PATTERNS so the existing is_viral
+# heuristic stays unchanged.
+BACTERIAL_SPECIES_PATTERNS = [
+    "mycobacterium",
+    "tuberculosis",
+    "staphylococcus",
+    "streptococcus",
+    "listeria",
+    "salmonella",
+    "escherichia coli",
+    "borrelia",
+    "bacillus",
+    "clostridium",
+    "neisseria",
+    "helicobacter",
+    "chlamydia",
+    "treponema",
+]
+
+CATEGORY_VIRAL = "viral"
+CATEGORY_BACTERIAL = "bacterial"
+CATEGORY_SELF = "self"
+CATEGORY_TUMOR_SELF = "tumor_self"
+CATEGORY_OTHER = "other"
+CATEGORY_UNKNOWN = "unknown"
+
+
+# Valid strictness modes for match_clonotypes. Translated to the internal
+# (do_ab_match, do_beta_fallback) tuple inside the function.
+MATCH_STRICTNESS_MODES = ("strict_ab", "ab_with_partial", "b_only")
+
 
 def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     """
@@ -304,6 +370,66 @@ def _flag_viral(df: pd.DataFrame) -> pd.Series:
     return is_viral
 
 
+def classify_category(species: pd.Series, antigen_gene: pd.Series) -> pd.Series:
+    """Classify each entry into a coarse specificity category.
+
+    Categories: ``viral``, ``bacterial``, ``tumor_self``, ``self``,
+    ``other``, ``unknown``. Tumor-associated self antigens override the
+    species-derived category so MART-1 / NY-ESO-1 / MAGE etc. don't
+    appear as plain ``self``.
+
+    Parameters
+    ----------
+    species : pd.Series
+        Source organism per entry (VDJdb's ``antigen.species`` /
+        IEDB's ``Epitope - Source Organism``).
+    antigen_gene : pd.Series
+        Source protein per entry. Used only for the tumor-self override.
+
+    Returns
+    -------
+    pd.Series
+        Category string per entry, same index as inputs.
+    """
+    species_lower = species.fillna("").astype(str).str.lower()
+    antigen_lower = antigen_gene.fillna("").astype(str).str.lower()
+
+    category = pd.Series(
+        [CATEGORY_UNKNOWN] * len(species),
+        index=species.index,
+        dtype=object,
+    )
+
+    is_known_species = species_lower.str.len() > 0
+    category[is_known_species] = CATEGORY_OTHER
+
+    is_viral = pd.Series(False, index=species.index)
+    for pattern in VIRAL_SPECIES_PATTERNS:
+        is_viral |= species_lower.str.contains(pattern, na=False)
+    category[is_viral] = CATEGORY_VIRAL
+
+    is_bacterial = pd.Series(False, index=species.index)
+    for pattern in BACTERIAL_SPECIES_PATTERNS:
+        is_bacterial |= species_lower.str.contains(pattern, na=False)
+    category[is_bacterial & ~is_viral] = CATEGORY_BACTERIAL
+
+    # "Homo sapiens", "Homo sapiens (human)", "human" all bucket as self.
+    is_self = species_lower.str.contains("homo sapiens", na=False) | (
+        species_lower == "human"
+    )
+    category[is_self & ~is_viral & ~is_bacterial] = CATEGORY_SELF
+
+    # Tumor-self override: applies independent of species. A handful of
+    # IEDB rows store tumor peptides under a viral alias; here we trust
+    # the antigen name over the species field.
+    is_tumor_self = pd.Series(False, index=species.index)
+    for pattern in TUMOR_SELF_ANTIGEN_PATTERNS:
+        is_tumor_self |= antigen_lower.str.contains(pattern, na=False)
+    category[is_tumor_self] = CATEGORY_TUMOR_SELF
+
+    return category
+
+
 def load_databases(
     vdjdb_path: str | Path | None = None,
     iedb_path: str | Path | None = None,
@@ -352,6 +478,7 @@ def match_clonotypes(
     clonotypes: pd.DataFrame,
     database: pd.DataFrame,
     match_by: str = "CDR3ab",
+    match_strictness: str | None = None,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -365,7 +492,19 @@ def match_clonotypes(
     database : pd.DataFrame
         Combined database from load_databases
     match_by : str
-        Matching strategy: "CDR3ab" (both chains) or "CDR3b_only" (beta only)
+        Legacy matching strategy. ``"CDR3ab"`` (both chains, β-only
+        fallback) or ``"CDR3b_only"`` (beta only). Kept for back-compat;
+        prefer ``match_strictness`` for new code.
+    match_strictness : str, optional
+        Explicit matching strictness. When set, takes precedence over
+        ``match_by``. One of:
+
+        - ``"strict_ab"`` — αβ-only, no β-only fallback. Best when you
+          want headline match counts you can trust.
+        - ``"ab_with_partial"`` — αβ first, β-only fallback per clone
+          (equivalent to legacy ``match_by="CDR3ab"``).
+        - ``"b_only"`` — β-only across the board (equivalent to legacy
+          ``match_by="CDR3b_only"``).
     verbose : bool
         Print progress information
     show_progress : bool
@@ -374,31 +513,51 @@ def match_clonotypes(
     Returns
     -------
     pd.DataFrame
-        Clonotypes with match annotations added
+        Clonotypes with match annotations: ``db_match``,
+        ``db_match_partial`` (β-only fallback flag — back-compat),
+        ``db_match_strength`` (``"ab"`` / ``"b_only"`` / None),
+        ``db_epitope``, ``db_protein``, ``db_species``, ``db_mhc``,
+        ``db_category``, ``db_database``, ``is_viral``.
     """
     # Validate inputs
     clonotypes = validate_clonotype_df(clonotypes, for_annotation=True)
     database = validate_dataframe(database, "database", min_rows=1)
 
-    valid_match_by = ["CDR3ab", "CDR3b_only"]
-    if match_by not in valid_match_by:
-        raise TCRsiftValidationError(
-            f"Invalid match_by: '{match_by}'",
-            hint=f"Valid options are: {valid_match_by}",
-        )
+    if match_strictness is not None:
+        if match_strictness not in MATCH_STRICTNESS_MODES:
+            raise TCRsiftValidationError(
+                f"Invalid match_strictness: '{match_strictness}'",
+                hint=f"Valid options are: {list(MATCH_STRICTNESS_MODES)}",
+            )
+        strictness = match_strictness
+    else:
+        valid_match_by = ["CDR3ab", "CDR3b_only"]
+        if match_by not in valid_match_by:
+            raise TCRsiftValidationError(
+                f"Invalid match_by: '{match_by}'",
+                hint=f"Valid options are: {valid_match_by}",
+            )
+        strictness = "ab_with_partial" if match_by == "CDR3ab" else "b_only"
 
     if verbose:
         logger.info(
-            f"Matching {len(clonotypes):,} clonotypes against {len(database):,} database entries by {match_by}"
+            f"Matching {len(clonotypes):,} clonotypes against "
+            f"{len(database):,} database entries (strictness={strictness})"
         )
 
     df = clonotypes.copy()
 
-    # Initialize annotation columns
+    # Initialize annotation columns. New columns added in #48; existing
+    # ones (db_match, db_match_partial, db_epitope, db_species,
+    # db_database, is_viral) kept for back-compat.
     df["db_match"] = False
     df["db_match_partial"] = False
+    df["db_match_strength"] = None
     df["db_epitope"] = None
+    df["db_protein"] = None
     df["db_species"] = None
+    df["db_mhc"] = None
+    df["db_category"] = None
     df["db_database"] = None
     df["is_viral"] = False
 
@@ -409,7 +568,7 @@ def match_clonotypes(
     # loader was written for, #46), the standardization silently does
     # nothing and the resulting `database` lacks `cdr3_alpha`/`cdr3_beta`.
     # Catch that here with a clear warning rather than `KeyError` later.
-    required = {"cdr3_beta"} if match_by == "CDR3b_only" else {"cdr3_alpha", "cdr3_beta"}
+    required = {"cdr3_beta"} if strictness == "b_only" else {"cdr3_alpha", "cdr3_beta"}
     missing = required - set(database.columns)
     if missing:
         dbs = sorted(set(database.get("database", pd.Series(["unknown"]))))
@@ -422,13 +581,15 @@ def match_clonotypes(
         return df
 
     # Build lookup sets for fast matching
-    if match_by == "CDR3ab":
-        # Match on both alpha and beta
+    if strictness in ("strict_ab", "ab_with_partial"):
+        allow_b_fallback = strictness == "ab_with_partial"
         db_alpha_beta = set(
             zip(database["cdr3_alpha"].fillna(""), database["cdr3_beta"].fillna(""))
         )
+        db_beta_values = (
+            set(database["cdr3_beta"].dropna()) if allow_b_fallback else set()
+        )
 
-        # Create iterator with optional progress bar
         row_iter = df.iterrows()
         if show_progress:
             row_iter = tqdm(
@@ -445,17 +606,14 @@ def match_clonotypes(
                 matches = database[
                     (database["cdr3_alpha"] == alpha) & (database["cdr3_beta"] == beta)
                 ]
-                _annotate_match(df, idx, matches)
-
-            # Also try beta-only match as fallback
-            elif beta and beta in database["cdr3_beta"].values:
+                _annotate_match(df, idx, matches, strength="ab")
+            elif allow_b_fallback and beta and beta in db_beta_values:
                 matches = database[database["cdr3_beta"] == beta]
-                _annotate_match(df, idx, matches, partial=True)
+                _annotate_match(df, idx, matches, strength="b_only", partial=True)
 
-    else:  # CDR3b_only
+    else:  # strictness == "b_only"
         db_beta_set = set(database["cdr3_beta"].dropna())
 
-        # Create iterator with optional progress bar
         row_iter = df.iterrows()
         if show_progress:
             row_iter = tqdm(
@@ -468,7 +626,7 @@ def match_clonotypes(
             beta = row.get("CDR3_beta", "") or ""
             if beta in db_beta_set:
                 matches = database[database["cdr3_beta"] == beta]
-                _annotate_match(df, idx, matches)
+                _annotate_match(df, idx, matches, strength="b_only")
 
     n_matches = df["db_match"].sum()
     n_viral = df["is_viral"].sum()
@@ -482,31 +640,54 @@ def _annotate_match(
     df: pd.DataFrame,
     idx: int,
     matches: pd.DataFrame,
+    strength: str = "ab",
     partial: bool = False,
 ):
-    """Annotate a single clonotype with match information."""
+    """Annotate a single clonotype with match information.
+
+    For multi-row matches, picks the most common value per field
+    (``.mode().iloc[0]``). Category is derived from the picked
+    species/protein so it stays internally consistent with what's
+    surfaced in ``db_species`` / ``db_protein``.
+    """
     if len(matches) == 0:
         return
 
     df.loc[idx, "db_match"] = True
+    df.loc[idx, "db_match_strength"] = strength
 
-    # Take most common epitope
     epitopes = matches["epitope"].dropna()
     if len(epitopes) > 0:
         df.loc[idx, "db_epitope"] = epitopes.mode().iloc[0]
 
-    # Take most common species
-    species = matches["species"].dropna()
+    species_val = None
+    species = matches["species"].dropna() if "species" in matches.columns else pd.Series(dtype=object)
     if len(species) > 0:
-        df.loc[idx, "db_species"] = species.mode().iloc[0]
+        species_val = species.mode().iloc[0]
+        df.loc[idx, "db_species"] = species_val
 
-    # Record database sources
+    protein_val = None
+    if "antigen_gene" in matches.columns:
+        proteins = matches["antigen_gene"].dropna()
+        if len(proteins) > 0:
+            protein_val = proteins.mode().iloc[0]
+            df.loc[idx, "db_protein"] = protein_val
+
+    if "mhc_allele" in matches.columns:
+        mhcs = matches["mhc_allele"].dropna()
+        if len(mhcs) > 0:
+            df.loc[idx, "db_mhc"] = mhcs.mode().iloc[0]
+
+    if species_val is not None or protein_val is not None:
+        category = classify_category(
+            pd.Series([species_val or ""]),
+            pd.Series([protein_val or ""]),
+        ).iloc[0]
+        df.loc[idx, "db_category"] = category
+
     df.loc[idx, "db_database"] = ";".join(matches["database"].unique())
-
-    # Viral flag
     df.loc[idx, "is_viral"] = matches["is_viral"].any()
 
-    # Partial match flag
     if partial:
         df.loc[idx, "db_match_partial"] = True
 
@@ -517,6 +698,7 @@ def annotate_clonotypes(
     iedb_path: str | Path | None = None,
     cedar_path: str | Path | None = None,
     match_by: str = "CDR3ab",
+    match_strictness: str | None = None,
     exclude_viral: bool = False,
     flag_only: bool = False,
 ) -> pd.DataFrame:
@@ -530,7 +712,11 @@ def annotate_clonotypes(
     vdjdb_path, iedb_path, cedar_path : str or Path, optional
         Paths to databases
     match_by : str
-        Matching strategy
+        Legacy matching strategy. Prefer ``match_strictness`` for new code.
+    match_strictness : str, optional
+        Explicit matching strictness — ``"strict_ab"`` /
+        ``"ab_with_partial"`` / ``"b_only"``. Overrides ``match_by``
+        when set. See :func:`match_clonotypes`.
     exclude_viral : bool
         Remove clones matching viral epitopes
     flag_only : bool
@@ -541,20 +727,29 @@ def annotate_clonotypes(
     pd.DataFrame
         Annotated clonotypes
     """
+    # Columns that get initialized on the no-database short-circuit.
+    # Mirrors the column set produced by match_clonotypes so downstream
+    # code can rely on these always being present.
+    _DEFAULT_ANNOTATION_COLUMNS = {
+        "db_match": False,
+        "db_match_partial": False,
+        "db_match_strength": None,
+        "db_epitope": None,
+        "db_protein": None,
+        "db_species": None,
+        "db_mhc": None,
+        "db_category": None,
+        "db_database": None,
+        "is_viral": False,
+    }
+
     # Annotation is optional: if no databases are provided, return input with default annotation columns.
     if not any([vdjdb_path, iedb_path, cedar_path]):
         logger.info("No annotation database paths provided; returning input with empty annotations")
         df = clonotypes.copy()
-        if "db_match" not in df.columns:
-            df["db_match"] = False
-        if "db_epitope" not in df.columns:
-            df["db_epitope"] = None
-        if "db_species" not in df.columns:
-            df["db_species"] = None
-        if "db_database" not in df.columns:
-            df["db_database"] = None
-        if "is_viral" not in df.columns:
-            df["is_viral"] = False
+        for col, default in _DEFAULT_ANNOTATION_COLUMNS.items():
+            if col not in df.columns:
+                df[col] = default
         return df
 
     # Load databases
@@ -565,7 +760,12 @@ def annotate_clonotypes(
     )
 
     # Match clonotypes
-    df = match_clonotypes(clonotypes, database, match_by=match_by)
+    df = match_clonotypes(
+        clonotypes,
+        database,
+        match_by=match_by,
+        match_strictness=match_strictness,
+    )
 
     # Handle viral exclusion
     if exclude_viral and not flag_only:
