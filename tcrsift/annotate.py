@@ -143,10 +143,12 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
       dropped (would need a ``complex.id`` pivot to recover αβ pairs,
       which is best deferred to the full file).
 
-    When given a directory, prefers ``vdjdb_full.txt``, falls back to
-    ``vdjdb.txt`` (with the gene-filter above), then to a filtered
-    glob over remaining ``vdjdb*.txt`` / ``.tsv`` files that skips
-    obvious metadata/processed sidecars.
+    When given a directory, looks for one of three canonical filenames
+    in priority order: ``vdjdb_full.txt``, ``vdjdb.txt``,
+    ``vdjdb.slim.txt``. Other files in the directory (metadata
+    sidecars, processed views, etc.) are ignored — a directory that
+    has none of these names raises with a hint to re-run
+    ``tcrsift data download`` or pass the file path explicitly.
 
     Parameters
     ----------

@@ -195,10 +195,9 @@ class TestLoadVdjdb:
         assert all(result["is_viral"])
 
     def test_load_picks_vdjdb_full_when_present(self, temp_dir):
-        """When the directory contains the canonical ``vdjdb_full.txt``
-        alongside the sidecar metadata file that would win an
-        alphabetical glob, the loader must pick the canonical file
-        (#45 bug 1).
+        """Directory-mode load picks the canonical ``vdjdb_full.txt``
+        and ignores any unrelated files (sidecar metadata,
+        partial/processed views) in the same directory (#45 bug 1).
 
         Uses a real VDJdb row (InfluenzaB NS1 / HLA-B*07:02).
         """
