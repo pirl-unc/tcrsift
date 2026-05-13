@@ -140,12 +140,18 @@ class TestLoadVdjdb:
 
     @pytest.fixture
     def mock_vdjdb_file(self, temp_dir):
-        """Create a mock VDJdb file."""
-        vdjdb_path = temp_dir / "vdjdb.tsv"
+        """Create a mock VDJdb file in the paired-chain format.
+
+        Mirrors the real ``vdjdb_full.txt`` schema (one row per
+        clonotype, separate ``cdr3.alpha`` / ``cdr3.beta`` columns).
+        Real VDJdb files use either this schema or the long/slim
+        ``cdr3`` + ``gene`` schema — never a mix.
+        """
+        vdjdb_path = temp_dir / "vdjdb_full.txt"
         df = pd.DataFrame(
             {
-                "cdr3": ["CASSLGQAYEQYF", "CASSXYZAYEQYF"],
                 "cdr3.alpha": ["CAVSDGGSQGNLIF", "CAVXYZQGNLIF"],
+                "cdr3.beta": ["CASSLGQAYEQYF", "CASSXYZAYEQYF"],
                 "antigen.epitope": ["NLV", "GLC"],
                 "antigen.species": ["CMV", "EBV"],
                 "mhc.a": ["HLA-A*02:01", "HLA-B*08:01"],
@@ -268,6 +274,78 @@ class TestLoadVdjdb:
 
         with pytest.raises(TCRsiftValidationError, match="No VDJdb data file"):
             load_vdjdb(temp_dir)
+
+    def test_long_format_filters_to_trb_to_avoid_alpha_leakage(self, temp_dir):
+        """The slim/long VDJdb file uses one row per chain — `cdr3` holds
+        an α-CDR3 when `gene=TRA` and a β-CDR3 when `gene=TRB`. A naive
+        `cdr3 → cdr3_beta` mapping puts α sequences into `cdr3_beta` and
+        causes wrong-chain matches downstream. The loader must filter
+        to TRB rows so cdr3_beta only carries actual β-CDR3s.
+        """
+        path = temp_dir / "vdjdb.txt"
+        pd.DataFrame(
+            {
+                "complex.id": [1, 1, 0, 0],
+                "gene": ["TRA", "TRB", "TRA", "TRB"],
+                "cdr3": [
+                    "CAVALPHASEQF",   # α — must NOT land in cdr3_beta
+                    "CASSBETASEQF",   # β — should land in cdr3_beta
+                    "CAVORPHANALPHA", # unpaired α — must be dropped
+                    "CASSORPHANBETA", # unpaired β — should be kept
+                ],
+                "antigen.epitope": ["NLV"] * 4,
+                "antigen.species": ["CMV"] * 4,
+            }
+        ).to_csv(path, sep="\t", index=False)
+
+        result = load_vdjdb(path)
+
+        # Only the two TRB rows survive.
+        assert len(result) == 2
+        betas = set(result["cdr3_beta"].dropna())
+        assert betas == {"CASSBETASEQF", "CASSORPHANBETA"}
+        # Crucially: no α-CDR3 sequences leaked into cdr3_beta.
+        assert "CAVALPHASEQF" not in betas
+        assert "CAVORPHANALPHA" not in betas
+        # cdr3_alpha column present but empty — schema stability.
+        assert "cdr3_alpha" in result.columns
+        assert result["cdr3_alpha"].isna().all()
+
+    def test_load_falls_back_to_vdjdb_slim_when_others_missing(self, temp_dir):
+        """When `vdjdb_full.txt` and `vdjdb.txt` are absent but
+        `vdjdb.slim.txt` is present, the slim file should be picked —
+        not raise "No VDJdb data file"."""
+        path = temp_dir / "vdjdb.slim.txt"
+        pd.DataFrame(
+            {
+                "complex.id": [1],
+                "gene": ["TRB"],
+                "cdr3": ["CASSLGQAYEQYF"],
+                "antigen.epitope": ["NLV"],
+                "antigen.species": ["CMV"],
+            }
+        ).to_csv(path, sep="\t", index=False)
+        # Also have a meta sidecar present to confirm picker doesn't
+        # confuse it with the real data file.
+        pd.DataFrame({"name": ["foo"]}).to_csv(
+            temp_dir / "vdjdb.meta.txt", sep="\t", index=False
+        )
+
+        result = load_vdjdb(temp_dir)
+        assert len(result) == 1
+        assert result.iloc[0]["cdr3_beta"] == "CASSLGQAYEQYF"
+
+    def test_unrecognized_schema_raises_clear_error(self, temp_dir):
+        """A file with neither paired nor long-format VDJdb columns
+        should raise a validation error naming the columns it saw,
+        rather than silently producing an empty/garbage result."""
+        path = temp_dir / "vdjdb_weird.txt"
+        pd.DataFrame(
+            {"random_col": ["foo"], "another_col": ["bar"]}
+        ).to_csv(path, sep="\t", index=False)
+
+        with pytest.raises(TCRsiftValidationError, match="Unrecognized VDJdb schema"):
+            load_vdjdb(path)
 
 
 class TestLoadIedb:
@@ -394,8 +472,8 @@ class TestLoadDatabases:
 
         pd.DataFrame(
             {
-                "cdr3": ["CASSTEST1"],
                 "cdr3.alpha": ["CAVTEST1"],
+                "cdr3.beta": ["CASSTEST1"],
                 "antigen.species": ["CMV"],
             }
         ).to_csv(vdjdb_path, sep="\t", index=False)
@@ -680,12 +758,12 @@ class TestAnnotateClonotypes:
 
     @pytest.fixture
     def mock_db_paths(self, temp_dir):
-        """Create mock database files."""
-        vdjdb_path = temp_dir / "vdjdb.tsv"
+        """Create mock database files using the real VDJdb paired schema."""
+        vdjdb_path = temp_dir / "vdjdb_full.txt"
         pd.DataFrame(
             {
-                "cdr3": ["CASSLGQAYEQYF"],
                 "cdr3.alpha": ["CAVSDGGSQGNLIF"],
+                "cdr3.beta": ["CASSLGQAYEQYF"],
                 "antigen.epitope": ["NLV"],
                 "antigen.species": ["CMV"],
             }

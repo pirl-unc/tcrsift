@@ -128,12 +128,25 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     """
     Load VDJdb database.
 
-    Accepts either a single VDJdb file or the directory the release zip
-    expands into (~18 files including metadata sidecars and broken/slim
-    views). When given a directory, prefers ``vdjdb_full.txt`` — the
-    full export with one row per clonotype carrying both α and β CDR3s.
-    Falls back to ``vdjdb.txt`` (slim/long, β-only practical), then to
-    a filtered glob that skips sidecars.
+    VDJdb ships two on-disk shapes with **different row semantics**:
+
+    - ``vdjdb_full.txt`` — *paired-chain* format: one row per
+      clonotype, with ``cdr3.alpha`` and ``cdr3.beta`` as separate
+      columns. This is what αβ matching needs.
+    - ``vdjdb.txt`` — *long/slim* format: one row per **chain**, keyed
+      by ``complex.id`` and ``gene`` (``TRA``/``TRB``). The ``cdr3``
+      column holds an α-CDR3 when ``gene == TRA`` and a β-CDR3 when
+      ``gene == TRB``. A naive ``cdr3 → cdr3_beta`` rename mixes the
+      two and matches alpha sequences as if they were beta. To avoid
+      that, the long-format path is filtered to ``gene == TRB`` rows
+      so ``cdr3_beta`` only carries actual β-CDR3s; α rows are
+      dropped (would need a ``complex.id`` pivot to recover αβ pairs,
+      which is best deferred to the full file).
+
+    When given a directory, prefers ``vdjdb_full.txt``, falls back to
+    ``vdjdb.txt`` (with the gene-filter above), then to a filtered
+    glob over remaining ``vdjdb*.txt`` / ``.tsv`` files that skips
+    obvious metadata/processed sidecars.
 
     Parameters
     ----------
@@ -147,7 +160,9 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     pd.DataFrame
         VDJdb entries with standardized columns (``cdr3_alpha``,
         ``cdr3_beta``, ``epitope``, ``antigen_gene``, ``species``,
-        ``mhc_allele``, ``database``, ``is_viral``).
+        ``mhc_allele``, ``database``, ``is_viral``). The
+        ``cdr3_alpha`` column is empty when loaded from the
+        long/slim format.
     """
     path = Path(path)
 
@@ -173,41 +188,32 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
             hint="Download a fresh copy from https://vdjdb.cdr3.net/",
         )
 
-    # Standardize columns. Both formats land in the same loop:
-    #   - vdjdb_full.txt: paired-chain rows → cdr3.alpha + cdr3.beta
-    #   - vdjdb.txt:      one-chain-per-row → cdr3 (β only, by gene)
-    # The full file is what `tcrsift annotate` actually wants for αβ
-    # matching; the slim file leaves cdr3_alpha unpopulated.
-    column_mapping = {
-        "cdr3.alpha": "cdr3_alpha",
-        "cdr3.beta": "cdr3_beta",
-        "cdr3": "cdr3_beta",
-        "antigen.epitope": "epitope",
-        "antigen.gene": "antigen_gene",
-        "mhc.a": "mhc_allele",
-        "mhc.class": "mhc_class",
-        "reference.id": "reference",
-    }
-
-    # The full export carries TWO species-like columns: ``species`` is
-    # the donor T-cell species, ``antigen.species`` is the source
-    # organism of the epitope. We use the latter for viral/category
-    # classification, so drop the donor species before renaming to
-    # avoid a same-name column collision (reported in #45). The donor
-    # species isn't used anywhere downstream.
-    if "species" in df.columns and "antigen.species" in df.columns:
-        df = df.drop(columns=["species"])
-
-    for old, new in column_mapping.items():
-        if old in df.columns:
-            df[new] = df[old]
-
-    if "antigen.species" in df.columns:
-        df["species"] = df["antigen.species"]
+    # Format-specific normalization. Paired vs. long is unambiguous by
+    # column presence: the paired file has ``cdr3.beta``, the long
+    # file has ``cdr3`` + ``gene``.
+    if "cdr3.beta" in df.columns or "cdr3.alpha" in df.columns:
+        df = _normalize_vdjdb_paired(df)
+    elif "cdr3" in df.columns and "gene" in df.columns:
+        n_total = len(df)
+        df = _normalize_vdjdb_long(df)
+        if verbose:
+            logger.info(
+                f"  Long/slim VDJdb format: kept {len(df):,} TRB rows "
+                f"out of {n_total:,} total (α rows discarded — load "
+                f"vdjdb_full.txt for αβ matching)."
+            )
+    else:
+        raise TCRsiftValidationError(
+            f"Unrecognized VDJdb schema in {db_file}",
+            hint=(
+                "Expected either paired-chain columns "
+                "(cdr3.alpha / cdr3.beta) or long-format columns "
+                "(cdr3 + gene). Got: "
+                f"{list(df.columns)[:10]}{'...' if len(df.columns) > 10 else ''}"
+            ),
+        )
 
     df["database"] = "VDJdb"
-
-    # Flag viral entries
     df["is_viral"] = _flag_viral(df)
 
     if verbose:
@@ -215,29 +221,114 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     return df
 
 
+def _normalize_vdjdb_paired(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize the paired-chain ``vdjdb_full.txt`` format.
+
+    Drops the donor ``species`` column before propagating
+    ``antigen.species`` → ``species`` — VDJdb's full export carries
+    both (donor T-cell species vs. epitope source organism), and we
+    use the latter throughout the codebase.
+    """
+    if "species" in df.columns and "antigen.species" in df.columns:
+        df = df.drop(columns=["species"])
+
+    column_mapping = {
+        "cdr3.alpha": "cdr3_alpha",
+        "cdr3.beta": "cdr3_beta",
+        "antigen.epitope": "epitope",
+        "antigen.gene": "antigen_gene",
+        "mhc.a": "mhc_allele",
+        "mhc.class": "mhc_class",
+        "reference.id": "reference",
+    }
+    for old, new in column_mapping.items():
+        if old in df.columns:
+            df[new] = df[old]
+
+    if "antigen.species" in df.columns:
+        df["species"] = df["antigen.species"]
+    return df
+
+
+def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize the long/slim ``vdjdb.txt`` format.
+
+    The long format has one row per chain. We filter to ``gene == TRB``
+    so the resulting ``cdr3_beta`` column only contains actual β-CDR3s
+    (α-CDR3s share the same ``cdr3`` column under ``gene == TRA`` rows
+    and would otherwise leak into ``cdr3_beta`` and produce wrong-chain
+    matches). Recovering αβ pairs would require a pivot on
+    ``complex.id`` — deferred; use ``vdjdb_full.txt`` for that.
+    """
+    df = df[df["gene"] == "TRB"].copy()
+
+    if "species" in df.columns and "antigen.species" in df.columns:
+        df = df.drop(columns=["species"])
+
+    column_mapping = {
+        "cdr3": "cdr3_beta",
+        "antigen.epitope": "epitope",
+        "antigen.gene": "antigen_gene",
+        "mhc.a": "mhc_allele",
+        "mhc.class": "mhc_class",
+        "reference.id": "reference",
+    }
+    for old, new in column_mapping.items():
+        if old in df.columns:
+            df[new] = df[old]
+
+    if "antigen.species" in df.columns:
+        df["species"] = df["antigen.species"]
+    # No α data in this format; explicit empty column keeps the
+    # downstream schema stable.
+    df["cdr3_alpha"] = pd.NA
+    return df
+
+
+# Filename fragments that, if present in a candidate filename, mark it
+# as a metadata/processed sidecar rather than the canonical data file.
+# Used as a last-resort filter when neither vdjdb_full.txt nor
+# vdjdb.txt is present in the directory.
+_VDJDB_NON_DATA_FILENAME_FRAGMENTS = (
+    ".meta.",          # vdjdb.meta.txt, vdjdb.slim.meta.txt
+    "broken",          # vdjdb_full_*_broken.txt — incomplete entries
+    "motif",           # motif_pwms.txt
+    "cluster_members", # cluster_members.txt
+    "summary_embed",   # vdjdb_summary_embed.html (also blocked by .txt glob)
+    "scored",          # vdjdb.scored.txt, vdjdb_full_scored.txt
+)
+
+
 def _pick_vdjdb_file(dir_path: Path) -> Path:
     """Choose the canonical VDJdb data file from an extracted release dir.
 
     Priority:
 
-    1. ``vdjdb_full.txt`` — paired αβ-per-row, the format needed for
-       αβ matching.
-    2. ``vdjdb.txt`` — slim/long, one chain per row (β-only useful).
-    3. Any other ``vdjdb*.txt``/``.tsv`` that isn't an obvious sidecar.
+    1. ``vdjdb_full.txt`` — paired αβ-per-row, the format αβ matching
+       needs.
+    2. ``vdjdb.txt`` — long/slim, one chain per row (β-only after the
+       gene filter applied in ``_normalize_vdjdb_long``).
+    3. ``vdjdb.slim.txt`` — smaller variant of the long format, same
+       schema.
+    4. Any other ``vdjdb*.txt`` / ``.tsv`` that isn't an obvious
+       metadata/processed sidecar.
 
     Avoids picking ``vdjdb.meta.txt`` (a columns-of-columns metadata
-    file that alphabetically beats the real data file), as well as
-    the ``*broken*`` / ``*scored*`` / motif / cluster-member views
-    that ship in the same zip (#45).
+    file that alphabetically beats the real data file) and the
+    ``*broken*`` / ``*scored*`` / ``motif*`` / ``cluster_members*``
+    views that ship in the same zip (#45).
     """
-    for preferred in ("vdjdb_full.txt", "vdjdb.txt"):
+    for preferred in ("vdjdb_full.txt", "vdjdb.txt", "vdjdb.slim.txt"):
         candidate = dir_path / preferred
         if candidate.is_file():
             return candidate
 
-    SIDECAR_TOKENS = (".meta.", ".slim.", "broken", "motif", "cluster_members", "summary_embed", "scored")
     all_candidates = sorted(dir_path.glob("vdjdb*.txt")) + sorted(dir_path.glob("vdjdb*.tsv"))
-    real = [c for c in all_candidates if not any(tok in c.name for tok in SIDECAR_TOKENS)]
+    real = [
+        c
+        for c in all_candidates
+        if not any(tok in c.name for tok in _VDJDB_NON_DATA_FILENAME_FRAGMENTS)
+    ]
     if real:
         return real[0]
 
