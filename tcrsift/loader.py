@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from anndata.experimental import concat_on_disk
-from scipy.sparse import csc_matrix, csr_matrix
+from scipy.sparse import csr_matrix, issparse
 from tqdm.auto import tqdm
 
 from .genes import TCELL_MARKERS, find_column_for_gene
@@ -623,22 +623,23 @@ def load_sample(
 def _ensure_x(adata: ad.AnnData) -> None:
     """Normalize `adata.X` so the spilled h5ad merges via `concat_on_disk`.
 
-    Two cases:
+    `concat_on_disk` requires every input store to have an X group, and
+    along the obs axis only supports CSR sparse or dense. Two cases:
 
-    1. VDJ-only AnnData has no expression matrix at all. `concat_on_disk`
-       requires every input store to have an X group, so we synthesize a
-       zero-column sparse placeholder. The placeholder is stripped
-       post-merge in `load_samples` when `combined.n_vars == 0`, preserving
-       the contract that VDJ-only loads have `X is None`.
+    1. VDJ-only AnnData has no expression matrix at all. Synthesize a
+       zero-column CSR placeholder. The placeholder is stripped post-merge
+       in `load_samples` when `combined.n_vars == 0`, preserving the
+       contract that VDJ-only loads have `X is None`.
 
-    2. The X is CSC sparse (what CellRanger's `filtered_feature_bc_matrix`
-       writes by default). `concat_on_disk` only supports CSR along the
-       obs axis and raises `NotImplementedError: Concat of following not
-       supported: ['csc', ...]` otherwise (issue #37). Convert in place.
+    2. Any non-CSR sparse format raises `NotImplementedError: Concat of
+       following not supported: [...]` from `concat_on_disk`. Convert to
+       CSR. The original report was CellRanger's CSC output (#37), but
+       the same shape applies to COO, `csc_array` (scipy 1.11+ sparse
+       arrays), etc.
     """
     if adata.X is None:
         adata.X = csr_matrix((adata.n_obs, 0))
-    elif isinstance(adata.X, csc_matrix):
+    elif issparse(adata.X) and getattr(adata.X, "format", "csr") != "csr":
         adata.X = adata.X.tocsr()
 
 
