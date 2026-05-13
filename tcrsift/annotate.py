@@ -188,10 +188,12 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
             hint="Download a fresh copy from https://vdjdb.cdr3.net/",
         )
 
-    # Format-specific normalization. Paired vs. long is unambiguous by
-    # column presence: the paired file has ``cdr3.beta``, the long
-    # file has ``cdr3`` + ``gene``.
-    if "cdr3.beta" in df.columns or "cdr3.alpha" in df.columns:
+    # Format-specific normalization, dispatched by column presence:
+    # the paired file has ``cdr3.beta``, the long file has
+    # ``cdr3`` + ``gene``. ``cdr3.alpha`` alone (no β) doesn't occur
+    # in real VDJdb files and isn't useful for matching — falls
+    # through to the unrecognized-schema error.
+    if "cdr3.beta" in df.columns:
         df = _normalize_vdjdb_paired(df)
     elif "cdr3" in df.columns and "gene" in df.columns:
         n_total = len(df)
@@ -207,8 +209,8 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
             f"Unrecognized VDJdb schema in {db_file}",
             hint=(
                 "Expected either paired-chain columns "
-                "(cdr3.alpha / cdr3.beta) or long-format columns "
-                "(cdr3 + gene). Got: "
+                "(`cdr3.alpha` + `cdr3.beta`) or long-format columns "
+                "(`cdr3` + `gene`). Got: "
                 f"{list(df.columns)[:10]}{'...' if len(df.columns) > 10 else ''}"
             ),
         )
@@ -260,6 +262,9 @@ def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
     matches). Recovering αβ pairs would require a pivot on
     ``complex.id`` — deferred; use ``vdjdb_full.txt`` for that.
     """
+    # Exact-string match on the canonical VDJdb labels (``TRA``/``TRB``).
+    # Any other gene (``TRG``/``TRD`` etc.) is silently dropped — αβ
+    # matching can't consume them anyway.
     df = df[df["gene"] == "TRB"].copy()
 
     if "species" in df.columns and "antigen.species" in df.columns:
@@ -285,18 +290,13 @@ def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# Filename fragments that, if present in a candidate filename, mark it
-# as a metadata/processed sidecar rather than the canonical data file.
-# Used as a last-resort filter when neither vdjdb_full.txt nor
-# vdjdb.txt is present in the directory.
-_VDJDB_NON_DATA_FILENAME_FRAGMENTS = (
-    ".meta.",          # vdjdb.meta.txt, vdjdb.slim.meta.txt
-    "broken",          # vdjdb_full_*_broken.txt — incomplete entries
-    "motif",           # motif_pwms.txt
-    "cluster_members", # cluster_members.txt
-    "summary_embed",   # vdjdb_summary_embed.html (also blocked by .txt glob)
-    "scored",          # vdjdb.scored.txt, vdjdb_full_scored.txt
-)
+# Canonical VDJdb data filenames in resolution priority order. The
+# release zip drops a swarm of processed sidecars (``vdjdb.meta.txt``,
+# ``vdjdb.scored.txt``, ``vdjdb_full_*_broken.txt`` etc.) alongside
+# these, but they have different schemas / are incomplete. We only
+# look for the names below; everything else stays invisible to the
+# loader. Users with a custom file should pass its path directly.
+_VDJDB_CANONICAL_FILENAMES = ("vdjdb_full.txt", "vdjdb.txt", "vdjdb.slim.txt")
 
 
 def _pick_vdjdb_file(dir_path: Path) -> Path:
@@ -308,38 +308,25 @@ def _pick_vdjdb_file(dir_path: Path) -> Path:
        needs.
     2. ``vdjdb.txt`` — long/slim, one chain per row (β-only after the
        gene filter applied in ``_normalize_vdjdb_long``).
-    3. ``vdjdb.slim.txt`` — smaller variant of the long format, same
-       schema.
-    4. Any other ``vdjdb*.txt`` / ``.tsv`` that isn't an obvious
-       metadata/processed sidecar.
+    3. ``vdjdb.slim.txt`` — smaller variant of the long format.
 
-    Avoids picking ``vdjdb.meta.txt`` (a columns-of-columns metadata
-    file that alphabetically beats the real data file) and the
-    ``*broken*`` / ``*scored*`` / ``motif*`` / ``cluster_members*``
-    views that ship in the same zip (#45).
+    A directory without any of these (e.g. the cache was corrupted or
+    the release format changed) raises with a clear hint pointing back
+    at ``tcrsift data download`` (#45).
     """
-    for preferred in ("vdjdb_full.txt", "vdjdb.txt", "vdjdb.slim.txt"):
-        candidate = dir_path / preferred
+    for name in _VDJDB_CANONICAL_FILENAMES:
+        candidate = dir_path / name
         if candidate.is_file():
             return candidate
 
-    all_candidates = sorted(dir_path.glob("vdjdb*.txt")) + sorted(dir_path.glob("vdjdb*.tsv"))
-    real = [
-        c
-        for c in all_candidates
-        if not any(tok in c.name for tok in _VDJDB_NON_DATA_FILENAME_FRAGMENTS)
-    ]
-    if real:
-        return real[0]
-
     available = [f.name for f in dir_path.iterdir()][:15]
     raise TCRsiftValidationError(
-        f"No VDJdb data file found in directory: {dir_path}",
+        f"No canonical VDJdb data file found in directory: {dir_path}",
         hint=(
-            "Expected `vdjdb_full.txt` or `vdjdb.txt`. The directory "
-            "contains only metadata/sidecar files. "
+            f"Expected one of {list(_VDJDB_CANONICAL_FILENAMES)}. "
             f"Available files: {available}. "
-            "Re-run `tcrsift data download --db vdjdb` to refresh."
+            "Re-run `tcrsift data download --db vdjdb` to refresh, "
+            "or pass the path to your VDJdb file directly with --vdjdb."
         ),
     )
 
