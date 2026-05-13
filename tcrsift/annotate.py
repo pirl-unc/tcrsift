@@ -137,23 +137,106 @@ def load_iedb(path: str | Path) -> pd.DataFrame:
     """
     Load IEDB TCR database.
 
+    Handles two on-disk shapes:
+
+    1. The current `receptor_full_v3.zip` export (cached as
+       ``tcr_full_v3.csv``): comma-separated with a two-row hierarchical
+       header — top row is the section (``Receptor``/``Epitope``/
+       ``Assay``/``Chain 1``/``Chain 2``…), second row is the field
+       (e.g. ``CDR3 Curated``, ``Source Organism``).
+    2. Older flat-TSV exports kept around for compatibility.
+
+    The format is sniffed from the first byte of the file rather than
+    the extension, so a user-supplied path is treated correctly
+    regardless of suffix.
+
     Parameters
     ----------
     path : str or Path
-        Path to IEDB file
+        Path to IEDB file (v3 CSV or legacy flat TSV).
 
     Returns
     -------
     pd.DataFrame
-        IEDB entries with standardized columns
+        IEDB entries with standardized columns (``cdr3_alpha``,
+        ``cdr3_beta``, ``epitope``, ``antigen_gene``, ``species``,
+        ``mhc_allele``, ``is_viral``, ``database``).
     """
     path = Path(path)
     logger.info(f"Loading IEDB from {path}")
 
+    if _looks_like_iedb_v3(path):
+        df = _load_iedb_v3(path)
+    else:
+        df = _load_iedb_legacy_tsv(path)
+
+    df["database"] = "IEDB"
+    df["is_viral"] = _flag_viral(df)
+
+    logger.info(f"Loaded {len(df)} IEDB entries ({df['is_viral'].sum()} viral)")
+    return df
+
+
+def _looks_like_iedb_v3(path: Path) -> bool:
+    """Detect the v3 hierarchical-header CSV by sniffing the first line.
+
+    The v3 export begins ``Receptor,Receptor,Receptor,...`` (each
+    section name repeated once per column under it). Anything else
+    (notably the older flat TSV) falls through to the legacy loader.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            first = f.readline()
+    except OSError:
+        return False
+    return first.startswith("Receptor,Receptor")
+
+
+def _load_iedb_v3(path: Path) -> pd.DataFrame:
+    raw = pd.read_csv(path, header=[0, 1], low_memory=False)
+
+    # IEDB v3 puts the alpha chain in "Chain 1" and the beta chain in
+    # "Chain 2" for alphabeta receptors. Drop gammadelta/construct
+    # rows — they aren't matchable against αβ clonotypes.
+    receptor_type = raw[("Receptor", "Type")] if ("Receptor", "Type") in raw.columns else None
+    if receptor_type is not None:
+        raw = raw[receptor_type == "alphabeta"].copy()
+
+    def _pick(col_section: str, *field_options: str) -> pd.Series:
+        """Pull the first present (section, field) combo, else NaN."""
+        for field in field_options:
+            key = (col_section, field)
+            if key in raw.columns:
+                return raw[key]
+        return pd.Series([pd.NA] * len(raw), index=raw.index)
+
+    # Prefer "CDR3 Curated" (manually validated) over "CDR3 Calculated"
+    # (algorithmic), matching how VDJdb prioritizes curated entries.
+    cdr3_alpha = _pick("Chain 1", "CDR3 Curated").fillna(
+        _pick("Chain 1", "CDR3 Calculated")
+    )
+    cdr3_beta = _pick("Chain 2", "CDR3 Curated").fillna(
+        _pick("Chain 2", "CDR3 Calculated")
+    )
+
+    out = pd.DataFrame(
+        {
+            "cdr3_alpha": cdr3_alpha,
+            "cdr3_beta": cdr3_beta,
+            "epitope": _pick("Epitope", "Name"),
+            "antigen_gene": _pick("Epitope", "Source Molecule"),
+            "species": _pick("Epitope", "Source Organism"),
+            "mhc_allele": _pick("Assay", "MHC Allele Names"),
+        }
+    )
+    # Drop rows with no CDR3 at all — they can't participate in matching.
+    out = out[out["cdr3_alpha"].notna() | out["cdr3_beta"].notna()].reset_index(drop=True)
+    return out
+
+
+def _load_iedb_legacy_tsv(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path, sep="\t", low_memory=False)
 
-    # Standardize columns (IEDB format varies)
-    # Common IEDB column names
     column_mapping = {
         "Chain 2 CDR3 Curated": "cdr3_beta",
         "Chain 1 CDR3 Curated": "cdr3_alpha",
@@ -162,15 +245,9 @@ def load_iedb(path: str | Path) -> pd.DataFrame:
         "Epitope - Source Organism Name": "species",
         "MHC Allele Names": "mhc_allele",
     }
-
     for old, new in column_mapping.items():
         if old in df.columns:
             df[new] = df[old]
-
-    df["database"] = "IEDB"
-    df["is_viral"] = _flag_viral(df)
-
-    logger.info(f"Loaded {len(df)} IEDB entries ({df['is_viral'].sum()} viral)")
     return df
 
 

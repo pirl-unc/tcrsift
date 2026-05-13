@@ -131,6 +131,65 @@ class TestLoadIedb:
         assert "cdr3_beta" in result.columns
         assert result["database"].iloc[0] == "IEDB"
 
+    def test_load_iedb_v3_hierarchical_header(self, temp_dir):
+        """Parse the current v3 export shape: comma-separated, two-row header.
+
+        The header starts ``Receptor,Receptor,Receptor,...`` and fields
+        live one level down (``CDR3 Curated`` under ``Chain 1`` etc.).
+        Synthesised here as a small CSV so the test doesn't depend on
+        a 99MB cache file.
+        """
+        path = temp_dir / "tcr_full_v3.csv"
+        content = (
+            # Row 1 — section names (repeated per field)
+            "Receptor,Receptor,Epitope,Epitope,Epitope,Assay,"
+            "Chain 1,Chain 1,Chain 2,Chain 2\n"
+            # Row 2 — field names
+            "IEDB Receptor ID,Type,Name,Source Molecule,Source Organism,"
+            "MHC Allele Names,Type,CDR3 Curated,Type,CDR3 Curated\n"
+            # Data — one αβ row that should be picked up
+            "1,alphabeta,NLVPMVATV,pp65,Human cytomegalovirus,HLA-A*02:01,"
+            "alpha,CAVSDGGSQGNLIF,beta,CASSLGQAYEQYF\n"
+            # A gammadelta row that should be dropped (not αβ-matchable)
+            "2,gammadelta,SOMEPEP,foo,Homo sapiens,HLA-A*02:01,"
+            "gamma,CAVGAMMA,delta,CASSDELTA\n"
+        )
+        path.write_text(content)
+
+        result = load_iedb(path)
+
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["cdr3_alpha"] == "CAVSDGGSQGNLIF"
+        assert row["cdr3_beta"] == "CASSLGQAYEQYF"
+        assert row["epitope"] == "NLVPMVATV"
+        assert row["antigen_gene"] == "pp65"
+        assert row["species"] == "Human cytomegalovirus"
+        assert row["mhc_allele"] == "HLA-A*02:01"
+        assert bool(row["is_viral"]) is True
+        assert row["database"] == "IEDB"
+
+    def test_load_iedb_v3_falls_back_to_calculated_cdr3(self, temp_dir):
+        """If a chain has no ``CDR3 Curated`` value but ``CDR3 Calculated``
+        is present, the calculated value is used. Mirrors the priority
+        VDJdb applies to its curated-over-inferred fields."""
+        path = temp_dir / "tcr_full_v3.csv"
+        content = (
+            "Receptor,Receptor,Epitope,Chain 1,Chain 1,Chain 1,"
+            "Chain 2,Chain 2,Chain 2\n"
+            "IEDB Receptor ID,Type,Name,Type,CDR3 Curated,CDR3 Calculated,"
+            "Type,CDR3 Curated,CDR3 Calculated\n"
+            "1,alphabeta,EPI1,alpha,,CAVCALCALPHA,beta,CASSCURBETA,CASSCALCBETA\n"
+        )
+        path.write_text(content)
+
+        result = load_iedb(path)
+
+        assert len(result) == 1
+        assert result.iloc[0]["cdr3_alpha"] == "CAVCALCALPHA"
+        # Curated wins over Calculated when both are present.
+        assert result.iloc[0]["cdr3_beta"] == "CASSCURBETA"
+
 
 class TestLoadCedar:
     """Tests for loading CEDAR."""
