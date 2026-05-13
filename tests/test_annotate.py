@@ -464,6 +464,109 @@ class TestLoadIedb:
         assert result.iloc[0]["cdr3_beta"] == "CASSCURBETA"
 
 
+class TestIedbEpitopeOverride:
+    """Tests for the optional epitope-table override (#54).
+
+    Synthetic mini-files mirror the real on-disk shapes:
+    - Receptor file: hierarchical CSV with ``Receptor``/``Epitope``/
+      ``Assay``/``Chain 1``/``Chain 2`` sections.
+    - Epitope file: hierarchical CSV with ``Epitope ID`` (single-level)
+      + ``Epitope`` / ``Related Object`` sections.
+
+    The receptor uses ``https://www.iedb.org/epitope/N`` IRIs; the
+    epitope file uses ``http://www.iedb.org/epitope/N``. The override
+    must normalize the URL scheme before joining.
+    """
+
+    @pytest.fixture
+    def receptor_csv(self, temp_dir):
+        path = temp_dir / "tcr_full_v3.csv"
+        content = (
+            # Row 1 — section names
+            "Receptor,Receptor,Epitope,Epitope,Epitope,Epitope,Assay,"
+            "Chain 1,Chain 1,Chain 2,Chain 2\n"
+            # Row 2 — field names
+            "IEDB Receptor ID,Type,IEDB IRI,Name,Source Molecule,Source Organism,"
+            "MHC Allele Names,Type,CDR3 Curated,Type,CDR3 Curated\n"
+            # Row A: long receptor name to be replaced by shorter epitope name
+            "1,alphabeta,https://www.iedb.org/epitope/42,LLFGYPVYV,"
+            "transcriptional activator Tax,Human T-cell leukemia virus type I,"
+            "HLA-A*02:01,alpha,CAVALPHA1,beta,CASSBETA1\n"
+            # Row B: receptor SM is empty; epitope table fills it in
+            "2,alphabeta,https://www.iedb.org/epitope/43,EEYLKAWTF,,,"
+            "HLA-A*02:01,alpha,CAVALPHA2,beta,CASSBETA2\n"
+            # Row C: epitope table has no record for this IRI; receptor value retained
+            "3,alphabeta,https://www.iedb.org/epitope/999,NLVPMVATV,"
+            "65 kDa phosphoprotein,Human cytomegalovirus,"
+            "HLA-A*02:01,alpha,CAVALPHA3,beta,CASSBETA3\n"
+        )
+        path.write_text(content)
+        return path
+
+    @pytest.fixture
+    def epitope_csv(self, temp_dir):
+        path = temp_dir / "epitope_full_v3.csv"
+        # Real epitope file has many columns; we synthesize the minimum
+        # ``load_iedb_epitope_lookup`` needs (top-level "Epitope ID" with
+        # "IEDB IRI" plus "Epitope" with "Source Molecule" / "Source Organism").
+        content = (
+            # Row 1 — section names. Notice the http:// (vs receptor's https://)
+            "Epitope ID,Epitope,Epitope,Epitope\n"
+            # Row 2 — field names
+            "IEDB IRI,Name,Source Molecule,Source Organism\n"
+            # Match for receptor row A: shorter canonical name.
+            "http://www.iedb.org/epitope/42,LLFGYPVYV,Protein Tax-1,"
+            "Human T-cell leukemia virus type I\n"
+            # Match for receptor row B: fills the blank.
+            "http://www.iedb.org/epitope/43,EEYLKAWTF,EBNA-3,Epstein-Barr virus\n"
+        )
+        path.write_text(content)
+        return path
+
+    def test_override_shortens_canonical_names(self, receptor_csv, epitope_csv):
+        """Receptor row whose Source Molecule is long ("transcriptional
+        activator Tax") gets overridden with the epitope-table's
+        shorter form ("Protein Tax-1") — the core win for #54."""
+        result = load_iedb(receptor_csv, epitope_path=epitope_csv)
+        rows = {r["cdr3_beta"]: r for _, r in result.iterrows()}
+        assert rows["CASSBETA1"]["antigen_gene"] == "Protein Tax-1"
+
+    def test_override_fills_blank_when_epitope_has_data(self, receptor_csv, epitope_csv):
+        """When the receptor row's Source Molecule is empty but the
+        epitope table has a value for that IRI, the blank is filled."""
+        result = load_iedb(receptor_csv, epitope_path=epitope_csv)
+        rows = {r["cdr3_beta"]: r for _, r in result.iterrows()}
+        assert rows["CASSBETA2"]["antigen_gene"] == "EBNA-3"
+        assert rows["CASSBETA2"]["species"] == "Epstein-Barr virus"
+
+    def test_override_keeps_receptor_value_when_epitope_missing(
+        self, receptor_csv, epitope_csv
+    ):
+        """An IRI absent from the epitope table keeps its receptor value
+        — the override is non-destructive."""
+        result = load_iedb(receptor_csv, epitope_path=epitope_csv)
+        rows = {r["cdr3_beta"]: r for _, r in result.iterrows()}
+        assert rows["CASSBETA3"]["antigen_gene"] == "65 kDa phosphoprotein"
+        assert rows["CASSBETA3"]["species"] == "Human cytomegalovirus"
+
+    def test_without_epitope_path_returns_receptor_values_unchanged(
+        self, receptor_csv
+    ):
+        """When ``epitope_path`` isn't passed, the receptor values pass
+        through unchanged — load_iedb's default behavior is unaffected."""
+        result = load_iedb(receptor_csv)  # no epitope_path
+        rows = {r["cdr3_beta"]: r for _, r in result.iterrows()}
+        assert rows["CASSBETA1"]["antigen_gene"] == "transcriptional activator Tax"
+
+    def test_https_to_http_iri_normalization(self, receptor_csv, epitope_csv):
+        """Receptor IRIs are ``https://``, epitope IRIs are ``http://``.
+        The join must normalize before matching — confirms the
+        ``_normalize_iedb_iri`` step is wired in correctly."""
+        result = load_iedb(receptor_csv, epitope_path=epitope_csv)
+        # If normalization weren't applied, no row would override.
+        assert any(result["antigen_gene"] == "Protein Tax-1")
+
+
 class TestLoadCedar:
     """Tests for loading CEDAR."""
 

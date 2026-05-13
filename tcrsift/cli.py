@@ -303,6 +303,10 @@ def cmd_annotate(args):
         vdjdb_path=args.vdjdb or cached_path("vdjdb", cache_dir),
         iedb_path=args.iedb or cached_path("iedb", cache_dir),
         cedar_path=args.cedar or cached_path("cedar", cache_dir),
+        iedb_epitope_path=(
+            getattr(args, "iedb_epitope", None)
+            or cached_path("iedb_epitope", cache_dir)
+        ),
         match_by=args.match_by if hasattr(args, "match_by") else "CDR3ab",
         exclude_viral=args.exclude_viral,
         flag_only=args.flag_only,
@@ -1059,6 +1063,10 @@ def cmd_run(args):
     vdjdb_path = config.annotate.vdjdb_path or cached_path("vdjdb", cache_dir)
     iedb_path = config.annotate.iedb_path or cached_path("iedb", cache_dir)
     cedar_path = config.annotate.cedar_path or cached_path("cedar", cache_dir)
+    # No config entry yet — fall back to the cache. Users who downloaded
+    # via ``tcrsift data download --db iedb_epitope`` get the override
+    # automatically.
+    iedb_epitope_path = cached_path("iedb_epitope", cache_dir)
     annotated = filtered
     has_annotation = vdjdb_path or iedb_path or cedar_path
     if has_annotation:
@@ -1068,6 +1076,7 @@ def cmd_run(args):
             vdjdb_path=vdjdb_path,
             iedb_path=iedb_path,
             cedar_path=cedar_path,
+            iedb_epitope_path=iedb_epitope_path,
             match_by=config.annotate.match_by,
             exclude_viral=config.annotate.exclude_viral,
             flag_only=config.annotate.flag_only,
@@ -1585,7 +1594,14 @@ def create_parser():
     p_annot.add_argument("--input", "-i", required=True, help="Input filtered CSV")
     p_annot.add_argument("--output", "-o", required=True, help="Output annotated CSV")
     p_annot.add_argument("--vdjdb", help="Path to VDJdb (overrides cache)")
-    p_annot.add_argument("--iedb", help="Path to IEDB (overrides cache)")
+    p_annot.add_argument("--iedb", help="Path to IEDB receptor table (overrides cache)")
+    p_annot.add_argument(
+        "--iedb-epitope",
+        dest="iedb_epitope",
+        help="Path to IEDB epitope_full_v3.csv (overrides cache). "
+        "When provided, IEDB receptor antigen/species fields are "
+        "replaced by the epitope-table's shorter canonical names.",
+    )
     p_annot.add_argument("--cedar", help="Path to CEDAR (overrides cache)")
     p_annot.add_argument(
         "--cache-dir",
