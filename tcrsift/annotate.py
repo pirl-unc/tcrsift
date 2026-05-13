@@ -325,6 +325,25 @@ def match_clonotypes(
     df["db_database"] = None
     df["is_viral"] = False
 
+    # Defensive check: the upstream `load_vdjdb` / `load_iedb` / `load_cedar`
+    # loaders standardize column names via mappings keyed on header strings
+    # they expect. When a database file's format drifts (e.g. IEDB's v3 CSV
+    # export with hierarchical headers vs the older flat-header TSV the
+    # loader was written for, #46), the standardization silently does
+    # nothing and the resulting `database` lacks `cdr3_alpha`/`cdr3_beta`.
+    # Catch that here with a clear warning rather than `KeyError` later.
+    required = {"cdr3_beta"} if match_by == "CDR3b_only" else {"cdr3_alpha", "cdr3_beta"}
+    missing = required - set(database.columns)
+    if missing:
+        dbs = sorted(set(database.get("database", pd.Series(["unknown"]))))
+        logger.warning(
+            f"Skipping annotation: database(s) {dbs} are missing required "
+            f"columns {sorted(missing)} after standardization. The source "
+            "file format may have changed since the loader was written. "
+            "Inspect the column list before reporting this as a tcrsift bug."
+        )
+        return df
+
     # Build lookup sets for fast matching
     if match_by == "CDR3ab":
         # Match on both alpha and beta

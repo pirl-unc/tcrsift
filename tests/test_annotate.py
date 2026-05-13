@@ -243,6 +243,43 @@ class TestMatchClonotypes:
         assert result["db_match"].sum() == 0
         assert (~result["is_viral"]).all()
 
+    def test_skips_with_warning_when_database_missing_cdr3_columns(
+        self, sample_clonotypes_df, caplog
+    ):
+        """When a database loader silently produces a DataFrame without
+        `cdr3_alpha`/`cdr3_beta` (e.g. format drift in IEDB's v3 CSV
+        export — the column-mapping in load_iedb expects flat headers
+        but v3 ships hierarchical ones), match_clonotypes should log a
+        clear warning and return the clonotypes unannotated rather than
+        crashing with KeyError (#46)."""
+        import logging
+
+        # Simulate a load_iedb output where the column-rename map missed
+        # every header — the result is a DataFrame with raw IEDB headers
+        # and no `cdr3_alpha`/`cdr3_beta`.
+        malformed_db = pd.DataFrame(
+            {
+                "Chain 1": ["foo"],
+                "Chain 2": ["bar"],
+                "database": ["IEDB"],
+                "is_viral": [False],
+            }
+        )
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.annotate"):
+            result = match_clonotypes(
+                sample_clonotypes_df, malformed_db, match_by="CDR3ab"
+            )
+
+        # Annotation columns are present and empty (initialized then
+        # returned without matching).
+        assert "db_match" in result.columns
+        assert not result["db_match"].any()
+        # Warning names the missing columns and points at the cause.
+        warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("missing required columns" in m for m in warnings)
+        assert any("cdr3_alpha" in m for m in warnings)
+
     def test_viral_flag_propagation(self, sample_clonotypes_df, sample_database_df):
         """Viral flag should propagate from database."""
         result = match_clonotypes(
