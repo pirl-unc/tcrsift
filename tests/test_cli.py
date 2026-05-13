@@ -113,6 +113,125 @@ class TestAnnotateParser:
         assert args.match_by == "CDR3b_only"
 
 
+class TestDataDownloadParser:
+    """Tests for `tcrsift data download` accepting multiple databases (#44).
+
+    The original argument was a single-value `--db`, so repeating it
+    (`--db vdjdb --db iedb`) silently downloaded only the last one.
+    Both space-separated (`--db vdjdb iedb`) and repeated-flag forms
+    must produce the same list.
+    """
+
+    def test_data_download_no_db_flag_yields_none(self):
+        parser = create_parser()
+        args = parser.parse_args(["data", "download"])
+        assert args.db is None  # handler interprets as "all"
+
+    def test_data_download_space_separated_dbs(self):
+        parser = create_parser()
+        args = parser.parse_args(["data", "download", "--db", "vdjdb", "iedb"])
+        assert args.db == ["vdjdb", "iedb"]
+
+    def test_data_download_repeated_flag_dbs(self):
+        """Reproduces the original bug surface: `--db vdjdb --db iedb`
+        used to drop the first value. With `action=extend`, both end
+        up in the list (#44)."""
+        parser = create_parser()
+        args = parser.parse_args(
+            ["data", "download", "--db", "vdjdb", "--db", "iedb"]
+        )
+        assert args.db == ["vdjdb", "iedb"]
+
+    def test_data_download_mixed_forms(self):
+        parser = create_parser()
+        args = parser.parse_args(
+            ["data", "download", "--db", "vdjdb", "iedb", "--db", "cedar"]
+        )
+        assert args.db == ["vdjdb", "iedb", "cedar"]
+
+    def test_data_clear_repeated_flag_dbs(self):
+        """Same fix applied to `data clear --db` (#44 bonus)."""
+        parser = create_parser()
+        args = parser.parse_args(
+            ["data", "clear", "--db", "vdjdb", "--db", "iedb"]
+        )
+        assert args.db == ["vdjdb", "iedb"]
+
+    def test_data_download_unknown_db_rejected(self):
+        """`choices=` constraint still applies — unknown names fail
+        argparse validation rather than silently doing nothing."""
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["data", "download", "--db", "bogus_db"])
+
+
+class TestDataDownloadCommand:
+    """Tests for the cmd_data_download handler behavior (#44)."""
+
+    def test_download_iterates_each_db(self, monkeypatch, tmp_path):
+        """Multiple `--db` values must trigger one download call each,
+        in the order given. Previously only the last value reached the
+        download path."""
+        from tcrsift.cli import cmd_data_download
+
+        called: list[str] = []
+
+        def fake_download(name, data_dir=None, force=False):
+            called.append(name)
+            return tmp_path / name / "fake"
+
+        monkeypatch.setattr("tcrsift.datacache.download_database", fake_download)
+
+        args = argparse.Namespace(
+            db=["vdjdb", "iedb"], cache_dir=str(tmp_path), force=False
+        )
+        cmd_data_download(args)
+
+        assert called == ["vdjdb", "iedb"]
+
+    def test_download_deduplicates_repeats(self, monkeypatch, tmp_path):
+        """A name repeated on the command line is downloaded only once.
+        Order of first mention is preserved."""
+        from tcrsift.cli import cmd_data_download
+
+        called: list[str] = []
+
+        def fake_download(name, data_dir=None, force=False):
+            called.append(name)
+            return tmp_path / name / "fake"
+
+        monkeypatch.setattr("tcrsift.datacache.download_database", fake_download)
+
+        args = argparse.Namespace(
+            db=["vdjdb", "iedb", "vdjdb"], cache_dir=str(tmp_path), force=False
+        )
+        cmd_data_download(args)
+
+        assert called == ["vdjdb", "iedb"]
+
+    def test_download_no_db_downloads_all_with_url(self, monkeypatch, tmp_path):
+        """Default behavior (no --db) still downloads every database
+        spec that has a non-None download_url."""
+        from tcrsift.cli import cmd_data_download
+        from tcrsift.datacache import DATABASES
+
+        called: list[str] = []
+
+        def fake_download(name, data_dir=None, force=False):
+            called.append(name)
+            return tmp_path / name / "fake"
+
+        monkeypatch.setattr("tcrsift.datacache.download_database", fake_download)
+
+        args = argparse.Namespace(db=None, cache_dir=str(tmp_path), force=False)
+        cmd_data_download(args)
+
+        expected = [
+            name for name, spec in DATABASES.items() if spec.download_url is not None
+        ]
+        assert called == expected
+
+
 class TestAnnotateGexCommand:
     """Tests for annotate-gex command function."""
 
