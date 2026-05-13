@@ -38,6 +38,30 @@ REALISTIC_TRA_CDR3_NT = "TGTGCTGTGTCAGATGGAGGAAGCCAGGGAAATCTCATCTTT"
 REALISTIC_TRB_CDR3_NT = "TGTGCCAGCAGTTTGGGACAGGCTTACGAGCAGTACTTC"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_tcrsift_data_dir(tmp_path_factory, monkeypatch):
+    """Redirect TCRSIFT_DATA_DIR to an isolated tmp_path for every test.
+
+    PR #33's cache fallback in `annotate`/`run` consults
+    `~/.cache/tcrsift/` when `--vdjdb`/`--iedb`/`--cedar` aren't provided.
+    Without this fixture, CLI tests that exercise `cmd_run` silently
+    pick up whatever the developer has cached locally, which:
+
+      - couples test results to developer-machine state, so a passing
+        local run can hide real bugs that CI (no cache) will catch
+      - exposes pre-existing format-handling bugs in load_iedb /
+        load_vdjdb that nobody saw before PR #33 since annotate was
+        opt-in (#46)
+
+    The fixture creates a per-session empty cache dir and points
+    `TCRSIFT_DATA_DIR` at it via monkeypatch, so `cached_path()`
+    returns None for every database and the annotate path stays a
+    no-op in tests that don't explicitly populate it.
+    """
+    empty_cache = tmp_path_factory.mktemp("tcrsift_empty_cache")
+    monkeypatch.setenv("TCRSIFT_DATA_DIR", str(empty_cache))
+
+
 @pytest.fixture
 def sample_vdj_df():
     """Create a sample VDJ DataFrame for testing.
