@@ -1290,6 +1290,56 @@ class TestLoadCellrangerGex:
         else:
             assert (filtered.obs[obs_col] <= median).all()
 
+    def test_load_gex_warns_on_low_pass_rate(self, mock_gex_dir, caplog):
+        """When QC drops more than half of cells, emit a warning that names
+        the relevant CLI flags (#41). The verbose-only info log isn't loud
+        enough to surface a config typo like --min-mito 1.0 (meant 10)."""
+        import logging
+
+        from tcrsift.loader import load_cellranger_gex
+
+        # min_genes well above the fixture's typical n_genes (~9) drops
+        # nearly every cell.
+        with caplog.at_level(logging.WARNING, logger="tcrsift.loader"):
+            load_cellranger_gex(
+                mock_gex_dir,
+                "test_sample",
+                min_genes=20,  # drops most of the 20-cell × 30-gene mock
+                max_genes=100,
+                min_counts=1,
+                max_counts=10000,
+                min_mito_pct=0,
+                max_mito_pct=100,
+                verbose=False,
+            )
+
+        warnings = [
+            r.message for r in caplog.records
+            if r.levelno == logging.WARNING and "QC dropped" in r.message
+        ]
+        assert warnings, "expected a QC-drop warning"
+        # The warning should name the relevant flags so the user knows
+        # what to inspect.
+        assert any("--min-genes" in m for m in warnings)
+        assert any("--min-mito" in m for m in warnings)
+
+    def test_load_gex_no_warning_at_normal_pass_rate(self, mock_gex_dir, caplog):
+        """Permissive bounds keep most cells — no warning should fire."""
+        import logging
+
+        from tcrsift.loader import load_cellranger_gex
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.loader"):
+            load_cellranger_gex(
+                mock_gex_dir, "test_sample", verbose=False, **self._PERMISSIVE_QC
+            )
+
+        qc_warnings = [
+            r.message for r in caplog.records
+            if r.levelno == logging.WARNING and "QC dropped" in r.message
+        ]
+        assert not qc_warnings, f"unexpected warning: {qc_warnings}"
+
     def test_load_gex_invalid_dir_raises(self, tmp_path):
         """Test that invalid directory raises error."""
         from tcrsift.loader import load_cellranger_gex

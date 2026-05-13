@@ -336,6 +336,19 @@ def load_cellranger_gex(
             f"  QC: {n_before:,} -> {adata.n_obs:,} cells pass "
             f"(dropped {n_before - adata.n_obs:,})"
         )
+    # Catch "silently wrong" config mistakes (e.g. --min-mito 1.0 typo for
+    # 10) where the filter eats most of the sample and downstream artifacts
+    # just look weird rather than failing clearly (#41). 50% is a reasonable
+    # line — peripheral blood routinely passes 90%+, tumor sits around 70%,
+    # below half is almost always a config or dataset-mismatch issue.
+    pass_rate = adata.n_obs / n_before if n_before else 0.0
+    if pass_rate < 0.5:
+        logger.warning(
+            f"  QC dropped {(1 - pass_rate) * 100:.0f}% of cells "
+            f"({n_before - adata.n_obs:,}/{n_before:,}) — "
+            "check --min-genes/--max-genes/--min-counts/--max-counts/"
+            "--min-mito/--max-mito if this is unexpected."
+        )
 
     return adata
 
