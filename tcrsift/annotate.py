@@ -124,6 +124,157 @@ CATEGORY_UNKNOWN = "unknown"
 MATCH_STRICTNESS_MODES = ("strict_ab", "ab_with_partial", "b_only")
 
 
+# Ordered list of (pattern, canonical) pairs for collapsing the many
+# free-text Source-Molecule strings IEDB/VDJdb emit into the short
+# symbols people read papers in. Order matters: first matching pattern
+# wins (#55). Patterns are case-insensitive substrings, matched against
+# the raw antigen_gene field — this is more forgiving than word
+# boundaries given how messy these strings are (``Spike glycoprotein
+# [Severe acute respiratory syndrome coronavirus 2]`` etc).
+#
+# Specificity rule of thumb: list LONGER and more specific patterns
+# BEFORE shorter, more ambiguous ones. ``Spike glycoprotein`` should be
+# checked before ``Spike`` alone, ``Cancer/testis antigen 1`` before
+# ``Cancer/testis antigen``. Where short tokens collide across species
+# (``pp65`` is CMV; ``M1`` is Flu), the organism prefix is baked into
+# the canonical form (``CMV pp65``, ``Flu M1``) so downstream plots
+# stay unambiguous.
+#
+# This is intentionally a static seed list. The right long-term answer
+# is an HGNC/UniProt join, but until that lands a curated table covers
+# the antigens that actually show up in TIL / vaccine cohorts.
+CANONICAL_ANTIGEN_ALIASES: tuple[tuple[str, str], ...] = (
+    # ─── Tumor-associated self antigens (TIL cohorts) ───
+    ("melanoma antigen recognized by t-cells", "MART-1"),
+    ("melan-a", "MART-1"),
+    ("mlana", "MART-1"),
+    ("mart-1", "MART-1"),
+    ("mart1", "MART-1"),
+    ("cancer/testis antigen 1", "NY-ESO-1"),
+    ("ctag1b", "NY-ESO-1"),
+    ("ny-eso-1", "NY-ESO-1"),
+    ("ny eso 1", "NY-ESO-1"),
+    ("ny_eso_1", "NY-ESO-1"),
+    ("mage-a3", "MAGE-A3"),
+    ("magea3", "MAGE-A3"),
+    ("mage-a4", "MAGE-A4"),
+    ("magea4", "MAGE-A4"),
+    ("mage-a1", "MAGE-A1"),
+    ("magea1", "MAGE-A1"),
+    ("mage-a", "MAGE-A"),
+    ("melanocyte protein pmel", "gp100"),
+    ("melanocyte-specific secreted glycoprotein", "gp100"),
+    ("gp100", "gp100"),
+    ("pmel", "gp100"),
+    ("tyrosinase", "Tyrosinase"),
+    ("ceacam5", "CEACAM5"),
+    ("carcinoembryonic", "CEA"),
+    ("wilms tumor", "WT1"),
+    ("wt1", "WT1"),
+    ("telomerase", "TERT"),
+    ("htert", "TERT"),
+    ("erbb2", "HER2"),
+    ("her2", "HER2"),
+    ("survivin", "Survivin"),
+    ("birc5", "Survivin"),
+    ("prostate-specific antigen", "PSA"),
+    ("ny-br-1", "NY-BR-1"),
+    ("bone marrow stromal antigen 2", "BST2"),
+    ("tetherin", "BST2"),
+    ("bst2", "BST2"),
+    # ─── HLA class I / MHC ───
+    ("hla class i histocompatibility antigen", "MHC class I"),
+    ("mhc class i protein", "MHC class I"),
+    ("mhc class i", "MHC class I"),
+    ("hla class ii", "MHC class II"),
+    # ─── Viral — CMV (HHV-5) ───
+    ("65 kda phosphoprotein", "CMV pp65"),
+    ("phosphoprotein 65", "CMV pp65"),
+    ("cmv pp65", "CMV pp65"),
+    ("pp65", "CMV pp65"),
+    ("55 kda immediate-early", "CMV IE1"),
+    ("regulatory protein ie1", "CMV IE1"),
+    ("immediate-early protein 1", "CMV IE1"),
+    ("immediate early 1", "CMV IE1"),
+    ("cmv ie1", "CMV IE1"),
+    # ─── Viral — EBV (HHV-4) ───
+    ("nuclear antigen ebna-3", "EBV EBNA-3"),
+    ("ebna-3", "EBV EBNA-3"),
+    ("ebna3", "EBV EBNA-3"),
+    ("ebna-1", "EBV EBNA-1"),
+    ("nuclear antigen ebna-1", "EBV EBNA-1"),
+    ("bzlf1", "EBV BZLF1"),
+    ("bmlf1", "EBV BMLF1"),
+    ("brlf1", "EBV BRLF1"),
+    ("lmp1", "EBV LMP1"),
+    ("lmp2", "EBV LMP2"),
+    # ─── Viral — Influenza ───
+    ("matrix protein 1", "Flu M1"),
+    ("matrix protein m1", "Flu M1"),
+    ("m1 protein", "Flu M1"),
+    ("influenza a virus matrix", "Flu M1"),
+    ("nucleoprotein", "Flu NP"),
+    ("hemagglutinin", "Flu HA"),
+    # ─── Viral — SARS-CoV-2 ───
+    ("spike glycoprotein", "SARS-CoV-2 Spike"),
+    ("surface glycoprotein", "SARS-CoV-2 Spike"),
+    ("spike protein", "SARS-CoV-2 Spike"),
+    ("sars-cov-2 spike", "SARS-CoV-2 Spike"),
+    ("replicase polyprotein 1ab", "SARS-CoV-2 ORF1ab"),
+    ("replicase polyprotein 1a", "SARS-CoV-2 ORF1ab"),
+    ("orf1ab polyprotein", "SARS-CoV-2 ORF1ab"),
+    ("orf1ab", "SARS-CoV-2 ORF1ab"),
+    ("nucleocapsid", "SARS-CoV-2 N"),
+    # ─── Viral — HIV ───
+    ("gag polyprotein", "HIV Gag"),
+    ("nef protein", "HIV Nef"),
+    # ─── Viral — HTLV ───
+    ("protein tax-1", "HTLV-1 Tax"),
+    ("transcriptional activator tax", "HTLV-1 Tax"),
+    ("tax-1", "HTLV-1 Tax"),
+    # ─── Viral — HCV ───
+    ("ns3", "HCV NS3"),
+    ("ns5b", "HCV NS5B"),
+    # ─── Bacterial ───
+    ("esat-6", "ESAT-6"),
+    ("listeriolysin", "LLO"),
+    # ─── Common self ───
+    ("insulin", "Insulin"),
+    ("beta-2-microglobulin", "B2M"),
+    ("b2m", "B2M"),
+)
+
+
+def canonicalize_antigen(antigen: str | None) -> str | None:
+    """Map a raw antigen string to its canonical short symbol, if known.
+
+    Returns the canonical symbol when the input matches any pattern in
+    :data:`CANONICAL_ANTIGEN_ALIASES` (case-insensitive substring,
+    first match wins); returns the input unchanged otherwise. ``None``
+    and empty strings pass through.
+
+    Designed for messy free-text inputs from VDJdb's ``antigen.gene``
+    and IEDB's ``Source Molecule`` — both routinely include
+    ``[organism]`` suffixes, "protein" descriptors, capitalization
+    variants, and parenthetical synonyms that should be ignored.
+    """
+    if antigen is None:
+        return None
+    raw = str(antigen).strip()
+    if not raw:
+        return raw
+    lowered = raw.lower()
+    for pattern, canonical in CANONICAL_ANTIGEN_ALIASES:
+        if pattern in lowered:
+            return canonical
+    return raw
+
+
+def canonicalize_antigens(antigens: pd.Series) -> pd.Series:
+    """Vectorized :func:`canonicalize_antigen` over a Series."""
+    return antigens.map(canonicalize_antigen)
+
+
 def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     """
     Load VDJdb database.
@@ -812,6 +963,7 @@ def match_clonotypes(
     df["db_match_strength"] = None
     df["db_epitope"] = None
     df["db_protein"] = None
+    df["db_protein_canonical"] = None
     df["db_species"] = None
     df["db_mhc"] = None
     df["db_category"] = None
@@ -838,24 +990,27 @@ def match_clonotypes(
         return df
 
     # Pre-classify the entire database once so the per-clone match path
-    # picks db_category as a mode like any other field — avoids
-    # invoking classify_category with a 1-row Series per match (#48
-    # follow-up). `database.assign` returns a copy so the caller's df
-    # isn't mutated.
+    # picks db_category / db_protein_canonical as modes like any other
+    # field — avoids invoking the classifiers with a 1-row Series per
+    # match (#48 follow-up). `database.assign` returns a copy so the
+    # caller's df isn't mutated.
+    species_col = (
+        database["species"]
+        if "species" in database.columns
+        else pd.Series([""] * len(database), index=database.index)
+    )
+    antigen_col = (
+        database["antigen_gene"]
+        if "antigen_gene" in database.columns
+        else pd.Series([""] * len(database), index=database.index)
+    )
+    new_columns: dict[str, pd.Series] = {}
     if "db_category" not in database.columns:
-        species_col = (
-            database["species"]
-            if "species" in database.columns
-            else pd.Series([""] * len(database), index=database.index)
-        )
-        antigen_col = (
-            database["antigen_gene"]
-            if "antigen_gene" in database.columns
-            else pd.Series([""] * len(database), index=database.index)
-        )
-        database = database.assign(
-            db_category=classify_category(species_col, antigen_col)
-        )
+        new_columns["db_category"] = classify_category(species_col, antigen_col)
+    if "db_protein_canonical" not in database.columns:
+        new_columns["db_protein_canonical"] = canonicalize_antigens(antigen_col)
+    if new_columns:
+        database = database.assign(**new_columns)
 
     # Build lookup sets for fast matching
     if strictness in ("strict_ab", "ab_with_partial"):
@@ -947,6 +1102,11 @@ def _annotate_match(
         if len(proteins) > 0:
             df.loc[idx, "db_protein"] = proteins.mode().iloc[0]
 
+    if "db_protein_canonical" in matches.columns:
+        canonicals = matches["db_protein_canonical"].dropna()
+        if len(canonicals) > 0:
+            df.loc[idx, "db_protein_canonical"] = canonicals.mode().iloc[0]
+
     if "mhc_allele" in matches.columns:
         mhcs = matches["mhc_allele"].dropna()
         if len(mhcs) > 0:
@@ -1014,6 +1174,7 @@ def annotate_clonotypes(
         "db_match_strength": None,
         "db_epitope": None,
         "db_protein": None,
+        "db_protein_canonical": None,
         "db_species": None,
         "db_mhc": None,
         "db_category": None,
