@@ -631,25 +631,46 @@ def cmd_data_list(args):
 
 
 def cmd_data_clear(args):
-    """Remove cached files for one or all managed databases."""
+    """Remove cached files for one or more managed databases."""
     from .datacache import clear_cache
 
-    removed = clear_cache(db=args.db, data_dir=args.cache_dir)
-    if not removed:
+    # `args.db` is None (clear all) or a list[str] of names. Deduplicate
+    # while preserving order so the user's first mention determines
+    # report order.
+    targets: list[str] | None = None
+    if args.db:
+        seen: set[str] = set()
+        targets = [n for n in args.db if not (n in seen or seen.add(n))]
+
+    removed_total: list = []
+    if targets is None:
+        removed_total = clear_cache(db=None, data_dir=args.cache_dir)
+    else:
+        for name in targets:
+            removed_total.extend(clear_cache(db=name, data_dir=args.cache_dir))
+
+    if not removed_total:
         print("Nothing to remove.")
         return
-    for path in removed:
+    for path in removed_total:
         print(f"Removed {path}")
 
 
 def cmd_data_download(args):
-    """Download one or all supported reference databases into the cache."""
+    """Download one or more supported reference databases into the cache."""
     from .datacache import DATABASES, DownloadError, download_database
 
     setup_logging(verbose=True)
-    targets = [args.db] if args.db else [
-        name for name, spec in DATABASES.items() if spec.download_url is not None
-    ]
+    # `args.db` is None (download all) or a list[str]. Deduplicate while
+    # preserving order — argparse with action=extend doesn't dedupe, and
+    # repeating a name shouldn't trigger a second download.
+    if args.db:
+        seen: set[str] = set()
+        targets = [n for n in args.db if not (n in seen or seen.add(n))]
+    else:
+        targets = [
+            name for name, spec in DATABASES.items() if spec.download_url is not None
+        ]
     failures: list[tuple[str, str]] = []
     for db in targets:
         try:
@@ -1647,7 +1668,13 @@ def create_parser():
     p_data_clear.add_argument(
         "--db",
         choices=sorted(DATABASES),
-        help="Database to clear (default: clear all)",
+        action="extend",
+        nargs="+",
+        help=(
+            "Database(s) to clear (default: clear all). "
+            "Repeatable and/or space-separated: "
+            "`--db vdjdb iedb` and `--db vdjdb --db iedb` both work."
+        ),
     )
     p_data_clear.add_argument(
         "--cache-dir", help="Override the default cache directory"
@@ -1661,7 +1688,13 @@ def create_parser():
     p_data_download.add_argument(
         "--db",
         choices=sorted(DATABASES),
-        help="Database to download (default: all DBs with a download URL)",
+        action="extend",
+        nargs="+",
+        help=(
+            "Database(s) to download (default: all DBs with a download URL). "
+            "Repeatable and/or space-separated: "
+            "`--db vdjdb iedb` and `--db vdjdb --db iedb` both work."
+        ),
     )
     p_data_download.add_argument(
         "--force",
