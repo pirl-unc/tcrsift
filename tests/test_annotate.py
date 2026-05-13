@@ -136,19 +136,32 @@ class TestClassifyCategory:
 
 
 class TestLoadVdjdb:
-    """Tests for loading VDJdb."""
+    """Tests for loading VDJdb.
+
+    Test data is sampled from the real ``vdjdb_full.txt`` and
+    ``vdjdb.txt`` files in the release zip so we exercise the actual
+    on-disk shapes and sequence conventions (β-CDR3s start ``CAS``,
+    α-CDR3s start ``CAV``/``CAA``, etc.) rather than synthetic stand-ins.
+    """
 
     @pytest.fixture
     def mock_vdjdb_file(self, temp_dir):
-        """Create a mock VDJdb file."""
-        vdjdb_path = temp_dir / "vdjdb.tsv"
+        """Create a mock VDJdb file in the paired-chain format.
+
+        Uses two real VDJdb rows (InfluenzaB NS1 / HLA-B*07:02
+        epitope HPNGYKSLSTL) so the schema and CDR3 motifs are
+        authentic.
+        """
+        vdjdb_path = temp_dir / "vdjdb_full.txt"
         df = pd.DataFrame(
             {
-                "cdr3": ["CASSLGQAYEQYF", "CASSXYZAYEQYF"],
-                "cdr3.alpha": ["CAVSDGGSQGNLIF", "CAVXYZQGNLIF"],
-                "antigen.epitope": ["NLV", "GLC"],
-                "antigen.species": ["CMV", "EBV"],
-                "mhc.a": ["HLA-A*02:01", "HLA-B*08:01"],
+                "cdr3.alpha": ["CAYRSAGSGGSNYKLTF", "CAYRSATGYALNF"],
+                "cdr3.beta": ["CASSLMTNQPQHF", "CASSLYGSVQNEQFF"],
+                "antigen.epitope": ["HPNGYKSLSTL", "HPNGYKSLSTL"],
+                "antigen.gene": ["NS1", "NS1"],
+                "antigen.species": ["InfluenzaB", "InfluenzaB"],
+                "mhc.a": ["HLA-B*07:02", "HLA-B*07:02"],
+                "species": ["HomoSapiens", "HomoSapiens"],  # donor — to be dropped
             }
         )
         df.to_csv(vdjdb_path, sep="\t", index=False)
@@ -178,8 +191,191 @@ class TestLoadVdjdb:
     def test_viral_flagging(self, mock_vdjdb_file):
         """VDJdb entries should have viral flag."""
         result = load_vdjdb(mock_vdjdb_file)
-        # CMV and EBV are both viral
+        # Both fixture rows are Influenza B (viral).
         assert all(result["is_viral"])
+
+    def test_load_picks_vdjdb_full_when_present(self, temp_dir):
+        """Directory-mode load picks the canonical ``vdjdb_full.txt``
+        and ignores any unrelated files (sidecar metadata,
+        partial/processed views) in the same directory (#45 bug 1).
+
+        Uses a real VDJdb row (InfluenzaB NS1 / HLA-B*07:02).
+        """
+        full = pd.DataFrame(
+            {
+                "cdr3.alpha": ["CAYRSAGSGGSNYKLTF"],
+                "cdr3.beta": ["CASSLMTNQPQHF"],
+                "antigen.epitope": ["HPNGYKSLSTL"],
+                "antigen.gene": ["NS1"],
+                "antigen.species": ["InfluenzaB"],
+                "species": ["HomoSapiens"],  # donor — should be dropped
+                "mhc.a": ["HLA-B*07:02"],
+            }
+        )
+        full.to_csv(temp_dir / "vdjdb_full.txt", sep="\t", index=False)
+        # A metadata sidecar that alphabetizes before vdjdb_full.txt.
+        pd.DataFrame(
+            {"name": ["complex.id"], "type": ["txt"], "comment": ["..."]}
+        ).to_csv(temp_dir / "vdjdb.meta.txt", sep="\t", index=False)
+
+        result = load_vdjdb(temp_dir)
+        assert len(result) == 1
+        assert result.iloc[0]["cdr3_alpha"] == "CAYRSAGSGGSNYKLTF"
+        assert result.iloc[0]["cdr3_beta"] == "CASSLMTNQPQHF"
+
+    def test_load_falls_back_to_vdjdb_txt_when_full_missing(self, temp_dir):
+        """Priority-2 path: when ``vdjdb_full.txt`` isn't present but
+        ``vdjdb.txt`` is, the long-format file must be picked from a
+        directory load (and then gene-filtered by the long normalizer).
+        Uses a real TRB row from VDJdb (InfluenzaA M1 / GILGFVFTL).
+        """
+        pd.DataFrame(
+            {
+                "complex.id": [0],
+                "gene": ["TRB"],
+                "cdr3": ["CASSIVGGNEQFF"],
+                "antigen.epitope": ["GILGFVFTL"],
+                "antigen.species": ["InfluenzaA"],
+            }
+        ).to_csv(temp_dir / "vdjdb.txt", sep="\t", index=False)
+        # Sidecars that mustn't be picked.
+        pd.DataFrame({"name": ["foo"]}).to_csv(
+            temp_dir / "vdjdb.meta.txt", sep="\t", index=False
+        )
+
+        result = load_vdjdb(temp_dir)
+        assert len(result) == 1
+        assert result.iloc[0]["cdr3_beta"] == "CASSIVGGNEQFF"
+
+    def test_load_falls_back_to_vdjdb_slim_when_others_missing(self, temp_dir):
+        """Priority-3 path: when only ``vdjdb.slim.txt`` is present,
+        the slim file should be picked. Uses a real TRB row.
+        """
+        pd.DataFrame(
+            {
+                "complex.id": [0],
+                "gene": ["TRB"],
+                "cdr3": ["CASSMRSTGELFF"],
+                "antigen.epitope": ["GILGFVFTL"],
+                "antigen.species": ["InfluenzaA"],
+            }
+        ).to_csv(temp_dir / "vdjdb.slim.txt", sep="\t", index=False)
+        # Sidecars present; must not be picked over the canonical slim.
+        pd.DataFrame({"name": ["foo"]}).to_csv(
+            temp_dir / "vdjdb.meta.txt", sep="\t", index=False
+        )
+
+        result = load_vdjdb(temp_dir)
+        assert len(result) == 1
+        assert result.iloc[0]["cdr3_beta"] == "CASSMRSTGELFF"
+
+    def test_load_maps_cdr3_dot_beta_to_cdr3_beta(self, temp_dir):
+        """``vdjdb_full.txt`` uses ``cdr3.beta`` (paired-chain row format),
+        not ``cdr3`` (slim/long format). Without ``cdr3.beta`` in the
+        mapping, ``match_clonotypes`` crashes with KeyError when the
+        user explicitly points at the full file (#45 bug 1)."""
+        path = temp_dir / "vdjdb_full.txt"
+        pd.DataFrame(
+            {
+                "cdr3.alpha": ["CAYRSAGSGGSNYKLTF"],
+                "cdr3.beta": ["CASSLMTNQPQHF"],
+                "antigen.epitope": ["HPNGYKSLSTL"],
+                "antigen.species": ["InfluenzaB"],
+            }
+        ).to_csv(path, sep="\t", index=False)
+
+        result = load_vdjdb(path)
+        assert "cdr3_beta" in result.columns
+        assert result["cdr3_beta"].iloc[0] == "CASSLMTNQPQHF"
+
+    def test_donor_species_does_not_collide_with_antigen_species(self, temp_dir):
+        """VDJdb's full export carries both a donor ``species`` column
+        (T-cell origin, usually ``HomoSapiens``) and ``antigen.species``
+        (the epitope source organism, e.g. ``InfluenzaB``). The loader
+        uses the latter for matching/category, so the former must not
+        leak through as a same-name column collision (#45 bug 1).
+        """
+        path = temp_dir / "vdjdb_full.txt"
+        pd.DataFrame(
+            {
+                "cdr3.alpha": ["CAYRSAGSGGSNYKLTF"],
+                "cdr3.beta": ["CASSLMTNQPQHF"],
+                "antigen.epitope": ["HPNGYKSLSTL"],
+                "antigen.species": ["InfluenzaB"],
+                "species": ["HomoSapiens"],
+            }
+        ).to_csv(path, sep="\t", index=False)
+
+        result = load_vdjdb(path)
+        # Only one column named ``species``, and it carries the antigen
+        # source organism — not the donor species.
+        assert (result.columns == "species").sum() == 1
+        assert result["species"].iloc[0] == "InfluenzaB"
+
+    def test_load_raises_when_no_canonical_file_present(self, temp_dir):
+        """A directory without any of the canonical names (only
+        sidecar/metadata files) must raise with a hint telling the
+        user how to recover (#45 bug 1)."""
+        pd.DataFrame({"name": ["foo"]}).to_csv(
+            temp_dir / "vdjdb.meta.txt", sep="\t", index=False
+        )
+        pd.DataFrame({"name": ["bar"]}).to_csv(
+            temp_dir / "vdjdb.slim.meta.txt", sep="\t", index=False
+        )
+
+        with pytest.raises(
+            TCRsiftValidationError, match="No canonical VDJdb data file"
+        ):
+            load_vdjdb(temp_dir)
+
+    def test_long_format_filters_to_trb_to_avoid_alpha_leakage(self, temp_dir):
+        """The slim/long VDJdb file uses one row per chain — ``cdr3``
+        holds an α-CDR3 when ``gene=TRA`` and a β-CDR3 when
+        ``gene=TRB``. A naive ``cdr3 → cdr3_beta`` mapping puts α
+        sequences into ``cdr3_beta`` and causes wrong-chain matches
+        downstream. The loader must filter to TRB rows so
+        ``cdr3_beta`` only carries actual β-CDR3s.
+
+        Uses real VDJdb sequences: ``CAASGGYQKVTF`` is a real α-CDR3
+        (HIV-1, gene=TRA); ``CASSIVGGNEQFF`` is a real β-CDR3 (InfluenzaA
+        M1 / GILGFVFTL).
+        """
+        path = temp_dir / "vdjdb.txt"
+        pd.DataFrame(
+            {
+                "complex.id": [0, 0],
+                "gene": ["TRA", "TRB"],
+                "cdr3": [
+                    "CAASGGYQKVTF",   # α — must NOT land in cdr3_beta
+                    "CASSIVGGNEQFF",  # β — should land in cdr3_beta
+                ],
+                "antigen.epitope": ["KAFSPEVIPMF", "GILGFVFTL"],
+                "antigen.species": ["HIV-1", "InfluenzaA"],
+            }
+        ).to_csv(path, sep="\t", index=False)
+
+        result = load_vdjdb(path)
+
+        # Only the TRB row survives.
+        assert len(result) == 1
+        assert result.iloc[0]["cdr3_beta"] == "CASSIVGGNEQFF"
+        # Crucially: the α-CDR3 sequence did NOT leak into cdr3_beta.
+        assert "CAASGGYQKVTF" not in set(result["cdr3_beta"].dropna())
+        # cdr3_alpha column present but empty — schema stability.
+        assert "cdr3_alpha" in result.columns
+        assert result["cdr3_alpha"].isna().all()
+
+    def test_unrecognized_schema_raises_clear_error(self, temp_dir):
+        """A file with neither paired nor long-format VDJdb columns
+        should raise a validation error naming the columns it saw,
+        rather than silently producing an empty/garbage result."""
+        path = temp_dir / "vdjdb_weird.txt"
+        pd.DataFrame(
+            {"random_col": ["foo"], "another_col": ["bar"]}
+        ).to_csv(path, sep="\t", index=False)
+
+        with pytest.raises(TCRsiftValidationError, match="Unrecognized VDJdb schema"):
+            load_vdjdb(path)
 
 
 class TestLoadIedb:
@@ -306,8 +502,8 @@ class TestLoadDatabases:
 
         pd.DataFrame(
             {
-                "cdr3": ["CASSTEST1"],
                 "cdr3.alpha": ["CAVTEST1"],
+                "cdr3.beta": ["CASSTEST1"],
                 "antigen.species": ["CMV"],
             }
         ).to_csv(vdjdb_path, sep="\t", index=False)
@@ -592,12 +788,12 @@ class TestAnnotateClonotypes:
 
     @pytest.fixture
     def mock_db_paths(self, temp_dir):
-        """Create mock database files."""
-        vdjdb_path = temp_dir / "vdjdb.tsv"
+        """Create mock database files using the real VDJdb paired schema."""
+        vdjdb_path = temp_dir / "vdjdb_full.txt"
         pd.DataFrame(
             {
-                "cdr3": ["CASSLGQAYEQYF"],
                 "cdr3.alpha": ["CAVSDGGSQGNLIF"],
+                "cdr3.beta": ["CASSLGQAYEQYF"],
                 "antigen.epitope": ["NLV"],
                 "antigen.species": ["CMV"],
             }

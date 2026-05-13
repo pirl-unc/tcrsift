@@ -128,31 +128,48 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     """
     Load VDJdb database.
 
+    VDJdb ships two on-disk shapes with **different row semantics**:
+
+    - ``vdjdb_full.txt`` — *paired-chain* format: one row per
+      clonotype, with ``cdr3.alpha`` and ``cdr3.beta`` as separate
+      columns. This is what αβ matching needs.
+    - ``vdjdb.txt`` — *long/slim* format: one row per **chain**, keyed
+      by ``complex.id`` and ``gene`` (``TRA``/``TRB``). The ``cdr3``
+      column holds an α-CDR3 when ``gene == TRA`` and a β-CDR3 when
+      ``gene == TRB``. A naive ``cdr3 → cdr3_beta`` rename mixes the
+      two and matches alpha sequences as if they were beta. To avoid
+      that, the long-format path is filtered to ``gene == TRB`` rows
+      so ``cdr3_beta`` only carries actual β-CDR3s; α rows are
+      dropped (would need a ``complex.id`` pivot to recover αβ pairs,
+      which is best deferred to the full file).
+
+    When given a directory, looks for one of three canonical filenames
+    in priority order: ``vdjdb_full.txt``, ``vdjdb.txt``,
+    ``vdjdb.slim.txt``. Other files in the directory (metadata
+    sidecars, processed views, etc.) are ignored — a directory that
+    has none of these names raises with a hint to re-run
+    ``tcrsift data download`` or pass the file path explicitly.
+
     Parameters
     ----------
     path : str or Path
-        Path to VDJdb directory or file
+        Path to VDJdb directory or single file.
     verbose : bool
-        Print progress information
+        Print progress information.
 
     Returns
     -------
     pd.DataFrame
-        VDJdb entries with standardized columns
+        VDJdb entries with standardized columns (``cdr3_alpha``,
+        ``cdr3_beta``, ``epitope``, ``antigen_gene``, ``species``,
+        ``mhc_allele``, ``database``, ``is_viral``). The
+        ``cdr3_alpha`` column is empty when loaded from the
+        long/slim format.
     """
     path = Path(path)
 
     if path.is_dir():
-        # Look for the main database file
-        candidates = list(path.glob("vdjdb*.txt")) + list(path.glob("vdjdb*.tsv"))
-        if not candidates:
-            available = [f.name for f in path.iterdir()][:15]
-            raise TCRsiftValidationError(
-                f"No VDJdb files found in directory: {path}",
-                hint=f"Expected files matching 'vdjdb*.txt' or 'vdjdb*.tsv'. "
-                f"Available files: {available}",
-            )
-        db_file = candidates[0]
+        db_file = _pick_vdjdb_file(path)
     else:
         db_file = validate_file_exists(path, "VDJdb database file")
 
@@ -173,30 +190,147 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
             hint="Download a fresh copy from https://vdjdb.cdr3.net/",
         )
 
-    # Standardize columns
-    column_mapping = {
-        "cdr3": "cdr3_beta",
-        "cdr3.alpha": "cdr3_alpha",
-        "antigen.epitope": "epitope",
-        "antigen.gene": "antigen_gene",
-        "antigen.species": "species",
-        "mhc.a": "mhc_allele",
-        "mhc.class": "mhc_class",
-        "reference.id": "reference",
-    }
-
-    for old, new in column_mapping.items():
-        if old in df.columns:
-            df[new] = df[old]
+    # Format-specific normalization, dispatched by column presence:
+    # the paired file has ``cdr3.beta``, the long file has
+    # ``cdr3`` + ``gene``. ``cdr3.alpha`` alone (no β) doesn't occur
+    # in real VDJdb files and isn't useful for matching — falls
+    # through to the unrecognized-schema error.
+    if "cdr3.beta" in df.columns:
+        df = _normalize_vdjdb_paired(df)
+    elif "cdr3" in df.columns and "gene" in df.columns:
+        n_total = len(df)
+        df = _normalize_vdjdb_long(df)
+        if verbose:
+            logger.info(
+                f"  Long/slim VDJdb format: kept {len(df):,} TRB rows "
+                f"out of {n_total:,} total (α rows discarded — load "
+                f"vdjdb_full.txt for αβ matching)."
+            )
+    else:
+        raise TCRsiftValidationError(
+            f"Unrecognized VDJdb schema in {db_file}",
+            hint=(
+                "Expected either paired-chain columns "
+                "(`cdr3.alpha` + `cdr3.beta`) or long-format columns "
+                "(`cdr3` + `gene`). Got: "
+                f"{list(df.columns)[:10]}{'...' if len(df.columns) > 10 else ''}"
+            ),
+        )
 
     df["database"] = "VDJdb"
-
-    # Flag viral entries
     df["is_viral"] = _flag_viral(df)
 
     if verbose:
         logger.info(f"  Loaded {len(df):,} VDJdb entries ({df['is_viral'].sum():,} viral)")
     return df
+
+
+def _normalize_vdjdb_paired(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize the paired-chain ``vdjdb_full.txt`` format.
+
+    Drops the donor ``species`` column before propagating
+    ``antigen.species`` → ``species`` — VDJdb's full export carries
+    both (donor T-cell species vs. epitope source organism), and we
+    use the latter throughout the codebase.
+    """
+    if "species" in df.columns and "antigen.species" in df.columns:
+        df = df.drop(columns=["species"])
+
+    column_mapping = {
+        "cdr3.alpha": "cdr3_alpha",
+        "cdr3.beta": "cdr3_beta",
+        "antigen.epitope": "epitope",
+        "antigen.gene": "antigen_gene",
+        "mhc.a": "mhc_allele",
+        "mhc.class": "mhc_class",
+        "reference.id": "reference",
+    }
+    for old, new in column_mapping.items():
+        if old in df.columns:
+            df[new] = df[old]
+
+    if "antigen.species" in df.columns:
+        df["species"] = df["antigen.species"]
+    return df
+
+
+def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize the long/slim ``vdjdb.txt`` format.
+
+    The long format has one row per chain. We filter to ``gene == TRB``
+    so the resulting ``cdr3_beta`` column only contains actual β-CDR3s
+    (α-CDR3s share the same ``cdr3`` column under ``gene == TRA`` rows
+    and would otherwise leak into ``cdr3_beta`` and produce wrong-chain
+    matches). Recovering αβ pairs would require a pivot on
+    ``complex.id`` — deferred; use ``vdjdb_full.txt`` for that.
+    """
+    # Exact-string match on the canonical VDJdb labels (``TRA``/``TRB``).
+    # Any other gene (``TRG``/``TRD`` etc.) is silently dropped — αβ
+    # matching can't consume them anyway.
+    df = df[df["gene"] == "TRB"].copy()
+
+    if "species" in df.columns and "antigen.species" in df.columns:
+        df = df.drop(columns=["species"])
+
+    column_mapping = {
+        "cdr3": "cdr3_beta",
+        "antigen.epitope": "epitope",
+        "antigen.gene": "antigen_gene",
+        "mhc.a": "mhc_allele",
+        "mhc.class": "mhc_class",
+        "reference.id": "reference",
+    }
+    for old, new in column_mapping.items():
+        if old in df.columns:
+            df[new] = df[old]
+
+    if "antigen.species" in df.columns:
+        df["species"] = df["antigen.species"]
+    # No α data in this format; explicit empty column keeps the
+    # downstream schema stable.
+    df["cdr3_alpha"] = pd.NA
+    return df
+
+
+# Canonical VDJdb data filenames in resolution priority order. The
+# release zip drops a swarm of processed sidecars (``vdjdb.meta.txt``,
+# ``vdjdb.scored.txt``, ``vdjdb_full_*_broken.txt`` etc.) alongside
+# these, but they have different schemas / are incomplete. We only
+# look for the names below; everything else stays invisible to the
+# loader. Users with a custom file should pass its path directly.
+_VDJDB_CANONICAL_FILENAMES = ("vdjdb_full.txt", "vdjdb.txt", "vdjdb.slim.txt")
+
+
+def _pick_vdjdb_file(dir_path: Path) -> Path:
+    """Choose the canonical VDJdb data file from an extracted release dir.
+
+    Priority:
+
+    1. ``vdjdb_full.txt`` — paired αβ-per-row, the format αβ matching
+       needs.
+    2. ``vdjdb.txt`` — long/slim, one chain per row (β-only after the
+       gene filter applied in ``_normalize_vdjdb_long``).
+    3. ``vdjdb.slim.txt`` — smaller variant of the long format.
+
+    A directory without any of these (e.g. the cache was corrupted or
+    the release format changed) raises with a clear hint pointing back
+    at ``tcrsift data download`` (#45).
+    """
+    for name in _VDJDB_CANONICAL_FILENAMES:
+        candidate = dir_path / name
+        if candidate.is_file():
+            return candidate
+
+    available = [f.name for f in dir_path.iterdir()][:15]
+    raise TCRsiftValidationError(
+        f"No canonical VDJdb data file found in directory: {dir_path}",
+        hint=(
+            f"Expected one of {list(_VDJDB_CANONICAL_FILENAMES)}. "
+            f"Available files: {available}. "
+            "Re-run `tcrsift data download --db vdjdb` to refresh, "
+            "or pass the path to your VDJdb file directly with --vdjdb."
+        ),
+    )
 
 
 def load_iedb(path: str | Path) -> pd.DataFrame:
