@@ -9,6 +9,8 @@ import pytest
 from tcrsift.annotate import (
     _flag_viral,
     annotate_clonotypes,
+    canonicalize_antigen,
+    canonicalize_antigens,
     classify_category,
     get_annotation_summary,
     load_cedar,
@@ -58,6 +60,100 @@ class TestFlagViral:
         df = pd.DataFrame({"species": [None, np.nan, ""]})
         result = _flag_viral(df)
         assert not any(result)
+
+
+class TestCanonicalizeAntigen:
+    """Tests for the antigen synonym table (#55).
+
+    Every assertion here is a real string variant pulled from the
+    issue's example table — these are spellings the loader actually
+    sees in VDJdb / IEDB output.
+    """
+
+    def test_collapses_mart1_variants(self):
+        for variant in (
+            "MART-1",
+            "MLANA",
+            "Melan-A",
+            "Melanoma antigen recognized by T-cells 1",
+        ):
+            assert canonicalize_antigen(variant) == "MART-1"
+
+    def test_collapses_ny_eso_1_variants(self):
+        for variant in ("NY-ESO-1", "CTAG1B", "Cancer/testis antigen 1"):
+            assert canonicalize_antigen(variant) == "NY-ESO-1"
+
+    def test_collapses_bst2_variants(self):
+        for variant in ("BST2", "Bone marrow stromal antigen 2", "Tetherin"):
+            assert canonicalize_antigen(variant) == "BST2"
+
+    def test_organism_prefix_disambiguates_short_tokens(self):
+        """``pp65`` alone is ambiguous; the canonical form prefixes
+        the organism so downstream plots stay unambiguous."""
+        assert canonicalize_antigen("pp65") == "CMV pp65"
+        assert canonicalize_antigen("65 kDa phosphoprotein") == "CMV pp65"
+        assert canonicalize_antigen("Matrix protein 1") == "Flu M1"
+        assert canonicalize_antigen("M1 protein") == "Flu M1"
+
+    def test_collapses_sars_cov_2_spike_variants(self):
+        """SARS-CoV-2 Spike appears under at least four distinct
+        free-text strings; all should collapse to one symbol."""
+        for variant in (
+            "Spike glycoprotein",
+            "spike protein [Pangolin coronavirus]",
+            "surface glycoprotein [Severe acute respiratory syndrome coronavirus 2]",
+            "SARS-CoV-2 Spike",
+        ):
+            assert canonicalize_antigen(variant) == "SARS-CoV-2 Spike"
+
+    def test_collapses_sars_cov_2_orf1ab_variants(self):
+        for variant in (
+            "ORF1ab",
+            "orf1ab polyprotein [Severe acute respiratory syndrome coronavirus 2]",
+            "Replicase polyprotein 1ab",
+            "Replicase polyprotein 1a",
+        ):
+            assert canonicalize_antigen(variant) == "SARS-CoV-2 ORF1ab"
+
+    def test_collapses_htlv_tax_variants(self):
+        """Both the receptor file's free-text version and the
+        epitope-table override land on the same canonical symbol."""
+        assert canonicalize_antigen("transcriptional activator Tax") == "HTLV-1 Tax"
+        assert canonicalize_antigen("Protein Tax-1") == "HTLV-1 Tax"
+
+    def test_unknown_antigen_passes_through_unchanged(self):
+        assert canonicalize_antigen("Some completely unknown antigen") == (
+            "Some completely unknown antigen"
+        )
+
+    def test_empty_and_none_pass_through(self):
+        assert canonicalize_antigen(None) is None
+        assert canonicalize_antigen("") == ""
+        assert canonicalize_antigen("   ") == ""
+
+    def test_case_insensitive(self):
+        assert canonicalize_antigen("mart-1") == "MART-1"
+        assert canonicalize_antigen("MART-1") == "MART-1"
+        assert canonicalize_antigen("MaRt-1") == "MART-1"
+
+    def test_first_matching_alias_wins(self):
+        """Deterministic ordering: longer / more specific patterns
+        before shorter ones. ``Spike glycoprotein`` matches the
+        SARS-CoV-2 entry before any hypothetical bare ``spike`` pattern.
+        """
+        # A string that contains both "spike glycoprotein" (matches
+        # SARS-CoV-2 Spike) and the (non-existent) bare token must
+        # resolve to the first-listed pattern.
+        assert (
+            canonicalize_antigen("Spike glycoprotein, partial sequence")
+            == "SARS-CoV-2 Spike"
+        )
+
+    def test_vectorized_canonicalize_antigens(self):
+        result = canonicalize_antigens(
+            pd.Series(["MLANA", "Spike glycoprotein", None, "unknown"])
+        )
+        assert list(result) == ["MART-1", "SARS-CoV-2 Spike", None, "unknown"]
 
 
 class TestClassifyCategory:
@@ -734,13 +830,23 @@ class TestMatchClonotypes:
 
         result = match_clonotypes(sample_clonotypes_df, db, match_by="CDR3ab")
 
-        for col in ("db_protein", "db_mhc", "db_category", "db_match_strength"):
+        for col in (
+            "db_protein",
+            "db_protein_canonical",
+            "db_mhc",
+            "db_category",
+            "db_match_strength",
+        ):
             assert col in result.columns
 
         matched = result[result["db_match"]]
         assert len(matched) >= 1
         first = matched.iloc[0]
         assert first["db_protein"] == "pp65"
+        # Canonicalization collapses the bare "pp65" to "CMV pp65" — the
+        # canonical column is what downstream plotting / category code
+        # should group on (#55).
+        assert first["db_protein_canonical"] == "CMV pp65"
         assert first["db_mhc"] == "HLA-A*02:01"
         assert first["db_epitope"] == "NLVPMVATV"
         assert first["db_category"] == "viral"
@@ -941,6 +1047,7 @@ class TestAnnotateClonotypes:
             "db_match_strength",
             "db_epitope",
             "db_protein",
+            "db_protein_canonical",
             "db_species",
             "db_mhc",
             "db_category",
