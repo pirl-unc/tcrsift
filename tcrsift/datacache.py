@@ -113,6 +113,22 @@ DATABASES: dict[str, DatabaseSpec] = {
         archive_format="zip",
         archive_member="tcr_full_v3.csv",
     ),
+    # Companion to ``iedb``: the per-epitope authoritative table.
+    # ``load_iedb`` uses it to override Source Molecule / Source Organism
+    # names with the shorter, more canonical strings the epitope table
+    # ships (e.g. ``Protein Tax-1`` instead of the receptor file's
+    # ``transcriptional activator Tax``). Optional — when absent,
+    # ``load_iedb`` just returns the receptor values unchanged.
+    "iedb_epitope": DatabaseSpec(
+        name="iedb_epitope",
+        filename="epitope_full_v3.csv",
+        source="https://www.iedb.org/database_export_v3.php",
+        download_url=(
+            "https://www.iedb.org/downloader.php?file_name=doc/epitope_full_v3.zip"
+        ),
+        archive_format="zip",
+        archive_member="epitope_full_v3.csv",
+    ),
     "cedar": DatabaseSpec(
         name="cedar",
         filename="cedar.tsv",

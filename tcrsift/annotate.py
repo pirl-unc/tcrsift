@@ -333,7 +333,10 @@ def _pick_vdjdb_file(dir_path: Path) -> Path:
     )
 
 
-def load_iedb(path: str | Path) -> pd.DataFrame:
+def load_iedb(
+    path: str | Path,
+    epitope_path: str | Path | None = None,
+) -> pd.DataFrame:
     """
     Load IEDB TCR database.
 
@@ -353,7 +356,18 @@ def load_iedb(path: str | Path) -> pd.DataFrame:
     Parameters
     ----------
     path : str or Path
-        Path to IEDB file (v3 CSV or legacy flat TSV).
+        Path to IEDB receptor file (v3 CSV or legacy flat TSV).
+    epitope_path : str or Path, optional
+        Path to the IEDB epitope-level CSV
+        (``epitope_full_v3.csv`` — companion to the receptor file,
+        cached by ``tcrsift data download --db iedb_epitope``).
+        When provided, the receptor file's ``antigen_gene`` / ``species``
+        fields are overridden with the epitope table's values
+        wherever the epitope table has them. Empirically, the
+        epitope-table names are shorter and more publication-canonical
+        (e.g. ``Protein Tax-1`` vs the receptor file's
+        ``transcriptional activator Tax``), which reduces downstream
+        synonym sprawl (#54).
 
     Returns
     -------
@@ -369,6 +383,9 @@ def load_iedb(path: str | Path) -> pd.DataFrame:
         df = _load_iedb_v3(path)
     else:
         df = _load_iedb_legacy_tsv(path)
+
+    if epitope_path is not None:
+        df = _apply_iedb_epitope_overrides(df, Path(epitope_path))
 
     df["database"] = "IEDB"
     df["is_viral"] = _flag_viral(df)
@@ -424,6 +441,7 @@ def _load_iedb_v3(path: Path) -> pd.DataFrame:
             "cdr3_alpha": cdr3_alpha,
             "cdr3_beta": cdr3_beta,
             "epitope": _pick("Epitope", "Name"),
+            "epitope_iri": _pick("Epitope", "IEDB IRI"),
             "antigen_gene": _pick("Epitope", "Source Molecule"),
             "species": _pick("Epitope", "Source Organism"),
             "mhc_allele": _pick("Assay", "MHC Allele Names"),
@@ -448,6 +466,103 @@ def _load_iedb_legacy_tsv(path: Path) -> pd.DataFrame:
     for old, new in column_mapping.items():
         if old in df.columns:
             df[new] = df[old]
+    return df
+
+
+def _normalize_iedb_iri(s: pd.Series) -> pd.Series:
+    """Normalize IEDB epitope IRIs to a comparable form.
+
+    The receptor file (``tcr_full_v3.csv``) emits ``https://`` IRIs;
+    the epitope file (``epitope_full_v3.csv``) emits ``http://``.
+    Same epitope, different scheme — the join needs them aligned.
+    """
+    return s.fillna("").astype(str).str.replace("https://", "http://", regex=False)
+
+
+def load_iedb_epitope_lookup(path: str | Path) -> pd.DataFrame:
+    """Load the IEDB epitope-level table as a (canonical) name lookup.
+
+    The epitope file has hierarchical CSV headers like the receptor
+    file. Returns a deduplicated frame indexed by normalized IRI with
+    columns ``antigen_gene`` and ``species`` — the values the
+    receptor-level loader should defer to when present.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to ``epitope_full_v3.csv``.
+
+    Returns
+    -------
+    pd.DataFrame
+        Indexed by ``epitope_iri`` (string, ``http://...`` form),
+        columns ``antigen_gene`` and ``species``.
+    """
+    raw = pd.read_csv(path, header=[0, 1], low_memory=False)
+
+    iri_col = ("Epitope ID", "IEDB IRI")
+    sm_col = ("Epitope", "Source Molecule")
+    so_col = ("Epitope", "Source Organism")
+    for required in (iri_col, sm_col, so_col):
+        if required not in raw.columns:
+            raise TCRsiftValidationError(
+                f"IEDB epitope file at {path} is missing required column {required}",
+                hint="Expected the v3 epitope CSV with hierarchical headers.",
+            )
+
+    lookup = pd.DataFrame(
+        {
+            "iri": _normalize_iedb_iri(raw[iri_col]),
+            "antigen_gene": raw[sm_col],
+            "species": raw[so_col],
+        }
+    )
+    # Multiple rows per IRI exist (one per Related Object); keep the
+    # row that actually carries a Source Molecule value (sorting NaNs
+    # last and dropping later duplicates).
+    lookup = (
+        lookup.sort_values("antigen_gene", na_position="last")
+        .drop_duplicates("iri", keep="first")
+        .set_index("iri")
+    )
+    return lookup
+
+
+def _apply_iedb_epitope_overrides(
+    receptor_df: pd.DataFrame, epitope_path: Path
+) -> pd.DataFrame:
+    """Override receptor antigen_gene/species with epitope-table values.
+
+    Strategy: for each receptor row that has an ``epitope_iri``, look
+    it up in the epitope table. If the epitope table has a non-null
+    value for that field, use it; otherwise keep the receptor value.
+    This catches the ~80K receptor rows where the epitope table's
+    name is shorter/more canonical, and the ~200 receptor rows where
+    the receptor was blank but the epitope table had data (#54).
+    """
+    if "epitope_iri" not in receptor_df.columns:
+        logger.warning(
+            "IEDB receptor frame has no epitope_iri column; skipping "
+            "epitope-table override (epitope_path was provided but "
+            "the receptor loader didn't capture IRIs)."
+        )
+        return receptor_df
+
+    logger.info(f"Loading IEDB epitope table from {epitope_path}")
+    lookup = load_iedb_epitope_lookup(epitope_path)
+
+    df = receptor_df.copy()
+    rec_iri = _normalize_iedb_iri(df["epitope_iri"])
+
+    for field in ("antigen_gene", "species"):
+        overrides = rec_iri.map(lookup[field])
+        # Keep receptor value where the epitope table is NaN.
+        df[field] = overrides.where(overrides.notna(), df[field])
+
+    n_changed = (rec_iri.isin(lookup.index)).sum()
+    logger.info(
+        f"  Applied epitope-table overrides to {n_changed:,} receptor rows."
+    )
     return df
 
 
@@ -571,6 +686,7 @@ def load_databases(
     vdjdb_path: str | Path | None = None,
     iedb_path: str | Path | None = None,
     cedar_path: str | Path | None = None,
+    iedb_epitope_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """
     Load and combine multiple TCR databases.
@@ -580,9 +696,13 @@ def load_databases(
     vdjdb_path : str or Path, optional
         Path to VDJdb
     iedb_path : str or Path, optional
-        Path to IEDB
+        Path to IEDB receptor table
     cedar_path : str or Path, optional
         Path to CEDAR
+    iedb_epitope_path : str or Path, optional
+        Path to IEDB epitope-level table (companion to ``iedb_path``).
+        When provided, ``load_iedb`` defers to its shorter/more
+        canonical antigen and organism names — see :func:`load_iedb`.
 
     Returns
     -------
@@ -594,7 +714,7 @@ def load_databases(
     if vdjdb_path:
         dfs.append(load_vdjdb(vdjdb_path))
     if iedb_path:
-        dfs.append(load_iedb(iedb_path))
+        dfs.append(load_iedb(iedb_path, epitope_path=iedb_epitope_path))
     if cedar_path:
         dfs.append(load_cedar(cedar_path))
 
@@ -849,6 +969,7 @@ def annotate_clonotypes(
     vdjdb_path: str | Path | None = None,
     iedb_path: str | Path | None = None,
     cedar_path: str | Path | None = None,
+    iedb_epitope_path: str | Path | None = None,
     match_by: str = "CDR3ab",
     match_strictness: str | None = None,
     exclude_viral: bool = False,
@@ -863,6 +984,11 @@ def annotate_clonotypes(
         Clonotype DataFrame
     vdjdb_path, iedb_path, cedar_path : str or Path, optional
         Paths to databases
+    iedb_epitope_path : str or Path, optional
+        Path to the IEDB epitope-level table (companion to
+        ``iedb_path``). When provided, IEDB receptor-row antigen/species
+        strings are overridden with the epitope-table's typically
+        shorter and more canonical equivalents (#54).
     match_by : str
         Legacy matching strategy. Prefer ``match_strictness`` for new code.
     match_strictness : str, optional
@@ -909,6 +1035,7 @@ def annotate_clonotypes(
         vdjdb_path=vdjdb_path,
         iedb_path=iedb_path,
         cedar_path=cedar_path,
+        iedb_epitope_path=iedb_epitope_path,
     )
 
     # Match clonotypes
