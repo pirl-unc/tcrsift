@@ -117,8 +117,17 @@ _MODULE_EXPORTS = {
     ".plots": (
         "plot_funnel",
         "plot_assembly_qc",
+        "plot_clone_freq_vs_signature_per_sample",
         "create_pipeline_funnel",
         "create_tcr_sequence_pdf",
+    ),
+    ".signatures": (
+        "ACTIVATION_GENES_HGNC",
+        "ANTIGEN_RESPONSE_GENES_HGNC",
+        "CYTOLYTIC_GENES_HGNC",
+        "EXHAUSTION_GENES_HGNC",
+        "TUMOR_REACTIVE_GENES_HGNC",
+        "T_CELL_SIGNATURES",
     ),
     ".qc": (
         "QCReport",

@@ -26,6 +26,17 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+# Re-export canonical T-cell signatures so callers of the per-sample
+# scatter can keep importing them from ``tcrsift.plots``. Source of
+# truth is :mod:`tcrsift.signatures`.
+from .signatures import (  # noqa: F401, E402
+    ACTIVATION_GENES_HGNC,
+    ANTIGEN_RESPONSE_GENES_HGNC,
+    CYTOLYTIC_GENES_HGNC,
+    EXHAUSTION_GENES_HGNC,
+    TUMOR_REACTIVE_GENES_HGNC,
+)
+
 logger = logging.getLogger(__name__)
 
 # Set default style
@@ -1445,12 +1456,9 @@ def plot_clones_by_n_methods(
 # Signature scatter — #43 item #7
 # =============================================================================
 #
-# Curated gene-set defaults pulled from the wrapper's published cohort
-# work. Callers can swap them out via the ``gene_ids`` argument when
-# their analysis uses a different signature.
-
-ACTIVATION_GENES_HGNC = ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7")
-EXHAUSTION_GENES_HGNC = ("PDCD1", "LAG3", "HAVCR2", "TIGIT", "TOX", "CTLA4")
+# Gene-set defaults live in :mod:`tcrsift.signatures` (top-of-file
+# import above). The per-sample scatter takes any ``gene_ids`` tuple,
+# so callers can drop in custom signatures via that argument.
 
 
 def _per_cell_signature(adata: ad.AnnData, gene_ids: list[str]) -> np.ndarray:
