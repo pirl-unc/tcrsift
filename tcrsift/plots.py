@@ -252,6 +252,11 @@ def plot_clonotypes(clonotypes: pd.DataFrame, output_dir: str | Path):
             plt.xticks(rotation=45, ha="right")
             save_figure(fig, output_dir / "clonotype_sharing_heatmap.png")
 
+    # Rank-family bundle (#43 — #2/#3/#4/#5). Each helper skips itself
+    # when prerequisites are missing, so callers without
+    # ``sample_frequencies`` get only the legacy clonotype plots above.
+    plot_rank_family(clonotypes, output_dir)
+
 
 # =============================================================================
 # Filter Plots
@@ -713,6 +718,409 @@ def plot_annotations_phase_b(
         plot_match_strength_comparison(
             clonotypes, output_dir, top_n=top_n, granularity=gran
         )
+
+
+# =============================================================================
+# Rank-family Plots — #43 (#2/#3/#4/#5)
+# =============================================================================
+#
+# Four plots built on a single "rank clones within a sample" kernel:
+#
+#   1. Per-sample log-log rank curves with optional tier highlight.
+#   2. Cumulative coverage by clone rank across samples.
+#   3. Top-N labeled bar chart per sample.
+#   4. Top-N cumulative stacked bar per sample (mono/oligo-clonality).
+#
+# Plus a `draw_reference_fractions` log-y utility that all four reuse.
+# Reference fractions: 10/1/0.1/0.01/0.001%.
+
+
+# Reference-fraction defaults for log-y frequency axes. Powers of ten
+# from 10% down to 0.001%; helpers above can override.
+REFERENCE_FRACTIONS = (0.1, 0.01, 0.001, 1e-4, 1e-5)
+
+
+def draw_reference_fractions(
+    ax: plt.Axes,
+    fractions: tuple[float, ...] = REFERENCE_FRACTIONS,
+    label: bool = True,
+    color: str = "#999999",
+    linestyle: str = ":",
+    linewidth: float = 0.8,
+) -> None:
+    """Draw labeled horizontal dashed lines at the given fractions.
+
+    Designed for log-y frequency axes — labels render as percent
+    strings on the right edge so they don't fight with data lines.
+    Skips fractions outside the current y-limits.
+    """
+    ymin, ymax = ax.get_ylim()
+    xmin, xmax = ax.get_xlim()
+    for f in fractions:
+        if not (ymin <= f <= ymax):
+            continue
+        ax.axhline(f, color=color, linestyle=linestyle, linewidth=linewidth, zorder=1)
+        if label:
+            pct = f"{f * 100:g}%"
+            ax.text(
+                xmax,
+                f,
+                f" {pct}",
+                ha="left",
+                va="center",
+                fontsize=8,
+                color=color,
+                clip_on=False,
+            )
+
+
+def _per_sample_rank_table(clonotypes: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Build a per-sample sorted-by-frequency view.
+
+    Returns a dict keyed by sample name; each value is a DataFrame
+    indexed by 1-based rank with columns ``CDR3ab``, ``frequency``,
+    and ``tier`` (if the column exists; else None). Clones with zero
+    frequency in that sample are excluded.
+    """
+    wide = _expand_sample_frequencies(clonotypes)
+    if wide.empty or wide.shape[1] == 0:
+        return {}
+
+    tier_lookup = (
+        clonotypes.set_index("CDR3ab")["tier"]
+        if "tier" in clonotypes.columns
+        else None
+    )
+
+    out: dict[str, pd.DataFrame] = {}
+    for sample in wide.columns:
+        col = wide[sample]
+        present = col[col > 0].sort_values(ascending=False)
+        if len(present) == 0:
+            continue
+        sample_df = pd.DataFrame(
+            {
+                "CDR3ab": present.index.tolist(),
+                "frequency": present.values,
+            }
+        )
+        if tier_lookup is not None:
+            sample_df["tier"] = sample_df["CDR3ab"].map(tier_lookup)
+        sample_df.index = range(1, len(sample_df) + 1)
+        sample_df.index.name = "rank"
+        out[sample] = sample_df
+    return out
+
+
+def _grid_shape(n_panels: int, max_cols: int = 3) -> tuple[int, int]:
+    """Pick (rows, cols) for a multi-panel layout."""
+    import math
+
+    cols = min(max(1, n_panels), max_cols)
+    rows = math.ceil(n_panels / cols)
+    return rows, cols
+
+
+def plot_rank_curves_per_sample(
+    clonotypes: pd.DataFrame,
+    output_dir: str | Path,
+    filename: str = "rank_curves_per_sample.png",
+    x_scale: str = "log",
+) -> Path | None:
+    """Log-log rank vs within-sample frequency, one panel per sample.
+
+    Tier-selected clones (``tier`` column non-null) get highlighted as
+    red dots overlaid on the rank curve so it's obvious which clones
+    are picked from where on the distribution. Reference-fraction
+    lines (10/1/0.1%/...) make the y-scale readable.
+
+    ``x_scale`` is ``"log"`` (default — best for whole-distribution
+    views) or ``"linear"`` (matches the "top-X linear-x" variant
+    mentioned in #43).
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    tables = _per_sample_rank_table(clonotypes)
+    if not tables:
+        logger.info("plot_rank_curves_per_sample: no sample_frequencies; skipping.")
+        return None
+
+    samples = list(tables)
+    rows, cols = _grid_shape(len(samples))
+    fig, axes = plt.subplots(
+        rows, cols, figsize=(5 * cols, 4 * rows), squeeze=False, sharey=True
+    )
+
+    for idx, sample in enumerate(samples):
+        ax = axes[idx // cols][idx % cols]
+        df = tables[sample]
+        ax.plot(df.index, df["frequency"], color="#1f77b4", linewidth=1.2)
+
+        if "tier" in df.columns:
+            tier_hits = df[df["tier"].notna()]
+            if len(tier_hits) > 0:
+                ax.scatter(
+                    tier_hits.index,
+                    tier_hits["frequency"],
+                    color="#d62728",
+                    s=20,
+                    zorder=3,
+                    label=f"tier-selected (n={len(tier_hits)})",
+                )
+                ax.legend(loc="upper right", fontsize=9)
+
+        ax.set_xscale(x_scale)
+        ax.set_yscale("log")
+        ax.set_xlabel("clone rank")
+        ax.set_ylabel("within-sample frequency")
+        ax.set_title(sample, fontsize=11)
+        draw_reference_fractions(ax)
+
+    # Blank any unused panels.
+    for unused in range(len(samples), rows * cols):
+        axes[unused // cols][unused % cols].axis("off")
+
+    fig.suptitle(
+        f"Clone-frequency rank curves per sample ({x_scale}-x)", y=1.02, fontsize=13
+    )
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+def plot_cumulative_coverage(
+    clonotypes: pd.DataFrame,
+    output_dir: str | Path,
+    filename: str = "cumulative_coverage_per_sample.png",
+    reference_levels: tuple[float, ...] = (0.5, 0.9),
+) -> Path | None:
+    """Σ(top-k frequency) vs k, one line per sample on a shared axes.
+
+    Reference horizontal lines at 50% / 90% (configurable) make
+    clonality differences across samples visually unambiguous: a
+    sample that hits 90% coverage by clone 10 is much more clonal
+    than one that needs 1000.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    tables = _per_sample_rank_table(clonotypes)
+    if not tables:
+        logger.info("plot_cumulative_coverage: no sample_frequencies; skipping.")
+        return None
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    palette = plt.get_cmap("tab10")
+    for i, (sample, df) in enumerate(tables.items()):
+        cum = df["frequency"].cumsum().values
+        ax.plot(
+            range(1, len(cum) + 1),
+            cum,
+            label=sample,
+            color=palette(i % 10),
+            linewidth=1.5,
+        )
+
+    for level in reference_levels:
+        ax.axhline(level, color="#999999", linestyle=":", linewidth=0.8, zorder=1)
+        ax.text(
+            ax.get_xlim()[1],
+            level,
+            f" {level * 100:g}%",
+            ha="left",
+            va="center",
+            fontsize=8,
+            color="#666666",
+            clip_on=False,
+        )
+
+    ax.set_xscale("log")
+    ax.set_xlabel("top-k clones")
+    ax.set_ylabel("cumulative frequency")
+    ax.set_ylim(0, 1.05)
+    ax.set_title("Cumulative coverage by clone rank")
+    ax.legend(loc="lower right", fontsize=9, title="sample")
+
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+def plot_top_n_labeled_bars_per_sample(
+    clonotypes: pd.DataFrame,
+    output_dir: str | Path,
+    n: int = 40,
+    annotate_top: int = 5,
+    filename: str = "top_n_labeled_bars_per_sample.png",
+) -> Path | None:
+    """Top-N clones per sample as a labeled bar chart, multi-panel.
+
+    Each panel: a bar per clone in the sample's top-N. X labels are
+    CDR3αβ (rotated and truncated for readability). Bar color
+    indicates tier-selected vs. not when the ``tier`` column is
+    available. The top ``annotate_top`` bars carry a small cell-count
+    annotation above them when ``cell_count`` is present.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    tables = _per_sample_rank_table(clonotypes)
+    if not tables:
+        logger.info(
+            "plot_top_n_labeled_bars_per_sample: no sample_frequencies; skipping."
+        )
+        return None
+
+    cell_count_lookup = (
+        clonotypes.set_index("CDR3ab")["cell_count"]
+        if "cell_count" in clonotypes.columns
+        else None
+    )
+
+    samples = list(tables)
+    rows, cols = _grid_shape(len(samples), max_cols=2)
+    fig, axes = plt.subplots(
+        rows, cols, figsize=(8 * cols, 4 * rows), squeeze=False
+    )
+
+    for idx, sample in enumerate(samples):
+        ax = axes[idx // cols][idx % cols]
+        df = tables[sample].head(n)
+        positions = range(len(df))
+
+        if "tier" in df.columns:
+            colors = [
+                "#d62728" if pd.notna(t) else "#7f7f7f" for t in df["tier"]
+            ]
+        else:
+            colors = "#1f77b4"
+
+        ax.bar(positions, df["frequency"].values, color=colors, edgecolor="white")
+        ax.set_yscale("log")
+        ax.set_xticks(positions)
+        # Show CDR3αβ but truncate to avoid an unreadable axis on long
+        # paired strings (e.g. ``CASS...F_CAVR...F``).
+        labels = [
+            (cdr3 if len(cdr3) <= 20 else cdr3[:17] + "…")
+            for cdr3 in df["CDR3ab"]
+        ]
+        ax.set_xticklabels(labels, rotation=75, ha="right", fontsize=7)
+        ax.set_ylabel("within-sample freq")
+        ax.set_title(f"{sample} — top {len(df)} clones", fontsize=11)
+        draw_reference_fractions(ax)
+
+        # Cell-count annotation on the leading bars.
+        if cell_count_lookup is not None:
+            top_to_label = df.head(annotate_top)
+            for pos, (_, row) in zip(positions, top_to_label.iterrows()):
+                count = cell_count_lookup.get(row["CDR3ab"])
+                if pd.notna(count):
+                    ax.annotate(
+                        f"{int(count)}",
+                        xy=(pos, row["frequency"]),
+                        xytext=(0, 4),
+                        textcoords="offset points",
+                        ha="center",
+                        va="bottom",
+                        fontsize=7,
+                        color="#333333",
+                    )
+
+    for unused in range(len(samples), rows * cols):
+        axes[unused // cols][unused % cols].axis("off")
+
+    fig.suptitle(f"Top-{n} clones per sample", y=1.02, fontsize=13)
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+def plot_top_n_cumulative_stacked(
+    clonotypes: pd.DataFrame,
+    output_dir: str | Path,
+    n: int = 20,
+    filename: str = "top_n_cumulative_stacked.png",
+) -> Path | None:
+    """Per-sample stacked bar showing the contribution of clones 1..N.
+
+    One bar per sample, each segment is a single clone's within-sample
+    frequency. Visually conveys mono/oligo-clonality at a glance: a
+    sample dominated by one segment is monoclonal, one with many even
+    segments is polyclonal.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    tables = _per_sample_rank_table(clonotypes)
+    if not tables:
+        logger.info("plot_top_n_cumulative_stacked: no sample_frequencies; skipping.")
+        return None
+
+    # Build a tidy long table of (sample, rank, frequency) for the top N.
+    rows_data = []
+    for sample, df in tables.items():
+        head = df.head(n)
+        for rank, freq in zip(head.index, head["frequency"]):
+            rows_data.append({"sample": sample, "rank": rank, "frequency": freq})
+    if not rows_data:
+        return None
+    long = pd.DataFrame(rows_data)
+    pivot = long.pivot(index="sample", columns="rank", values="frequency").fillna(0.0)
+    pivot = pivot.reindex(sorted(pivot.columns), axis=1)
+
+    fig, ax = plt.subplots(figsize=(max(8, 1.0 * len(pivot)), 6))
+    bottom = pd.Series(0.0, index=pivot.index)
+    # Rank-1 darkest → rank-N lightest, so the eye reads the leading
+    # contributor first.
+    cmap = plt.get_cmap("viridis_r")
+    for rank in pivot.columns:
+        ax.bar(
+            pivot.index,
+            pivot[rank].values,
+            bottom=bottom.values,
+            color=cmap((rank - 1) / max(1, n - 1)),
+            edgecolor="white",
+            linewidth=0.5,
+        )
+        bottom += pivot[rank]
+
+    ax.set_ylabel("cumulative within-sample frequency")
+    ax.set_xlabel("sample")
+    ax.set_title(f"Top-{n} cumulative frequency per sample")
+    ax.set_ylim(0, max(1.0, bottom.max() * 1.05))
+    plt.xticks(rotation=45, ha="right")
+
+    # Colorbar for clone rank.
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=1, vmax=n))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, pad=0.02)
+    cbar.set_label("clone rank within sample")
+
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+def plot_rank_family(
+    clonotypes: pd.DataFrame, output_dir: str | Path, top_n: int = 40
+) -> None:
+    """One-shot orchestrator for the rank-family plots.
+
+    Emits the four plots described in #43 (#2/#3/#4/#5) under
+    ``output_dir``. Each helper skips itself when prerequisites are
+    missing, so this is safe on partial data.
+    """
+    plot_rank_curves_per_sample(clonotypes, output_dir, x_scale="log")
+    plot_rank_curves_per_sample(
+        clonotypes,
+        output_dir,
+        filename="rank_curves_per_sample_linear.png",
+        x_scale="linear",
+    )
+    plot_cumulative_coverage(clonotypes, output_dir)
+    plot_top_n_labeled_bars_per_sample(clonotypes, output_dir, n=top_n)
+    plot_top_n_cumulative_stacked(clonotypes, output_dir, n=min(20, top_n))
 
 
 # =============================================================================
