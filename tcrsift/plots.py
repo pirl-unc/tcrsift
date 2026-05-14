@@ -26,6 +26,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from .format import pretty_method, pretty_methods, pretty_sample, pretty_samples  # noqa: F401, E402
+
 # Re-export canonical T-cell signatures so callers of the per-sample
 # scatter can keep importing them from ``tcrsift.plots``. Source of
 # truth is :mod:`tcrsift.signatures`.
@@ -130,6 +132,155 @@ def plot_assembly_qc(
 # =============================================================================
 
 
+def plot_cells_per_sample_stacked(
+    adata: ad.AnnData,
+    output_path: str | Path,
+    *,
+    qc_cols: tuple[str, ...] = (
+        "filter:min_genes", "filter:max_genes",
+        "filter:min_counts", "filter:max_counts",
+        "filter:min_mito", "filter:max_mito",
+        "filter:min_cd3",
+    ),
+    cd8_label: str = "Confident CD8+",
+    donor: str | None = None,
+) -> Path | None:
+    """Per-sample cells bar with three layered cohorts (#76).
+
+    Stacks three bars at the same baseline so the smaller bars sit
+    visually *inside* the larger one (a "filled subset" view):
+
+    1. **Loaded barcodes** (pale gray) — all rows in ``adata.obs``.
+    2. **Passing scRNA QC** (medium blue) — when ``qc_cols`` are all
+       present, the AND of those mask columns; otherwise this layer
+       equals the loaded count.
+    3. **αβ-pair denominator** (deep blue) — confident CD8+ ∧ complete
+       αβ ∧ no doublet ∧ TRA_1_umis ≥ 2 ∧ TRB_1_umis ≥ 2. This is the
+       denominator we report per-condition cell fractions against
+       (#72). When the TCR-purity columns aren't present, this layer
+       is omitted.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Must have ``obs["sample"]``. Optionally ``filter:*`` mask
+        columns (boolean) and the TCR-purity flags
+        ``is_confident``, ``has_both_chains``, ``multi_chain``,
+        ``Tcell_type`` / ``Tcell_type_consensus``, ``TRA_1_umis``,
+        ``TRB_1_umis``.
+    output_path : str | Path
+        File to write the figure to.
+    qc_cols : tuple[str, ...]
+        Per-cell boolean QC columns to AND together for the QC layer.
+    cd8_label : str
+        Value of ``Tcell_type`` / ``Tcell_type_consensus`` indicating a
+        confident-CD8+ cell.
+    donor : str | None
+        Optional donor name added to the title.
+
+    Returns
+    -------
+    Path | None
+        Output path on success.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    obs = adata.obs
+    if "sample" not in obs.columns:
+        logger.info("plot_cells_per_sample_stacked: no 'sample' column; skipping.")
+        return None
+
+    samples = sorted(obs["sample"].astype(str).unique())
+    samp = obs["sample"].astype(str).values
+    loaded_n = (
+        pd.Series(np.ones(len(obs), dtype=int), index=samp)
+        .groupby(level=0).sum().reindex(samples, fill_value=0)
+    )
+
+    has_qc = all(c in obs.columns for c in qc_cols)
+    if has_qc:
+        qc_mask = np.logical_and.reduce(
+            [obs[c].fillna(False).astype(bool).values for c in qc_cols]
+        )
+    else:
+        qc_mask = np.ones(len(obs), dtype=bool)
+    qc_n = (
+        pd.Series(qc_mask.astype(int), index=samp)
+        .groupby(level=0).sum().reindex(samples, fill_value=0)
+    )
+
+    tcell_col = None
+    for cand in ("Tcell_type_consensus", "Tcell_type"):
+        if cand in obs.columns:
+            tcell_col = cand
+            break
+    has_tcr = (
+        "has_both_chains" in obs.columns
+        and "multi_chain" in obs.columns
+        and "is_confident" in obs.columns
+        and "TRA_1_umis" in obs.columns
+        and "TRB_1_umis" in obs.columns
+        and tcell_col is not None
+    )
+    if has_tcr:
+        is_cd8 = (obs[tcell_col].astype(str) == cd8_label).values
+        tcr_mask = (
+            obs["is_confident"].fillna(False).astype(bool).values
+            & is_cd8
+            & obs["has_both_chains"].fillna(False).astype(bool).values
+            & (~obs["multi_chain"].fillna(False).astype(bool).values)
+            & (obs["TRA_1_umis"].fillna(0).astype(float).values >= 2)
+            & (obs["TRB_1_umis"].fillna(0).astype(float).values >= 2)
+        )
+        denom_n = (
+            pd.Series((qc_mask & tcr_mask).astype(int), index=samp)
+            .groupby(level=0).sum().reindex(samples, fill_value=0)
+        )
+    else:
+        denom_n = None
+
+    fig, ax = plt.subplots(figsize=(max(6, 0.6 * len(samples) + 2), 4.8))
+    x = np.arange(len(samples))
+    ax.bar(
+        x, loaded_n.values, color="#cbd5e1", edgecolor="white",
+        label="Loaded cells (all barcodes)",
+    )
+    if has_qc:
+        ax.bar(
+            x, qc_n.values, color="#60a5fa", edgecolor="white",
+            label="Passing scRNA QC",
+        )
+    if denom_n is not None:
+        ax.bar(
+            x, denom_n.values, color="#1d4ed8", edgecolor="white",
+            label="αβ-pair denominator (confident CD8+, complete αβ, "
+                  "no doublet, min_umi ≥ 2)",
+        )
+    for xi, lv in zip(x, loaded_n.values):
+        ax.text(
+            xi, lv, f"{int(lv):,}", ha="center", va="bottom",
+            fontsize=8.5, color="#475569",
+        )
+    if denom_n is not None:
+        for xi, dv in zip(x, denom_n.values):
+            if dv > 0:
+                ax.text(
+                    xi, dv, f"{int(dv):,}", ha="center", va="bottom",
+                    fontsize=8, color="white", fontweight="bold",
+                )
+    ax.set_xticks(x)
+    ax.set_xticklabels(pretty_samples(samples), rotation=30, ha="right")
+    ax.set_ylabel("Cells")
+    title = "Cells per sample"
+    if donor:
+        title += f" — donor {donor}"
+    ax.set_title(title)
+    ax.legend(loc="upper left", fontsize=8, frameon=False)
+    save_figure(fig, output_path)
+    return output_path
+
+
 def plot_qc(adata: ad.AnnData, output_dir: str | Path):
     """Generate QC plots for loaded data."""
     output_dir = Path(output_dir)
@@ -175,17 +326,10 @@ def plot_qc(adata: ad.AnnData, output_dir: str | Path):
         ax.legend()
         save_figure(fig, output_dir / "qc_mito_percent.png")
 
-    # Cells per sample
-    fig, ax = plt.subplots(figsize=(12, 6))
-    sample_counts = adata.obs["sample"].value_counts()
-    ax.bar(range(len(sample_counts)), sample_counts.values)
-    ax.set_xticks(range(len(sample_counts)))
-    ax.set_xticklabels(sample_counts.index, rotation=45, ha="right")
-    ax.set_ylabel("Number of Cells")
-    ax.set_title("Cells per Sample")
-    for i, v in enumerate(sample_counts.values):
-        ax.text(i, v + 0.01 * max(sample_counts.values), str(v), ha="center", fontsize=10)
-    save_figure(fig, output_dir / "qc_cells_per_sample.png")
+    # Cells per sample — stacked layout when QC/TCR masks are present
+    # (#76); falls back to a single-bar count when only ``sample`` is
+    # available on ``adata.obs``.
+    plot_cells_per_sample_stacked(adata, output_dir / "qc_cells_per_sample.png")
 
 
 # =============================================================================
@@ -959,7 +1103,8 @@ def plot_rank_curves_per_sample(
         ax.set_yscale("log")
         ax.set_xlabel("clone rank")
         ax.set_ylabel("within-sample frequency")
-        ax.set_title(sample, fontsize=11)
+
+        ax.set_title(pretty_sample(sample), fontsize=11)
         draw_reference_fractions(ax)
 
     # Blank any unused panels.
@@ -1092,7 +1237,8 @@ def plot_top_n_labeled_bars_per_sample(
         ]
         ax.set_xticklabels(labels, rotation=75, ha="right", fontsize=7)
         ax.set_ylabel("within-sample freq")
-        ax.set_title(f"{sample} — top {len(df)} clones", fontsize=11)
+
+        ax.set_title(f"{pretty_sample(sample)} — top {len(df)} clones", fontsize=11)
         draw_reference_fractions(ax)
 
         # Cell-count annotation on the leading bars.
@@ -1607,7 +1753,8 @@ def plot_clone_freq_vs_signature_per_sample(
         ax.set_xscale("log")
         ax.set_xlabel("clone frequency within sample")
         ax.set_ylabel(f"mean log1p {signature_label}")
-        ax.set_title(sample)
+
+        ax.set_title(pretty_sample(sample))
         ax.grid(True, which="both", linewidth=0.3, alpha=0.4)
 
     fig.suptitle(
@@ -1729,6 +1876,8 @@ def plot_method_overlap(
     ax.set_title(title)
     ax.set_xlabel("method")
     ax.set_ylabel("method")
+    ax.set_xticklabels(pretty_methods(matrix.columns))
+    ax.set_yticklabels(pretty_methods(matrix.index))
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -1791,7 +1940,7 @@ def plot_method_recovery(
             )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(method_order, rotation=30, ha="right")
+    ax.set_xticklabels(pretty_methods(method_order), rotation=30, ha="right")
     ax.set_ylim(0, 1.05)
     ax.set_ylabel(f"fraction of {tier_label} clones recovered")
     ax.set_xlabel("method")
@@ -1852,10 +2001,36 @@ def plot_assembly(clonotypes: pd.DataFrame, output_dir: str | Path):
 # =============================================================================
 
 
+FUNNEL_LABEL_NICE: dict[str, str] = {
+    # Raw mask-column names → readable funnel labels (#72). The
+    # ``filter:min_counts`` / ``filter:max_counts`` names are
+    # particularly misleading — they read like row-count filters but
+    # actually test per-cell *UMI counts*.
+    "filter:min_counts": "min UMIs per cell",
+    "filter:max_counts": "max UMIs per cell",
+    "filter:min_genes": "min genes per cell",
+    "filter:max_genes": "max genes per cell",
+    "filter:min_mito": "min mito %",
+    "filter:max_mito": "max mito %",
+    "filter:min_cd3": "min CD3 reads",
+    "filter:min_umi": "min TCR UMIs per chain",
+}
+
+
+def normalize_funnel_label(name: str) -> str:
+    """Map a raw mask/stage key to a reader-friendly funnel label
+    (#72). Pass-through for names not in :data:`FUNNEL_LABEL_NICE`."""
+    return FUNNEL_LABEL_NICE.get(name, name)
+
+
 def plot_funnel(
     stage_counts: dict[str, int],
     output_dir: str | Path,
     title: str = "TCR Selection Funnel",
+    *,
+    denominator_stage: str | None = None,
+    section_starts: tuple[str, ...] | None = None,
+    filename: str = "funnel_plot.png",
 ):
     """
     Generate a funnel plot showing TCR counts at each filtering stage.
@@ -1864,11 +2039,24 @@ def plot_funnel(
     ----------
     stage_counts : dict
         Ordered dictionary mapping stage names to counts.
-        Example: {"Raw Cells": 10000, "With VDJ": 8000, "Phenotyped": 7500, ...}
+        Example: ``{"Raw Cells": 10000, "With VDJ": 8000, ...}``.
+        Caller controls ordering — use this to put TCR-purity gates
+        ahead of scRNA-QC gates (or vice versa) per #72.
     output_dir : str or Path
-        Directory to save the plot
+        Directory to save the plot.
     title : str
-        Plot title
+        Plot title.
+    denominator_stage : str | None
+        When set, annotate this stage as the per-condition cell-fraction
+        denominator (the αβ-pair denominator, per #72). Draws an arrow
+        + label to the right of that bar.
+    section_starts : tuple[str, ...] | None
+        Stage names that *start* a new logical section (e.g. the first
+        scRNA-QC gate after the TCR-purity block). A thin horizontal
+        divider line is drawn above each named stage so a reader can
+        see where one gate group ends and the next begins.
+    filename : str
+        Output filename (default ``funnel_plot.png``).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1923,7 +2111,29 @@ def plot_funnel(
                 color="gray",
             )
 
-    ax.set_xlim(0, 1.1)
+        # αβ-pair denominator callout (#72).
+        if denominator_stage and stage == denominator_stage:
+            y = len(stages) - i - 1
+            ax.annotate(
+                "← αβ-pair denominator",
+                xy=(0.9, y),
+                xytext=(1.15, y),
+                ha="left", va="center",
+                fontsize=10, color="#1d4ed8", fontweight="bold",
+                arrowprops=dict(arrowstyle="->", color="#1d4ed8", lw=1.4),
+            )
+
+    # Section divider lines (#72). Drawn ABOVE the named stage row.
+    if section_starts:
+        for name in section_starts:
+            if name not in stages:
+                continue
+            i = stages.index(name)
+            y = len(stages) - i - 1 + 0.45
+            ax.axhline(y=y, xmin=0.02, xmax=0.98, color="#94a3b8",
+                       linestyle="--", linewidth=0.9, alpha=0.7)
+
+    ax.set_xlim(0, 1.3 if denominator_stage else 1.1)
     ax.set_ylim(-0.5, len(stages) - 0.5)
     ax.set_title(title, fontsize=14, fontweight="bold", pad=20)
     ax.axis("off")
@@ -1941,7 +2151,7 @@ def plot_funnel(
             style="italic",
         )
 
-    save_figure(fig, output_dir / "funnel_plot.png")
+    save_figure(fig, output_dir / filename)
 
 
 # =============================================================================
@@ -2169,6 +2379,10 @@ def create_pipeline_funnel(
     filtered: int,
     tier_counts: dict[str, int] | None = None,
     output_dir: str | Path = ".",
+    *,
+    ab_pair_denominator: int | None = None,
+    selected_count: int | None = None,
+    emit_selected_variant: bool = False,
 ):
     """
     Create a funnel plot for the TCRsift pipeline stages.
@@ -2176,33 +2390,75 @@ def create_pipeline_funnel(
     Parameters
     ----------
     raw_cells : int
-        Number of cells after loading
+        Number of cells after loading.
     with_vdj : int
-        Number of cells with VDJ data
+        Number of cells with VDJ data.
     phenotyped : int
-        Number of cells after phenotyping
+        Number of cells after phenotyping.
     clonotypes : int
-        Number of unique clonotypes
+        Number of unique clonotypes.
     filtered : int
-        Number of clonotypes passing filters
-    tier_counts : dict, optional
-        Counts per confidence tier
-    output_dir : str or Path
-        Output directory for the plot
+        Number of clonotypes passing filters.
+    tier_counts : dict | None
+        Counts per confidence tier (tier1 / tier2 / …).
+    output_dir : str | Path
+        Output directory for the plot.
+    ab_pair_denominator : int | None
+        Per-cell count after the TCR-purity gates (confident CD8+ ∧
+        complete αβ ∧ no doublet ∧ min UMI ≥ 2 per chain). When given,
+        inserted between ``Phenotyped`` and ``Unique Clonotypes`` and
+        annotated as the αβ-pair denominator (#72).
+    selected_count : int | None
+        Number of clones in the shortlist from
+        :func:`tcrsift.candidate.select_candidates`. Only used when
+        ``emit_selected_variant=True``.
+    emit_selected_variant : bool
+        When True, also emit a sibling funnel ``funnel_plot_selected.png``
+        that collapses the tier cascade into a single ``Selected``
+        stage (tier1 ∪ tier2 ∪ top-N-by-signature from tier3+).
     """
     stage_counts = {
         "Raw Cells": raw_cells,
         "With VDJ": with_vdj,
         "Phenotyped (CD4/CD8)": phenotyped,
-        "Unique Clonotypes": clonotypes,
-        "Passing Filters": filtered,
     }
+    if ab_pair_denominator is not None:
+        stage_counts["αβ-pair denominator"] = ab_pair_denominator
+    stage_counts["Unique Clonotypes"] = clonotypes
+    stage_counts["Passing Filters"] = filtered
 
+    tier_stage_counts = dict(stage_counts)
     if tier_counts:
         for tier, count in tier_counts.items():
-            stage_counts[f"Tier: {tier}"] = count
+            tier_stage_counts[f"Tier: {tier}"] = count
 
-    plot_funnel(stage_counts, output_dir)
+    section_starts = (
+        ("Unique Clonotypes",)
+        if ab_pair_denominator is not None
+        else None
+    )
+    plot_funnel(
+        tier_stage_counts,
+        output_dir,
+        denominator_stage=(
+            "αβ-pair denominator" if ab_pair_denominator is not None else None
+        ),
+        section_starts=section_starts,
+    )
+
+    if emit_selected_variant and selected_count is not None:
+        selected_stage_counts = dict(stage_counts)
+        selected_stage_counts["Selected"] = selected_count
+        plot_funnel(
+            selected_stage_counts,
+            output_dir,
+            denominator_stage=(
+                "αβ-pair denominator" if ab_pair_denominator is not None else None
+            ),
+            section_starts=section_starts,
+            filename="funnel_plot_selected.png",
+            title="TCR Selection Funnel (Selected shortlist)",
+        )
 
 
 # =============================================================================

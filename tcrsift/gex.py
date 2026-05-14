@@ -305,6 +305,122 @@ def aggregate_gex_by_clonotype(
     return result
 
 
+def compute_signature_scores_per_clonotype(
+    df: pd.DataFrame,
+    *,
+    signatures: dict[str, tuple[str, ...]] | None = None,
+    group_col: str = "CDR3_pair",
+    gex_prefix: str = "gex",
+    cd8_only: bool = True,
+    cd8_col: str | None = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """Compute per-clonotype signature scores (#74).
+
+    For each named signature (gene set), compute the per-cell
+    ``log1p(expression)`` mean across the gene set, then aggregate per
+    clonotype as the **cell-count-weighted mean** (i.e. each cell
+    contributes equally; cells aren't first summarized per sample).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Per-cell frame with GEX columns named ``{gex_prefix}.GENE``
+        (the shape :func:`augment_with_gex` writes).
+    signatures : dict[str, tuple[str, ...]] | None
+        Mapping of signature name → gene-symbol tuple. Defaults to the
+        five canonical T-cell signatures from :mod:`tcrsift.signatures`.
+    group_col : str
+        Column identifying the clonotype (default ``CDR3_pair``).
+    gex_prefix : str
+        Prefix on the GEX columns to look up (default ``gex``).
+    cd8_only : bool
+        When True (default) and a CD8 column is present, restrict to
+        cells with ``CD8 > 0`` before aggregating. Catches mixed CD4/CD8
+        clones where the relevant signature lives in the CD8 subset.
+    cd8_col : str | None
+        Override CD8 column name. Auto-detected from ``{gex_prefix}.CD8A``,
+        ``{gex_prefix}.CD8``, etc. when None.
+    verbose : bool
+        Log progress.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per clonotype with columns ``[{group_col}] +
+        ["signature_{name}" for name in signatures]``. Signatures whose
+        gene set has no overlap with the available GEX columns yield
+        NaN for every clone (with a single warning log line).
+    """
+    if signatures is None:
+        from .signatures import T_CELL_SIGNATURES
+
+        signatures = T_CELL_SIGNATURES
+
+    if group_col not in df.columns:
+        raise ValueError(
+            f"compute_signature_scores_per_clonotype: missing {group_col!r} column"
+        )
+
+    sub = df
+    if cd8_only:
+        if cd8_col is None:
+            for c in (f"{gex_prefix}.CD8A", f"{gex_prefix}.CD8", "CD8A", "CD8"):
+                if c in df.columns:
+                    cd8_col = c
+                    break
+        if cd8_col is not None and cd8_col in df.columns:
+            sub = df[df[cd8_col].fillna(0) > 0]
+            if verbose:
+                logger.info(
+                    f"compute_signature_scores_per_clonotype: restricting to "
+                    f"{len(sub):,}/{len(df):,} CD8+ cells via {cd8_col!r}"
+                )
+
+    score_cols: dict[str, str] = {}
+    for sig_name, genes in signatures.items():
+        gex_cols = [f"{gex_prefix}.{g}" for g in genes if f"{gex_prefix}.{g}" in sub.columns]
+        if not gex_cols:
+            if verbose:
+                logger.warning(
+                    f"compute_signature_scores_per_clonotype: signature "
+                    f"{sig_name!r} — none of {list(genes)} found under "
+                    f"prefix {gex_prefix!r}; emitting NaN"
+                )
+            sub = sub.assign(**{f"_signature_{sig_name}": np.nan})
+            score_cols[sig_name] = f"_signature_{sig_name}"
+            continue
+        # log1p mean across the available genes in the signature.
+        per_cell = np.log1p(sub[gex_cols].fillna(0).to_numpy()).mean(axis=1)
+        sub = sub.assign(**{f"_signature_{sig_name}": per_cell})
+        score_cols[sig_name] = f"_signature_{sig_name}"
+
+    if len(sub) == 0:
+        # No rows after filtering — emit NaN-valued result keyed by all
+        # clonotypes in the original frame.
+        result = (
+            df[[group_col]]
+            .drop_duplicates()
+            .assign(**{f"signature_{s}": np.nan for s in signatures})
+        )
+        return result.reset_index(drop=True)
+
+    grouped = sub.groupby(group_col, observed=True)[
+        list(score_cols.values())
+    ].mean().reset_index()
+
+    grouped = grouped.rename(
+        columns={src: f"signature_{name}" for name, src in score_cols.items()}
+    )
+
+    if verbose:
+        logger.info(
+            f"compute_signature_scores_per_clonotype: scored "
+            f"{len(grouped):,} clonotypes across {len(signatures)} signatures"
+        )
+    return grouped
+
+
 def compute_cd4_cd8_counts(
     df: pd.DataFrame,
     group_col: str = "CDR3_pair",

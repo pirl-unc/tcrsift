@@ -53,6 +53,7 @@ _MODULE_EXPORTS = {
         "augment_with_gex",
         "aggregate_gex_by_clonotype",
         "compute_cd4_cd8_counts",
+        "compute_signature_scores_per_clonotype",
         "DEFAULT_GENE_LIST",
         "DEFAULT_GENE_GROUPS",
     ),
@@ -66,6 +67,9 @@ _MODULE_EXPORTS = {
         "aggregate_clonotypes",
         "get_clonotype_summary",
         "export_clonotypes_airr",
+    ),
+    ".candidate": (
+        "select_candidates",
     ),
     ".filter": (
         "filter_clonotypes",
@@ -115,11 +119,20 @@ _MODULE_EXPORTS = {
         "export_fasta",
     ),
     ".plots": (
+        "FUNNEL_LABEL_NICE",
+        "normalize_funnel_label",
         "plot_funnel",
         "plot_assembly_qc",
+        "plot_cells_per_sample_stacked",
         "plot_clone_freq_vs_signature_per_sample",
         "create_pipeline_funnel",
         "create_tcr_sequence_pdf",
+    ),
+    ".format": (
+        "pretty_method",
+        "pretty_methods",
+        "pretty_sample",
+        "pretty_samples",
     ),
     ".signatures": (
         "ACTIVATION_GENES_HGNC",

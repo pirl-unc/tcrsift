@@ -1292,6 +1292,7 @@ def cmd_annotate_gex(args):
         aggregate_gex_by_clonotype,
         augment_with_gex,
         compute_cd4_cd8_counts,
+        compute_signature_scores_per_clonotype,
     )
 
     setup_logging(args.verbose)
@@ -1341,6 +1342,26 @@ def cmd_annotate_gex(args):
             operations=["sum", "mean"],
             verbose=args.verbose,
         )
+
+    # Step 2b: Per-clonotype signature scores (#74). Always runs when
+    # the per-cell augmented frame is available — scores are NaN for
+    # signatures whose genes weren't in the augmented set.
+    if augmented_df is not None:
+        print("\nComputing per-clonotype signature scores...")
+        sig_df = compute_signature_scores_per_clonotype(
+            augmented_df,
+            group_col=args.group_col,
+            gex_prefix=args.prefix,
+            cd8_only=True,
+            verbose=args.verbose,
+        )
+        sig_cols = [c for c in sig_df.columns if c.startswith("signature_")]
+        if sig_cols:
+            df = df.merge(
+                sig_df[[args.group_col, *sig_cols]],
+                on=args.group_col,
+                how="left",
+            )
 
     # Step 3: Compute CD4/CD8 counts if requested
     if args.cd4_cd8_counts:
