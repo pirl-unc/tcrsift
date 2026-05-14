@@ -1452,6 +1452,22 @@ def plot_clones_by_n_methods(
 ACTIVATION_GENES_HGNC = ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7")
 EXHAUSTION_GENES_HGNC = ("PDCD1", "LAG3", "HAVCR2", "TIGIT", "TOX", "CTLA4")
 
+# Focal 2-gene minimal signatures matching ``til_select.py`` defaults
+# (#70). Mirror :data:`tcrsift.til_select.ANTIGEN_RESPONSE_GENES_DEFAULT`,
+# :data:`CYTOLYTIC_GENES_DEFAULT`, and :data:`ENRICHMENT_GENES_DEFAULT`
+# so the per-sample signature scatter and the TIL-selection scores
+# agree on gene-set membership.
+#
+# - antigen_response (TNFRSF9, MKI67): recent TCR engagement + active
+#   proliferation. TNFRSF9 (4-1BB / CD137) is the AIM-assay activation
+#   marker; MKI67 (Ki-67) is the proliferation marker.
+# - cytolytic (PRF1, GZMB): canonical cytotoxic effector readout.
+# - tumor_reactive (CXCL13, ENTPD1): TIL-resident tumor-reactive
+#   phenotype — CXCL13 chemokine + CD39 ectoenzyme.
+ANTIGEN_RESPONSE_GENES_HGNC = ("TNFRSF9", "MKI67")
+CYTOLYTIC_GENES_HGNC = ("PRF1", "GZMB")
+TUMOR_REACTIVE_GENES_HGNC = ("CXCL13", "ENTPD1")
+
 
 def _per_cell_signature(adata: ad.AnnData, gene_ids: list[str]) -> np.ndarray:
     """Mean log1p expression across ``gene_ids`` per cell.

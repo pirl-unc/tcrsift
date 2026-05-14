@@ -36,7 +36,10 @@ from scipy.sparse import csr_matrix  # noqa: E402
 
 from tcrsift.plots import (  # noqa: E402
     ACTIVATION_GENES_HGNC,
+    ANTIGEN_RESPONSE_GENES_HGNC,
+    CYTOLYTIC_GENES_HGNC,
     EXHAUSTION_GENES_HGNC,
+    TUMOR_REACTIVE_GENES_HGNC,
     _derive_n_methods,
     make_method_panel_grid,
     plot_clone_freq_vs_signature_per_sample,
@@ -72,13 +75,17 @@ def ranked_clonotypes():
 
 @pytest.fixture
 def adata_with_signature_genes(ranked_clonotypes):
-    """Minimal AnnData where var_names include the default activation /
-    exhaustion gene symbols so the signature scatter has data to work with."""
+    """Minimal AnnData where var_names include every default signature
+    gene (activation, exhaustion, antigen-response, cytolytic,
+    tumor-reactive) so any scatter call has data to work with."""
     rng = np.random.default_rng(0)
-    gene_ids = list(ACTIVATION_GENES_HGNC) + list(EXHAUSTION_GENES_HGNC) + [
-        "FOO",
-        "BAR",
-    ]
+    gene_ids = sorted(
+        set(ACTIVATION_GENES_HGNC)
+        | set(EXHAUSTION_GENES_HGNC)
+        | set(ANTIGEN_RESPONSE_GENES_HGNC)
+        | set(CYTOLYTIC_GENES_HGNC)
+        | set(TUMOR_REACTIVE_GENES_HGNC)
+    ) + ["FOO", "BAR"]
     n_cells = 60
     X = csr_matrix(rng.poisson(0.5, size=(n_cells, len(gene_ids))).astype(float))
     a = ad.AnnData(X=X)
@@ -86,6 +93,29 @@ def adata_with_signature_genes(ranked_clonotypes):
     a.obs["sample"] = ["S1"] * 20 + ["S2"] * 15 + ["S3"] * 15 + ["S4"] * 10
     a.obs["CDR3ab"] = rng.choice(ranked_clonotypes["CDR3ab"], size=n_cells)
     return a
+
+
+class TestFocalSignatureConstants:
+    """The 2-gene focal signatures in plots.py must stay in sync with
+    the til_select defaults so the per-sample scatter and TIL-selection
+    scores agree on gene-set membership (#70)."""
+
+    def test_antigen_response_matches_til_select(self):
+        from tcrsift.til_select import ANTIGEN_RESPONSE_GENES_DEFAULT
+
+        assert tuple(ANTIGEN_RESPONSE_GENES_HGNC) == tuple(
+            ANTIGEN_RESPONSE_GENES_DEFAULT
+        )
+
+    def test_cytolytic_matches_til_select(self):
+        from tcrsift.til_select import CYTOLYTIC_GENES_DEFAULT
+
+        assert tuple(CYTOLYTIC_GENES_HGNC) == tuple(CYTOLYTIC_GENES_DEFAULT)
+
+    def test_tumor_reactive_matches_til_select(self):
+        from tcrsift.til_select import ENRICHMENT_GENES_DEFAULT
+
+        assert tuple(TUMOR_REACTIVE_GENES_HGNC) == tuple(ENRICHMENT_GENES_DEFAULT)
 
 
 class TestMakeMethodPanelGrid:
@@ -182,6 +212,45 @@ class TestPlotCloneFreqVsSignaturePerSample:
             ranked_clonotypes,
             gene_ids=EXHAUSTION_GENES_HGNC,
             signature_label="exhaustion",
+            output_dir=tmp_path,
+        )
+        assert out is not None
+
+    def test_works_with_antigen_response_genes(
+        self, adata_with_signature_genes, ranked_clonotypes, tmp_path
+    ):
+        """The third focal signature added in #70."""
+        out = plot_clone_freq_vs_signature_per_sample(
+            adata_with_signature_genes,
+            ranked_clonotypes,
+            gene_ids=ANTIGEN_RESPONSE_GENES_HGNC,
+            signature_label="antigen-response",
+            output_dir=tmp_path,
+        )
+        assert out is not None and out.exists()
+
+    def test_works_with_cytolytic_genes(
+        self, adata_with_signature_genes, ranked_clonotypes, tmp_path
+    ):
+        """Parity with the experiment's three focal signatures (#70)."""
+        out = plot_clone_freq_vs_signature_per_sample(
+            adata_with_signature_genes,
+            ranked_clonotypes,
+            gene_ids=CYTOLYTIC_GENES_HGNC,
+            signature_label="cytolytic",
+            output_dir=tmp_path,
+        )
+        assert out is not None
+
+    def test_works_with_tumor_reactive_genes(
+        self, adata_with_signature_genes, ranked_clonotypes, tmp_path
+    ):
+        """Parity with the experiment's three focal signatures (#70)."""
+        out = plot_clone_freq_vs_signature_per_sample(
+            adata_with_signature_genes,
+            ranked_clonotypes,
+            gene_ids=TUMOR_REACTIVE_GENES_HGNC,
+            signature_label="tumor-reactive",
             output_dir=tmp_path,
         )
         assert out is not None
