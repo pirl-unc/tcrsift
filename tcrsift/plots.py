@@ -1124,6 +1124,423 @@ def plot_rank_family(
 
 
 # =============================================================================
+# Multi-Panel Grid Helper — #43 method-grouping helper
+# =============================================================================
+#
+# A generic version of the wrapper's `make_method_grid` / `method_panel_layout`
+# that doesn't hardcode any cohort's specific method set. Callers who want
+# a cohort-specific layout (e.g. the MART-1 cohort's 3-2-2 layout) can pass
+# it as `layout`; otherwise the helper falls back to row-major chunks.
+
+
+def make_method_panel_grid(
+    methods: list[str],
+    panel_size: tuple[float, float] = (4.5, 3.5),
+    cols: int = 3,
+    layout: list[list[str]] | None = None,
+    sharex: bool = False,
+    sharey: bool = False,
+) -> tuple[plt.Figure, dict[str, plt.Axes]]:
+    """Build a multi-panel grid keyed by method/sample name.
+
+    Returns ``(fig, {method: ax})``. When ``layout`` is given (a
+    list-of-lists), it's used verbatim — useful for cohort-specific
+    layouts where panel groupings carry meaning. Otherwise methods are
+    chunked row-major into ``cols`` columns.
+
+    Designed so panel-keyed plots (slope chart, signature scatter,
+    overlap matrices) all share the same multi-panel skeleton.
+    """
+    if layout is None:
+        layout = [methods[i : i + cols] for i in range(0, len(methods), cols)]
+    n_rows = len(layout)
+    n_cols = max((len(row) for row in layout), default=1)
+    w, h = panel_size
+    fig = plt.figure(figsize=(w * n_cols, h * n_rows))
+    gs = fig.add_gridspec(n_rows, n_cols)
+
+    axes_map: dict[str, plt.Axes] = {}
+    first_ax: plt.Axes | None = None
+    for r, row in enumerate(layout):
+        for c, method in enumerate(row):
+            kw: dict = {}
+            if sharex and first_ax is not None:
+                kw["sharex"] = first_ax
+            if sharey and first_ax is not None:
+                kw["sharey"] = first_ax
+            ax = fig.add_subplot(gs[r, c], **kw)
+            if first_ax is None:
+                first_ax = ax
+            axes_map[method] = ax
+    return fig, axes_map
+
+
+# =============================================================================
+# Slope chart — #43 item #1
+# =============================================================================
+
+
+def plot_clone_tracking_slopes(
+    clonotypes: pd.DataFrame,
+    output_dir: str | Path,
+    top_n: int = 20,
+    floor: float = 1e-5,
+    filename: str = "clone_tracking_slopes.png",
+    layout: list[list[str]] | None = None,
+) -> Path | None:
+    """Slope chart: per source-sample, top-N clones' frequency across all samples.
+
+    For each source sample, picks the top-N clones by within-source
+    frequency and draws their frequencies across every sample as
+    connected lines. Clones unique to the source plummet to the
+    log-y floor; broadly shared clones stay high. The visual delta
+    makes it obvious which top clones are source-private vs.
+    cohort-public (#43 item #1).
+
+    Skips silently when ``sample_frequencies`` is missing.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    wide = _expand_sample_frequencies(clonotypes)
+    if wide.empty or wide.shape[1] == 0:
+        logger.info("plot_clone_tracking_slopes: no sample_frequencies; skipping.")
+        return None
+
+    samples = list(wide.columns)
+    fig, axes_map = make_method_panel_grid(
+        samples, panel_size=(5.5, 3.4), layout=layout, sharey=True
+    )
+
+    palette = sns.color_palette("viridis", n_colors=top_n)
+    y_max = max(float(wide.values.max()), floor * 2) * 1.5
+
+    for source, ax in axes_map.items():
+        # Pick top-N clones by frequency in this source.
+        col = wide[source]
+        present = col[col > 0].sort_values(ascending=False).head(top_n)
+        if len(present) == 0:
+            ax.axis("off")
+            continue
+
+        # Order x-axis: source first, then others by mean freq across
+        # the source's top-N (decreasing) — same ordering as the wrapper.
+        other = [s for s in samples if s != source]
+        if other:
+            other_means = wide.loc[present.index, other].mean(axis=0)
+            other = list(other_means.sort_values(ascending=False).index)
+        x_order = [source] + other
+        x_pos = np.arange(len(x_order))
+
+        mat = wide.loc[present.index, x_order].clip(lower=floor)
+        for i, cdr3 in enumerate(mat.index):
+            ax.plot(
+                x_pos,
+                mat.loc[cdr3].values,
+                color=palette[i],
+                linewidth=1.1,
+                alpha=0.85,
+                marker="o",
+                markersize=3.5,
+            )
+
+        ax.set_yscale("log")
+        ax.set_ylim(floor / 2, y_max)
+        ax.axvline(0, color="#dc2626", linewidth=0.7, alpha=0.5, zorder=1)
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(x_order, rotation=30, ha="right", fontsize=8)
+        ax.set_title(source, loc="left", fontsize=10)
+        ax.grid(True, which="both", linewidth=0.3, alpha=0.4)
+        draw_reference_fractions(ax)
+
+    fig.suptitle(
+        f"Top-{top_n} clones traced across samples (source marked at left of each panel)",
+        fontsize=12,
+        y=1.01,
+    )
+    fig.tight_layout()
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+# =============================================================================
+# N-methods distribution — #43 item #6
+# =============================================================================
+
+
+def _derive_n_methods(clonotypes: pd.DataFrame) -> pd.Series | None:
+    """Return per-clone count of distinct samples present.
+
+    Prefers an explicit ``n_methods`` / ``n_conditions_present`` column
+    if present; otherwise derives by counting non-zero entries in the
+    per-clone ``sample_frequencies`` dict. Returns ``None`` when
+    neither source is available.
+    """
+    if "n_methods" in clonotypes.columns:
+        return clonotypes["n_methods"]
+    if "n_conditions_present" in clonotypes.columns:
+        return clonotypes["n_conditions_present"]
+    if "sample_frequencies" in clonotypes.columns:
+        return clonotypes["sample_frequencies"].apply(
+            lambda d: sum(1 for v in (d or {}).values() if v > 0)
+        )
+    return None
+
+
+def plot_clones_by_n_methods(
+    clonotypes: pd.DataFrame,
+    output_dir: str | Path,
+    filename: str = "clones_by_n_methods.png",
+    highlight_tiers: tuple[str, ...] = ("tier1", "tier2"),
+) -> Path | None:
+    """1-D distribution of clones × number of distinct methods present (#43 #6).
+
+    Two side-by-side bars per bin:
+    - "all surviving clones" — every clone in the input frame
+    - tier-selected subset (default tier1 + tier2) when a ``tier``
+      column is present
+
+    Uses a symlog y-axis so a single highly-public clone and the tail
+    of singletons both stay visible. Returns ``None`` when neither
+    ``n_methods`` nor ``sample_frequencies`` is available.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    n_methods = _derive_n_methods(clonotypes)
+    if n_methods is None:
+        logger.info(
+            "plot_clones_by_n_methods: no n_methods / sample_frequencies; skipping."
+        )
+        return None
+    n_methods = n_methods.dropna().astype(int)
+    if len(n_methods) == 0:
+        return None
+
+    max_m = int(n_methods.max())
+    bins = list(range(1, max_m + 1))
+    surviving = n_methods.value_counts().reindex(bins, fill_value=0)
+
+    if "tier" in clonotypes.columns:
+        tier_mask = clonotypes["tier"].isin(highlight_tiers)
+        tier_subset = _derive_n_methods(clonotypes[tier_mask])
+        tier_subset = (
+            tier_subset.dropna().astype(int).value_counts().reindex(bins, fill_value=0)
+            if tier_subset is not None
+            else pd.Series(0, index=bins)
+        )
+    else:
+        tier_subset = None
+
+    fig, ax = plt.subplots(figsize=(max(6, 0.7 * max_m + 3), 5))
+    x = np.arange(len(bins))
+    if tier_subset is not None:
+        ax.bar(x - 0.2, surviving.values, width=0.38, label="all surviving clones",
+               color="#1f77b4")
+        ax.bar(x + 0.2, tier_subset.values, width=0.38,
+               label=f"{'+'.join(highlight_tiers)}", color="#d62728")
+        for xi, v in zip(x - 0.2, surviving.values):
+            if v > 0:
+                ax.text(xi, v, f"{int(v)}", ha="center", va="bottom", fontsize=8)
+        for xi, v in zip(x + 0.2, tier_subset.values):
+            if v > 0:
+                ax.text(xi, v, f"{int(v)}", ha="center", va="bottom",
+                        fontsize=8, color="#7f1d1d")
+    else:
+        ax.bar(x, surviving.values, width=0.6, color="#1f77b4",
+               label="all surviving clones")
+        for xi, v in zip(x, surviving.values):
+            if v > 0:
+                ax.text(xi, v, f"{int(v)}", ha="center", va="bottom", fontsize=8)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(bins)
+    ax.set_xlabel("Distinct samples / enrichment methods clone appears in")
+    ax.set_ylabel("Number of clones")
+    ax.set_yscale("symlog", linthresh=10)
+    ax.set_title("Clones × number of distinct samples")
+    ax.legend()
+
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+# =============================================================================
+# Signature scatter — #43 item #7
+# =============================================================================
+#
+# Curated gene-set defaults pulled from the wrapper's published cohort
+# work. Callers can swap them out via the ``gene_ids`` argument when
+# their analysis uses a different signature.
+
+ACTIVATION_GENES_HGNC = ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7")
+EXHAUSTION_GENES_HGNC = ("PDCD1", "LAG3", "HAVCR2", "TIGIT", "TOX", "CTLA4")
+
+
+def _per_cell_signature(adata: ad.AnnData, gene_ids: list[str]) -> np.ndarray:
+    """Mean log1p expression across ``gene_ids`` per cell.
+
+    Drops any IDs not present in ``adata.var_names``; returns a
+    zero-vector if none of the requested genes are in the matrix.
+    """
+    valid = [g for g in gene_ids if g in adata.var_names]
+    if not valid:
+        return np.zeros(adata.n_obs)
+    idx = [adata.var_names.get_loc(g) for g in valid]
+    X = adata.X[:, idx]
+    if hasattr(X, "toarray"):
+        X = X.toarray()
+    return np.log1p(X).mean(axis=1)
+
+
+def plot_clone_freq_vs_signature_per_sample(
+    adata: ad.AnnData,
+    clonotypes: pd.DataFrame,
+    gene_ids: list[str] | tuple[str, ...],
+    signature_label: str,
+    output_dir: str | Path,
+    filename: str | None = None,
+    min_cells_per_clone: int = 2,
+    layout: list[list[str]] | None = None,
+) -> Path | None:
+    """Per-sample scatter of clone freq vs. mean log1p signature expression.
+
+    For each sample, plots one point per (sample, clone) pair where
+    ``x = within-sample frequency`` and ``y = mean log1p expression``
+    of the genes in ``gene_ids`` averaged across that clone's cells
+    in the sample. Spearman correlation between log-freq and signature
+    rendered as a corner annotation per panel (#43 item #7).
+
+    Requires:
+    - ``adata`` with ``obs["sample"]``, ``obs["CDR3ab"]``
+    - ``clonotypes`` with ``sample_frequencies`` (so we can look up
+      per-(sample, clone) frequency) and ``cell_count`` for point
+      sizing.
+
+    Skips silently when any prerequisite is missing or when the gene
+    list doesn't overlap ``adata.var_names`` at all.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    needed = {"sample", "CDR3ab"}
+    if not needed.issubset(set(adata.obs.columns)):
+        logger.info(
+            "plot_clone_freq_vs_signature_per_sample: adata.obs missing "
+            f"required columns ({needed - set(adata.obs.columns)}); skipping."
+        )
+        return None
+    if "sample_frequencies" not in clonotypes.columns:
+        logger.info(
+            "plot_clone_freq_vs_signature_per_sample: no sample_frequencies; skipping."
+        )
+        return None
+
+    gene_ids = list(gene_ids)
+    valid_genes = [g for g in gene_ids if g in adata.var_names]
+    if not valid_genes:
+        logger.info(
+            "plot_clone_freq_vs_signature_per_sample: none of the requested "
+            f"genes ({gene_ids[:5]}...) match adata.var_names; skipping."
+        )
+        return None
+
+    sig = _per_cell_signature(adata, gene_ids)
+    cell_df = pd.DataFrame(
+        {
+            "sample": adata.obs["sample"].astype(str).values,
+            "CDR3ab": adata.obs["CDR3ab"].astype(str).values,
+            "signature": sig,
+        }
+    )
+    cell_df = cell_df[cell_df["CDR3ab"] != "nan"]
+    clone_sig = (
+        cell_df.groupby(["sample", "CDR3ab"], observed=True)["signature"]
+        .agg(["mean", "size"])
+        .rename(columns={"size": "cells_in_sample"})
+        .reset_index()
+    )
+    if clone_sig.empty:
+        return None
+
+    # Long-format frequency lookup from sample_frequencies.
+    freq_rows = []
+    for _, row in clonotypes.iterrows():
+        freqs = row.get("sample_frequencies") or {}
+        for sample, freq in freqs.items():
+            if freq > 0:
+                freq_rows.append(
+                    {
+                        "sample": str(sample),
+                        "CDR3ab": str(row["CDR3ab"]),
+                        "frequency": float(freq),
+                    }
+                )
+    if not freq_rows:
+        return None
+    freq_long = pd.DataFrame(freq_rows)
+    merged = clone_sig.merge(freq_long, on=["sample", "CDR3ab"], how="inner")
+    merged = merged[merged["cells_in_sample"] >= min_cells_per_clone]
+    if merged.empty:
+        return None
+
+    samples = sorted(merged["sample"].unique())
+    fig, axes_map = make_method_panel_grid(
+        samples, panel_size=(5.0, 3.8), layout=layout
+    )
+
+    for sample, ax in axes_map.items():
+        m = merged[merged["sample"] == sample]
+        if len(m) == 0:
+            ax.axis("off")
+            continue
+        ax.scatter(
+            m["frequency"],
+            m["mean"],
+            s=np.clip(m["cells_in_sample"], 4, 80),
+            alpha=0.55,
+            color="#1f77b4",
+            edgecolor="white",
+            linewidth=0.4,
+        )
+        if len(m) >= 5 and m["frequency"].std() > 0:
+            r = np.corrcoef(np.log10(m["frequency"].clip(lower=1e-6)), m["mean"])[0, 1]
+            ax.text(
+                0.02,
+                0.97,
+                f"Spearman log-freq vs sig: r = {r:.2f}\nn clones = {len(m)}",
+                transform=ax.transAxes,
+                va="top",
+                ha="left",
+                fontsize=8,
+                bbox=dict(
+                    boxstyle="round,pad=0.3",
+                    facecolor="white",
+                    alpha=0.7,
+                    edgecolor="none",
+                ),
+            )
+        ax.set_xscale("log")
+        ax.set_xlabel("clone frequency within sample")
+        ax.set_ylabel(f"mean log1p {signature_label}")
+        ax.set_title(sample)
+        ax.grid(True, which="both", linewidth=0.3, alpha=0.4)
+
+    fig.suptitle(
+        f"Clone frequency vs {signature_label} signature per sample",
+        fontsize=12,
+        y=1.01,
+    )
+    fig.tight_layout()
+    filename = filename or f"clone_freq_vs_{signature_label.split()[0]}.png"
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+# =============================================================================
 # TIL Plots
 # =============================================================================
 
@@ -1443,6 +1860,223 @@ def plot_funnel(
         )
 
     save_figure(fig, output_dir / "funnel_plot.png")
+
+
+# =============================================================================
+# Funnel variants — #43 item #8
+# =============================================================================
+#
+# Ribbon, lollipop, and terrace siblings to the existing bars funnel.
+# All four siblings consume the same ``stage_counts: dict[str, int]``
+# input as ``plot_funnel`` for API consistency. The shared
+# `_log_stage_widths` helper makes the visual narrowing rate match
+# between bars / ribbon / terrace.
+
+
+def _log_stage_widths(counts: list[int], floor: float = 0.10) -> np.ndarray:
+    """Map stage counts to relative widths in [floor, 1.0].
+
+    Log-spaced so a 10× narrowing reads as a 10× width drop visually
+    (rather than 10% as it would on a linear scale). The smallest
+    stage gets ``floor`` width to stay visible; the largest gets 1.0.
+    """
+    arr = np.array([max(c, 1) for c in counts], dtype=float)
+    log_counts = np.log10(arr)
+    lo, hi = log_counts.min(), log_counts.max()
+    if hi == lo:
+        return np.ones(len(counts))
+    return floor + (1.0 - floor) * (log_counts - lo) / (hi - lo)
+
+
+def _draw_funnel_side_labels(
+    ax: plt.Axes, stages: list[str], counts: list[int]
+) -> None:
+    """Draw stage labels on the left, count + retention% on the right."""
+    initial = counts[0] if counts else 1
+    for i, (stage, count) in enumerate(zip(stages, counts)):
+        ax.text(
+            -0.04, i, stage, ha="right", va="center",
+            fontsize=10.5, fontweight="semibold", color="#1a1a1a",
+        )
+        frac = count / initial if initial else 0
+        ax.text(
+            1.04, i, f"n = {count:,}  ·  {frac * 100:.1f}% of initial",
+            ha="left", va="center", fontsize=9.5, color="#444444",
+        )
+
+
+def plot_funnel_ribbon(
+    stage_counts: dict[str, int],
+    output_dir: str | Path,
+    title: str = "TCR Selection Funnel",
+    filename: str = "funnel_ribbon.png",
+) -> Path:
+    """Funnel as a smooth narrowing polygon (#43 #8).
+
+    Interpolates stage widths along the vertical axis to render a
+    continuous taper rather than discrete bars. Inner tick marks at
+    each stage's exact width preserve the per-stage information.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stages = list(stage_counts.keys())
+    counts = list(stage_counts.values())
+    n = len(stages)
+    widths = _log_stage_widths(counts)
+
+    fig, ax = plt.subplots(figsize=(12, max(5, 0.7 * n + 2)))
+    ys = np.arange(n)
+    interp_y = np.linspace(0, n - 1, (n - 1) * 30 + 1) if n > 1 else np.array([0.0])
+    interp_w = np.interp(interp_y, ys, widths)
+    left = (1 - interp_w) / 2
+    right = (1 + interp_w) / 2
+    ax.fill_betweenx(interp_y, left, right, color="#fda4a4", alpha=0.85, linewidth=0)
+    ax.plot(left, interp_y, color="#b91c1c", linewidth=2.0)
+    ax.plot(right, interp_y, color="#b91c1c", linewidth=2.0)
+    for i, w in enumerate(widths):
+        ax.plot([(1 - w) / 2, (1 + w) / 2], [i, i],
+                color="#b91c1c", linewidth=0.8, alpha=0.4)
+
+    _draw_funnel_side_labels(ax, stages, counts)
+    ax.set_xlim(-0.55, 1.55)
+    ax.set_ylim(n - 0.5, -0.6)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.grid(False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_title(title, pad=14)
+
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+def plot_funnel_lollipop(
+    stage_counts: dict[str, int],
+    output_dir: str | Path,
+    title: str = "TCR Selection Funnel",
+    filename: str = "funnel_lollipop.png",
+) -> Path:
+    """Funnel as a horizontal lollipop on a log-x axis (#43 #8).
+
+    One dot per stage at its actual count; lollipop "stick" runs from
+    the dot out to a common right edge so the visual fall-off is
+    obvious. Best for funnels with wide dynamic range where the
+    other variants compress the small stages.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stages = list(stage_counts.keys())
+    counts = np.array([max(c, 1) for c in stage_counts.values()], dtype=float)
+    n = len(stages)
+
+    fig, ax = plt.subplots(figsize=(10.5, max(4, 0.6 * n + 2)))
+    y = np.arange(n)
+    ax.plot(counts, y, color="#b91c1c", linewidth=2.0, zorder=2)
+    ax.scatter(
+        counts, y,
+        s=np.linspace(95, 42, n),
+        color="#b91c1c", edgecolor="white", linewidth=1.0, zorder=3,
+    )
+    for yi, stage, count in zip(y, stages, counts):
+        ax.hlines(yi, xmin=count, xmax=counts.max() * 2.4,
+                  color="#fda4a4", linewidth=2.3)
+        ax.text(count / 1.10, yi, f"n = {int(count):,}",
+                va="center", ha="left", fontsize=9.5)
+
+    ax.set_xscale("log")
+    ax.set_xlim(counts.max() * 2.4, counts.min() * 0.55)
+    ax.set_yticks(y)
+    ax.set_yticklabels(stages)
+    ax.set_xlabel("count (log scale)")
+    ax.set_ylim(n - 0.5, -0.5)
+    ax.set_title(title, pad=14)
+
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+def plot_funnel_terrace(
+    stage_counts: dict[str, int],
+    output_dir: str | Path,
+    title: str = "TCR Selection Funnel",
+    filename: str = "funnel_terrace.png",
+) -> Path:
+    """Funnel as stepped trapezoids between adjacent stages (#43 #8).
+
+    Each transition is a filled trapezoid that visually emphasizes
+    the *drop* between consecutive stages — useful for funnels where
+    the per-step retention matters more than absolute counts.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stages = list(stage_counts.keys())
+    counts = list(stage_counts.values())
+    n = len(stages)
+    widths = _log_stage_widths(counts)
+    cmap = plt.get_cmap("Reds")
+
+    fig, ax = plt.subplots(figsize=(12, max(5, 0.7 * n + 2)))
+    for i in range(n - 1):
+        w0, w1 = widths[i], widths[i + 1]
+        y0, y1 = i + 0.22, i + 0.78
+        poly = np.array(
+            [
+                [(1 - w0) / 2, y0], [(1 + w0) / 2, y0],
+                [(1 + w1) / 2, y1], [(1 - w1) / 2, y1],
+            ]
+        )
+        ax.fill(
+            poly[:, 0], poly[:, 1],
+            color=cmap(0.34 + 0.55 * i / max(1, n - 2)),
+            alpha=0.9, edgecolor="white", linewidth=1.1,
+        )
+    for i, w in enumerate(widths):
+        ax.plot([(1 - w) / 2, (1 + w) / 2], [i, i],
+                color="#7f1d1d", linewidth=1.0, alpha=0.6)
+
+    _draw_funnel_side_labels(ax, stages, counts)
+    ax.set_xlim(-0.55, 1.55)
+    ax.set_ylim(n - 0.5, -0.6)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.grid(False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_title(title, pad=14)
+
+    out_path = output_dir / filename
+    save_figure(fig, out_path)
+    return out_path
+
+
+def plot_funnel_variants(
+    stage_counts: dict[str, int],
+    output_dir: str | Path,
+    title: str = "TCR Selection Funnel",
+) -> list[Path]:
+    """Emit all four funnel renderings (bars / ribbon / lollipop / terrace).
+
+    Useful when prepping figures for an audience-uncertain context —
+    each variant exposes a different aspect (absolute counts vs.
+    per-step retention vs. dynamic range).
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    # The legacy bars renderer writes to ``funnel_plot.png``; use the
+    # same path so existing pipelines pick it up unchanged.
+    plot_funnel(stage_counts, output_dir, title=title)
+    paths.append(output_dir / "funnel_plot.png")
+    paths.append(plot_funnel_ribbon(stage_counts, output_dir, title=title))
+    paths.append(plot_funnel_lollipop(stage_counts, output_dir, title=title))
+    paths.append(plot_funnel_terrace(stage_counts, output_dir, title=title))
+    return paths
 
 
 def create_pipeline_funnel(
