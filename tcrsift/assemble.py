@@ -176,6 +176,116 @@ CONSTANT_REGION_ENDINGS = {
 }
 
 
+# Canonical human TCR constant-region amino acid sequences.
+#
+# These are the mature constant regions (post signal-cleavage), spanning
+# the connecting peptide, transmembrane helix, and cytoplasmic tail —
+# everything that goes downstream of the J-gene boundary in a cloned
+# TCR construct. Hardcoding rather than fetching from Ensembl because:
+#
+#   * Pyensembl introduces an external dependency and a frame-handling
+#     bug surface (#66) for sequences that don't actually change.
+#   * The protein sequences are well-established (UniProt P01848 /
+#     P01850 / A0A075B6Y0) and stable across releases.
+#   * The Sarah TIL pipeline already substitutes canonical strings
+#     downstream as a workaround; this brings the pipeline upstream.
+#
+# Each sequence ends with the canonical C-terminus stored in
+# ``CONSTANT_REGION_ENDINGS`` — see ``validate_sequences``.
+HUMAN_TRAC_AA = (
+    "IQNPDPAVYQLRDSKSSDKSVCLFTDFDSQTNVSQSKDSDVYITDKCVLDMRSMDFKSNSAVAWSNKSDFAC"
+    "ANAFNNSIIPEDTFFPSPESSCDVKLVEKSFETDTNLNFQNLSVIGFRILLLKVAGFNLLMTLRLWSS"
+)
+HUMAN_TRBC1_AA = (
+    "EDLNKVFPPEVAVFEPSEAEISHTQKATLVCLATGFFPDHVELSWWVNGKEVHSGVSTDPQPLKEQPALND"
+    "SRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIVSAEAWGRADCGFTSESYQQGV"
+    "LSATILYEILLGKATLYAVLVSALVLMAMVKRKDF"
+)
+HUMAN_TRBC2_AA = (
+    "EDLNKVFPPEVAVFEPSEAEISHTQKATLVCLATGFYPDHVELSWWVNGKEVHSGVCTDPQPLKEQPALND"
+    "SRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIVSAEAWGRADCGFTSVSYQQGV"
+    "LSATILYEILLGKATLYAVLVSALVLMAMVKRKDSRG"
+)
+
+HUMAN_CONSTANT_REGIONS_AA: dict[str, str] = {
+    "TRAC": HUMAN_TRAC_AA,
+    "TRBC1": HUMAN_TRBC1_AA,
+    "TRBC2": HUMAN_TRBC2_AA,
+}
+
+
+# Codon table for back-translating canonical AA constants to NT for
+# downstream consumers that need DNA. Picks the most frequent human
+# codon per residue (CCDS-weighted, GenScript table). This is
+# representative — not authoritative for nucleotide-level work.
+# Stop codon "*" maps to TAA.
+HUMAN_PREFERRED_CODONS: dict[str, str] = {
+    "A": "GCC", "R": "CGG", "N": "AAC", "D": "GAC", "C": "TGC",
+    "Q": "CAG", "E": "GAG", "G": "GGC", "H": "CAC", "I": "ATC",
+    "L": "CTG", "K": "AAG", "M": "ATG", "F": "TTC", "P": "CCC",
+    "S": "AGC", "T": "ACC", "W": "TGG", "Y": "TAC", "V": "GTG",
+    "*": "TAA",
+}
+
+
+def back_translate(aa: str) -> str:
+    """Reverse-translate a polypeptide to DNA via :data:`HUMAN_PREFERRED_CODONS`.
+
+    The result is one of many valid back-translations; tcrsift uses it
+    for NT columns that downstream pipelines expect (``*_constant_nt``)
+    but doesn't claim it matches any particular Ensembl transcript.
+    Unknown residues fall back to NNN.
+    """
+    fallback = "NNN"
+    out = [HUMAN_PREFERRED_CODONS.get(r, fallback) for r in aa]
+    return "".join(out)
+
+
+def pick_canonical_constant(
+    chain: str, c_gene: str | None = None, j_gene: str | None = None
+) -> tuple[str, str]:
+    """Choose the canonical constant-region AA for a chain.
+
+    - Alpha → always TRAC.
+    - Beta → TRBC1 vs TRBC2 by ``c_gene`` call when available; falls
+      back to the in-cis J→C rule (TRBJ1-* with TRBC1, TRBJ2-* with
+      TRBC2) when ``c_gene`` is missing.
+
+    Returns ``(gene_name, canonical_aa)``.
+    """
+    if chain == "alpha":
+        return "TRAC", HUMAN_TRAC_AA
+
+    c = c_gene if isinstance(c_gene, str) else ""
+    if "TRBC2" in c:
+        return "TRBC2", HUMAN_TRBC2_AA
+    if "TRBC1" in c:
+        return "TRBC1", HUMAN_TRBC1_AA
+
+    j = j_gene if isinstance(j_gene, str) else ""
+    if "TRBJ2" in j:
+        return "TRBC2", HUMAN_TRBC2_AA
+    # Default to TRBC1 when nothing else is known.
+    return "TRBC1", HUMAN_TRBC1_AA
+
+
+def verify_canonical_constant_start(
+    observed: str, canonical_aa: str, min_match: int = 8
+) -> bool:
+    """Sanity-check the observed C-region start against the canonical.
+
+    Returns True if at least ``min_match`` of the first ``len(observed)``
+    residues match position-wise. Used to verify a CellRanger contig's
+    post-J residues against the picked canonical before splicing the
+    canonical full sequence into the assembled construct.
+    """
+    n = min(len(observed), len(canonical_aa))
+    if n == 0:
+        return False
+    matches = sum(1 for a, b in zip(observed[:n], canonical_aa[:n]) if a == b)
+    return matches >= min_match
+
+
 def _describe_leader(param_value: str | None, resolved: str | dict | None) -> str:
     """Generate a description of a leader configuration for logging."""
     if param_value is None:
@@ -310,48 +420,28 @@ def load_contigs(contig_dir: str | Path) -> dict[str, dict[str, str]]:
 
 def get_constant_region_sequences() -> dict[str, str]:
     """
-    Get human TCR constant region sequences from Ensembl.
+    Return human TCR constant-region CDS (DNA) via back-translation.
+
+    Sources NT from :data:`HUMAN_CONSTANT_REGIONS_AA` and
+    :func:`back_translate`. The earlier pyensembl-backed implementation
+    of this function read the full mRNA at frame offset 2 and silently
+    truncated TRAC / TRBC1 / TRBC2 to 2–11 residues for every
+    assembled clonotype (#66). Hardcoding eliminates the frame bug,
+    drops the pyensembl dependency, and matches the canonical
+    sequences that downstream cloning constructs need (#67).
 
     Returns
     -------
     dict
-        Gene name to coding sequence
+        Gene name → CDS (DNA, ATG-prepended … stop). Sourced from the
+        canonical AA via :func:`back_translate`.
     """
-    try:
-        from pyensembl import ensembl_grch38
-
-        def find_stop_codon(seq, offset=0):
-            for i in range(offset, len(seq), 3):
-                codon = seq[i : i + 3]
-                if codon in {"TAA", "TAG", "TGA"}:
-                    return i
-            return None
-
-        constants = {}
-
-        # TRAC
-        trac = ensembl_grch38.genes_by_name("TRAC")[0]
-        trac_seq = trac.transcripts[0].sequence
-        stop_idx = find_stop_codon(trac_seq, offset=2)
-        if stop_idx:
-            constants["TRAC"] = trac_seq[: stop_idx + 3]
-
-        # TRBC1 and TRBC2
-        for name in ["TRBC1", "TRBC2"]:
-            gene = ensembl_grch38.genes_by_name(name)[0]
-            seq = gene.transcripts[0].sequence
-            stop_idx = find_stop_codon(seq, offset=2)
-            if stop_idx:
-                constants[name] = seq[: stop_idx + 3]
-
-        return constants
-
-    except ImportError:
-        logger.warning("pyensembl not available, constant regions will not be included")
-        return {}
-    except Exception as e:
-        logger.warning(f"Could not load constant regions from Ensembl: {e}")
-        return {}
+    out: dict[str, str] = {}
+    for name, aa in HUMAN_CONSTANT_REGIONS_AA.items():
+        # Construct ends at the canonical C-terminus; back-translate
+        # the polypeptide and append a stop codon for completeness.
+        out[name] = back_translate(aa) + HUMAN_PREFERRED_CODONS["*"]
+    return out
 
 
 def assemble_full_sequences(
@@ -385,9 +475,21 @@ def assemble_full_sequences(
         Leader sequence for beta chain. Same options as alpha_leader.
         Default is "CD8A" to provide distinct sequences from alpha chain.
     include_constant : bool
-        Include constant region sequences (fetched from Ensembl or data)
+        Include constant region sequences.
     constant_source : str
-        Source for constant regions: "ensembl" or "from-data"
+        Source for constant regions:
+
+        - ``"canonical"`` (default): splice in the hardcoded canonical
+          human TRAC / TRBC1 / TRBC2 (:data:`HUMAN_CONSTANT_REGIONS_AA`).
+          When CellRanger contigs are available, the canonical's first
+          ~15 residues are verified against the observed contig start
+          and a ``qc_warnings`` entry is emitted on mismatch.
+        - ``"ensembl"``: back-compat alias for ``"canonical"``. The
+          earlier pyensembl-backed path was removed in #66 — it read
+          the full mRNA at the wrong frame offset and silently
+          truncated constants to 2–11 residues.
+        - ``"from-data"``: read ``{chain}_constant_aa`` /
+          ``{chain}_constant_nt`` directly from the input frame.
     linker : str
         Linker sequence for single-chain constructs: "T2A", "P2A", "E2A", "F2A"
     verbose : bool
@@ -422,7 +524,7 @@ def assemble_full_sequences(
     # Validate inputs
     clonotypes = validate_clonotype_df(clonotypes, for_assembly=True)
 
-    valid_constant_sources = ["ensembl", "from-data"]
+    valid_constant_sources = ["canonical", "ensembl", "from-data"]
     if constant_source not in valid_constant_sources:
         raise TCRsiftValidationError(
             f"Invalid constant_source: '{constant_source}'",
@@ -460,18 +562,22 @@ def assemble_full_sequences(
 
     df = clonotypes.copy()
 
-    # Load constant regions if needed
+    # Load constant regions if needed. "canonical" / "ensembl" both
+    # hit the same hardcoded-AA path now (#66, #67); "ensembl" is
+    # retained as a back-compat alias and emits an info note.
     constant_seqs = {}
-    if include_constant and constant_source == "ensembl":
-        if verbose:
-            logger.info("  Loading constant regions from Ensembl...")
-        constant_seqs = get_constant_region_sequences()
-        if not constant_seqs:
-            logger.warning(
-                "  Could not load constant regions from Ensembl, will use sequences from data"
+    if include_constant and constant_source in ("canonical", "ensembl"):
+        if constant_source == "ensembl" and verbose:
+            logger.info(
+                "  constant_source='ensembl' is now an alias for 'canonical' "
+                "(#66) — splicing canonical TRAC / TRBC1 / TRBC2 from "
+                "HUMAN_CONSTANT_REGIONS_AA."
             )
-        elif verbose:
-            logger.info(f"    Loaded {len(constant_seqs)} constant region sequences")
+        constant_seqs = get_constant_region_sequences()
+        if verbose:
+            logger.info(
+                f"    Loaded {len(constant_seqs)} canonical constant region sequences"
+            )
 
     # Warn if from-data constants requested but not present
     if include_constant and constant_source == "from-data":
@@ -597,7 +703,10 @@ def _assemble_clone(
         if constant_source == "from-data":
             _add_constant_from_row(row, result)
         else:
-            _add_constant_regions(result, constant_seqs)
+            # ``canonical`` / ``ensembl`` (back-compat alias) flow:
+            # pick the canonical TRAC / TRBC1 / TRBC2, splice the AA
+            # in, and verify against the contig start when available.
+            _add_constant_regions(result, constant_seqs, row=row, sample_contigs=sample_contigs)
 
     # Determine which chains have leaders for building full sequences
     include_alpha_leader = leader_config.get("alpha") is not None
@@ -655,18 +764,104 @@ def _extract_leader_from_contigs_single(
         result[f"{chain}_leader_nt"] = leader_dna_counter.most_common(1)[0][0]
 
 
-def _add_constant_regions(result: dict, constant_seqs: dict):
-    """Add constant region sequences."""
-    for chain, c_gene_default in [("alpha", "TRAC"), ("beta", "TRBC1")]:
-        c_gene = result.get(f"{chain}_c_gene", c_gene_default)
-        if not c_gene:
-            c_gene = c_gene_default
+def _add_constant_regions(
+    result: dict,
+    constant_seqs: dict,
+    row: pd.Series | None = None,
+    sample_contigs: dict | None = None,
+):
+    """Add constant-region sequences and verify against the observed
+    CellRanger contig start where possible.
 
-        if c_gene in constant_seqs:
-            const_nt = constant_seqs[c_gene]
-            const_aa, _ = translate_dna(const_nt)
-            result[f"{chain}_constant_nt"] = const_nt
-            result[f"{chain}_constant_aa"] = const_aa
+    Strategy: pick the canonical TRAC / TRBC1 / TRBC2 via
+    :func:`pick_canonical_constant` using ``c_gene`` (with J-gene
+    fallback for β), splice the canonical AA in as the constant, and —
+    if contigs are available — pull the first ~15 residues observed
+    after the VDJ in the contig and verify they match the canonical
+    start. Mismatches surface as ``{chain}_constant_qc`` warnings on
+    the result; the canonical is still used so downstream
+    cloning-construct outputs are at least biologically valid.
+    """
+    for chain in ["alpha", "beta"]:
+        c_gene = result.get(f"{chain}_c_gene")
+        j_gene = result.get(f"{chain}_j_gene")
+        canonical_name, canonical_aa = pick_canonical_constant(chain, c_gene, j_gene)
+
+        # Splice in canonical AA + back-translated NT.
+        result[f"{chain}_constant_aa"] = canonical_aa
+        # `constant_seqs` already holds back-translated DNA for the
+        # canonical AA; keep it pluggable in case a caller patches
+        # the dict (the keys are gene names).
+        result[f"{chain}_constant_nt"] = constant_seqs.get(
+            canonical_name, back_translate(canonical_aa)
+        )
+        result[f"{chain}_c_gene_canonical"] = canonical_name
+
+        # Verify the observed contig C-region start against canonical.
+        observed = (
+            _extract_c_region_start_from_contig(
+                row, sample_contigs, result.get(f"vdj_{chain}_aa", ""), chain
+            )
+            if (row is not None and sample_contigs)
+            else None
+        )
+        if observed is None:
+            result[f"{chain}_constant_source"] = f"canonical:{canonical_name}"
+        elif verify_canonical_constant_start(observed, canonical_aa):
+            result[f"{chain}_constant_source"] = (
+                f"canonical:{canonical_name} (contig-verified)"
+            )
+        else:
+            result[f"{chain}_constant_source"] = (
+                f"canonical:{canonical_name} (UNVERIFIED — start mismatch)"
+            )
+            result.setdefault("qc_warnings", []).append(
+                f"{chain} constant start mismatch: observed "
+                f"{observed!r} differs from canonical {canonical_name} "
+                f"(expected start {canonical_aa[:len(observed)]!r}). "
+                "Using canonical anyway; c_gene assignment may be wrong."
+            )
+
+
+def _extract_c_region_start_from_contig(
+    row: pd.Series,
+    sample_contigs: dict,
+    vdj_aa: str,
+    chain: str,
+    n_aa: int = 15,
+) -> str | None:
+    """Pull the first ``n_aa`` residues observed after the VDJ in the
+    CellRanger contig, if extractable.
+
+    Mirrors the logic in :func:`_extract_leader_from_contigs_single` —
+    longest-ORF translation, split on the VDJ AA, take what follows.
+    Returns ``None`` when no contig contains the VDJ AA or the
+    post-VDJ tail is shorter than ``n_aa``.
+    """
+    if not vdj_aa:
+        return None
+    samples = str(row.get("samples", "")).split(";")
+    contig_col = f"{chain}_contig_ids"
+    if contig_col not in row or pd.isna(row[contig_col]):
+        return None
+
+    contig_ids = str(row[contig_col]).split(";")
+    starts = Counter()
+    for sample in samples:
+        if sample not in sample_contigs:
+            continue
+        for contig_id in contig_ids:
+            if contig_id not in sample_contigs[sample]:
+                continue
+            contig_seq = sample_contigs[sample][contig_id]
+            translated, _, _ = find_longest_orf(contig_seq)
+            if vdj_aa in translated:
+                _, after = translated.split(vdj_aa, 1)
+                if len(after) >= n_aa:
+                    starts[after[:n_aa]] += 1
+    if starts:
+        return starts.most_common(1)[0][0]
+    return None
 
 
 def _add_constant_from_row(row: pd.Series, result: dict):
@@ -772,55 +967,143 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     return df
 
 
-def validate_sequences(df: pd.DataFrame) -> list[str]:
-    """
-    Validate assembled sequences.
+def validate_sequences(
+    df: pd.DataFrame, strict: bool = False
+) -> list[str]:
+    """Validate assembled sequences end-to-end per row (#68).
 
-    Returns
-    -------
-    list
-        List of warning messages
-    """
-    warnings = []
+    Checks each ``full_{chain}_aa`` row against:
 
-    # Check sequence lengths
+    - Length window (200–450 aa).
+    - CDR3 string present in the assembled sequence.
+    - Constant region's canonical C-terminus (from
+      :data:`CONSTANT_REGION_ENDINGS`).
+    - Constant region's canonical start (first 8+ residues of
+      :data:`HUMAN_CONSTANT_REGIONS_AA`).
+    - Whether the per-row ``qc_warnings`` list (populated by
+      ``_add_constant_regions`` when a contig-vs-canonical mismatch
+      was detected) is non-empty.
+
+    Returns a flat list of "Clone {idx}: ..." messages. When ``strict``
+    is True, raises :class:`TCRsiftValidationError` if any
+    load-bearing checks fail. Load-bearing = length window failures,
+    missing CDR3 in the assembled sequence, canonical-ending or
+    canonical-start mismatch. Non-load-bearing (returned but not
+    raised even in strict): "didn't have enough info to check"
+    notes — useful for spotting input that's missing the columns the
+    validator needs.
+
+    Distinguishing "didn't check" from "passed" was the key gap that
+    let the #66 truncated-constant bug slip through unnoticed — the
+    old check silently passed when ``c_gene`` was missing.
+    """
+    load_bearing: list[str] = []
+    informational: list[str] = []
+
+    # 1. Per-chain shape and content checks.
     for chain in ["alpha", "beta"]:
         col = f"full_{chain}_aa"
         if col not in df.columns:
             continue
-
         for idx, row in df.iterrows():
             seq = row.get(col, "")
-            if not seq:
+            if not seq or not isinstance(seq, str):
                 continue
 
             if len(seq) < 200:
-                warnings.append(f"Clone {idx}: {chain} chain too short ({len(seq)} aa)")
-            if len(seq) > 450:
-                warnings.append(f"Clone {idx}: {chain} chain too long ({len(seq)} aa)")
+                load_bearing.append(
+                    f"Clone {idx}: {chain} chain too short ({len(seq)} aa)"
+                )
+            elif len(seq) > 450:
+                load_bearing.append(
+                    f"Clone {idx}: {chain} chain too long ({len(seq)} aa)"
+                )
 
-            # Check CDR3 is present
             cdr3_col = f"CDR3_{chain}"
             if cdr3_col in row:
                 cdr3 = row[cdr3_col]
-                if cdr3 and cdr3 not in seq:
-                    warnings.append(f"Clone {idx}: CDR3_{chain} not found in full sequence")
-
-    # Check constant region endings
-    for idx, row in df.iterrows():
-        for chain in ["alpha", "beta"]:
-            c_gene = row.get(f"{chain}_c_gene", "")
-            full_seq = row.get(f"full_{chain}_aa", "")
-
-            if c_gene and full_seq and c_gene in CONSTANT_REGION_ENDINGS:
-                expected_end = CONSTANT_REGION_ENDINGS[c_gene]
-                if not full_seq.endswith(expected_end):
-                    warnings.append(
-                        f"Clone {idx}: {chain} constant region doesn't end with expected "
-                        f"sequence for {c_gene}"
+                if isinstance(cdr3, str) and cdr3 and cdr3 not in seq:
+                    load_bearing.append(
+                        f"Clone {idx}: CDR3_{chain}={cdr3!r} not found in full sequence"
                     )
 
-    return warnings
+            # Canonical-ending / canonical-start checks. Prefer
+            # ``{chain}_c_gene_canonical`` (written by
+            # ``_add_constant_regions``); fall back to the raw
+            # CellRanger ``{chain}_c_gene`` call. If neither resolves
+            # to a known canonical gene name, emit an informational
+            # "did-not-check" note so the user knows validation was
+            # incomplete.
+            c_gene = (
+                row.get(f"{chain}_c_gene_canonical")
+                or row.get(f"{chain}_c_gene")
+                or ""
+            )
+            # Strip any allele suffix (e.g. "TRBC1*01" → "TRBC1").
+            c_gene_base = c_gene.split("*")[0] if isinstance(c_gene, str) else ""
+            if c_gene_base in CONSTANT_REGION_ENDINGS:
+                expected_end = CONSTANT_REGION_ENDINGS[c_gene_base]
+                if not seq.endswith(expected_end):
+                    load_bearing.append(
+                        f"Clone {idx}: {chain} doesn't end with canonical "
+                        f"{c_gene_base} C-terminus ({expected_end!r}); "
+                        f"got {seq[-len(expected_end):]!r}"
+                    )
+                canonical_aa = HUMAN_CONSTANT_REGIONS_AA.get(c_gene_base)
+                if canonical_aa and not verify_canonical_constant_start(
+                    _expected_constant_start_from_full(seq, row, chain),
+                    canonical_aa,
+                    min_match=8,
+                ):
+                    load_bearing.append(
+                        f"Clone {idx}: {chain} constant start doesn't match "
+                        f"canonical {c_gene_base} (expected start "
+                        f"{canonical_aa[:15]!r})"
+                    )
+            else:
+                informational.append(
+                    f"Clone {idx}: {chain} c_gene={c_gene!r} not in "
+                    "CONSTANT_REGION_ENDINGS — canonical ending/start unverifiable"
+                )
+
+    # 2. Surface any per-row qc_warnings the assembler stashed (e.g.
+    # contig-vs-canonical start mismatch detected during assembly).
+    if "qc_warnings" in df.columns:
+        for idx, qcs in df["qc_warnings"].items():
+            if isinstance(qcs, list):
+                for msg in qcs:
+                    load_bearing.append(f"Clone {idx}: {msg}")
+
+    all_messages = load_bearing + informational
+    if strict and load_bearing:
+        raise TCRsiftValidationError(
+            f"Sequence validation failed ({len(load_bearing)} load-bearing issues):\n  "
+            + "\n  ".join(load_bearing[:10])
+            + ("\n  ..." if len(load_bearing) > 10 else "")
+        )
+    return all_messages
+
+
+def _expected_constant_start_from_full(
+    full_aa: str, row: pd.Series, chain: str
+) -> str:
+    """Best-effort extract of the first ~15 aa of the constant region
+    from a full assembled chain.
+
+    Strategy: the full chain is leader + VDJ + constant. The VDJ AA
+    is available as ``vdj_{chain}_aa``; split on it. If the VDJ isn't
+    in the full sequence (which is itself a different failure caught
+    elsewhere), fall back to slicing off the canonical-length leader.
+    Returns up to 15 residues; an empty string when nothing useful
+    can be extracted.
+    """
+    if not isinstance(full_aa, str) or not full_aa:
+        return ""
+    vdj = row.get(f"vdj_{chain}_aa")
+    if isinstance(vdj, str) and vdj and vdj in full_aa:
+        after = full_aa.split(vdj, 1)[1]
+        return after[:15]
+    return ""
 
 
 def export_fasta(df: pd.DataFrame, output_path: str | Path, sequence_col: str = "single_chain_aa"):
