@@ -44,8 +44,8 @@ from tcrsift.validation import TCRsiftValidationError
 
 
 def _ok_clone(
-    vdj_alpha: str = "CASS" + "A" * 60 + "VDJALPHA",     # ~72 aa
-    vdj_beta: str = "CASS" + "B" * 30 + "VDJBETA",        # ~41 aa
+    vdj_alpha: str = "CASS" + "A" * 60 + "VLPHA",        # ~69 aa, valid AAs only
+    vdj_beta: str = "CASS" + "G" * 30 + "VETA",           # ~38 aa, valid AAs only
     leader_aa: str = "MALELPLLLL" * 2,                    # 20 aa
     c_gene_alpha: str = "TRAC",
     c_gene_beta: str = "TRBC1",

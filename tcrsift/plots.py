@@ -40,6 +40,80 @@ def save_figure(fig: plt.Figure, output_path: str | Path, dpi: int = 300):
     logger.info(f"Saved plot to {output_path}")
 
 
+def plot_assembly_qc(
+    report,
+    output_path: str | Path | None = None,
+    *,
+    figsize: tuple[float, float] | None = None,
+) -> plt.Figure:
+    """Stacked horizontal bar of pass/fail per assembly QC check (#67).
+
+    Parameters
+    ----------
+    report : tcrsift.assemble.AssemblyQCReport
+        Structured report from :func:`tcrsift.assemble.build_assembly_qc_report`.
+    output_path : str | Path | None
+        If given, save the figure here and return it after closing.
+    figsize : tuple[float, float] | None
+        Override default sizing. Default scales height to check count.
+    """
+    checks = list(report.checks)
+    if not checks:
+        fig, ax = plt.subplots(figsize=(6, 1.5))
+        ax.text(
+            0.5, 0.5, "No QC checks ran (empty input)",
+            ha="center", va="center", transform=ax.transAxes,
+        )
+        ax.set_axis_off()
+        if output_path:
+            save_figure(fig, output_path)
+        return fig
+
+    if figsize is None:
+        figsize = (9, max(2.5, 0.4 * len(checks) + 1.5))
+    fig, ax = plt.subplots(figsize=figsize)
+
+    labels = [c.label for c in checks]
+    passed = np.array([c.passed for c in checks])
+    failed = np.array([c.failed for c in checks])
+    y = np.arange(len(checks))
+
+    ax.barh(y, passed, color="#2a9d8f", label="pass")
+    ax.barh(y, failed, left=passed, color="#e63946", label="fail")
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("clones")
+    status = "PASS" if report.passed else "FAIL"
+    ax.set_title(f"Assembly QC — {report.n_rows} clones — {status}")
+    ax.legend(loc="lower right", frameon=False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    # Annotate each row with the pass/total fraction (and median where set).
+    for i, c in enumerate(checks):
+        right_edge = c.total
+        text_parts = [f"{c.passed}/{c.total}"]
+        if c.median_value is not None:
+            text_parts.append(
+                f"med {c.median_value:g}"
+                + (f" {c.unit}" if c.unit else "")
+            )
+        ax.text(
+            right_edge,
+            i,
+            "  " + " · ".join(text_parts),
+            va="center",
+            fontsize=9,
+            color="#444",
+        )
+
+    fig.tight_layout()
+    if output_path:
+        save_figure(fig, output_path)
+    return fig
+
+
 # =============================================================================
 # QC Plots (load command)
 # =============================================================================
