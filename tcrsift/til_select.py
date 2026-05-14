@@ -44,6 +44,15 @@ from matplotlib.backends.backend_pdf import PdfPages
 from scipy import sparse
 from scipy.sparse import issparse
 
+from .signatures import (
+    ANTIGEN_RESPONSE_GENES_HGNC as ANTIGEN_RESPONSE_GENES_DEFAULT,
+)
+from .signatures import (
+    CYTOLYTIC_GENES_HGNC as CYTOLYTIC_GENES_DEFAULT,
+)
+from .signatures import (
+    TUMOR_REACTIVE_GENES_HGNC as ENRICHMENT_GENES_DEFAULT,
+)
 from .validation import TCRsiftValidationError, validate_file_exists
 
 logger = logging.getLogger(__name__)
@@ -88,9 +97,10 @@ TCR_SEGMENTS_AA = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4")
 TCR_SEGMENTS_NT = tuple(f"{segment}_nt" for segment in TCR_SEGMENTS_AA)
 VDJ_SEGMENT_COLS = list(TCR_SEGMENTS_AA)
 VDJ_SEGMENT_NT_COLS = list(TCR_SEGMENTS_NT)
-CYTOLYTIC_GENES_DEFAULT = ("PRF1", "GZMB")
-ANTIGEN_RESPONSE_GENES_DEFAULT = ("TNFRSF9", "MKI67")
-ENRICHMENT_GENES_DEFAULT = ("CXCL13", "ENTPD1")
+# ``CYTOLYTIC_GENES_DEFAULT`` / ``ANTIGEN_RESPONSE_GENES_DEFAULT`` /
+# ``ENRICHMENT_GENES_DEFAULT`` are now back-compat aliases imported
+# above from :mod:`tcrsift.signatures`, which can drive non-TIL
+# selections too.
 RANK_METRICS = (
     "mean_frequency",
     "max_frequency",

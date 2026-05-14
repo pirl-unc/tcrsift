@@ -26,6 +26,17 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+# Re-export canonical T-cell signatures so callers of the per-sample
+# scatter can keep importing them from ``tcrsift.plots``. Source of
+# truth is :mod:`tcrsift.signatures`.
+from .signatures import (  # noqa: F401, E402
+    ACTIVATION_GENES_HGNC,
+    ANTIGEN_RESPONSE_GENES_HGNC,
+    CYTOLYTIC_GENES_HGNC,
+    EXHAUSTION_GENES_HGNC,
+    TUMOR_REACTIVE_GENES_HGNC,
+)
+
 logger = logging.getLogger(__name__)
 
 # Set default style
@@ -1445,28 +1456,9 @@ def plot_clones_by_n_methods(
 # Signature scatter — #43 item #7
 # =============================================================================
 #
-# Curated gene-set defaults pulled from the wrapper's published cohort
-# work. Callers can swap them out via the ``gene_ids`` argument when
-# their analysis uses a different signature.
-
-ACTIVATION_GENES_HGNC = ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7")
-EXHAUSTION_GENES_HGNC = ("PDCD1", "LAG3", "HAVCR2", "TIGIT", "TOX", "CTLA4")
-
-# Focal 2-gene minimal signatures matching ``til_select.py`` defaults
-# (#70). Mirror :data:`tcrsift.til_select.ANTIGEN_RESPONSE_GENES_DEFAULT`,
-# :data:`CYTOLYTIC_GENES_DEFAULT`, and :data:`ENRICHMENT_GENES_DEFAULT`
-# so the per-sample signature scatter and the TIL-selection scores
-# agree on gene-set membership.
-#
-# - antigen_response (TNFRSF9, MKI67): recent TCR engagement + active
-#   proliferation. TNFRSF9 (4-1BB / CD137) is the AIM-assay activation
-#   marker; MKI67 (Ki-67) is the proliferation marker.
-# - cytolytic (PRF1, GZMB): canonical cytotoxic effector readout.
-# - tumor_reactive (CXCL13, ENTPD1): TIL-resident tumor-reactive
-#   phenotype — CXCL13 chemokine + CD39 ectoenzyme.
-ANTIGEN_RESPONSE_GENES_HGNC = ("TNFRSF9", "MKI67")
-CYTOLYTIC_GENES_HGNC = ("PRF1", "GZMB")
-TUMOR_REACTIVE_GENES_HGNC = ("CXCL13", "ENTPD1")
+# Gene-set defaults live in :mod:`tcrsift.signatures` (top-of-file
+# import above). The per-sample scatter takes any ``gene_ids`` tuple,
+# so callers can drop in custom signatures via that argument.
 
 
 def _per_cell_signature(adata: ad.AnnData, gene_ids: list[str]) -> np.ndarray:

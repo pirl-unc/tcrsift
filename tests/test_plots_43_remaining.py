@@ -95,27 +95,38 @@ def adata_with_signature_genes(ranked_clonotypes):
     return a
 
 
-class TestFocalSignatureConstants:
-    """The 2-gene focal signatures in plots.py must stay in sync with
-    the til_select defaults so the per-sample scatter and TIL-selection
-    scores agree on gene-set membership (#70)."""
+class TestFocalSignatureBackcompat:
+    """The til_select-side ``_DEFAULT`` aliases must keep pointing at
+    the same canonical signatures, since downstream callers (and
+    internal til_select code) still import them by the old name."""
 
-    def test_antigen_response_matches_til_select(self):
+    def test_antigen_response_alias_preserved(self):
         from tcrsift.til_select import ANTIGEN_RESPONSE_GENES_DEFAULT
 
         assert tuple(ANTIGEN_RESPONSE_GENES_HGNC) == tuple(
             ANTIGEN_RESPONSE_GENES_DEFAULT
         )
 
-    def test_cytolytic_matches_til_select(self):
+    def test_cytolytic_alias_preserved(self):
         from tcrsift.til_select import CYTOLYTIC_GENES_DEFAULT
 
         assert tuple(CYTOLYTIC_GENES_HGNC) == tuple(CYTOLYTIC_GENES_DEFAULT)
 
-    def test_tumor_reactive_matches_til_select(self):
+    def test_tumor_reactive_alias_preserved(self):
         from tcrsift.til_select import ENRICHMENT_GENES_DEFAULT
 
         assert tuple(TUMOR_REACTIVE_GENES_HGNC) == tuple(ENRICHMENT_GENES_DEFAULT)
+
+    def test_canonical_module_is_signatures(self):
+        """``tcrsift.signatures`` is the source of truth — verify both
+        ``plots`` and ``til_select`` import from there and end up with
+        the same tuple object."""
+        from tcrsift import signatures
+        from tcrsift.plots import ANTIGEN_RESPONSE_GENES_HGNC as p
+        from tcrsift.til_select import ANTIGEN_RESPONSE_GENES_DEFAULT as t
+
+        assert p is signatures.ANTIGEN_RESPONSE_GENES_HGNC
+        assert t is signatures.ANTIGEN_RESPONSE_GENES_HGNC
 
 
 class TestMakeMethodPanelGrid:
