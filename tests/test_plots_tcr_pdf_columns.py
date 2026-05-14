@@ -166,20 +166,20 @@ class TestCreateTcrSequencePdfStrict:
         from tcrsift.plots import create_tcr_sequence_pdf
         from tcrsift.validation import TCRsiftValidationError
 
-        vdj_alpha = "CASS" + "A" * 60 + "VDJALPHA"
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
         # The constant is truncated to "RT" — exactly what the #66
         # bug produced — but everything else is in order.
         df = pd.DataFrame(
             [
                 {
                     "CDR3_alpha": vdj_alpha,
-                    "CDR3_beta": "CASSBETAVDJ",
+                    "CDR3_beta": "CASSGETAVDF",
                     "vdj_alpha_aa": vdj_alpha,
-                    "vdj_beta_aa": "CASSBETAVDJ",
+                    "vdj_beta_aa": "CASSGETAVDF",
                     "alpha_c_gene_canonical": "TRAC",
                     "beta_c_gene_canonical": "TRBC1",
                     "full_alpha_aa": "M" * 20 + vdj_alpha + "RT",  # truncated
-                    "full_beta_aa": "M" * 20 + "CASSBETAVDJ" + HUMAN_TRAC_AA,
+                    "full_beta_aa": "M" * 20 + "CASSGETAVDF" + HUMAN_TRAC_AA,
                     "alpha_constant_aa": "RT",
                     "beta_constant_aa": HUMAN_TRAC_AA,
                 }
@@ -199,18 +199,18 @@ class TestCreateTcrSequencePdfStrict:
         from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
         from tcrsift.plots import create_tcr_sequence_pdf
 
-        vdj_alpha = "CASS" + "A" * 60 + "VDJALPHA"
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
         df = pd.DataFrame(
             [
                 {
                     "CDR3_alpha": vdj_alpha,
-                    "CDR3_beta": "CASSBETAVDJ",
+                    "CDR3_beta": "CASSGETAVDF",
                     "vdj_alpha_aa": vdj_alpha,
-                    "vdj_beta_aa": "CASSBETAVDJ",
+                    "vdj_beta_aa": "CASSGETAVDF",
                     "alpha_c_gene_canonical": "TRAC",
                     "beta_c_gene_canonical": "TRBC1",
                     "full_alpha_aa": "M" * 20 + vdj_alpha + "RT",  # truncated
-                    "full_beta_aa": "M" * 20 + "CASSBETAVDJ" + HUMAN_TRBC1_AA,
+                    "full_beta_aa": "M" * 20 + "CASSGETAVDF" + HUMAN_TRBC1_AA,
                     "alpha_constant_aa": "RT",
                     "beta_constant_aa": HUMAN_TRBC1_AA,
                 }

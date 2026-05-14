@@ -514,7 +514,12 @@ def cmd_assemble(args):
     """Assemble full-length TCR sequences."""
     import pandas as pd
 
-    from .assemble import assemble_full_sequences, export_fasta, validate_sequences
+    from .assemble import (
+        assemble_full_sequences,
+        assemble_qc_report,
+        export_fasta,
+        validate_sequences,
+    )
     from .plots import plot_assembly
 
     setup_logging(args.verbose)
@@ -553,10 +558,11 @@ def cmd_assemble(args):
         linker=args.linker if args.single_chain else None,
     )
 
-    # Validate
+    # Validate (per-row warnings + aggregate QC report).
     warnings = validate_sequences(assembled)
     for w in warnings:
         print(f"WARNING: {w}")
+    print(assemble_qc_report(assembled))
 
     # Save
     assembled.to_csv(args.output, index=False)

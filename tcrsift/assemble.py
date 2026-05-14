@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -174,6 +175,21 @@ CONSTANT_REGION_ENDINGS = {
     "TRBC1": "VKRKDF",
     "TRBC2": "VKRKDSRG",
 }
+
+# Minimum plausible length of the mature constant region per chain.
+# TRAC mature ≈ 138 aa; TRBC1/TRBC2 mature ≈ 178 aa. The #66 bug produced
+# 2–11 aa constants. Anything below these floors is a truncation.
+CONSTANT_AA_FLOOR = {"alpha": 100, "beta": 150}
+
+# In-cis J→C pairing for β chain: TRBJ1-* segments rearrange with TRBC1,
+# TRBJ2-* with TRBC2. A row whose J-gene parity contradicts the called
+# C-gene is either an annotation conflict or an assembly bug.
+BETA_JC_PARITY = {"TRBJ1": "TRBC1", "TRBJ2": "TRBC2"}
+
+# Allowed residue alphabet for assembled protein chains: the 20 standard
+# AAs plus X (unknown — sometimes emitted by translation) and * (stop).
+# Anything outside this set in a ``full_*_aa`` is corruption.
+_VALID_AA_CHARS = frozenset("ACDEFGHIKLMNPQRSTVWYX*")
 
 
 # Canonical human TCR constant-region amino acid sequences.
@@ -970,37 +986,41 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
 def validate_sequences(
     df: pd.DataFrame, strict: bool = False
 ) -> list[str]:
-    """Validate assembled sequences end-to-end per row (#68).
+    """Validate assembled sequences end-to-end per row (#67, #68).
 
-    Checks each ``full_{chain}_aa`` row against:
+    Per-chain checks on each ``full_{chain}_aa`` row:
 
     - Length window (200–450 aa).
-    - CDR3 string present in the assembled sequence.
+    - CDR3 substring present in the assembled sequence.
     - Constant region's canonical C-terminus (from
       :data:`CONSTANT_REGION_ENDINGS`).
     - Constant region's canonical start (first 8+ residues of
       :data:`HUMAN_CONSTANT_REGIONS_AA`).
-    - Whether the per-row ``qc_warnings`` list (populated by
-      ``_add_constant_regions`` when a contig-vs-canonical mismatch
-      was detected) is non-empty.
+    - Constant length floor (:data:`CONSTANT_AA_FLOOR`).
+    - No premature stop codon (``*`` mid-chain).
+    - Methionine start (when a leader was included).
+    - Standard residue alphabet only (:data:`_VALID_AA_CHARS`).
+    - Byte-for-byte equality of ``leader + vdj + constant`` and the
+      assembled ``full_{chain}_aa``, when all three parts are present.
+
+    Cross-row checks:
+
+    - β-chain J→C in-cis parity: ``TRBJ1*`` pairs with TRBC1,
+      ``TRBJ2*`` with TRBC2.
+    - Single-chain integrity: linker present in ``single_chain_aa``.
+    - Per-row ``qc_warnings`` (stashed by ``_add_constant_regions``)
+      are surfaced.
 
     Returns a flat list of "Clone {idx}: ..." messages. When ``strict``
-    is True, raises :class:`TCRsiftValidationError` if any
-    load-bearing checks fail. Load-bearing = length window failures,
-    missing CDR3 in the assembled sequence, canonical-ending or
-    canonical-start mismatch. Non-load-bearing (returned but not
-    raised even in strict): "didn't have enough info to check"
-    notes — useful for spotting input that's missing the columns the
-    validator needs.
-
-    Distinguishing "didn't check" from "passed" was the key gap that
-    let the #66 truncated-constant bug slip through unnoticed — the
-    old check silently passed when ``c_gene`` was missing.
+    is True, raises :class:`TCRsiftValidationError` if any load-bearing
+    checks fail. Non-load-bearing notes ("didn't have enough info to
+    check") are returned but never raise — distinguishing those from a
+    silent pass was the gap that hid #66.
     """
     load_bearing: list[str] = []
     informational: list[str] = []
 
-    # 1. Per-chain shape and content checks.
+    # 1. Per-chain, per-row shape and content checks.
     for chain in ["alpha", "beta"]:
         col = f"full_{chain}_aa"
         if col not in df.columns:
@@ -1019,12 +1039,66 @@ def validate_sequences(
                     f"Clone {idx}: {chain} chain too long ({len(seq)} aa)"
                 )
 
+            # Standard residue alphabet only.
+            invalid = sorted(set(seq) - _VALID_AA_CHARS)
+            if invalid:
+                load_bearing.append(
+                    f"Clone {idx}: full_{chain}_aa has invalid residues "
+                    f"{''.join(invalid)!r}"
+                )
+
+            # Premature stop codon: ``*`` anywhere except the final position.
+            body = seq.rstrip("*")
+            if "*" in body:
+                pos = body.index("*")
+                load_bearing.append(
+                    f"Clone {idx}: full_{chain}_aa has premature stop "
+                    f"at position {pos} of {len(seq)}"
+                )
+
+            # Methionine start (only when leader was included).
+            leader = row.get(f"{chain}_leader_aa")
+            if isinstance(leader, str) and leader and not seq.startswith("M"):
+                load_bearing.append(
+                    f"Clone {idx}: full_{chain}_aa doesn't start with M "
+                    f"(starts with {seq[:5]!r}; leader present)"
+                )
+
             cdr3_col = f"CDR3_{chain}"
             if cdr3_col in row:
                 cdr3 = row[cdr3_col]
                 if isinstance(cdr3, str) and cdr3 and cdr3 not in seq:
                     load_bearing.append(
                         f"Clone {idx}: CDR3_{chain}={cdr3!r} not found in full sequence"
+                    )
+
+            # Constant region length floor (separate from full-chain
+            # length check — catches truncations that hid behind a
+            # long leader).
+            const = row.get(f"{chain}_constant_aa")
+            if isinstance(const, str) and const:
+                floor = CONSTANT_AA_FLOOR[chain]
+                if len(const) < floor:
+                    load_bearing.append(
+                        f"Clone {idx}: {chain}_constant_aa too short "
+                        f"({len(const)} aa, floor {floor})"
+                    )
+
+            # Byte-for-byte: full == leader + vdj + constant when all
+            # parts are available. Catches dropped/added residues
+            # during assembly (the failure mode no other check finds).
+            vdj = row.get(f"vdj_{chain}_aa")
+            if (
+                isinstance(leader, str) and leader
+                and isinstance(vdj, str) and vdj
+                and isinstance(const, str) and const
+            ):
+                expected = leader + vdj + const
+                if expected != seq:
+                    load_bearing.append(
+                        f"Clone {idx}: full_{chain}_aa != "
+                        f"leader+vdj+constant "
+                        f"(len {len(seq)} vs {len(expected)})"
                     )
 
             # Canonical-ending / canonical-start checks. Prefer
@@ -1066,7 +1140,67 @@ def validate_sequences(
                     "CONSTANT_REGION_ENDINGS — canonical ending/start unverifiable"
                 )
 
-    # 2. Surface any per-row qc_warnings the assembler stashed (e.g.
+    # 2. β-chain J→C in-cis parity disagreement (#67).
+    if "beta_j_gene" in df.columns:
+        for idx, row in df.iterrows():
+            j_gene = row.get("beta_j_gene", "")
+            c_gene = (
+                row.get("beta_c_gene_canonical")
+                or row.get("beta_c_gene")
+                or ""
+            )
+            if not isinstance(j_gene, str) or not isinstance(c_gene, str):
+                continue
+            j_family = j_gene.split("-", 1)[0] if "-" in j_gene else j_gene
+            c_base = c_gene.split("*")[0] if c_gene else ""
+            expected_c = BETA_JC_PARITY.get(j_family)
+            if expected_c and c_base and c_base != expected_c:
+                load_bearing.append(
+                    f"Clone {idx}: β J→C parity mismatch — "
+                    f"{j_gene} (family {j_family}) should pair with "
+                    f"{expected_c}, got {c_base}"
+                )
+
+    # 3. Single-chain (β-linker-α) construct integrity. Three checks:
+    #    a) the linker appears in ``single_chain_aa`` exactly once,
+    #    b) ``single_chain_aa == β.rstrip('*') + linker + α`` byte-for-byte
+    #       (catches dropped residues or wrong concatenation order),
+    #    c) if the linker AA matches a known 2A peptide name, it should
+    #       be the canonical sequence from :data:`LINKERS`.
+    if "single_chain_aa" in df.columns and "linker" in df.columns:
+        for idx, row in df.iterrows():
+            sc = row.get("single_chain_aa")
+            linker = row.get("linker")
+            if not isinstance(sc, str) or not sc:
+                continue
+            if not isinstance(linker, str) or not linker:
+                continue
+            count = sc.count(linker)
+            if count == 0:
+                load_bearing.append(
+                    f"Clone {idx}: single_chain_aa missing linker {linker!r}"
+                )
+            elif count > 1:
+                load_bearing.append(
+                    f"Clone {idx}: single_chain_aa contains linker "
+                    f"{linker!r} {count} times (expected 1)"
+                )
+
+            beta = row.get("full_beta_aa")
+            alpha = row.get("full_alpha_aa")
+            if (
+                isinstance(beta, str) and beta
+                and isinstance(alpha, str) and alpha
+                and count == 1
+            ):
+                expected_sc = beta.rstrip("*") + linker + alpha
+                if sc != expected_sc:
+                    load_bearing.append(
+                        f"Clone {idx}: single_chain_aa != "
+                        f"β+linker+α (len {len(sc)} vs {len(expected_sc)})"
+                    )
+
+    # 4. Surface any per-row qc_warnings the assembler stashed (e.g.
     # contig-vs-canonical start mismatch detected during assembly).
     if "qc_warnings" in df.columns:
         for idx, qcs in df["qc_warnings"].items():
@@ -1082,6 +1216,356 @@ def validate_sequences(
             + ("\n  ..." if len(load_bearing) > 10 else "")
         )
     return all_messages
+
+
+@dataclass
+class AssemblyQCCheck:
+    """One QC check's tally across a frame.
+
+    Attributes:
+        name: machine-friendly identifier (e.g. ``"alpha_terminal_residue"``).
+        label: human-readable label for the log/plot (e.g. ``"α terminal residue"``).
+        chain: ``"alpha"``, ``"beta"``, ``"single_chain"``, or ``None`` for
+            cross-chain checks.
+        passed: row count that passed this check.
+        total: row count this check ran against.
+        median_value: optional median (used for length-style checks); unitless.
+        unit: optional unit for ``median_value`` (e.g. ``"aa"``).
+        examples: up to a few failure exemplars as ``"clone {idx}: ..."``.
+    """
+
+    name: str
+    label: str
+    chain: str | None
+    passed: int
+    total: int
+    median_value: float | None = None
+    unit: str = ""
+    examples: list[str] = field(default_factory=list)
+
+    @property
+    def failed(self) -> int:
+        return max(0, self.total - self.passed)
+
+    @property
+    def is_passing(self) -> bool:
+        return self.failed == 0
+
+    @property
+    def pass_rate(self) -> float:
+        return 1.0 if self.total == 0 else self.passed / self.total
+
+
+@dataclass
+class AssemblyQCReport:
+    """Structured report covering every check ``assemble_qc_report``
+    runs. Replaces the earlier string-only return (#67)."""
+
+    n_rows: int
+    checks: list[AssemblyQCCheck] = field(default_factory=list)
+
+    @property
+    def passed(self) -> bool:
+        return all(c.is_passing for c in self.checks)
+
+    def format_text(self) -> str:
+        """Multi-line ``[assemble QC]`` summary suitable for logging."""
+        lines = [f"[assemble QC] {self.n_rows} / {self.n_rows} rows checked"]
+        for c in self.checks:
+            mark = "✓" if c.is_passing else "✗"
+            extras = []
+            if c.median_value is not None:
+                extras.append(
+                    f"median {c.median_value:g}"
+                    + (f" {c.unit}" if c.unit else "")
+                )
+            extra = f" ({', '.join(extras)})" if extras else ""
+            lines.append(
+                f"[assemble QC]   {mark} {c.label}: {c.passed}/{c.total} pass{extra}"
+            )
+        lines.append(
+            f"[assemble QC] {'PASS' if self.passed else 'FAIL — see warnings above'}"
+        )
+        return "\n".join(lines)
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """Tabular form for programmatic consumption."""
+        return pd.DataFrame(
+            [
+                {
+                    "name": c.name,
+                    "label": c.label,
+                    "chain": c.chain,
+                    "passed": c.passed,
+                    "failed": c.failed,
+                    "total": c.total,
+                    "pass_rate": c.pass_rate,
+                    "median": c.median_value,
+                    "unit": c.unit,
+                }
+                for c in self.checks
+            ]
+        )
+
+    def __str__(self) -> str:
+        return self.format_text()
+
+
+def build_assembly_qc_report(df: pd.DataFrame) -> AssemblyQCReport:
+    """Build a structured :class:`AssemblyQCReport` (#67).
+
+    Each per-check tally — terminal residue, length floors, premature
+    stop, standard alphabet, β J→C parity, single-chain linker — is
+    one :class:`AssemblyQCCheck` in the report's ``checks`` list.
+    """
+    n = len(df)
+    report = AssemblyQCReport(n_rows=n)
+
+    def _add(
+        name: str,
+        label: str,
+        chain: str | None,
+        passing: pd.Series,
+        total: int,
+        *,
+        median_value: float | None = None,
+        unit: str = "",
+        df_for_examples: pd.DataFrame | None = None,
+        failure_formatter=None,
+    ) -> None:
+        passed = int(passing.sum())
+        examples: list[str] = []
+        if failure_formatter is not None and df_for_examples is not None:
+            failing_idx = passing.index[~passing]
+            for idx in failing_idx[:3]:
+                msg = failure_formatter(df_for_examples.loc[idx], idx)
+                if msg:
+                    examples.append(msg)
+        report.checks.append(
+            AssemblyQCCheck(
+                name=name,
+                label=label,
+                chain=chain,
+                passed=passed,
+                total=total,
+                median_value=median_value,
+                unit=unit,
+                examples=examples,
+            )
+        )
+
+    for chain in ("alpha", "beta"):
+        full_col = f"full_{chain}_aa"
+        if full_col not in df.columns:
+            continue
+        full = df[full_col]
+        present_mask = full.apply(lambda s: isinstance(s, str) and bool(s))
+        total = int(present_mask.sum())
+        if total == 0:
+            continue
+        sub = df[present_mask]
+        sub_full = full[present_mask]
+        chain_label = "α" if chain == "alpha" else "β"
+
+        # Terminal residue (against canonical for the row's c_gene).
+        def _ends_canonical(row, _chain=chain):
+            s = row.get(f"full_{_chain}_aa", "")
+            if not isinstance(s, str) or not s:
+                return False
+            c = (
+                row.get(f"{_chain}_c_gene_canonical")
+                or row.get(f"{_chain}_c_gene")
+                or ""
+            )
+            base = c.split("*")[0] if isinstance(c, str) else ""
+            if base in CONSTANT_REGION_ENDINGS:
+                return s.endswith(CONSTANT_REGION_ENDINGS[base])
+            return any(
+                s.endswith(end) for end in CONSTANT_REGION_ENDINGS.values()
+            )
+
+        end_pass = sub.apply(_ends_canonical, axis=1)
+        _add(
+            f"{chain}_terminal_residue",
+            f"{chain_label} terminal residue",
+            chain,
+            end_pass,
+            total,
+            df_for_examples=sub,
+            failure_formatter=lambda row, idx, c=chain: (
+                f"clone {idx}: tail {row[f'full_{c}_aa'][-10:]!r}"
+            ),
+        )
+
+        # Length floor (200 aa).
+        lengths = sub_full.str.len()
+        len_pass = lengths >= 200
+        _add(
+            f"{chain}_length_floor",
+            f"{chain_label} length ≥ 200",
+            chain,
+            len_pass,
+            total,
+            median_value=float(lengths.median()),
+            unit="aa",
+        )
+
+        # Constant length floor.
+        const_col = f"{chain}_constant_aa"
+        if const_col in df.columns:
+            const_lens = sub[const_col].apply(
+                lambda s: len(s) if isinstance(s, str) else 0
+            )
+            floor = CONSTANT_AA_FLOOR[chain]
+            const_pass = const_lens >= floor
+            present_const_lens = const_lens[const_lens > 0]
+            cmedian = (
+                float(present_const_lens.median())
+                if len(present_const_lens)
+                else 0.0
+            )
+            _add(
+                f"{chain}_constant_floor",
+                f"{chain_label} constant ≥ {floor}",
+                chain,
+                const_pass,
+                total,
+                median_value=cmedian,
+                unit="aa",
+            )
+
+        # No premature stop.
+        def _no_premature_stop(s):
+            if not isinstance(s, str) or not s:
+                return True
+            return "*" not in s.rstrip("*")
+
+        stop_pass = sub_full.apply(_no_premature_stop)
+        _add(
+            f"{chain}_no_premature_stop",
+            f"{chain_label} no premature stop",
+            chain,
+            stop_pass,
+            total,
+        )
+
+        # Standard alphabet.
+        def _valid_alphabet(s):
+            if not isinstance(s, str) or not s:
+                return True
+            return not (set(s) - _VALID_AA_CHARS)
+
+        alpha_pass = sub_full.apply(_valid_alphabet)
+        _add(
+            f"{chain}_standard_alphabet",
+            f"{chain_label} standard alphabet",
+            chain,
+            alpha_pass,
+            total,
+        )
+
+    # β J→C parity.
+    if "beta_j_gene" in df.columns:
+        def _jc_parity_ok(row):
+            j = row.get("beta_j_gene", "")
+            c = (
+                row.get("beta_c_gene_canonical")
+                or row.get("beta_c_gene")
+                or ""
+            )
+            if not isinstance(j, str) or not isinstance(c, str):
+                return True
+            fam = j.split("-", 1)[0] if "-" in j else j
+            cbase = c.split("*")[0] if c else ""
+            expected = BETA_JC_PARITY.get(fam)
+            if not expected or not cbase:
+                return True
+            return cbase == expected
+
+        jc_pass = df.apply(_jc_parity_ok, axis=1)
+        _add("beta_jc_parity", "β J→C in-cis parity", "beta", jc_pass, n)
+
+    # Single-chain linker integrity.
+    if "single_chain_aa" in df.columns and "linker" in df.columns:
+        def _linker_ok(row):
+            sc = row.get("single_chain_aa")
+            linker = row.get("linker")
+            if not isinstance(sc, str) or not sc:
+                return True
+            if not isinstance(linker, str) or not linker:
+                return True
+            return sc.count(linker) == 1
+
+        link_pass = df.apply(_linker_ok, axis=1)
+        _add(
+            "single_chain_linker_present",
+            "single_chain linker exactly once",
+            "single_chain",
+            link_pass,
+            n,
+        )
+
+        # Byte-for-byte: single_chain == β.rstrip('*') + linker + α.
+        def _single_chain_byte_exact(row):
+            sc = row.get("single_chain_aa")
+            linker = row.get("linker")
+            beta = row.get("full_beta_aa")
+            alpha = row.get("full_alpha_aa")
+            if not all(
+                isinstance(x, str) and x for x in (sc, linker, beta, alpha)
+            ):
+                return True
+            return sc == beta.rstrip("*") + linker + alpha
+
+        sc_byte_pass = df.apply(_single_chain_byte_exact, axis=1)
+        _add(
+            "single_chain_byte_exact",
+            "single_chain == β + linker + α",
+            "single_chain",
+            sc_byte_pass,
+            n,
+        )
+
+        # Canonical 2A peptide AA (when the linker name matches a known
+        # 2A peptide, the AA should be the canonical sequence — guards
+        # against custom-substituted linkers with the right NAME but
+        # wrong AA).
+        def _linker_canonical(row):
+            linker = row.get("linker")
+            if not isinstance(linker, str) or not linker:
+                return True
+            # The DataFrame's ``linker`` column stores the AA, not the
+            # peptide name. Verify it matches one of the canonical 2A
+            # AAs (or is a non-2A custom linker — which we accept).
+            canonical_aas = {info["aa"] for info in LINKERS.values()}
+            non_2a = linker not in canonical_aas and not any(
+                linker.endswith(a[-6:]) for a in canonical_aas
+            )
+            return non_2a or linker in canonical_aas
+
+        canon_pass = df.apply(_linker_canonical, axis=1)
+        _add(
+            "single_chain_2a_canonical",
+            "2A peptide canonical AA",
+            "single_chain",
+            canon_pass,
+            n,
+        )
+
+    return report
+
+
+def assemble_qc_report(df: pd.DataFrame) -> str:
+    """Aggregate QC summary across all rows (#67).
+
+    Returns multi-line ``[assemble QC]`` text suitable for logging at
+    the end of ``assemble_full_sequences``. Reports per-check tallies
+    (pass / fail + median where relevant) plus a final PASS / FAIL
+    banner. For programmatic consumption use
+    :func:`build_assembly_qc_report`, which returns the same data as
+    an :class:`AssemblyQCReport` object.
+    """
+    return build_assembly_qc_report(df).format_text()
 
 
 def _expected_constant_start_from_full(
