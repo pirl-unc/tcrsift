@@ -266,7 +266,9 @@ class TestValidateSequences:
         )
 
         warnings = validate_sequences(df)
-        assert any("CDR3_alpha not found" in w for w in warnings)
+        assert any(
+            "CDR3_alpha" in w and "not found in full sequence" in w for w in warnings
+        )
 
 
 class TestExportFasta:
@@ -496,7 +498,9 @@ class TestValidateSequencesExtended:
         )
 
         warnings = validate_sequences(df)
-        assert any("CDR3_beta not found" in w for w in warnings)
+        assert any(
+            "CDR3_beta" in w and "not found in full sequence" in w for w in warnings
+        )
 
     def test_validate_missing_full_sequence(self):
         """Missing full sequence should not cause error."""

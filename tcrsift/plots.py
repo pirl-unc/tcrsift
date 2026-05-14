@@ -2128,6 +2128,49 @@ def create_pipeline_funnel(
 # =============================================================================
 
 
+# Canonical assembled-sequence columns rendered by the TCR sequence
+# PDF, listed in biological assembly order. The linker direction in
+# tcrsift is β-T2A-α, so the β block comes first. Earlier versions
+# had (1) the α leader before the β block, (2) lowercase
+# ``vdj_{chain}_aa`` and uppercase ``VDJ_{chain}_aa`` as aliases both
+# matched, so both columns rendered when both existed, and (3) the
+# ``full_{chain}_aa`` summary columns listed alongside their
+# constituent parts, duplicating the chain content. All three are
+# fixed here (#65).
+#
+# The canonical column names ``assemble.py`` writes to
+# ``full_sequences.csv`` are all lowercase ``vdj_*_aa``. The
+# ``full_*_aa`` summary columns are intentionally not rendered: their
+# content equals leader + VDJ + constant, which are already shown.
+_TCR_SEQUENCE_COLUMN_CANDIDATES: tuple[tuple[str, str], ...] = (
+    ("beta_leader_aa", "Beta Leader"),
+    ("vdj_beta_aa", "Beta VDJ"),
+    ("beta_constant_aa", "Beta Constant"),
+    ("linker", "Linker"),
+    ("alpha_leader_aa", "Alpha Leader"),
+    ("vdj_alpha_aa", "Alpha VDJ"),
+    ("alpha_constant_aa", "Alpha Constant"),
+)
+
+
+def _default_tcr_sequence_columns(df: pd.DataFrame) -> dict[str, str]:
+    """Auto-detect sequence columns for the TCR PDF in assembly order.
+
+    Returns a dict mapping column-name → display label, biological
+    assembly order preserved (β leader → β VDJ → β constant → linker
+    → α leader → α VDJ → α constant). When none of the canonical
+    assembled columns are present but ``single_chain_aa`` is, returns
+    just that as a fallback so callers with a pre-concatenated single
+    chain still get a useful page.
+    """
+    detected = {
+        col: label for col, label in _TCR_SEQUENCE_COLUMN_CANDIDATES if col in df.columns
+    }
+    if not detected and "single_chain_aa" in df.columns:
+        return {"single_chain_aa": "Single Chain"}
+    return detected
+
+
 def create_tcr_sequence_pdf(
     df: pd.DataFrame,
     output_path: str | Path,
@@ -2137,6 +2180,7 @@ def create_tcr_sequence_pdf(
     label_font_size: int = 11,
     title_font_size: int = 12,
     chars_per_line: int = 60,
+    strict: bool = True,
 ):
     """
     Create a PDF with color-coded TCR sequences.
@@ -2165,7 +2209,44 @@ def create_tcr_sequence_pdf(
         Font size for titles
     chars_per_line : int
         Characters per line before wrapping
+    strict : bool
+        Refuse to render when :func:`tcrsift.assemble.validate_sequences`
+        reports load-bearing failures (CDR3 missing from full sequence,
+        canonical C-terminus mismatch, length outside 200–450 aa, etc.).
+        Set to ``False`` to render anyway with a warning banner per
+        suspect row. Defaults to ``True`` so users don't accidentally
+        export PDFs of structurally-invalid TCRs (#68).
     """
+    # Sanity-gate the input. The PDF rendered nonsense in earlier
+    # versions because nothing checked that the sequences it was
+    # iterating over were biologically valid (#68). With #66 and #67
+    # fixed, this is the last line of defense against future
+    # construction regressions silently producing broken figures.
+    from .assemble import validate_sequences
+
+    qc_messages = validate_sequences(df, strict=False)
+    load_bearing = [
+        m
+        for m in qc_messages
+        if "unverifiable" not in m  # "didn't check" notes are informational
+    ]
+    if load_bearing:
+        preview = "\n  ".join(load_bearing[:10])
+        more = f"\n  ... ({len(load_bearing) - 10} more)" if len(load_bearing) > 10 else ""
+        msg = (
+            f"create_tcr_sequence_pdf: {len(load_bearing)} load-bearing "
+            f"validation failures:\n  {preview}{more}"
+        )
+        if strict:
+            from .validation import TCRsiftValidationError
+
+            raise TCRsiftValidationError(
+                msg,
+                hint="Pass strict=False to render anyway, or fix the input "
+                "with `tcrsift.assemble.validate_sequences(df)`.",
+            )
+        else:
+            logger.warning(msg)
     try:
         from itertools import cycle
 
@@ -2177,30 +2258,8 @@ def create_tcr_sequence_pdf(
         logger.warning("reportlab not installed, cannot generate sequence PDF")
         return
 
-    # Default sequence columns
     if sequence_columns is None:
-        sequence_columns = {}
-        # Try to find sequence columns in order
-        column_candidates = [
-            ("beta_leader_aa", "Beta Leader"),
-            ("alpha_leader_aa", "Alpha Leader"),
-            ("vdj_beta_aa", "Beta VDJ"),
-            ("VDJ_beta_aa", "Beta VDJ"),
-            ("full_beta_aa", "Beta Full"),
-            ("beta_constant_aa", "Beta Constant"),
-            ("linker", "Linker"),
-            ("vdj_alpha_aa", "Alpha VDJ"),
-            ("VDJ_alpha_aa", "Alpha VDJ"),
-            ("full_alpha_aa", "Alpha Full"),
-            ("alpha_constant_aa", "Alpha Constant"),
-        ]
-        for col, label in column_candidates:
-            if col in df.columns:
-                sequence_columns[col] = label
-
-        # If we have single_chain_aa, use that instead
-        if "single_chain_aa" in df.columns and not sequence_columns:
-            sequence_columns = {"single_chain_aa": "Single Chain"}
+        sequence_columns = _default_tcr_sequence_columns(df)
 
     if not sequence_columns:
         logger.warning("No sequence columns found in DataFrame")
