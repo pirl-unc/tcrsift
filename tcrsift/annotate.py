@@ -23,6 +23,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm.auto import tqdm
 
+from .pgen import annotate_publicness as _annotate_publicness
 from .validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
@@ -31,6 +32,34 @@ from .validation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_publicness(
+    df: pd.DataFrame,
+    *,
+    cdr3_col: str,
+    v_gene_col: str,
+    j_gene_col: str,
+    log_summary: bool,
+) -> pd.DataFrame:
+    """Helper used by ``annotate_clonotypes`` to add publicness on
+    both the no-DB short-circuit path and the post-match path."""
+    if cdr3_col not in df.columns:
+        logger.warning(
+            f"add_publicness=True but {cdr3_col!r} not in DataFrame; "
+            "skipping publicness annotation"
+        )
+        return df
+    df = _annotate_publicness(
+        df, cdr3_col=cdr3_col, v_gene_col=v_gene_col, j_gene_col=j_gene_col
+    )
+    if log_summary:
+        n_public = int((df["publicness"] >= 0.5).sum())
+        logger.info(
+            f"  Publicness: {n_public:,}/{len(df):,} clones above 0.5 "
+            "(consider discounting their DB matches)"
+        )
+    return df
 
 
 # Known viral species patterns for flagging
@@ -1202,14 +1231,13 @@ def annotate_clonotypes(
         for col, default in _DEFAULT_ANNOTATION_COLUMNS.items():
             if col not in df.columns:
                 df[col] = default
-        if add_publicness and publicness_cdr3_col in df.columns:
-            from .pgen import annotate_publicness
-
-            df = annotate_publicness(
+        if add_publicness:
+            df = _apply_publicness(
                 df,
                 cdr3_col=publicness_cdr3_col,
                 v_gene_col=publicness_v_gene_col,
                 j_gene_col=publicness_j_gene_col,
+                log_summary=False,
             )
         return df
 
@@ -1239,25 +1267,13 @@ def annotate_clonotypes(
     # the resulting Pgen/publicness columns align with the final row
     # set.
     if add_publicness:
-        from .pgen import annotate_publicness
-
-        if publicness_cdr3_col in df.columns:
-            df = annotate_publicness(
-                df,
-                cdr3_col=publicness_cdr3_col,
-                v_gene_col=publicness_v_gene_col,
-                j_gene_col=publicness_j_gene_col,
-            )
-            n_public = int((df["publicness"] >= 0.5).sum())
-            logger.info(
-                f"  Publicness: {n_public:,}/{len(df):,} clones above 0.5 "
-                "(consider discounting their DB matches)"
-            )
-        else:
-            logger.warning(
-                f"add_publicness=True but {publicness_cdr3_col!r} not in "
-                "DataFrame; skipping publicness annotation"
-            )
+        df = _apply_publicness(
+            df,
+            cdr3_col=publicness_cdr3_col,
+            v_gene_col=publicness_v_gene_col,
+            j_gene_col=publicness_j_gene_col,
+            log_summary=True,
+        )
 
     return df
 

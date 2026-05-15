@@ -203,6 +203,72 @@ class TestPublicnessScore:
         assert s.iloc[1] == 1.0
 
 
+class TestIndexPreservation:
+    """``publicness_score`` and ``annotate_publicness`` must preserve
+    the caller's index. Earlier versions stripped it via
+    ``pd.Series(np.asarray(list(...)))`` and downstream assignments
+    silently produced all-NaN when the frame had a non-default index."""
+
+    def test_publicness_score_keeps_series_index(self):
+        s = pd.Series([-25.0, -20.0, -18.0], index=[10, 20, 30])
+        out = publicness_score(s)
+        assert list(out.index) == [10, 20, 30]
+
+    def test_annotate_publicness_with_filtered_index(self):
+        df = pd.DataFrame({
+            "CDR3_beta": ["CASSLAPGATNEKLFF", "CASSPGTGELFF", "CASSDROPME"],
+            "beta_v_gene": ["TRBV20-1", "TRBV9", "TRBV28"],
+            "beta_j_gene": ["TRBJ2-1", "TRBJ1-2", "TRBJ2-3"],
+        }, index=[100, 200, 300])
+        # Drop the middle row so the index is non-contiguous.
+        df = df.drop(index=200)
+        out = annotate_publicness(df)
+        assert list(out.index) == [100, 300]
+        assert out["log10_pgen"].notna().all(), "log10_pgen lost on non-default index"
+        assert out["publicness"].notna().all(), "publicness lost on non-default index"
+
+    def test_compute_pgen_named_with_output_col(self):
+        from tcrsift.pgen import compute_pgen as cp
+
+        df = pd.DataFrame({
+            "CDR3_beta": ["CASSPGTGELFF"],
+            "beta_v_gene": ["TRBV20-1"],
+            "beta_j_gene": ["TRBJ2-1"],
+        }, index=[42])
+        out = cp(df, output_col="my_pgen")
+        assert out.name == "my_pgen"
+        assert list(out.index) == [42]
+
+
+class TestAutoQuantileCalibration:
+    """``publicness_score(auto_quantile=True)`` calibrates the cutoffs
+    from the input distribution, useful when the scale of incoming
+    Pgens is unknown or the fixed cutoffs saturate the score."""
+
+    def test_auto_quantile_spans_extremes(self):
+        # 11 values spread evenly; with quantile_low=0.1 and high=0.9,
+        # the extremes should map close to 0 and 1.
+        values = pd.Series(np.linspace(-30.0, -10.0, 11))
+        out = publicness_score(values, auto_quantile=True)
+        assert out.iloc[0] == 0.0
+        assert out.iloc[-1] == 1.0
+        # Middle row should be near 0.5.
+        assert abs(out.iloc[5] - 0.5) < 0.05
+
+    def test_auto_quantile_with_narrow_distribution(self):
+        """A degenerate constant distribution returns 0.5 everywhere
+        (publicness is meaningless when there's no spread)."""
+        values = pd.Series([-25.0] * 5)
+        out = publicness_score(values, auto_quantile=True)
+        assert (out == 0.5).all()
+
+    def test_auto_quantile_preserves_nan(self):
+        values = pd.Series([-25.0, np.nan, -20.0, -18.0], index=[1, 2, 3, 4])
+        out = publicness_score(values, auto_quantile=True)
+        assert pd.isna(out.iloc[1])
+        assert list(out.index) == [1, 2, 3, 4]
+
+
 class TestAnnotatePublicness:
     def test_adds_both_columns(self):
         df = pd.DataFrame({

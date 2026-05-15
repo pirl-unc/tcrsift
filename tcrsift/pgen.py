@@ -140,6 +140,16 @@ def _strip_allele(gene: str | None) -> str:
     return gene.split("*", 1)[0].strip()
 
 
+# IMGT functional gene-pool sizes (Lefranc 2009). Used to spread the
+# uncovered tail mass over the *right* number of genes per chain.
+_GENE_POOL_SIZE = {
+    ("beta", "v"):  80,
+    ("beta", "j"):  5,    # 13 total but the table covers all of them
+    ("alpha", "v"): 50,
+    ("alpha", "j"): 50,
+}
+
+
 def _v_usage_log(gene: str, chain: str) -> float:
     """log P(V) for the given gene; falls back to a uniform tail mass."""
     table = _TRBV_USAGE if chain == "beta" else _TRAV_USAGE
@@ -147,9 +157,9 @@ def _v_usage_log(gene: str, chain: str) -> float:
     if base in table:
         p = table[base]
     else:
-        # Total uncovered tail mass spread over an estimated 40 genes.
         listed_mass = sum(table.values())
-        p = max(0.0005, (1.0 - listed_mass) / 40)
+        n_tail = _GENE_POOL_SIZE[(chain, "v")]
+        p = max(0.0005, (1.0 - listed_mass) / n_tail)
     return math.log(p)
 
 
@@ -161,8 +171,7 @@ def _j_usage_log(gene: str, chain: str) -> float:
         p = table[base]
     else:
         listed_mass = sum(table.values())
-        # β has ~13 J; α has ~50. Tail spread accordingly.
-        n_tail = 5 if chain == "beta" else 50
+        n_tail = _GENE_POOL_SIZE[(chain, "j")]
         p = max(0.0005, (1.0 - listed_mass) / n_tail)
     return math.log(p)
 
@@ -284,12 +293,14 @@ def compute_pgen(
         (nt). When None, estimated from CDR3 AA length and a typical
         templated contribution from :data:`_TEMPLATED_NT_TYPICAL`.
     output_col : str
-        Not currently used (the returned Series is unnamed).
+        Name applied to the returned Series.
 
     Returns
     -------
     pd.Series
-        log10 Pgen estimate per row, indexed like ``df``.
+        log10 Pgen estimate per row, indexed like ``df`` and named
+        ``output_col``. Rows whose ``cdr3_col`` is empty or non-string
+        get NaN.
     """
     chain = chain.lower()
     if chain not in ("alpha", "beta"):
@@ -298,28 +309,72 @@ def compute_pgen(
         raise ValueError(f"compute_pgen: missing {cdr3_col!r} column")
 
     cdr3 = df[cdr3_col]
-    v = df[v_gene_col] if v_gene_col in df.columns else pd.Series([None] * len(df), index=df.index)
-    j = df[j_gene_col] if j_gene_col in df.columns else pd.Series([None] * len(df), index=df.index)
-    if n_inserted_col and n_inserted_col in df.columns:
-        n_ins = df[n_inserted_col]
-    else:
-        n_ins = pd.Series([None] * len(df), index=df.index)
+    valid_mask = cdr3.apply(lambda s: isinstance(s, str) and bool(s))
 
-    out = []
-    for c, vg, jg, ni in zip(cdr3, v, j, n_ins):
-        if not isinstance(c, str) or not c:
-            out.append(np.nan)
-            continue
-        ni_val = int(ni) if ni is not None and not pd.isna(ni) else None
-        out.append(pgen_single(c, vg, jg, chain=chain, n_inserted=ni_val))
-    return pd.Series(out, index=df.index, name=output_col)
+    # Vectorize the four CDR3-length-derived terms (which don't depend
+    # on V/J at all) and the V/J-only terms (which are dict lookups,
+    # naturally per-row).
+    LN10 = math.log(10.0)
+    aa_lens = cdr3.where(valid_mask, "").apply(
+        lambda s: len(s) if isinstance(s, str) else 0
+    )
+
+    # Length component — gaussian density at the AA length.
+    mu, sigma = _CDR3_LENGTH_PARAMS[chain]
+    z = (aa_lens.astype(float) - mu) / sigma
+    pdf = np.exp(-0.5 * z * z) / (sigma * math.sqrt(2 * math.pi))
+    log10_p_length = np.log(np.maximum(pdf, 1e-30)) / LN10
+
+    # N-insertion component.
+    if n_inserted_col and n_inserted_col in df.columns:
+        n_ins_arr = pd.to_numeric(df[n_inserted_col], errors="coerce")
+        n_ins_arr = n_ins_arr.where(
+            n_ins_arr.notna(),
+            other=(3 * aa_lens - _TEMPLATED_NT_TYPICAL[chain]),
+        )
+    else:
+        n_ins_arr = 3 * aa_lens - _TEMPLATED_NT_TYPICAL[chain]
+    n_ins_arr = n_ins_arr.clip(lower=0).astype(int)
+    p_ins = _N_INSERT_GEOM_P[chain]
+    if chain == "beta":
+        # Negative binomial(r=2, p): P(N=n) = (n+1) (1-p)^n p^2
+        log10_p_n = (
+            np.log(n_ins_arr.astype(float) + 1.0)
+            + n_ins_arr.astype(float) * math.log(1 - p_ins)
+            + 2 * math.log(p_ins)
+        ) / LN10
+    else:
+        log10_p_n = (
+            n_ins_arr.astype(float) * math.log(1 - p_ins) + math.log(p_ins)
+        ) / LN10
+
+    # AA composition baseline — length × log(1/20).
+    log10_p_composition = aa_lens.astype(float) * (_LOG_AA_BASELINE / LN10)
+
+    # V / J gene-usage logs — dict-lookup per row.
+    v_series = df[v_gene_col] if v_gene_col in df.columns else pd.Series([None] * len(df), index=df.index)
+    j_series = df[j_gene_col] if j_gene_col in df.columns else pd.Series([None] * len(df), index=df.index)
+    log10_p_v = v_series.apply(lambda g: _v_usage_log(g or "", chain) / LN10)
+    log10_p_j = j_series.apply(lambda g: _j_usage_log(g or "", chain) / LN10)
+
+    total = (
+        log10_p_v + log10_p_j + log10_p_length
+        + log10_p_n + log10_p_composition
+    )
+    # Empty/missing CDR3 → NaN, regardless of V/J availability.
+    total = total.where(valid_mask, other=np.nan)
+    total.name = output_col
+    return total
 
 
 def publicness_score(
     log10_pgen: pd.Series | Iterable[float],
     *,
-    low_pgen_cutoff: float = -30.0,
-    high_pgen_cutoff: float = -18.0,
+    low_pgen_cutoff: float | None = -30.0,
+    high_pgen_cutoff: float | None = -18.0,
+    auto_quantile: bool = False,
+    quantile_low: float = 0.10,
+    quantile_high: float = 0.90,
 ) -> pd.Series:
     """Map log10 Pgen → [0, 1] publicness in a monotone-decreasing way.
 
@@ -337,15 +392,52 @@ def publicness_score(
     composition term is uniform-over-20 rather than position-specific.
     Override the cutoffs if you're feeding in real OLGA values
     (use ~−20 / −8 for OLGA).
+
+    Parameters
+    ----------
+    log10_pgen : pd.Series | Iterable[float]
+        Per-row log10 Pgen estimates. When a Series, its index is
+        preserved in the returned Series.
+    low_pgen_cutoff, high_pgen_cutoff : float | None
+        Fixed cutoffs. Ignored when ``auto_quantile=True``.
+    auto_quantile : bool
+        When True, derive cutoffs from the input distribution rather
+        than a fixed pair. Useful when the input's Pgen scale is
+        unknown or when the fixed cutoffs would saturate the score for
+        most rows (e.g. a narrow distribution all within ~5 log units).
+    quantile_low, quantile_high : float
+        Quantile cutoffs used when ``auto_quantile=True``. Defaults
+        (0.10, 0.90) clip to the central 80% of the input range.
     """
-    arr = pd.Series(np.asarray(list(log10_pgen), dtype=float))
+    if isinstance(log10_pgen, pd.Series):
+        arr = log10_pgen.astype(float)
+    else:
+        arr = pd.Series(np.asarray(list(log10_pgen), dtype=float))
+
+    if auto_quantile:
+        non_nan = arr.dropna()
+        if non_nan.empty:
+            # Nothing to calibrate against — return all-NaN preserving index.
+            return pd.Series(np.nan, index=arr.index)
+        low_pgen_cutoff = float(non_nan.quantile(quantile_low))
+        high_pgen_cutoff = float(non_nan.quantile(quantile_high))
+        if high_pgen_cutoff <= low_pgen_cutoff:
+            # Degenerate distribution (constant or near-constant) —
+            # publicness is undefined; return 0.5 for everything.
+            return pd.Series(
+                np.where(arr.notna(), 0.5, np.nan), index=arr.index
+            )
+
+    if low_pgen_cutoff is None or high_pgen_cutoff is None:
+        raise ValueError(
+            "low_pgen_cutoff/high_pgen_cutoff required when auto_quantile=False"
+        )
     width = high_pgen_cutoff - low_pgen_cutoff
     if width <= 0:
         raise ValueError("high_pgen_cutoff must be > low_pgen_cutoff")
     clipped = arr.clip(lower=low_pgen_cutoff, upper=high_pgen_cutoff)
     score = (clipped - low_pgen_cutoff) / width
-    score = score.where(arr.notna(), other=np.nan)
-    return score
+    return score.where(arr.notna(), other=np.nan)
 
 
 def annotate_publicness(
