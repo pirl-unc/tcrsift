@@ -44,6 +44,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from scipy import sparse
 from scipy.sparse import issparse
 
+from .annotate import canonicalize_species
 from .signatures import (
     ANTIGEN_RESPONSE_GENES_HGNC as ANTIGEN_RESPONSE_GENES_DEFAULT,
 )
@@ -264,39 +265,7 @@ def load_databases(
 
 def normalize_species_label(species: str | float | None) -> str | None:
     """Normalize species/antigen labels for summary plotting."""
-    if pd.isna(species):
-        return None
-    text = str(species).strip()
-    if not text:
-        return None
-    text = re.sub(r"\s+", " ", text)
-    text_no_parens = re.sub(r"[()]", "", text)
-    text_no_parens = re.sub(r"\s+", " ", text_no_parens).strip()
-    lower = text.lower()
-    if (
-        "coronavirus" in lower
-        or "sars-cov" in lower
-        or "sars cov" in lower
-        or "severe acute respiratory syndrome" in lower
-    ):
-        return "Coronavirus SARS-related"
-    if "mouse cytomegalovirus" in lower or "murid" in lower:
-        return "Mouse CMV"
-    if lower == "cmv" or "human cytomegalovirus" in lower or "human herpesvirus 5" in lower:
-        return "CMV"
-    if lower == "ebv" or "epstein barr" in lower or "human herpesvirus 4" in lower:
-        return "EBV"
-    if "hepatitis b" in lower or re.search(r"\bhbv\b", lower):
-        return "Hepatitis B"
-    if "hepatitis c" in lower or re.search(r"\bhcv\b", lower):
-        return "Hepatitis C"
-    if lower in {"homosapiens", "homo sapiens", "homo sapiens (human)"}:
-        return "Homo sapiens"
-    if "influenza" in lower:
-        return "Influenza"
-    if "yellow fever virus" in lower:
-        return "Yellow fever virus"
-    return text_no_parens
+    return canonicalize_species(species)
 
 
 def match_clonotypes(

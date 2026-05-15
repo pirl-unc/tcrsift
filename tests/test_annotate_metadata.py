@@ -16,7 +16,7 @@
 - ``db_match_strength`` gains ``ab_cross`` / ``b_only_cross`` suffix
   when matched rows are non-human host
 - ``db_category`` becomes ``"contradictory"`` when matches disagree on
-  an informative category (rather than silently picking a mode)
+  an informative category, with dominant/detail/count audit columns
 """
 
 from __future__ import annotations
@@ -74,16 +74,31 @@ class TestHostSpeciesColumn:
         clones = pd.DataFrame({"CDR3_alpha": ["X"], "CDR3_beta": ["Y"]})
         out = annotate_clonotypes(clones)
         assert "db_host_species" in out.columns
+        assert "db_category_dominant" in out.columns
+        assert "db_category_detail" in out.columns
+        assert "db_category_counts" in out.columns
 
 
 class TestCrossSpeciesStrength:
+    def test_vdjdb_homosapiens_host_yields_plain_ab_strength(self):
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        db = _db([{
+            "cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+            "host_species": "HomoSapiens", "species": "Human cytomegalovirus",
+        }])
+        out = match_clonotypes(clones, db, show_progress=False)
+        assert out["db_host_species"].iloc[0] == "Homo sapiens"
+        assert out["db_species"].iloc[0] == "CMV"
+        assert out["db_match_strength"].iloc[0] == "ab"
+
     def test_mouse_host_yields_ab_cross_strength(self):
         clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
         db = _db([{
             "cdr3_alpha": "CAS", "cdr3_beta": "CASS",
-            "host_species": "Mus musculus", "species": "OVA",
+            "host_species": "MusMusculus", "species": "OVA",
         }])
-        out = match_clonotypes(clones, db)
+        out = match_clonotypes(clones, db, show_progress=False)
+        assert out["db_host_species"].iloc[0] == "Mus musculus"
         assert out["db_match_strength"].iloc[0] == "ab_cross"
 
     def test_human_host_yields_plain_ab_strength(self):
@@ -118,6 +133,30 @@ class TestContradictoryCategory:
         ])
         out = match_clonotypes(clones, db)
         assert out["db_category"].iloc[0] == CATEGORY_CONTRADICTORY
+        assert out["db_category_dominant"].iloc[0] is None
+        assert out["db_category_detail"].iloc[0] == CATEGORY_CONTRADICTORY
+        assert out["db_category_counts"].iloc[0] == "tumor_self:1;viral:1"
+
+    def test_disagreeing_categories_with_dominant_label_audited(self):
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        # Viral is the dominant informative category, but there is also
+        # a tumor-self match and an unknown row. Unknown rows are ignored
+        # whenever informative category rows exist.
+        db = _db([
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Cytomegalovirus", "antigen_gene": "pp65"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Epstein-Barr virus", "antigen_gene": "EBNA-3"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Homo sapiens", "antigen_gene": "MART1"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "", "antigen_gene": ""},
+        ])
+        out = match_clonotypes(clones, db)
+        assert out["db_category"].iloc[0] == CATEGORY_CONTRADICTORY
+        assert out["db_category_dominant"].iloc[0] == CATEGORY_VIRAL
+        assert out["db_category_detail"].iloc[0] == "contradictory_dominant_viral"
+        assert out["db_category_counts"].iloc[0] == "viral:2;tumor_self:1"
 
     def test_agreeing_matches_keep_their_category(self):
         clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
@@ -132,10 +171,13 @@ class TestContradictoryCategory:
         ])
         out = match_clonotypes(clones, db)
         assert out["db_category"].iloc[0] == CATEGORY_VIRAL
+        assert out["db_category_dominant"].iloc[0] == CATEGORY_VIRAL
+        assert out["db_category_detail"].iloc[0] == CATEGORY_VIRAL
+        assert out["db_category_counts"].iloc[0] == "viral:3"
 
     def test_unknown_does_not_trigger_contradiction(self):
         """Mixing a real label with ``unknown`` is not a contradiction
-        — pick the informative label."""
+        — drop the unknown row and pick the informative label."""
         clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
         db = _db([
             {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
@@ -146,3 +188,20 @@ class TestContradictoryCategory:
         ])
         out = match_clonotypes(clones, db)
         assert out["db_category"].iloc[0] == CATEGORY_TUMOR_SELF
+        assert out["db_category_dominant"].iloc[0] == CATEGORY_TUMOR_SELF
+        assert out["db_category_detail"].iloc[0] == CATEGORY_TUMOR_SELF
+        assert out["db_category_counts"].iloc[0] == "tumor_self:1"
+
+    def test_all_unknown_matches_stay_unknown(self):
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        db = _db([
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "", "antigen_gene": ""},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": None, "antigen_gene": ""},
+        ])
+        out = match_clonotypes(clones, db)
+        assert out["db_category"].iloc[0] == "unknown"
+        assert out["db_category_dominant"].iloc[0] is None
+        assert out["db_category_detail"].iloc[0] == "unknown"
+        assert out["db_category_counts"].iloc[0] == "unknown:2"
