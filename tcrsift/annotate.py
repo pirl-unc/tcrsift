@@ -146,6 +146,10 @@ CATEGORY_SELF = "self"
 CATEGORY_TUMOR_SELF = "tumor_self"
 CATEGORY_OTHER = "other"
 CATEGORY_UNKNOWN = "unknown"
+# Set on a single clone when its DB matches disagree on category
+# (e.g. one match says ``viral``, another says ``tumor_self``). Rather
+# than pick one mode arbitrarily we expose the disagreement (#83).
+CATEGORY_CONTRADICTORY = "contradictory"
 
 
 # Valid strictness modes for match_clonotypes. The function dispatches
@@ -408,13 +412,16 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
 def _normalize_vdjdb_paired(df: pd.DataFrame) -> pd.DataFrame:
     """Standardize the paired-chain ``vdjdb_full.txt`` format.
 
-    Drops the donor ``species`` column before propagating
-    ``antigen.species`` → ``species`` — VDJdb's full export carries
-    both (donor T-cell species vs. epitope source organism), and we
-    use the latter throughout the codebase.
+    VDJdb's full export carries two species columns: the TCR donor's
+    species and the epitope's source organism. We propagate
+    ``antigen.species`` → ``species`` (the convention used throughout
+    the codebase) and preserve the donor species as ``host_species``
+    (#83 — needed for cross-species match-strength detection).
     """
-    if "species" in df.columns and "antigen.species" in df.columns:
-        df = df.drop(columns=["species"])
+    if "species" in df.columns:
+        df["host_species"] = df["species"]
+        if "antigen.species" in df.columns:
+            df = df.drop(columns=["species"])
 
     column_mapping = {
         "cdr3.alpha": "cdr3_alpha",
@@ -449,8 +456,10 @@ def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
     # matching can't consume them anyway.
     df = df[df["gene"] == "TRB"].copy()
 
-    if "species" in df.columns and "antigen.species" in df.columns:
-        df = df.drop(columns=["species"])
+    if "species" in df.columns:
+        df["host_species"] = df["species"]
+        if "antigen.species" in df.columns:
+            df = df.drop(columns=["species"])
 
     column_mapping = {
         "cdr3": "cdr3_beta",
@@ -952,9 +961,17 @@ def match_clonotypes(
     pd.DataFrame
         Clonotypes with match annotations: ``db_match``,
         ``db_match_partial`` (β-only fallback flag — back-compat),
-        ``db_match_strength`` (``"ab"`` / ``"b_only"`` / None),
-        ``db_epitope``, ``db_protein``, ``db_species``, ``db_mhc``,
-        ``db_category``, ``db_database``, ``is_viral``.
+        ``db_match_strength`` (``"ab"`` / ``"b_only"`` / ``"ab_cross"``
+        / ``"b_only_cross"`` / None; ``_cross`` suffix indicates a
+        non-human host-species match per #83),
+        ``db_epitope``, ``db_protein``, ``db_protein_canonical``,
+        ``db_species`` (antigen source organism),
+        ``db_host_species`` (TCR donor organism, new in #83),
+        ``db_mhc``, ``db_category`` (``viral`` / ``bacterial`` /
+        ``self`` / ``tumor_self`` / ``other`` / ``unknown`` /
+        ``contradictory`` — last when multiple matches disagree on
+        an informative label per #83),
+        ``db_database``, ``is_viral``.
     """
     # Validate inputs
     clonotypes = validate_clonotype_df(clonotypes, for_annotation=True)
@@ -994,6 +1011,7 @@ def match_clonotypes(
     df["db_protein"] = None
     df["db_protein_canonical"] = None
     df["db_species"] = None
+    df["db_host_species"] = None
     df["db_mhc"] = None
     df["db_category"] = None
     df["db_database"] = None
@@ -1107,12 +1125,33 @@ def _annotate_match(
     """Annotate a single clonotype with match information.
 
     For multi-row matches, picks the most common value per field
-    (``.mode().iloc[0]``). ``db_category`` is expected to have been
-    pre-computed on ``matches`` (see ``match_clonotypes``); the mode of
-    the pre-classified category is what gets surfaced.
+    (``.mode().iloc[0]``). Two exceptions (#83):
+
+    - ``db_category`` is set to :data:`CATEGORY_CONTRADICTORY` when
+      matches disagree on a non-null category (rather than silently
+      picking a mode); the agreed value is used otherwise.
+    - ``db_match_strength`` gets an ``_cross`` suffix when any matched
+      row carries a non-human host species (``host_species``). Lets
+      downstream filters distinguish a confident human-vs-human match
+      from a cross-species curiosity.
     """
     if len(matches) == 0:
         return
+
+    # Cross-species detection — applied before strength is recorded.
+    host_species_match: str | None = None
+    if "host_species" in matches.columns:
+        hs = matches["host_species"].dropna()
+        if len(hs) > 0:
+            host_species_match = hs.mode().iloc[0]
+            df.loc[idx, "db_host_species"] = host_species_match
+            hs_lower = hs.astype(str).str.lower()
+            any_non_human = (
+                ~hs_lower.str.contains("homo sapiens", na=False, regex=False)
+                & (hs_lower != "human")
+            ).any()
+            if any_non_human:
+                strength = f"{strength}_cross"
 
     df.loc[idx, "db_match"] = True
     df.loc[idx, "db_match_strength"] = strength
@@ -1144,7 +1183,16 @@ def _annotate_match(
     if "db_category" in matches.columns:
         cats = matches["db_category"].dropna()
         if len(cats) > 0:
-            df.loc[idx, "db_category"] = cats.mode().iloc[0]
+            unique_cats = set(cats.unique())
+            # ``unknown`` is the "we don't know" sentinel — don't let a
+            # mixed bag of "unknown" + a real label trigger a
+            # contradiction. Only flag when ≥ 2 *informative* categories
+            # disagree.
+            informative = unique_cats - {CATEGORY_UNKNOWN}
+            if len(informative) > 1:
+                df.loc[idx, "db_category"] = CATEGORY_CONTRADICTORY
+            else:
+                df.loc[idx, "db_category"] = cats.mode().iloc[0]
 
     df.loc[idx, "db_database"] = ";".join(matches["database"].unique())
     df.loc[idx, "is_viral"] = matches["is_viral"].any()
@@ -1218,6 +1266,7 @@ def annotate_clonotypes(
         "db_protein": None,
         "db_protein_canonical": None,
         "db_species": None,
+        "db_host_species": None,
         "db_mhc": None,
         "db_category": None,
         "db_database": None,
