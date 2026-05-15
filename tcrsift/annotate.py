@@ -23,6 +23,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm.auto import tqdm
 
+from .pgen import annotate_publicness as _annotate_publicness
 from .validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
@@ -31,6 +32,34 @@ from .validation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_publicness(
+    df: pd.DataFrame,
+    *,
+    cdr3_col: str,
+    v_gene_col: str,
+    j_gene_col: str,
+    log_summary: bool,
+) -> pd.DataFrame:
+    """Helper used by ``annotate_clonotypes`` to add publicness on
+    both the no-DB short-circuit path and the post-match path."""
+    if cdr3_col not in df.columns:
+        logger.warning(
+            f"add_publicness=True but {cdr3_col!r} not in DataFrame; "
+            "skipping publicness annotation"
+        )
+        return df
+    df = _annotate_publicness(
+        df, cdr3_col=cdr3_col, v_gene_col=v_gene_col, j_gene_col=j_gene_col
+    )
+    if log_summary:
+        n_public = int((df["publicness"] >= 0.5).sum())
+        logger.info(
+            f"  Publicness: {n_public:,}/{len(df):,} clones above 0.5 "
+            "(consider discounting their DB matches)"
+        )
+    return df
 
 
 # Known viral species patterns for flagging
@@ -1134,6 +1163,11 @@ def annotate_clonotypes(
     match_strictness: str | None = None,
     exclude_viral: bool = False,
     flag_only: bool = False,
+    *,
+    add_publicness: bool = False,
+    publicness_cdr3_col: str = "CDR3_beta",
+    publicness_v_gene_col: str = "beta_v_gene",
+    publicness_j_gene_col: str = "beta_j_gene",
 ) -> pd.DataFrame:
     """
     Main annotation function.
@@ -1159,6 +1193,14 @@ def annotate_clonotypes(
         Remove clones matching viral epitopes
     flag_only : bool
         Just flag viral, don't remove
+    add_publicness : bool
+        When True, add ``log10_pgen`` and ``publicness`` columns from
+        :func:`tcrsift.pgen.annotate_publicness` (#58). High-publicness
+        sequences are likely to be public; downstream callers can
+        discount DB matches against them by multiplying any per-match
+        score by ``(1 - publicness)``.
+    publicness_cdr3_col, publicness_v_gene_col, publicness_j_gene_col : str
+        Columns Pgen estimator should read.
 
     Returns
     -------
@@ -1189,6 +1231,14 @@ def annotate_clonotypes(
         for col, default in _DEFAULT_ANNOTATION_COLUMNS.items():
             if col not in df.columns:
                 df[col] = default
+        if add_publicness:
+            df = _apply_publicness(
+                df,
+                cdr3_col=publicness_cdr3_col,
+                v_gene_col=publicness_v_gene_col,
+                j_gene_col=publicness_j_gene_col,
+                log_summary=False,
+            )
         return df
 
     # Load databases
@@ -1212,6 +1262,18 @@ def annotate_clonotypes(
         initial = len(df)
         df = df[~df["is_viral"]]
         logger.info(f"Excluded {initial - len(df)} viral clones")
+
+    # Publicness annotation (#58). Computed after match filtering so
+    # the resulting Pgen/publicness columns align with the final row
+    # set.
+    if add_publicness:
+        df = _apply_publicness(
+            df,
+            cdr3_col=publicness_cdr3_col,
+            v_gene_col=publicness_v_gene_col,
+            j_gene_col=publicness_j_gene_col,
+            log_summary=True,
+        )
 
     return df
 

@@ -1058,6 +1058,33 @@ class TestAnnotateClonotypes:
         assert (~result["db_match"]).all()
         assert (~result["is_viral"]).all()
 
+    def test_add_publicness_no_db_path(self):
+        """``add_publicness=True`` on the no-DB short-circuit should
+        still emit ``log10_pgen`` + ``publicness`` columns. Regression
+        coverage for the publicness path that bypasses match logic."""
+        df = pd.DataFrame({
+            "CDR3_beta": ["CASSLAPGATNEKLFF", "CASSPGTGELFF"],
+            "beta_v_gene": ["TRBV20-1", "TRBV9"],
+            "beta_j_gene": ["TRBJ2-1", "TRBJ1-2"],
+        })
+        out = annotate_clonotypes(df, add_publicness=True)
+        assert "log10_pgen" in out.columns
+        assert "publicness" in out.columns
+        assert out["log10_pgen"].notna().all()
+
+    def test_add_publicness_preserves_non_default_index(self):
+        """A non-default frame index must propagate through publicness
+        annotation. Earlier ``publicness_score`` stripped the index and
+        the resulting assignment silently produced all-NaN."""
+        df = pd.DataFrame({
+            "CDR3_beta": ["CASSLAPGATNEKLFF", "CASSPGTGELFF"],
+            "beta_v_gene": ["TRBV20-1", "TRBV9"],
+            "beta_j_gene": ["TRBJ2-1", "TRBJ1-2"],
+        }, index=[42, 99])
+        out = annotate_clonotypes(df, add_publicness=True)
+        assert list(out.index) == [42, 99]
+        assert out["publicness"].notna().all()
+
 
 class TestGetAnnotationSummary:
     """Tests for annotation summary."""
