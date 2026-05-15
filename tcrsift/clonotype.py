@@ -16,6 +16,8 @@ Clonotype aggregation for TCRsift.
 Groups cells by TCR CDR3 sequences to identify clonal populations.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 
