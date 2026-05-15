@@ -554,16 +554,54 @@ def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
                 hint="Make sure VDJ data was loaded.",
             )
 
-    valid = obs[(obs["CDR3ab"] != "") & (obs["CDR3ab"] != "_")].copy()
+    # Filter to rows with a real CDR3ab. NaN != "" evaluates to True
+    # in pandas, so a plain ``!= ""`` check would let chainless cells
+    # through and silently inflate the denominator (#80).
+    cdr3ab_str = obs["CDR3ab"].astype(str)
+    valid = obs[
+        obs["CDR3ab"].notna()
+        & (cdr3ab_str != "")
+        & (cdr3ab_str != "_")
+        & (cdr3ab_str != "nan")
+    ].copy()
 
-    # Frequency denominator: total cells per sample passing the same
-    # validity filter. For consistency with max_frequency, restrict to
-    # complete clones when the marker is available.
-    if "is_complete_clone" in valid.columns:
-        denom_subset = valid[valid["is_complete_clone"]]
+    # Frequency denominator: re-derive ``is_complete_clone`` with the
+    # same UMI-gated rule ``aggregate_clonotypes`` uses (#80). The
+    # column already present on ``adata.obs`` from an earlier pipeline
+    # step often lacks the UMI gate, which made the denominator
+    # diverge from ``clonotypes.csv:max_frequency``. Doing it locally
+    # here keeps the two paths in lockstep.
+    def _has(col):
+        return col in valid.columns
+
+    tra_pass_umi = (
+        valid["TRA_1_umis"].fillna(0).astype(float) >= 2
+        if _has("TRA_1_umis") else pd.Series(True, index=valid.index)
+    )
+    trb_pass_umi = (
+        valid["TRB_1_umis"].fillna(0).astype(float) >= 2
+        if _has("TRB_1_umis") else pd.Series(True, index=valid.index)
+    )
+    if _has("CDR3_alpha") and _has("CDR3_beta"):
+        is_complete = (
+            valid["CDR3_alpha"].notna()
+            & (valid["CDR3_alpha"].astype(str) != "")
+            & valid["CDR3_beta"].notna()
+            & (valid["CDR3_beta"].astype(str) != "")
+            & tra_pass_umi
+            & trb_pass_umi
+        )
+    elif _has("CDR3_beta"):
+        is_complete = (
+            valid["CDR3_beta"].notna()
+            & (valid["CDR3_beta"].astype(str) != "")
+            & trb_pass_umi
+        )
     else:
-        denom_subset = valid
-    sample_totals = denom_subset.groupby("sample").size()
+        # No chain columns at all — fall back to the raw row count.
+        is_complete = pd.Series(True, index=valid.index)
+    valid["is_complete_clone"] = is_complete
+    sample_totals = valid[is_complete].groupby("sample").size()
 
     # Cell counts and UMI sums per (clone, sample).
     grouped = valid.groupby(["CDR3ab", "sample"])
@@ -609,6 +647,136 @@ def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
     out = out[leading + extra]
 
     return out.sort_values(["CDR3ab", "sample"]).reset_index(drop=True)
+
+
+def build_clone_method_long(
+    long_df: pd.DataFrame,
+    *,
+    method_col: str = "method",
+    clone_col: str = "CDR3ab",
+    cells_col: str = "cells",
+    freq_col: str = "frequency",
+    sample_col: str = "sample",
+) -> pd.DataFrame:
+    """Per-(clone, method) cell-count + frequency table (#81).
+
+    Aggregates ``long_df`` (one row per (clone, sample)) into one row
+    per (clone, method) using the same denominator the clone_sample
+    table uses. This is the authoritative input for per-method picks,
+    selection-route heatmaps, per-method tier-eligibility queries.
+
+    Columns emitted:
+
+    - ``CDR3ab``, ``method``
+    - ``cells_in_method`` — sum of cells across samples within the method
+    - ``max_freq_in_method`` — max per-sample frequency observed in the method
+    - ``n_samples_in_method`` — count of samples in which the clone appears
+
+    Downstream code was rolling this aggregation by hand in multiple
+    places, drifting on ``cells=max`` vs ``cells=sum``. This function
+    is the single source of truth (see #81).
+    """
+    if long_df.empty:
+        return pd.DataFrame(
+            columns=[
+                clone_col, method_col, "cells_in_method",
+                "max_freq_in_method", "n_samples_in_method",
+            ]
+        )
+    if method_col not in long_df.columns:
+        raise ValueError(
+            f"build_clone_method_long: missing {method_col!r} column "
+            "(populate enrichment_method on the sample sheet)"
+        )
+
+    agg = (
+        long_df.groupby([clone_col, method_col], observed=True)
+        .agg(
+            cells_in_method=(cells_col, "sum"),
+            max_freq_in_method=(freq_col, "max"),
+            n_samples_in_method=(sample_col, "nunique"),
+        )
+        .reset_index()
+    )
+    return agg.sort_values([clone_col, method_col]).reset_index(drop=True)
+
+
+def compute_sample_overlap_matrices(
+    long_df: pd.DataFrame,
+    *,
+    clone_col: str = "CDR3ab",
+    sample_col: str = "sample",
+    cells_col: str = "cells",
+    restrict_clones: set | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Sample × sample overlap matrices (#82).
+
+    Returns a dict with two square DataFrames indexed by sample:
+
+    - ``"jaccard"`` — clone-set Jaccard. |A ∩ B| / |A ∪ B| over the
+      sets of clones observed in each sample.
+    - ``"cell_weighted_jaccard"`` — cell-weighted Jaccard.
+      Σ min(cells_A[c], cells_B[c]) / Σ max(cells_A[c], cells_B[c])
+      over clones in A ∪ B. Captures abundance similarity, not just
+      presence/absence.
+
+    Parameters
+    ----------
+    long_df : pd.DataFrame
+        Output of :func:`build_clone_sample_long`.
+    clone_col, sample_col, cells_col : str
+        Column names.
+    restrict_clones : set | None
+        When set, restrict the matrices to clones in this set. Useful
+        for "selected clones only" / "tier1 only" variants.
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        ``{"jaccard": …, "cell_weighted_jaccard": …}``. Diagonal is
+        always 1.0.
+    """
+    sub = long_df
+    if restrict_clones is not None:
+        sub = sub[sub[clone_col].isin(restrict_clones)]
+
+    samples = sorted(long_df[sample_col].astype(str).unique())
+    if not samples or sub.empty:
+        empty = pd.DataFrame(0.0, index=samples, columns=samples)
+        for s in samples:
+            empty.loc[s, s] = 1.0
+        return {"jaccard": empty, "cell_weighted_jaccard": empty}
+
+    # Pivot to (sample × clone) matrix of cell counts.
+    pivot = (
+        sub.pivot_table(
+            index=sample_col, columns=clone_col,
+            values=cells_col, aggfunc="sum", fill_value=0,
+        )
+        .reindex(samples, fill_value=0)
+    )
+    sets = {s: set(pivot.columns[pivot.loc[s] > 0]) for s in samples}
+
+    jaccard = pd.DataFrame(0.0, index=samples, columns=samples)
+    cw_jaccard = pd.DataFrame(0.0, index=samples, columns=samples)
+    for a in samples:
+        a_vec = pivot.loc[a].astype(float).to_numpy()
+        for b in samples:
+            if a == b:
+                jaccard.loc[a, b] = 1.0
+                cw_jaccard.loc[a, b] = 1.0
+                continue
+            inter = sets[a] & sets[b]
+            union = sets[a] | sets[b]
+            jaccard.loc[a, b] = (
+                len(inter) / len(union) if union else 0.0
+            )
+            b_vec = pivot.loc[b].astype(float).to_numpy()
+            min_sum = float(np.minimum(a_vec, b_vec).sum())
+            max_sum = float(np.maximum(a_vec, b_vec).sum())
+            cw_jaccard.loc[a, b] = min_sum / max_sum if max_sum > 0 else 0.0
+
+    return {"jaccard": jaccard, "cell_weighted_jaccard": cw_jaccard}
 
 
 def build_per_method_rankings(

@@ -82,6 +82,65 @@ DEFAULT_THRESHOLD_TIERS = {
 DEFAULT_FDR_TIERS = [0.0001, 0.001, 0.01, 0.1, 0.15]
 
 
+def clone_clears_tier(
+    cells: int | float,
+    max_frequency: float,
+    tier_def: dict,
+    *,
+    n_conditions: int | None = None,
+) -> bool:
+    """Test whether a clone's stats clear a tier definition (#85).
+
+    Returns True iff:
+    - ``cells >= tier_def['min_cells']``
+    - ``max_frequency >= tier_def['min_frequency']``
+    - ``n_conditions <= tier_def['max_conditions']`` (skipped when None)
+
+    Downstream callers were reimplementing this logic against
+    :data:`DEFAULT_THRESHOLD_TIERS`. Centralizing it keeps the
+    threshold definitions in lockstep across the per-method-recovery
+    plot, the selection-route heatmap, and the funnel.
+    """
+    try:
+        if float(cells) < tier_def.get("min_cells", 0):
+            return False
+        if float(max_frequency) < tier_def.get("min_frequency", 0.0):
+            return False
+    except (TypeError, ValueError):
+        return False
+    if n_conditions is not None:
+        max_c = tier_def.get("max_conditions")
+        if max_c is not None and n_conditions > max_c:
+            return False
+    return True
+
+
+def strictest_tier_met(
+    cells: int | float,
+    max_frequency: float,
+    tier_defs: dict[str, dict] | None = None,
+    *,
+    n_conditions: int | None = None,
+    tier_order: tuple[str, ...] = ("tier1", "tier2", "tier3", "tier4", "tier5"),
+) -> str | None:
+    """Return the strictest tier the clone qualifies for, or None (#85).
+
+    Walks ``tier_order`` from strict→permissive and returns the first
+    label whose tier definition the clone clears via
+    :func:`clone_clears_tier`. ``None`` when the clone fails even the
+    most permissive tier.
+    """
+    tier_defs = tier_defs if tier_defs is not None else DEFAULT_THRESHOLD_TIERS
+    for name in tier_order:
+        if name not in tier_defs:
+            continue
+        if clone_clears_tier(
+            cells, max_frequency, tier_defs[name], n_conditions=n_conditions
+        ):
+            return name
+    return None
+
+
 # Named filter modes (#15). Pre-canned compositions of the donor/method
 # knobs that match common multi-donor / multi-method study designs.
 # `fdr` is the existing default and is documented here for completeness;

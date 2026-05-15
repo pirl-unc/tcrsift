@@ -76,7 +76,11 @@ nav:
     - Clonotyping: api/clonotype.md
     - Filtering: api/filter.md
     - Annotation: api/annotate.md
+    - Pgen / Publicness: api/pgen.md
+    - Signatures: api/signatures.md
+    - Candidate Selection: api/candidate.md
     - TIL Matching: api/til.md
     - TIL Selection: api/til_select.md
     - Assembly: api/assemble.md
+    - Display Formatting: api/format.md
   - Contributing: contributing.md

@@ -65,17 +65,26 @@ _MODULE_EXPORTS = {
     ),
     ".clonotype": (
         "aggregate_clonotypes",
+        "build_clone_method_long",
+        "build_clone_sample_long",
+        "compute_sample_overlap_matrices",
         "get_clonotype_summary",
         "export_clonotypes_airr",
     ),
     ".candidate": (
+        "compute_signature_picks_per_method",
         "select_candidates",
+        "signature_picks_clone_to_methods",
     ),
     ".filter": (
+        "DEFAULT_THRESHOLD_TIERS",
+        "DEFAULT_FDR_TIERS",
+        "clone_clears_tier",
         "filter_clonotypes",
         "filter_clonotypes_threshold",
         "assign_tiers_threshold",
         "split_by_tier",
+        "strictest_tier_met",
         "get_filter_summary",
     ),
     ".annotate": (
