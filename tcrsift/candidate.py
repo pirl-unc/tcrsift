@@ -137,3 +137,95 @@ def select_candidates(
         f"(top_n={top_n} per signature; signatures={list(signatures)})"
     )
     return df
+
+
+def compute_signature_picks_per_method(
+    per_clone_method: pd.DataFrame,
+    *,
+    signatures: tuple[str, ...] = (
+        "antigen_response", "cytolytic", "tumor_reactive",
+    ),
+    pool_clones: set | None = None,
+    top_n: int = 1,
+    min_cells: int = 2,
+    method_col: str = "method",
+    clone_col: str = "CDR3ab",
+    cells_col: str = "cells_in_method",
+    score_col_template: str = "signature_{name}",
+) -> dict:
+    """Top-N tier3+ picks per (method, signature) by signature score (#84).
+
+    For each method, for each signature, rank clones in ``pool_clones``
+    by their signature score (within that method's per-clone aggregate)
+    and take the top ``top_n`` clones with ``cells_in_method >= min_cells``.
+
+    Used by the selection-route heatmap and the per-method candidate
+    overlay. Pre-aggregating to (method, clone) BEFORE ranking is the
+    correctness fix #84 calls out — ranking on the raw clone_sample_long
+    can pick top_n rows from the same clone if the method has multiple
+    samples.
+
+    Parameters
+    ----------
+    per_clone_method : pd.DataFrame
+        One row per (clone, method) with at least ``method_col``,
+        ``clone_col``, ``cells_col``, and one column per signature
+        named via ``score_col_template``. Build via
+        :func:`tcrsift.clonotype.build_clone_method_long` merged with
+        signature scores from
+        :func:`tcrsift.gex.compute_signature_scores_per_clonotype`.
+    signatures : tuple[str, ...]
+        Signature names to rank against.
+    pool_clones : set | None
+        Restrict picks to this clone set (e.g. the tier3+ pool). When
+        None, ranks all clones in the input.
+    top_n, min_cells : int
+        Picks per (method, signature); minimum cells in the method for
+        a clone to be eligible.
+    method_col, clone_col, cells_col, score_col_template : str
+        Column names.
+
+    Returns
+    -------
+    dict
+        ``{method: {signature: [CDR3ab, …], …}, …}`` — the top-N
+        clones per (method, signature) by descending signature score.
+    """
+    if per_clone_method.empty:
+        return {}
+    df = per_clone_method
+    if pool_clones is not None:
+        df = df[df[clone_col].isin(pool_clones)]
+    df = df[df[cells_col] >= min_cells]
+
+    picks: dict = {}
+    for method, msub in df.groupby(method_col, observed=True):
+        picks[method] = {}
+        for sig in signatures:
+            col = score_col_template.format(name=sig)
+            if col not in msub.columns:
+                picks[method][sig] = []
+                continue
+            ranked = msub.dropna(subset=[col]).sort_values(
+                col, ascending=False, kind="stable"
+            )
+            picks[method][sig] = list(ranked[clone_col].head(top_n))
+    return picks
+
+
+def signature_picks_clone_to_methods(per_method_picks: dict) -> dict:
+    """Invert :func:`compute_signature_picks_per_method` output (#84).
+
+    Input shape: ``{method: {signature: [clones]}}``
+    Output shape: ``{clone: {signature: [methods]}}``
+
+    Used to populate per-clone ``tier3_top_by_<sig>_signature_methods``
+    columns on the candidate shortlist so a reviewer can see *which*
+    methods drove a clone's inclusion.
+    """
+    out: dict = {}
+    for method, by_sig in per_method_picks.items():
+        for sig, clones in by_sig.items():
+            for clone in clones:
+                out.setdefault(clone, {}).setdefault(sig, []).append(method)
+    return out

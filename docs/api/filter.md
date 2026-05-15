@@ -10,6 +10,8 @@ Module for clonotype filtering and tier assignment.
         - filter_clonotypes_logistic
         - assign_tiers_threshold
         - split_by_tier
+        - clone_clears_tier
+        - strictest_tier_met
         - get_filter_summary
         - DEFAULT_THRESHOLD_TIERS
         - DEFAULT_FDR_TIERS
