@@ -53,6 +53,145 @@ def save_figure(fig: plt.Figure, output_path: str | Path, dpi: int = 300):
     logger.info(f"Saved plot to {output_path}")
 
 
+def plot_pgen_distribution(
+    df: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    pgen_col: str = "log10_pgen",
+    publicness_col: str | None = "publicness",
+    group_col: str | None = None,
+    bins: int = 40,
+    title: str | None = None,
+) -> Path | None:
+    """Histogram of log10 Pgen with the publicness cutoff overlaid (#58).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Clonotypes with a ``log10_pgen`` (or named via ``pgen_col``)
+        column produced by :func:`tcrsift.pgen.compute_pgen` or
+        :func:`tcrsift.pgen.annotate_publicness`.
+    output_path : str | Path
+        File to write.
+    pgen_col : str
+        Column name with log10 Pgen.
+    publicness_col : str | None
+        If a publicness column is present, color bars by mean
+        publicness in each bin (red = public, blue = private).
+    group_col : str | None
+        Optional categorical column to facet on (e.g. ``tier``). When
+        set, overlays one translucent histogram per group.
+    bins : int
+        Number of histogram bins.
+    title : str | None
+        Optional title override.
+
+    Returns
+    -------
+    Path | None
+        Output path, or None if there's no data to plot.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if pgen_col not in df.columns:
+        logger.info(
+            f"plot_pgen_distribution: {pgen_col!r} not in frame; skipping."
+        )
+        return None
+    values = df[pgen_col].dropna()
+    if values.empty:
+        logger.info("plot_pgen_distribution: no non-NaN Pgen values; skipping.")
+        return None
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+
+    if group_col and group_col in df.columns:
+        palette = sns.color_palette("Set2", n_colors=df[group_col].nunique())
+        for color, (g, sub) in zip(palette, df.groupby(group_col, observed=True)):
+            ax.hist(
+                sub[pgen_col].dropna(), bins=bins, alpha=0.55,
+                label=str(g), color=color, edgecolor="white",
+            )
+        ax.legend(title=group_col, frameon=False, fontsize=9)
+    else:
+        ax.hist(values, bins=bins, color="#3b82f6", edgecolor="white", alpha=0.85)
+
+    # Annotate the publicness cutoffs (matches the
+    # ``publicness_score`` defaults — pass override lines via title if
+    # the caller is using a different scale).
+    for cutoff, label, color in (
+        (-30.0, "low (private)", "#1d4ed8"),
+        (-18.0, "high (public)", "#dc2626"),
+    ):
+        ax.axvline(cutoff, color=color, linestyle="--", linewidth=1.0, alpha=0.7)
+        ax.text(
+            cutoff, ax.get_ylim()[1] * 0.95, f" {label}",
+            color=color, fontsize=8.5, va="top", ha="left",
+        )
+
+    ax.set_xlabel(r"log$_{10}$ Pgen (proxy)")
+    ax.set_ylabel("clones")
+    ax.set_title(title or "Generation-probability distribution")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    save_figure(fig, output_path)
+    return output_path
+
+
+def plot_publicness_vs_match_score(
+    df: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    publicness_col: str = "publicness",
+    match_score_col: str = "n_db_matches",
+    tier_col: str | None = "tier",
+    title: str | None = None,
+) -> Path | None:
+    """Scatter of publicness vs. raw DB match count (#58).
+
+    Helps spot DB matches that are inflated by public sequences:
+    points in the high-publicness, high-match-score corner are clones
+    that look "well-annotated" only because they're easy to generate
+    by chance.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if publicness_col not in df.columns or match_score_col not in df.columns:
+        logger.info(
+            f"plot_publicness_vs_match_score: missing "
+            f"{publicness_col!r} or {match_score_col!r}; skipping."
+        )
+        return None
+    sub = df.dropna(subset=[publicness_col, match_score_col])
+    if sub.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    if tier_col and tier_col in sub.columns:
+        palette = sns.color_palette("rocket_r", n_colors=sub[tier_col].nunique())
+        for color, (t, g) in zip(palette, sub.groupby(tier_col, observed=True)):
+            ax.scatter(
+                g[publicness_col], g[match_score_col],
+                color=color, alpha=0.7, s=22, edgecolor="white",
+                linewidth=0.4, label=str(t),
+            )
+        ax.legend(title=tier_col, frameon=False, fontsize=9, loc="upper left")
+    else:
+        ax.scatter(
+            sub[publicness_col], sub[match_score_col],
+            color="#3b82f6", alpha=0.7, s=22, edgecolor="white",
+            linewidth=0.4,
+        )
+    ax.set_xlabel("publicness (1 = generatable by chance)")
+    ax.set_ylabel(match_score_col)
+    ax.set_title(title or "DB match count vs. publicness")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    save_figure(fig, output_path)
+    return output_path
+
+
 def plot_assembly_qc(
     report,
     output_path: str | Path | None = None,

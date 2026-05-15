@@ -1134,6 +1134,11 @@ def annotate_clonotypes(
     match_strictness: str | None = None,
     exclude_viral: bool = False,
     flag_only: bool = False,
+    *,
+    add_publicness: bool = False,
+    publicness_cdr3_col: str = "CDR3_beta",
+    publicness_v_gene_col: str = "beta_v_gene",
+    publicness_j_gene_col: str = "beta_j_gene",
 ) -> pd.DataFrame:
     """
     Main annotation function.
@@ -1159,6 +1164,14 @@ def annotate_clonotypes(
         Remove clones matching viral epitopes
     flag_only : bool
         Just flag viral, don't remove
+    add_publicness : bool
+        When True, add ``log10_pgen`` and ``publicness`` columns from
+        :func:`tcrsift.pgen.annotate_publicness` (#58). High-publicness
+        sequences are likely to be public; downstream callers can
+        discount DB matches against them by multiplying any per-match
+        score by ``(1 - publicness)``.
+    publicness_cdr3_col, publicness_v_gene_col, publicness_j_gene_col : str
+        Columns Pgen estimator should read.
 
     Returns
     -------
@@ -1189,6 +1202,15 @@ def annotate_clonotypes(
         for col, default in _DEFAULT_ANNOTATION_COLUMNS.items():
             if col not in df.columns:
                 df[col] = default
+        if add_publicness and publicness_cdr3_col in df.columns:
+            from .pgen import annotate_publicness
+
+            df = annotate_publicness(
+                df,
+                cdr3_col=publicness_cdr3_col,
+                v_gene_col=publicness_v_gene_col,
+                j_gene_col=publicness_j_gene_col,
+            )
         return df
 
     # Load databases
@@ -1212,6 +1234,30 @@ def annotate_clonotypes(
         initial = len(df)
         df = df[~df["is_viral"]]
         logger.info(f"Excluded {initial - len(df)} viral clones")
+
+    # Publicness annotation (#58). Computed after match filtering so
+    # the resulting Pgen/publicness columns align with the final row
+    # set.
+    if add_publicness:
+        from .pgen import annotate_publicness
+
+        if publicness_cdr3_col in df.columns:
+            df = annotate_publicness(
+                df,
+                cdr3_col=publicness_cdr3_col,
+                v_gene_col=publicness_v_gene_col,
+                j_gene_col=publicness_j_gene_col,
+            )
+            n_public = int((df["publicness"] >= 0.5).sum())
+            logger.info(
+                f"  Publicness: {n_public:,}/{len(df):,} clones above 0.5 "
+                "(consider discounting their DB matches)"
+            )
+        else:
+            logger.warning(
+                f"add_publicness=True but {publicness_cdr3_col!r} not in "
+                "DataFrame; skipping publicness annotation"
+            )
 
     return df
 
