@@ -88,6 +88,13 @@ _MODULE_EXPORTS = {
         "get_filter_summary",
     ),
     ".annotate": (
+        "CATEGORY_BACTERIAL",
+        "CATEGORY_CONTRADICTORY",
+        "CATEGORY_OTHER",
+        "CATEGORY_SELF",
+        "CATEGORY_TUMOR_SELF",
+        "CATEGORY_UNKNOWN",
+        "CATEGORY_VIRAL",
         "load_vdjdb",
         "load_iedb",
         "load_cedar",

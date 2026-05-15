@@ -11,6 +11,8 @@ from tcrsift.annotate import (
     annotate_clonotypes,
     canonicalize_antigen,
     canonicalize_antigens,
+    canonicalize_species,
+    canonicalize_species_labels,
     classify_category,
     get_annotation_summary,
     load_cedar,
@@ -156,6 +158,53 @@ class TestCanonicalizeAntigen:
         assert list(result) == ["MART-1", "SARS-CoV-2 Spike", None, "unknown"]
 
 
+class TestCanonicalizeSpecies:
+    """Tests for species/source-organism canonicalization."""
+
+    def test_collapses_human_variants(self):
+        for variant in (
+            "Homo sapiens",
+            "HomoSapiens",
+            "Homo sapiens (human)",
+            "human",
+            "homo_sapiens",
+        ):
+            assert canonicalize_species(variant) == "Homo sapiens"
+
+    def test_collapses_mouse_variants(self):
+        for variant in ("Mus musculus", "MusMusculus", "mouse", "murine"):
+            assert canonicalize_species(variant) == "Mus musculus"
+
+    def test_collapses_common_pathogen_variants(self):
+        cases = {
+            "CMV": "CMV",
+            "Human cytomegalovirus": "CMV",
+            "Human herpesvirus 5": "CMV",
+            "Epstein-Barr virus": "EBV",
+            "Human herpesvirus 4": "EBV",
+            "Severe acute respiratory syndrome coronavirus 2": "SARS-CoV-2",
+            "SARS CoV 2": "SARS-CoV-2",
+            "InfluenzaA": "Influenza A",
+            "Influenza B virus": "Influenza B",
+        }
+        for variant, expected in cases.items():
+            assert canonicalize_species(variant) == expected
+
+    def test_formats_unlisted_binomial_variants(self):
+        assert canonicalize_species("Plasmodium_falciparum") == "Plasmodium falciparum"
+        assert canonicalize_species("ListeriaMonocytogenes") == "Listeria monocytogenes"
+
+    def test_unknown_species_normalizes_to_none(self):
+        for variant in (None, np.nan, "", "unknown", "N/A"):
+            assert canonicalize_species(variant) is None
+
+    def test_vectorized_canonicalize_species_labels(self):
+        result = canonicalize_species_labels(
+            pd.Series(["HomoSapiens", "Human cytomegalovirus", None])
+        )
+        assert list(result) == ["Homo sapiens", "CMV", None]
+
+
 class TestClassifyCategory:
     """Tests for the species/antigen → category classifier."""
 
@@ -175,8 +224,8 @@ class TestClassifyCategory:
 
     def test_self_homo_sapiens(self):
         cats = classify_category(
-            pd.Series(["Homo sapiens (human)", "Homo sapiens"]),
-            pd.Series(["beta-2-microglobulin", "insulin"]),
+            pd.Series(["Homo sapiens (human)", "Homo sapiens", "HomoSapiens", "human"]),
+            pd.Series(["beta-2-microglobulin", "insulin", "CD3D", "albumin"]),
         )
         assert (cats == "self").all()
 
@@ -229,6 +278,19 @@ class TestClassifyCategory:
             pd.Series(["HER2", "TERT", "PSA", "WT1"]),
         )
         assert (cats == "tumor_self").all()
+
+    def test_species_category_survives_missing_antigen_gene(self):
+        """Source organism alone is enough for species-derived buckets."""
+        cats = classify_category(
+            pd.Series([
+                "Human cytomegalovirus",
+                "Homo sapiens",
+                "Mycobacterium tuberculosis",
+                "Plasmodium falciparum",
+            ]),
+            pd.Series(["", None, "", None]),
+        )
+        assert list(cats) == ["viral", "self", "bacterial", "other"]
 
 
 class TestLoadVdjdb:
@@ -835,6 +897,9 @@ class TestMatchClonotypes:
             "db_protein_canonical",
             "db_mhc",
             "db_category",
+            "db_category_dominant",
+            "db_category_detail",
+            "db_category_counts",
             "db_match_strength",
         ):
             assert col in result.columns
@@ -850,6 +915,9 @@ class TestMatchClonotypes:
         assert first["db_mhc"] == "HLA-A*02:01"
         assert first["db_epitope"] == "NLVPMVATV"
         assert first["db_category"] == "viral"
+        assert first["db_category_dominant"] == "viral"
+        assert first["db_category_detail"] == "viral"
+        assert first["db_category_counts"] == "viral:1"
         assert first["db_match_strength"] == "ab"
 
     def test_match_strictness_strict_ab_no_fallback(self, sample_clonotypes_df):
@@ -1051,6 +1119,9 @@ class TestAnnotateClonotypes:
             "db_species",
             "db_mhc",
             "db_category",
+            "db_category_dominant",
+            "db_category_detail",
+            "db_category_counts",
             "db_database",
             "is_viral",
         }

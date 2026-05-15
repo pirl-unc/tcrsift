@@ -18,6 +18,7 @@ Matches TCRs against VDJdb, IEDB, and CEDAR to identify known specificities.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -140,17 +141,268 @@ BACTERIAL_SPECIES_PATTERNS = [
     "treponema",
 ]
 
+UNKNOWN_SPECIES_TOKENS = {
+    "unknown",
+    "unk",
+    "na",
+    "nan",
+    "none",
+    "notapplicable",
+    "notavailable",
+    "unclassified",
+    "unspecified",
+}
+
+# Exact aliases keyed by lowercased alphanumeric text. This catches spelling,
+# separator, and source-specific compact forms (e.g. VDJdb's HomoSapiens).
+CANONICAL_SPECIES_ALIASES: dict[str, str] = {
+    "human": "Homo sapiens",
+    "homosapiens": "Homo sapiens",
+    "homosapienshuman": "Homo sapiens",
+    "mouse": "Mus musculus",
+    "mice": "Mus musculus",
+    "murine": "Mus musculus",
+    "musmusculus": "Mus musculus",
+    "rat": "Rattus norvegicus",
+    "rattusnorvegicus": "Rattus norvegicus",
+    "rhesusmacaque": "Macaca mulatta",
+    "macacamulatta": "Macaca mulatta",
+    "cynomolgusmacaque": "Macaca fascicularis",
+    "macacafascicularis": "Macaca fascicularis",
+    "pig": "Sus scrofa",
+    "swine": "Sus scrofa",
+    "susscrofa": "Sus scrofa",
+    "cow": "Bos taurus",
+    "cattle": "Bos taurus",
+    "bostaurus": "Bos taurus",
+    "cmv": "CMV",
+    "hcmv": "CMV",
+    "humancmv": "CMV",
+    "humancytomegalovirus": "CMV",
+    "humanherpesvirus5": "CMV",
+    "hhv5": "CMV",
+    "mcmv": "Mouse CMV",
+    "mousecmv": "Mouse CMV",
+    "murinecmv": "Mouse CMV",
+    "mousecytomegalovirus": "Mouse CMV",
+    "muridbetaherpesvirus1": "Mouse CMV",
+    "ebv": "EBV",
+    "epsteinbarr": "EBV",
+    "epsteinbarrvirus": "EBV",
+    "humanherpesvirus4": "EBV",
+    "hhv4": "EBV",
+    "hiv": "HIV",
+    "humanimmunodeficiencyvirus": "HIV",
+    "hiv1": "HIV-1",
+    "humanimmunodeficiencyvirus1": "HIV-1",
+    "hiv2": "HIV-2",
+    "humanimmunodeficiencyvirus2": "HIV-2",
+    "htlv1": "HTLV-1",
+    "humantlymphotropicvirus1": "HTLV-1",
+    "humantcellleukemiavirus1": "HTLV-1",
+    "sarscov2": "SARS-CoV-2",
+    "severeacuterespiratorysyndromecoronavirus2": "SARS-CoV-2",
+    "2019ncov": "SARS-CoV-2",
+    "sarscov": "SARS-CoV-1",
+    "severeacuterespiratorysyndromecoronavirus": "SARS-CoV-1",
+    "influenza": "Influenza",
+    "flu": "Influenza",
+    "influenzaa": "Influenza A",
+    "influenzaavirus": "Influenza A",
+    "influenzaavirusa": "Influenza A",
+    "influenzab": "Influenza B",
+    "influenzabvirus": "Influenza B",
+    "hsv1": "HSV-1",
+    "herpessimplexvirus1": "HSV-1",
+    "humanherpesvirus1": "HSV-1",
+    "hsv2": "HSV-2",
+    "herpessimplexvirus2": "HSV-2",
+    "humanherpesvirus2": "HSV-2",
+    "hpv": "HPV",
+    "humanpapillomavirus": "HPV",
+    "hbv": "HBV",
+    "hepatitisb": "HBV",
+    "hepatitisbvirus": "HBV",
+    "hcv": "HCV",
+    "hepatitisc": "HCV",
+    "hepatitiscvirus": "HCV",
+    "dengue": "Dengue virus",
+    "denguevirus": "Dengue virus",
+    "zika": "Zika virus",
+    "zikavirus": "Zika virus",
+    "yellowfever": "Yellow fever virus",
+    "yellowfevervirus": "Yellow fever virus",
+}
+
+# Substring aliases are ordered most-specific first so strains and longer
+# source names collapse before their broader family names.
+CANONICAL_SPECIES_CONTAINS: tuple[tuple[str, str], ...] = (
+    ("severeacuterespiratorysyndromecoronavirus2", "SARS-CoV-2"),
+    ("sarscov2", "SARS-CoV-2"),
+    ("2019ncov", "SARS-CoV-2"),
+    ("mousecytomegalovirus", "Mouse CMV"),
+    ("murinecytomegalovirus", "Mouse CMV"),
+    ("muridbetaherpesvirus1", "Mouse CMV"),
+    ("humancytomegalovirus", "CMV"),
+    ("humanherpesvirus5", "CMV"),
+    ("cytomegalovirus", "CMV"),
+    ("epsteinbarrvirus", "EBV"),
+    ("epsteinbarr", "EBV"),
+    ("humanherpesvirus4", "EBV"),
+    ("humanimmunodeficiencyvirus1", "HIV-1"),
+    ("humanimmunodeficiencyvirus2", "HIV-2"),
+    ("humanimmunodeficiencyvirus", "HIV"),
+    ("sarscov", "SARS-CoV-1"),
+    ("influenzaavirusb", "Influenza B"),
+    ("influenzab", "Influenza B"),
+    ("influenzaavirusa", "Influenza A"),
+    ("influenzaa", "Influenza A"),
+    ("influenza", "Influenza"),
+    ("herpessimplexvirus1", "HSV-1"),
+    ("herpessimplexvirus2", "HSV-2"),
+    ("humanpapillomavirus", "HPV"),
+    ("hepatitisbvirus", "HBV"),
+    ("hepatitiscvirus", "HCV"),
+    ("denguevirus", "Dengue virus"),
+    ("zikavirus", "Zika virus"),
+    ("yellowfevervirus", "Yellow fever virus"),
+)
+
 CATEGORY_VIRAL = "viral"
 CATEGORY_BACTERIAL = "bacterial"
 CATEGORY_SELF = "self"
 CATEGORY_TUMOR_SELF = "tumor_self"
 CATEGORY_OTHER = "other"
 CATEGORY_UNKNOWN = "unknown"
+# Set on a single clone when its DB matches disagree on category
+# (e.g. one match says ``viral``, another says ``tumor_self``). Rather
+# than pick one mode arbitrarily we expose the disagreement (#83).
+CATEGORY_CONTRADICTORY = "contradictory"
+DB_CATEGORY_DETAIL_CONTRADICTORY_DOMINANT = "contradictory_dominant"
 
 
 # Valid strictness modes for match_clonotypes. The function dispatches
 # on this string directly — there's no further internal translation.
 MATCH_STRICTNESS_MODES = ("strict_ab", "ab_with_partial", "b_only")
+
+
+def _species_alias_key(value: str) -> str:
+    """Collapse punctuation/case so source-specific spellings compare cleanly."""
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _fallback_species_label(value: str) -> str | None:
+    """Return a stable display label for species not in the alias table."""
+    text = re.sub(r"[/_]+", " ", value).strip()
+    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
+    text = re.sub(r"\s*\([^)]*\)\s*", " ", text)
+    text = re.sub(r"\s*\[[^\]]*\]\s*", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" ;,")
+    if not text:
+        return None
+
+    tokens = text.split()
+    if len(tokens) >= 2 and tokens[0].isalpha() and tokens[1].isalpha():
+        return " ".join([tokens[0].capitalize(), tokens[1].lower(), *tokens[2:]])
+    return text
+
+
+def canonicalize_species(value: object) -> str | None:
+    """Canonicalize a species/source-organism label.
+
+    Public TCR databases use a mixture of compact taxonomy names
+    (``HomoSapiens``), informal host labels (``human`` / ``mouse``),
+    pathogen abbreviations (``CMV`` / ``EBV``), and long NCBI organism
+    names. This helper maps common aliases to one stable display symbol
+    and normalizes punctuation/case for less common binomials.
+    """
+    if pd.isna(value):
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    text = re.sub(r"\s+", " ", text)
+    key = _species_alias_key(text)
+    if key in UNKNOWN_SPECIES_TOKENS:
+        return None
+    if key in CANONICAL_SPECIES_ALIASES:
+        return CANONICAL_SPECIES_ALIASES[key]
+
+    for needle, canonical in CANONICAL_SPECIES_CONTAINS:
+        if needle in key:
+            return canonical
+
+    fallback = _fallback_species_label(text)
+    if fallback is None:
+        return None
+
+    fallback_key = _species_alias_key(fallback)
+    if fallback_key in UNKNOWN_SPECIES_TOKENS:
+        return None
+    return CANONICAL_SPECIES_ALIASES.get(fallback_key, fallback)
+
+
+def canonicalize_species_labels(species: pd.Series) -> pd.Series:
+    """Vectorized wrapper for :func:`canonicalize_species`."""
+    return species.map(canonicalize_species)
+
+
+def _canonicalize_database_species(database: pd.DataFrame) -> pd.DataFrame:
+    """Normalize species columns on a match-time copy of the DB frame."""
+    species_columns = [
+        col for col in ("species", "host_species") if col in database.columns
+    ]
+    if not species_columns:
+        return database
+    return database.assign(
+        **{col: canonicalize_species_labels(database[col]) for col in species_columns}
+    )
+
+
+def _format_category_counts(counts: pd.Series) -> str:
+    """Return deterministic ``category:count`` audit text."""
+    return ";".join(f"{category}:{int(count)}" for category, count in counts.items())
+
+
+def _summarize_match_categories(
+    categories: pd.Series,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Summarize category calls across all matched DB rows.
+
+    Returns ``(db_category, db_category_dominant, db_category_detail,
+    db_category_counts)``. ``unknown`` rows are ignored whenever at
+    least one informative category is present; they only surface when
+    every matched row is unknown.
+    """
+    cats = categories.dropna().astype(str)
+    if len(cats) == 0:
+        return None, None, None, None
+
+    counts = cats.value_counts(sort=False)
+    counts = counts.sort_index().sort_values(ascending=False, kind="stable")
+    informative_counts = counts.drop(labels=[CATEGORY_UNKNOWN], errors="ignore")
+    if len(informative_counts) == 0:
+        counts_text = _format_category_counts(counts)
+        return CATEGORY_UNKNOWN, None, CATEGORY_UNKNOWN, counts_text
+
+    counts = informative_counts
+    counts_text = _format_category_counts(counts)
+
+    top_count = informative_counts.iloc[0]
+    top_categories = list(informative_counts[informative_counts == top_count].index)
+    dominant = top_categories[0] if len(top_categories) == 1 else None
+
+    if len(informative_counts) == 1:
+        category = informative_counts.index[0]
+        return category, category, category, counts_text
+
+    if dominant is not None:
+        detail = f"{DB_CATEGORY_DETAIL_CONTRADICTORY_DOMINANT}_{dominant}"
+        return CATEGORY_CONTRADICTORY, dominant, detail, counts_text
+
+    return CATEGORY_CONTRADICTORY, None, CATEGORY_CONTRADICTORY, counts_text
 
 
 # Ordered list of (pattern, canonical) pairs for collapsing the many
@@ -408,13 +660,16 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
 def _normalize_vdjdb_paired(df: pd.DataFrame) -> pd.DataFrame:
     """Standardize the paired-chain ``vdjdb_full.txt`` format.
 
-    Drops the donor ``species`` column before propagating
-    ``antigen.species`` → ``species`` — VDJdb's full export carries
-    both (donor T-cell species vs. epitope source organism), and we
-    use the latter throughout the codebase.
+    VDJdb's full export carries two species columns: the TCR donor's
+    species and the epitope's source organism. We propagate
+    ``antigen.species`` → ``species`` (the convention used throughout
+    the codebase) and preserve the donor species as ``host_species``
+    (#83 — needed for cross-species match-strength detection).
     """
-    if "species" in df.columns and "antigen.species" in df.columns:
-        df = df.drop(columns=["species"])
+    if "species" in df.columns:
+        df["host_species"] = df["species"]
+        if "antigen.species" in df.columns:
+            df = df.drop(columns=["species"])
 
     column_mapping = {
         "cdr3.alpha": "cdr3_alpha",
@@ -449,8 +704,10 @@ def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
     # matching can't consume them anyway.
     df = df[df["gene"] == "TRB"].copy()
 
-    if "species" in df.columns and "antigen.species" in df.columns:
-        df = df.drop(columns=["species"])
+    if "species" in df.columns:
+        df["host_species"] = df["species"]
+        if "antigen.species" in df.columns:
+            df = df.drop(columns=["species"])
 
     column_mapping = {
         "cdr3": "cdr3_beta",
@@ -790,7 +1047,7 @@ def _flag_viral(df: pd.DataFrame) -> pd.Series:
     if "species" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    species_lower = df["species"].fillna("").str.lower()
+    species_lower = canonicalize_species_labels(df["species"]).fillna("").str.lower()
 
     is_viral = pd.Series(False, index=df.index)
     for pattern in VIRAL_SPECIES_PATTERNS:
@@ -823,7 +1080,8 @@ def classify_category(species: pd.Series, antigen_gene: pd.Series) -> pd.Series:
     pd.Series
         Category string per entry, same index as inputs.
     """
-    species_lower = species.fillna("").astype(str).str.lower()
+    species_canonical = canonicalize_species_labels(species)
+    species_lower = species_canonical.fillna("").astype(str).str.lower()
     antigen_lower = antigen_gene.fillna("").astype(str).str.lower()
 
     category = pd.Series(
@@ -832,7 +1090,7 @@ def classify_category(species: pd.Series, antigen_gene: pd.Series) -> pd.Series:
         dtype=object,
     )
 
-    is_known_species = species_lower.str.len() > 0
+    is_known_species = species_canonical.notna() & (species_lower.str.len() > 0)
     category[is_known_species] = CATEGORY_OTHER
 
     is_viral = pd.Series(False, index=species.index)
@@ -845,10 +1103,9 @@ def classify_category(species: pd.Series, antigen_gene: pd.Series) -> pd.Series:
         is_bacterial |= species_lower.str.contains(pattern, na=False, regex=False)
     category[is_bacterial & ~is_viral] = CATEGORY_BACTERIAL
 
-    # "Homo sapiens", "Homo sapiens (human)", "human" all bucket as self.
-    is_self = species_lower.str.contains("homo sapiens", na=False, regex=False) | (
-        species_lower == "human"
-    )
+    # Human synonyms are normalized before this point, including VDJdb's
+    # compact ``HomoSapiens`` label.
+    is_self = species_canonical == "Homo sapiens"
     category[is_self & ~is_viral & ~is_bacterial] = CATEGORY_SELF
 
     # Tumor-self override: regex patterns anchored at word boundaries so
@@ -952,9 +1209,21 @@ def match_clonotypes(
     pd.DataFrame
         Clonotypes with match annotations: ``db_match``,
         ``db_match_partial`` (β-only fallback flag — back-compat),
-        ``db_match_strength`` (``"ab"`` / ``"b_only"`` / None),
-        ``db_epitope``, ``db_protein``, ``db_species``, ``db_mhc``,
-        ``db_category``, ``db_database``, ``is_viral``.
+        ``db_match_strength`` (``"ab"`` / ``"b_only"`` / ``"ab_cross"``
+        / ``"b_only_cross"`` / None; ``_cross`` suffix indicates a
+        non-human host-species match per #83),
+        ``db_epitope``, ``db_protein``, ``db_protein_canonical``,
+        ``db_species`` (canonical antigen source organism),
+        ``db_host_species`` (canonical TCR donor organism, new in #83),
+        ``db_mhc``, ``db_category`` (``viral`` / ``bacterial`` /
+        ``self`` / ``tumor_self`` / ``other`` / ``unknown`` /
+        ``contradictory`` — last when multiple matches disagree on
+        an informative label per #83), ``db_category_dominant`` (most
+        common informative label when unique), ``db_category_detail``
+        (e.g. ``viral`` / ``contradictory`` /
+        ``contradictory_dominant_viral``), and
+        ``db_category_counts`` (``label:count`` audit string),
+        ``db_database``, ``is_viral``.
     """
     # Validate inputs
     clonotypes = validate_clonotype_df(clonotypes, for_annotation=True)
@@ -994,8 +1263,12 @@ def match_clonotypes(
     df["db_protein"] = None
     df["db_protein_canonical"] = None
     df["db_species"] = None
+    df["db_host_species"] = None
     df["db_mhc"] = None
     df["db_category"] = None
+    df["db_category_dominant"] = None
+    df["db_category_detail"] = None
+    df["db_category_counts"] = None
     df["db_database"] = None
     df["is_viral"] = False
 
@@ -1017,6 +1290,8 @@ def match_clonotypes(
             "Inspect the column list before reporting this as a tcrsift bug."
         )
         return df
+
+    database = _canonicalize_database_species(database)
 
     # Pre-classify the entire database once so the per-clone match path
     # picks db_category / db_protein_canonical as modes like any other
@@ -1107,12 +1382,30 @@ def _annotate_match(
     """Annotate a single clonotype with match information.
 
     For multi-row matches, picks the most common value per field
-    (``.mode().iloc[0]``). ``db_category`` is expected to have been
-    pre-computed on ``matches`` (see ``match_clonotypes``); the mode of
-    the pre-classified category is what gets surfaced.
+    (``.mode().iloc[0]``). Two exceptions (#83):
+
+    - ``db_category`` is set to :data:`CATEGORY_CONTRADICTORY` when
+      matches disagree on an informative category, while
+      ``db_category_dominant`` / ``db_category_detail`` / counts retain
+      the most common informative label when there is one.
+    - ``db_match_strength`` gets an ``_cross`` suffix when any matched
+      row carries a non-human host species (``host_species``). Lets
+      downstream filters distinguish a confident human-vs-human match
+      from a cross-species curiosity.
     """
     if len(matches) == 0:
         return
+
+    # Cross-species detection — applied before strength is recorded.
+    host_species_match: str | None = None
+    if "host_species" in matches.columns:
+        hs = canonicalize_species_labels(matches["host_species"]).dropna()
+        if len(hs) > 0:
+            host_species_match = hs.mode().iloc[0]
+            df.loc[idx, "db_host_species"] = host_species_match
+            any_non_human = (hs != "Homo sapiens").any()
+            if any_non_human:
+                strength = f"{strength}_cross"
 
     df.loc[idx, "db_match"] = True
     df.loc[idx, "db_match_strength"] = strength
@@ -1122,7 +1415,7 @@ def _annotate_match(
         df.loc[idx, "db_epitope"] = epitopes.mode().iloc[0]
 
     if "species" in matches.columns:
-        species = matches["species"].dropna()
+        species = canonicalize_species_labels(matches["species"]).dropna()
         if len(species) > 0:
             df.loc[idx, "db_species"] = species.mode().iloc[0]
 
@@ -1142,9 +1435,13 @@ def _annotate_match(
             df.loc[idx, "db_mhc"] = mhcs.mode().iloc[0]
 
     if "db_category" in matches.columns:
-        cats = matches["db_category"].dropna()
-        if len(cats) > 0:
-            df.loc[idx, "db_category"] = cats.mode().iloc[0]
+        category, dominant, detail, counts = _summarize_match_categories(
+            matches["db_category"]
+        )
+        df.loc[idx, "db_category"] = category
+        df.loc[idx, "db_category_dominant"] = dominant
+        df.loc[idx, "db_category_detail"] = detail
+        df.loc[idx, "db_category_counts"] = counts
 
     df.loc[idx, "db_database"] = ";".join(matches["database"].unique())
     df.loc[idx, "is_viral"] = matches["is_viral"].any()
@@ -1218,8 +1515,12 @@ def annotate_clonotypes(
         "db_protein": None,
         "db_protein_canonical": None,
         "db_species": None,
+        "db_host_species": None,
         "db_mhc": None,
         "db_category": None,
+        "db_category_dominant": None,
+        "db_category_detail": None,
+        "db_category_counts": None,
         "db_database": None,
         "is_viral": False,
     }
