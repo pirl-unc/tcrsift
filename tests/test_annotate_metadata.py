@@ -271,6 +271,22 @@ class TestAntigenIdentityCoherence:
         assert out["db_species"].iloc[0] == "SARS-CoV-2"
         assert out["db_epitope"].iloc[0] == "APKEIIFLEGETL"
 
+    def test_single_row_match_passes_through_metadata_intact(self):
+        """The smallest match-set: one DB row. The antigen-group
+        machinery must reduce to a no-op restriction and pass all
+        antigen-identity columns through verbatim."""
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        db = _db([{
+            "cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+            "species": "Homo sapiens", "antigen_gene": "MLANA",
+            "epitope": "ALGIGILTV", "db_protein_canonical": "MART-1",
+        }])
+        out = match_clonotypes(clones, db)
+        assert out["db_protein"].iloc[0] == "MLANA"
+        assert out["db_protein_canonical"].iloc[0] == "MART-1"
+        assert out["db_species"].iloc[0] == "Homo sapiens"
+        assert out["db_epitope"].iloc[0] == "ALGIGILTV"
+
     def test_falls_back_to_antigen_gene_when_canonical_all_nan(self):
         """If `db_protein_canonical` column exists but is entirely
         empty/NaN for this match set, fall through to `antigen_gene`

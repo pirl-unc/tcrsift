@@ -745,16 +745,19 @@ def assemble_full_sequences(
     # One aggregate line for J-family overrides of CellRanger TRBC
     # (#90). pick_canonical_constant is silent per-call to avoid a
     # log flood on cohorts where every other clone hits the case.
-    n_overrides = _count_trbc_overrides(df)
-    if n_overrides:
-        n_beta = df["beta_c_gene"].notna().sum() if "beta_c_gene" in df.columns else 0
-        logger.warning(
-            "  Overrode CellRanger TRBC call on %d / %d β clones to match "
-            "J-family parity (TRBJ1→TRBC1, TRBJ2→TRBC2). CellRanger's "
-            "TRBC1/2 discrimination is unreliable; the locus rule is "
-            "authoritative.",
-            n_overrides, n_beta,
-        )
+    # Gated by `verbose` so silent runs stay silent — the override
+    # itself still happens, this is the audit trail.
+    if verbose:
+        n_overrides = _count_trbc_overrides(df)
+        if n_overrides:
+            n_beta = df["beta_c_gene"].notna().sum() if "beta_c_gene" in df.columns else 0
+            logger.warning(
+                "  Overrode CellRanger TRBC call on %d / %d β clones to match "
+                "J-family parity (TRBJ1→TRBC1, TRBJ2→TRBC2). CellRanger's "
+                "TRBC1/2 discrimination is unreliable; the locus rule is "
+                "authoritative.",
+                n_overrides, n_beta,
+            )
 
     return df
 
@@ -1109,6 +1112,13 @@ class ValidationMessage(str):
     - ``"autocorrect"`` — emitted by :func:`fix_jc_parity` (and by
       :func:`validate_sequences` when ``fix=True``) to record an
       in-place correction that was applied.
+
+    **Caveat:** any :class:`str` operation that returns a new value
+    (``+``, slicing, ``.replace``, f-string interpolation,
+    ``json.dumps``, etc.) returns a plain :class:`str` and drops the
+    ``.idx`` / ``.severity`` attributes. Read the metadata directly
+    off the original instance — don't massage the text first. ``copy``
+    and ``pickle`` do preserve the attributes.
     """
     idx: object
     severity: str

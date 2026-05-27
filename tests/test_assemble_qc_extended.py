@@ -174,6 +174,79 @@ class TestAssembleEndToEndJCOverride:
     j_gene=None and the override is bypassed in the real pipeline (#90).
     """
 
+    def test_aggregate_override_warning_fires_at_end_of_assembly(self, caplog):
+        """Regression: the aggregate `Overrode CellRanger TRBC call on
+        N / M β clones` warning must actually be logged when verbose=True
+        and overrides occurred. Existing tests check side effects on
+        the output frame; this checks the audit trail."""
+        import logging
+
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_a = "CASS" + "A" * 100 + "EQFF"
+        vdj_b = "CASS" + "G" * 100 + "EYFF"
+        df = pd.DataFrame([
+            # Two clones with cross-parity, one OK.
+            {
+                "CDR3ab": "c1", "CDR3_alpha": vdj_a, "CDR3_beta": vdj_b,
+                "VDJ_alpha_aa": vdj_a, "VDJ_beta_aa": vdj_b,
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC2",
+                "beta_j_gene": "TRBJ1-1", "samples": "S1",
+            },
+            {
+                "CDR3ab": "c2", "CDR3_alpha": vdj_a + "X", "CDR3_beta": vdj_b + "X",
+                "VDJ_alpha_aa": vdj_a + "X", "VDJ_beta_aa": vdj_b + "X",
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+                "beta_j_gene": "TRBJ2-5", "samples": "S1",  # also cross-parity
+            },
+            {
+                "CDR3ab": "c3", "CDR3_alpha": vdj_a + "Y", "CDR3_beta": vdj_b + "Y",
+                "VDJ_alpha_aa": vdj_a + "Y", "VDJ_beta_aa": vdj_b + "Y",
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+                "beta_j_gene": "TRBJ1-1", "samples": "S1",  # consistent
+            },
+        ])
+        with caplog.at_level(logging.WARNING, logger="tcrsift.assemble"):
+            assemble_full_sequences(
+                df, alpha_leader=None, beta_leader=None,
+                verbose=True, show_progress=False,
+            )
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(
+            "Overrode CellRanger TRBC call on 2 / 3" in m for m in msgs
+        ), f"expected aggregate override warning, got: {msgs}"
+
+    def test_aggregate_override_warning_silenced_when_verbose_false(
+        self, caplog
+    ):
+        """`verbose=False` should suppress the audit warning — useful
+        for batch / notebook contexts. The override still happens; only
+        the log line is gated."""
+        import logging
+
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_a = "CASS" + "A" * 100 + "EQFF"
+        vdj_b = "CASS" + "G" * 100 + "EYFF"
+        df = pd.DataFrame([{
+            "CDR3ab": "c1", "CDR3_alpha": vdj_a, "CDR3_beta": vdj_b,
+            "VDJ_alpha_aa": vdj_a, "VDJ_beta_aa": vdj_b,
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC2",
+            "beta_j_gene": "TRBJ1-1", "samples": "S1",
+        }])
+        with caplog.at_level(logging.WARNING, logger="tcrsift.assemble"):
+            out = assemble_full_sequences(
+                df, alpha_leader=None, beta_leader=None,
+                verbose=False, show_progress=False,
+            )
+        # Override still applied.
+        assert out["beta_c_gene_canonical"].iloc[0] == "TRBC1"
+        # But the audit log line wasn't emitted.
+        assert not any(
+            "Overrode CellRanger TRBC call" in r.getMessage()
+            for r in caplog.records
+        )
+
     @pytest.mark.parametrize(
         "j_gene,cellranger_c,expected_c,expected_tail",
         [
@@ -278,6 +351,20 @@ class TestFixJCParity:
         assert df.loc[df.index[0], "beta_c_gene_canonical"] == "TRBC2"
         assert any("autocorrected" in m and "TRBC2" in m for m in messages)
 
+    def test_fix_jc_parity_with_no_raw_beta_c_gene_column(self):
+        """A frame produced by a path that wrote only
+        `beta_c_gene_canonical` (no raw `beta_c_gene`) should still
+        autocorrect when the canonical disagrees with J."""
+        row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-1")
+        row["beta_c_gene_canonical"] = "TRBC2"
+        # Explicitly NOT setting beta_c_gene.
+        row.pop("beta_c_gene", None)
+        df = pd.DataFrame([row])
+        assert "beta_c_gene" not in df.columns
+        messages = fix_jc_parity(df)
+        assert df.loc[df.index[0], "beta_c_gene_canonical"] == "TRBC1"
+        assert any("autocorrected" in m for m in messages)
+
     def test_no_correction_when_parity_already_consistent(self):
         row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-2")
         df = pd.DataFrame([row])
@@ -360,6 +447,20 @@ class TestValidationMessageStructure:
         load_bearing = [m for m in msgs if m.severity == "load_bearing"]
         assert load_bearing
         assert all(m.idx == "custom-clone-id" for m in load_bearing)
+
+    def test_metadata_survives_pickle_and_copy(self):
+        """`copy.copy` and `pickle.loads(pickle.dumps(...))` preserve
+        idx/severity even though plain str operations don't.
+        Documented behavior — locked in so a refactor to `__slots__`
+        or `__reduce__` doesn't silently break it."""
+        import copy
+        import pickle
+
+        m = ValidationMessage("Clone 7: chain too short", idx=7, severity="load_bearing")
+        m2 = copy.copy(m)
+        assert m2.idx == 7 and m2.severity == "load_bearing"
+        m3 = pickle.loads(pickle.dumps(m))
+        assert m3.idx == 7 and m3.severity == "load_bearing"
 
     def test_severity_classifies_messages(self):
         """Failures are load_bearing; 'unverifiable' notes are
