@@ -792,7 +792,14 @@ def _assemble_clone(
     """Assemble full sequence for a single clone."""
     result = {}
 
-    # Try to get full sequence from VDJ columns if available
+    # Try to get full sequence from VDJ columns if available.
+    # Note (#91): the CellRanger-produced ``VDJ_*_nt`` typically has a
+    # +1 trailing nucleotide past the J segment — a contig artifact
+    # that does not encode any AA. If we leave it in, splicing
+    # leader + VDJ + constant frame-shifts everything past the VDJ→C
+    # boundary. Trim to ``3 * len(vdj_aa)`` here so the canonical
+    # stored ``vdj_*_nt`` is always a clean ORF and every downstream
+    # NT concatenation translates back to the assembled AA.
     for chain in ["alpha", "beta"]:
         vdj_col = f"VDJ_{chain}_aa"
         vdj_nt_col = f"VDJ_{chain}_nt"
@@ -800,7 +807,11 @@ def _assemble_clone(
         if vdj_col in row and pd.notna(row.get(vdj_col)):
             result[f"vdj_{chain}_aa"] = row[vdj_col]
         if vdj_nt_col in row and pd.notna(row.get(vdj_nt_col)):
-            result[f"vdj_{chain}_nt"] = row[vdj_nt_col]
+            vdj_nt = row[vdj_nt_col]
+            vdj_aa = result.get(f"vdj_{chain}_aa")
+            if isinstance(vdj_aa, str) and vdj_aa:
+                vdj_nt = vdj_nt[: 3 * len(vdj_aa)]
+            result[f"vdj_{chain}_nt"] = vdj_nt
 
         # Get C gene and J gene for constant-region lookup. J gene is
         # needed by ``pick_canonical_constant`` to override
@@ -1415,7 +1426,15 @@ def validate_sequences(
                         f"single_chain_aa != β+linker+α "
                         f"(len {len(sc)} vs {len(expected_sc)})")
 
-    # 4. Surface any per-row qc_warnings the assembler stashed (e.g.
+    # 4. NT → AA round-trip invariants (#91). Every NT column the
+    # assembler emits must back-translate to its corresponding AA
+    # column. This is the integration check that catches splice-time
+    # frame bugs — the original #91 (+1 trailing nt in VDJ_*_nt was
+    # not trimmed before concatenation, frame-shifting everything
+    # past the VDJ→C boundary) would have been caught here on day one.
+    _validate_nt_aa_roundtrip(df, _lb)
+
+    # 5. Surface any per-row qc_warnings the assembler stashed (e.g.
     # contig-vs-canonical start mismatch detected during assembly).
     if "qc_warnings" in df.columns:
         for idx, qcs in df["qc_warnings"].items():
@@ -1771,6 +1790,101 @@ def assemble_qc_report(df: pd.DataFrame) -> str:
     an :class:`AssemblyQCReport` object.
     """
     return build_assembly_qc_report(df).format_text()
+
+
+def _nt_translates_to(nt: str, aa: str, strip_trailing_stop: bool = True) -> bool:
+    """Check that ``translate(nt)`` matches ``aa``, optionally dropping
+    a trailing stop codon from ``nt`` first.
+
+    Used by the NT→AA round-trip invariants (#91). Returns False on
+    any of: NT length not a multiple of 3 (after optional stop trim),
+    translation contains a stop codon mid-chain, translated AA differs
+    from the assembled AA. The caller composes the failure message
+    so it can include which column failed.
+    """
+    if not isinstance(nt, str) or not nt:
+        return False
+    if not isinstance(aa, str) or not aa:
+        return False
+    work = nt
+    if strip_trailing_stop and len(work) >= 3 and work[-3:] in {"TAA", "TAG", "TGA"}:
+        work = work[:-3]
+    if len(work) != 3 * len(aa):
+        return False
+    translated, ragged = translate_dna(work)
+    if ragged:
+        return False
+    # ``translate_dna`` stops at the first internal stop, returning a
+    # shorter aa string than expected — equality with ``aa`` (which
+    # has no stop) already catches that case, but assert explicitly
+    # to make intent clear.
+    return translated == aa
+
+
+def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
+    """Run NT→AA back-translation checks on every NT column the
+    assembler emits, appending load-bearing messages via ``_lb`` for
+    mismatches.
+
+    Checks (per chain α/β where columns are present):
+
+    - ``vdj_{chain}_nt`` translates to ``vdj_{chain}_aa`` (no stop;
+      length must be exactly 3×AA).
+    - ``{chain}_constant_nt`` translates to ``{chain}_constant_aa``
+      after dropping the trailing stop codon.
+    - ``full_{chain}_nt`` translates to ``full_{chain}_aa`` after
+      dropping the trailing stop codon. **This is the integration
+      check that would have caught #91 (+1 nt overshoot at the
+      VDJ→C boundary) on day one.**
+    - ``single_chain_nt`` translates to ``single_chain_aa`` (trailing
+      stop dropped).
+    """
+    for chain in ("alpha", "beta"):
+        nt_col = f"vdj_{chain}_nt"
+        aa_col = f"vdj_{chain}_aa"
+        if nt_col in df.columns and aa_col in df.columns:
+            for idx, row in df.iterrows():
+                nt = row.get(nt_col)
+                aa = row.get(aa_col)
+                if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
+                    if not _nt_translates_to(nt, aa, strip_trailing_stop=False):
+                        _lb(idx,
+                            f"{nt_col} does not translate to {aa_col} "
+                            f"(NT length {len(nt)}, expected {3 * len(aa)})")
+
+        nt_col = f"{chain}_constant_nt"
+        aa_col = f"{chain}_constant_aa"
+        if nt_col in df.columns and aa_col in df.columns:
+            for idx, row in df.iterrows():
+                nt = row.get(nt_col)
+                aa = row.get(aa_col)
+                if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
+                    if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
+                        _lb(idx,
+                            f"{nt_col} does not translate to {aa_col} "
+                            f"(after stripping any trailing stop)")
+
+        nt_col = f"full_{chain}_nt"
+        aa_col = f"full_{chain}_aa"
+        if nt_col in df.columns and aa_col in df.columns:
+            for idx, row in df.iterrows():
+                nt = row.get(nt_col)
+                aa = row.get(aa_col)
+                if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
+                    if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
+                        _lb(idx,
+                            f"{nt_col} does not translate to {aa_col} "
+                            f"— frame likely broken at a splice boundary (#91)")
+
+    if "single_chain_nt" in df.columns and "single_chain_aa" in df.columns:
+        for idx, row in df.iterrows():
+            nt = row.get("single_chain_nt")
+            aa = row.get("single_chain_aa")
+            if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
+                if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
+                    _lb(idx,
+                        "single_chain_nt does not translate to single_chain_aa "
+                        "— frame likely broken at a splice boundary (#91)")
 
 
 def _expected_constant_start_from_full(
