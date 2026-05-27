@@ -16,9 +16,11 @@ Input validation for TCRsift.
 Provides clear, actionable error messages when inputs don't meet requirements.
 """
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -31,7 +33,7 @@ logger = logging.getLogger(__name__)
 class TCRsiftValidationError(ValueError):
     """Custom exception for validation errors with clear messages."""
 
-    def __init__(self, message: str, hint: Optional[str] = None):
+    def __init__(self, message: str, hint: str | None = None):
         self.hint = hint
         full_message = message
         if hint:
@@ -40,7 +42,7 @@ class TCRsiftValidationError(ValueError):
 
 
 def validate_file_exists(
-    path: Union[str, Path],
+    path: str | Path,
     file_description: str = "file",
 ) -> Path:
     """
@@ -81,9 +83,9 @@ def validate_file_exists(
 
 
 def validate_directory_exists(
-    path: Union[str, Path],
+    path: str | Path,
     dir_description: str = "directory",
-    required_files: Optional[list[str]] = None,
+    required_files: list[str] | None = None,
 ) -> Path:
     """
     Validate that a directory exists and optionally contains required files.
@@ -132,7 +134,7 @@ def validate_directory_exists(
 def validate_dataframe(
     df: Any,
     name: str = "DataFrame",
-    required_columns: Optional[list[str]] = None,
+    required_columns: list[str] | None = None,
     min_rows: int = 0,
 ) -> pd.DataFrame:
     """
@@ -182,9 +184,9 @@ def validate_dataframe(
 def validate_anndata(
     adata: Any,
     name: str = "AnnData",
-    required_obs_columns: Optional[list[str]] = None,
+    required_obs_columns: list[str] | None = None,
     min_cells: int = 0,
-) -> "ad.AnnData":
+) -> ad.AnnData:
     """
     Validate AnnData object.
 
@@ -231,7 +233,7 @@ def validate_anndata(
     return adata
 
 
-def validate_cellranger_vdj_dir(path: Union[str, Path]) -> Path:
+def validate_cellranger_vdj_dir(path: str | Path) -> Path:
     """
     Validate a CellRanger VDJ output directory.
 
@@ -269,7 +271,7 @@ def validate_cellranger_vdj_dir(path: Union[str, Path]) -> Path:
     return path
 
 
-def validate_cellranger_gex_dir(path: Union[str, Path]) -> Path:
+def validate_cellranger_gex_dir(path: str | Path) -> Path:
     """
     Validate a CellRanger GEX output directory.
 
@@ -718,8 +720,8 @@ def validate_clonotype_df(
 def validate_numeric_param(
     value: Any,
     name: str,
-    min_value: Optional[float] = None,
-    max_value: Optional[float] = None,
+    min_value: float | None = None,
+    max_value: float | None = None,
 ) -> float:
     """
     Validate a numeric parameter.
@@ -767,7 +769,7 @@ def log_validation_summary(
     n_valid: int,
     n_total: int,
     item_name: str = "items",
-    warnings: Optional[list[str]] = None,
+    warnings: list[str] | None = None,
 ):
     """
     Log a summary of validation results.
@@ -911,7 +913,7 @@ def validate_cli_conditional_requirement(
     args,
     required_arg: str,
     condition_args: list[str],
-    condition_values: Optional[list] = None,
+    condition_values: list | None = None,
     condition_description: str = "",
 ) -> None:
     """

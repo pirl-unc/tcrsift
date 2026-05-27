@@ -45,6 +45,22 @@ def test_root_export_table_drives_public_api():
     assert set(expected_exports).issubset(set(dir(tcrsift)))
 
 
+def test_validation_module_imports_on_python_3_9():
+    """Regression for 1.0.0: ``tcrsift.validation`` was importing-broken
+    on Python 3.9 because ``pick_representative_cell`` used PEP 604
+    ``pd.Series | None`` in its annotation without
+    ``from __future__ import annotations``. CI (3.9) failed at module
+    collection. The fix is the future-import; this test just exercises
+    the import path so the regression can't sneak back in via the
+    full-suite-passes-on-3.12-only blind spot."""
+    # Importing the module is the test — if a 3.9-incompatible
+    # annotation slips in, this will raise TypeError at collection.
+    from tcrsift import validation
+
+    assert hasattr(validation, "pick_representative_cell")
+    assert hasattr(validation, "most_common")
+
+
 def test_most_common_replaces_safe_mode_in_1_0():
     """1.0 breaking rename: ``safe_mode`` is gone; the same function is
     now exposed as ``most_common``. Lock both halves so a future
