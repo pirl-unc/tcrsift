@@ -29,8 +29,8 @@ from tqdm.auto import tqdm
 from ._dtypes import rehydrate_obs
 from .validation import (
     TCRsiftValidationError,
+    pick_representative_cell,
     safe_divide,
-    safe_mode,
     validate_anndata,
     validate_numeric_param,
 )
@@ -239,10 +239,20 @@ def _aggregate_clone_data(
             record["CDR3_alpha"] = parts[0] if len(parts) > 0 else ""
             record["CDR3_beta"] = parts[1] if len(parts) > 1 else ""
         else:
-            # For CDR3b_only grouping, get most common alpha chain
+            # For CDR3b_only grouping, pull the α-chain identity from
+            # the cell with the strongest α-UMI evidence (#94). Using
+            # per-column safe_mode here would risk decoupling
+            # CDR3_alpha from V/J/AA/NT picked elsewhere if a future
+            # change ever reads more α columns at this site.
             record["CDR3_beta"] = cdr3ab
             if "CDR3_alpha" in clone_df.columns:
-                record["CDR3_alpha"] = safe_mode(clone_df["CDR3_alpha"], default="")
+                rep_alpha = pick_representative_cell(
+                    clone_df, umi_cols=("TRA_1_umis",)
+                )
+                record["CDR3_alpha"] = (
+                    rep_alpha.get("CDR3_alpha", "")
+                    if rep_alpha is not None else ""
+                )
             else:
                 record["CDR3_alpha"] = ""
 
@@ -403,22 +413,36 @@ def _aggregate_clone_data(
             record["n_CD8"] = clone_df["is_CD8"].sum() if "is_CD8" in clone_df.columns else 0
             record["n_CD4"] = clone_df["is_CD4"].sum() if "is_CD4" in clone_df.columns else 0
 
-        # Gene usage
+        # Gene calls + VDJ AA/NT (#94). All coupled per-chain columns
+        # must come from a SINGLE representative cell, not from
+        # independent per-column modes. Independent modes break ties
+        # alphabetically per column, so AA and NT can end up sourced
+        # from different cells and produce internally inconsistent
+        # (AA, NT) pairs (translate(NT) != AA). Per-chain
+        # representatives are picked by per-chain UMI rank so each
+        # chain's data comes from the cell with the most read support
+        # for THAT chain — even when α and β were captured in
+        # different cells.
         for chain, prefix in [("alpha", "TRA_1"), ("beta", "TRB_1")]:
+            rep = pick_representative_cell(
+                clone_df, umi_cols=(f"{prefix}_umis",)
+            )
             for gene in ["v_gene", "j_gene", "c_gene"]:
                 col = f"{prefix}_{gene}"
                 if col in clone_df.columns:
-                    record[f"{chain}_{gene}"] = safe_mode(clone_df[col], default=None)
-
-        # VDJ sequences if available
-        for chain, prefix in [("alpha", "TRA_1"), ("beta", "TRB_1")]:
+                    record[f"{chain}_{gene}"] = (
+                        rep.get(col) if rep is not None else None
+                    )
             vdj_col = f"{prefix}_vdj_aa"
             if vdj_col in clone_df.columns:
-                record[f"VDJ_{chain}_aa"] = safe_mode(clone_df[vdj_col], default=None)
-
+                record[f"VDJ_{chain}_aa"] = (
+                    rep.get(vdj_col) if rep is not None else None
+                )
             vdj_nt_col = f"{prefix}_vdj_nt"
             if vdj_nt_col in clone_df.columns:
-                record[f"VDJ_{chain}_nt"] = safe_mode(clone_df[vdj_nt_col], default=None)
+                record[f"VDJ_{chain}_nt"] = (
+                    rep.get(vdj_nt_col) if rep is not None else None
+                )
 
         # Quality metrics
         for chain, prefix in [("alpha", "TRA_1"), ("beta", "TRB_1")]:

@@ -539,6 +539,55 @@ def safe_mode(series: pd.Series, default: Any = None) -> Any:
     return mode_result.iloc[0]
 
 
+def pick_representative_cell(
+    clone_df: pd.DataFrame,
+    *,
+    umi_cols: tuple[str, ...] = ("TRA_1_umis", "TRB_1_umis"),
+) -> pd.Series | None:
+    """Pick one row from a per-cell DataFrame to act as the canonical
+    source for coupled per-contig columns (#94).
+
+    Ranks rows by summed UMI evidence across ``umi_cols`` (default:
+    α+β UMI sums) and returns the top-ranked row as a :class:`pd.Series`.
+    Ties are broken by the row's position in ``clone_df`` (first wins).
+    When no ``umi_cols`` are present in the frame, falls back to the
+    first row — that's still single-cell-sourced, just ranked by a
+    weaker (positional) signal.
+
+    Use this whenever aggregating multiple correlated columns from a
+    group of cells (CDR3 AA, CDR3 NT, V/J/C gene calls, contig IDs,
+    leader, constant region — anything that should describe a single
+    biological molecule). Never call :func:`safe_mode` independently on
+    coupled columns: it picks per-column modes with lex tie-breaking,
+    so AA and NT can end up sourced from different cells and produce
+    an internally-inconsistent (AA, NT) pair.
+
+    Parameters
+    ----------
+    clone_df
+        Per-cell rows for a single clonotype (or any grouping where
+        you want to copy multiple correlated columns from one source).
+    umi_cols
+        Columns to sum for the UMI-evidence ranking. Defaults to the
+        CellRanger α+β UMI columns. Pass a single-element tuple to
+        rank by one chain only, or supply a different ranking proxy.
+
+    Returns
+    -------
+    pd.Series | None
+        The representative row, or ``None`` when ``clone_df`` is empty.
+    """
+    if clone_df is None or len(clone_df) == 0:
+        return None
+    available = [c for c in umi_cols if c in clone_df.columns]
+    if available:
+        score = clone_df[available].fillna(0).sum(axis=1)
+        rep_idx = score.idxmax()
+    else:
+        rep_idx = clone_df.index[0]
+    return clone_df.loc[rep_idx]
+
+
 def validate_sample_sheet_entry(
     entry: dict,
     index: int,

@@ -286,14 +286,31 @@ def match_clonotypes(
         group_cols = ["cdr3_alpha", "cdr3_beta"]
         key_cols = ["CDR3_alpha", "CDR3_beta"]
 
-    agg = (
-        db.groupby(group_cols, dropna=False)
-        .agg(
-            db_epitope=("epitope", _mode_or_nan),
-            db_species=("species", _mode_or_nan),
-            db_database=("database", lambda s: ";".join(sorted(set(s.dropna())))),
-            is_viral=("is_viral", "any"),
+    # db_epitope and db_species must come from the same DB row (#88
+    # / #94 archetype): independent ``_mode_or_nan`` calls on coupled
+    # columns can produce inconsistent (epitope, species) pairs when
+    # the per-CDR3 match set spans multiple antigens. Pick a
+    # representative row per group based on the (epitope, species)
+    # mode and read both fields off it.
+    def _agg_group(g: pd.DataFrame) -> pd.Series:
+        epi = _mode_or_nan(g["epitope"])
+        if pd.notna(epi):
+            sub = g[g["epitope"] == epi]
+        else:
+            sub = g
+        spe = _mode_or_nan(sub["species"])
+        return pd.Series(
+            {
+                "db_epitope": epi,
+                "db_species": spe,
+                "db_database": ";".join(sorted(set(g["database"].dropna()))),
+                "is_viral": bool(g["is_viral"].any()),
+            }
         )
+
+    agg = (
+        db.groupby(group_cols, dropna=False, group_keys=False)
+        .apply(_agg_group, include_groups=False)
         .reset_index()
     )
     merged = df.merge(agg, left_on=key_cols, right_on=group_cols, how="left")
@@ -738,11 +755,19 @@ def load_from_consensus(
     )
     merged = merged.dropna(subset=["cell_count"])
 
-    agg = {"cell_count": ("cell_count", "sum")}
+    # Numeric tallies aggregate independently across rows — these are
+    # additive so cross-row contributions are fine.
+    sum_agg = {"cell_count": ("cell_count", "sum")}
     if "umis_sum" in merged.columns:
-        agg["umis_sum"] = ("umis_sum", "sum")
+        sum_agg["umis_sum"] = ("umis_sum", "sum")
     if "reads_sum" in merged.columns:
-        agg["reads_sum"] = ("reads_sum", "sum")
+        sum_agg["reads_sum"] = ("reads_sum", "sum")
+
+    # Per-clonotype metadata (AA, NT, V/D/J/C) must come from a single
+    # representative consensus row, not from per-column modes — the
+    # latter ties-break alphabetically and decouples AA / NT / gene
+    # calls across source rows (#94). Rank by ``umis_sum`` so the
+    # winning row is the one with the most read support.
     meta_cols = [
         col
         for col in [
@@ -766,10 +791,19 @@ def load_from_consensus(
         ]
         if col in merged.columns
     ]
-    for col in meta_cols:
-        agg[col] = (col, _mode_or_nan)
 
-    counts = merged.groupby(["CDR3_alpha", "CDR3_beta"], as_index=False).agg(**agg)
+    counts = merged.groupby(["CDR3_alpha", "CDR3_beta"], as_index=False).agg(**sum_agg)
+    if meta_cols:
+        if "umis_sum" in merged.columns:
+            rep_source = merged.sort_values(
+                "umis_sum", ascending=False, kind="mergesort"
+            )
+        else:
+            rep_source = merged
+        rep_rows = rep_source.drop_duplicates(
+            subset=["CDR3_alpha", "CDR3_beta"], keep="first"
+        )[["CDR3_alpha", "CDR3_beta", *meta_cols]]
+        counts = counts.merge(rep_rows, on=["CDR3_alpha", "CDR3_beta"], how="left")
     counts["CDR3ab"] = counts["CDR3_alpha"] + "_" + counts["CDR3_beta"]
     if counts["CDR3ab"].duplicated().any():
         raise TCRsiftValidationError(
@@ -1186,10 +1220,22 @@ def build_harmonized_table(
             merged[col] = merged[col].fillna(0).astype(int)
 
     if metadata_frames:
+        # Take all metadata for a (CDR3_alpha, CDR3_beta, CDR3ab) from a
+        # single representative source row (#94). Rank by the source's
+        # own cell_count when present so we prefer the most evidenced
+        # timepoint; fall back to row order otherwise. Per-column modes
+        # would decouple AA / NT / V / J across timepoints.
         metadata_all = pd.concat(metadata_frames, ignore_index=True)
         meta_cols_union = [c for c in metadata_all.columns if c not in key_cols]
-        metadata_agg = {col: (col, _mode_or_nan) for col in meta_cols_union}
-        metadata_unique = metadata_all.groupby(key_cols, as_index=False).agg(**metadata_agg)
+        if "cell_count" in metadata_all.columns:
+            rep_source = metadata_all.sort_values(
+                "cell_count", ascending=False, kind="mergesort"
+            )
+        else:
+            rep_source = metadata_all
+        metadata_unique = rep_source.drop_duplicates(
+            subset=key_cols, keep="first"
+        )[key_cols + meta_cols_union]
         merged = merged.merge(metadata_unique, on=key_cols, how="left")
 
     freq_cols = []

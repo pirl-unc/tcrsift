@@ -1345,3 +1345,164 @@ class TestSingleMethodMethodOverlap:
         filtered = pd.DataFrame({"CDR3ab": ["A", "B", "C"]})
         out = build_method_overlap_matrices(filtered, long_df, similarity="count")
         assert int(out["B1-2"].iat[0, 0]) == 3
+# ---------------------------------------------------------------------------
+# Regression tests for #94: clonotype aggregation must pick all
+# coupled per-cell columns (V/J/C genes, VDJ AA, VDJ NT, CDR3_alpha
+# under CDR3b_only grouping) from a single representative source cell.
+#
+# Previously each column went through ``safe_mode`` independently;
+# under tied modes ``iloc[0]`` chose the lex-first value per column,
+# which made AA and NT sort independently and end up sourced from
+# different cells. The new round-trip validator from #91 caught this
+# as ``translate(VDJ_nt) != VDJ_aa``; these tests exercise the
+# aggregator directly so the bug can't sneak back.
+# ---------------------------------------------------------------------------
+
+import anndata as ad  # noqa: E402
+import numpy as np  # noqa: E402
+
+from tcrsift.validation import pick_representative_cell  # noqa: E402
+
+
+class TestPickRepresentativeCell:
+    """Direct unit tests for the helper added in validation.py."""
+
+    def test_picks_row_with_max_umi_sum(self):
+        df = pd.DataFrame(
+            {
+                "TRA_1_umis": [3, 10, 5],
+                "TRB_1_umis": [2, 1, 4],
+                "label": ["lo", "mid", "hi"],
+            },
+            index=["c0", "c1", "c2"],
+        )
+        # Sums: c0=5, c1=11, c2=9 → c1 wins.
+        rep = pick_representative_cell(df)
+        assert rep.name == "c1"
+        assert rep["label"] == "mid"
+
+    def test_ranks_by_specified_umi_col_only(self):
+        """Per-chain ranking: pass a single-element ``umi_cols``."""
+        df = pd.DataFrame(
+            {
+                "TRA_1_umis": [3, 10, 5],
+                "TRB_1_umis": [99, 1, 4],
+                "label": ["a", "b", "c"],
+            }
+        )
+        rep_alpha = pick_representative_cell(df, umi_cols=("TRA_1_umis",))
+        assert rep_alpha["label"] == "b"
+        rep_beta = pick_representative_cell(df, umi_cols=("TRB_1_umis",))
+        assert rep_beta["label"] == "a"
+
+    def test_falls_back_to_first_row_without_umi(self):
+        df = pd.DataFrame({"label": ["first", "second"]})
+        rep = pick_representative_cell(df)
+        assert rep["label"] == "first"
+
+    def test_returns_none_on_empty(self):
+        df = pd.DataFrame({"TRA_1_umis": []})
+        assert pick_representative_cell(df) is None
+
+    def test_tie_broken_by_row_order_via_idxmax(self):
+        """When the UMI sum ties, idxmax returns the first occurrence —
+        the chosen cell is deterministic, not lex-first by row index."""
+        df = pd.DataFrame(
+            {
+                "TRA_1_umis": [5, 5, 5],
+                "label": ["A", "B", "C"],
+            },
+            index=["x", "y", "z"],
+        )
+        rep = pick_representative_cell(df)
+        # First-occurrence row wins on ties.
+        assert rep.name == "x"
+
+
+class TestAggregatorCouplingFix:
+    """End-to-end: the aggregator must source coupled per-chain
+    columns (V/J/C, VDJ AA, VDJ NT) from the SAME cell."""
+
+    @staticmethod
+    def _three_cell_clone_adata():
+        """Mimics the CAVKGVHNFNKFYF_CASSLGRRNTEAFF bug case from #94:
+        three cells in one clonotype, three unique (AA, NT) pairs, each
+        cell internally consistent. The lex-first AA and lex-first NT
+        come from different cells under per-column safe_mode (the bug)."""
+        # AA / NT chosen so lex-first AA is row 2 ("AAA..."), but
+        # lex-first NT is row 0 ("GCT...") — opposite cells.
+        aas = ["BBB", "CCC", "AAA"]
+        nts = ["GCT", "TGT", "TTT"]
+        umis = [2, 50, 3]  # cell 1 has the highest UMI evidence
+        n = 3
+        adata = ad.AnnData(np.ones((n, 1)))
+        adata.obs_names = [f"cell_{i}" for i in range(n)]
+        adata.obs["sample"] = ["S1"] * n
+        adata.obs["CDR3_alpha"] = ["CAS_A"] * n
+        adata.obs["CDR3_beta"] = ["CAS_B"] * n
+        adata.obs["has_TRA"] = [True] * n
+        adata.obs["has_TRB"] = [True] * n
+        adata.obs["has_both_chains"] = [True] * n
+        adata.obs["TRA_1_vdj_aa"] = aas
+        adata.obs["TRA_1_vdj_nt"] = nts
+        adata.obs["TRB_1_vdj_aa"] = aas
+        adata.obs["TRB_1_vdj_nt"] = nts
+        adata.obs["TRA_1_umis"] = umis
+        adata.obs["TRB_1_umis"] = umis
+        adata.obs["TRA_1_v_gene"] = ["TRAV12-2*01", "TRAV12-2*02", "TRAV12-2*03"]
+        adata.obs["TRA_1_j_gene"] = ["TRAJ1"] * n
+        adata.obs["TRA_1_c_gene"] = ["TRAC"] * n
+        adata.obs["TRB_1_v_gene"] = ["TRBV6-2"] * n
+        adata.obs["TRB_1_j_gene"] = ["TRBJ1-1"] * n
+        adata.obs["TRB_1_c_gene"] = ["TRBC1"] * n
+        return adata
+
+    def test_vdj_aa_and_nt_come_from_same_cell(self):
+        """Under the bug, lex-first AA and lex-first NT differed →
+        translate(NT) != AA. Fix: same source cell, so the (AA, NT)
+        pair is internally consistent."""
+        adata = self._three_cell_clone_adata()
+        result = aggregate_clonotypes(
+            adata, group_by="CDR3ab", min_umi=0, verbose=False, show_progress=False
+        )
+        assert len(result) == 1
+        row = result.iloc[0]
+        aa = row["VDJ_alpha_aa"]
+        nt = row["VDJ_alpha_nt"]
+        # The (AA, NT) pair must correspond to one of the source cells,
+        # not be a Frankenstein cross-source pick.
+        valid_pairs = {("BBB", "GCT"), ("CCC", "TGT"), ("AAA", "TTT")}
+        assert (aa, nt) in valid_pairs
+
+    def test_highest_umi_cell_wins(self):
+        """The representative cell is the one with the highest UMI
+        sum (cell 1 in the fixture). Both AA and NT should be its values."""
+        adata = self._three_cell_clone_adata()
+        result = aggregate_clonotypes(
+            adata, group_by="CDR3ab", min_umi=0, verbose=False, show_progress=False
+        )
+        row = result.iloc[0]
+        # Cell 1 had umi=50 (vs 2 and 3) — its AA="CCC", NT="TGT".
+        assert row["VDJ_alpha_aa"] == "CCC"
+        assert row["VDJ_alpha_nt"] == "TGT"
+        # Same applies to beta and to the V/J/C gene calls from that cell.
+        assert row["VDJ_beta_aa"] == "CCC"
+        assert row["VDJ_beta_nt"] == "TGT"
+        assert row["alpha_v_gene"] == "TRAV12-2*02"
+
+    def test_alpha_and_beta_ranked_independently(self):
+        """When α and β have different UMI rankings, each chain's data
+        should come from the cell with the strongest signal for THAT
+        chain — not a single global representative."""
+        adata = self._three_cell_clone_adata()
+        adata.obs["TRA_1_umis"] = [99, 1, 1]  # cell 0 wins for alpha
+        adata.obs["TRB_1_umis"] = [1, 1, 99]  # cell 2 wins for beta
+        result = aggregate_clonotypes(
+            adata, group_by="CDR3ab", min_umi=0, verbose=False, show_progress=False
+        )
+        row = result.iloc[0]
+        # Cell 0 has alpha AA "BBB", cell 2 has beta AA "AAA".
+        assert row["VDJ_alpha_aa"] == "BBB"
+        assert row["VDJ_alpha_nt"] == "GCT"
+        assert row["VDJ_beta_aa"] == "AAA"
+        assert row["VDJ_beta_nt"] == "TTT"

@@ -183,6 +183,7 @@ _MODULE_EXPORTS = {
         "safe_divide",
         "safe_percentage",
         "safe_mode",
+        "pick_representative_cell",
     ),
 }
 
