@@ -305,23 +305,28 @@ def _beta_j_family(j_gene: str | None) -> str:
     return token.split("-", 1)[0] if "-" in token else token
 
 
-def _count_trbc_overrides(df: pd.DataFrame) -> int:
-    """Count rows whose ``beta_c_gene_canonical`` differs from the raw
-    ``beta_c_gene`` after J-family resolution — i.e. the rows where
-    :func:`pick_canonical_constant` overrode CellRanger's TRBC call.
+def _trbc_override_mask(df: pd.DataFrame) -> pd.Series:
+    """Boolean Series identifying rows where ``beta_c_gene_canonical``
+    differs from raw ``beta_c_gene`` after gene-family normalisation —
+    the rows where :func:`pick_canonical_constant` overrode
+    CellRanger's TRBC call.
 
-    Used to emit a single aggregate log line at the end of assembly
-    instead of one warning per clonotype.
+    Returns an all-False Series (aligned to ``df.index``) when either
+    column is missing. Used both by :func:`_count_trbc_overrides` and
+    to emit the per-row ``beta_c_gene_overridden`` audit column.
     """
     if "beta_c_gene" not in df.columns or "beta_c_gene_canonical" not in df.columns:
-        return 0
-    n = 0
-    for raw, canonical in zip(df["beta_c_gene"], df["beta_c_gene_canonical"]):
-        raw_base = _beta_c_base(raw)
-        canon_base = _beta_c_base(canonical)
-        if raw_base and canon_base and raw_base != canon_base:
-            n += 1
-    return n
+        return pd.Series(False, index=df.index)
+    raw_base = df["beta_c_gene"].apply(_beta_c_base)
+    canon_base = df["beta_c_gene_canonical"].apply(_beta_c_base)
+    return (raw_base != "") & (canon_base != "") & (raw_base != canon_base)
+
+
+def _count_trbc_overrides(df: pd.DataFrame) -> int:
+    """Count rows where :func:`pick_canonical_constant` overrode
+    CellRanger's TRBC call. Thin wrapper over
+    :func:`_trbc_override_mask` for callers that just want a tally."""
+    return int(_trbc_override_mask(df).sum())
 
 
 def _beta_c_base(c_gene: str | None) -> str:
@@ -742,13 +747,27 @@ def assemble_full_sequences(
         logger.info(f"    With full beta: {n_with_beta:,}")
         logger.info(f"    Single-chain constructs: {n_single_chain:,}")
 
+    # Per-row override audit column (#90). True where the canonical
+    # picked by the J-family rule disagreed with CellRanger's raw
+    # `beta_c_gene` call. Lets users filter / inspect post-hoc
+    # without going through the log. Written even when no overrides
+    # fired so the column is always present (defaults to False).
+    if "beta_c_gene" in df.columns:
+        df["beta_c_gene_overridden"] = _trbc_override_mask(df)
+
     # One aggregate line for J-family overrides of CellRanger TRBC
     # (#90). pick_canonical_constant is silent per-call to avoid a
     # log flood on cohorts where every other clone hits the case.
     # Gated by `verbose` so silent runs stay silent — the override
-    # itself still happens, this is the audit trail.
+    # itself still happens, this is the audit trail. The per-row
+    # `beta_c_gene_overridden` column above is the data-side audit
+    # that survives the log.
     if verbose:
-        n_overrides = _count_trbc_overrides(df)
+        n_overrides = (
+            int(df["beta_c_gene_overridden"].sum())
+            if "beta_c_gene_overridden" in df.columns
+            else 0
+        )
         if n_overrides:
             n_beta = df["beta_c_gene"].notna().sum() if "beta_c_gene" in df.columns else 0
             logger.warning(
@@ -1160,20 +1179,27 @@ def fix_jc_parity(df: pd.DataFrame) -> list[ValidationMessage]:
         df["beta_c_gene_canonical"] = df.get("beta_c_gene")
     df["beta_c_gene_canonical"] = df["beta_c_gene_canonical"].astype(object)
 
-    for idx, row in df.iterrows():
-        j_gene = row.get("beta_j_gene", "")
-        j_family = _beta_j_family(j_gene)
-        expected_c = BETA_JC_PARITY.get(j_family) if j_family else None
-        if not expected_c:
-            continue
+    # Vectorise the family lookup so we iterate only over the rows
+    # that actually have a parity rule to enforce. On a 100k-row
+    # cohort with ~0.1% override rate this skips ~99% of the loop
+    # iterations.
+    j_family_s = df["beta_j_gene"].apply(_beta_j_family)
+    expected_s = j_family_s.map(BETA_JC_PARITY)
+    candidates = expected_s.dropna()
+    if candidates.empty:
+        return messages
+
+    for idx in candidates.index:
+        row = df.loc[idx]
         current = _resolve_c_gene(row, "beta")
         current_base = _beta_c_base(current)
+        expected_c = candidates.loc[idx]
         if current_base and current_base != expected_c:
             df.at[idx, "beta_c_gene_canonical"] = expected_c
             messages.append(
                 ValidationMessage(
                     f"Clone {idx}: autocorrected β c_gene {current!r} → "
-                    f"{expected_c} based on {j_gene} (J family rules)",
+                    f"{expected_c} based on {row['beta_j_gene']} (J family rules)",
                     idx=idx,
                     severity="autocorrect",
                 )
@@ -1317,7 +1343,7 @@ def validate_sequences(
             # incomplete.
             c_gene = _resolve_c_gene(row, chain)
             # Strip any allele suffix (e.g. "TRBC1*01" → "TRBC1").
-            c_gene_base = c_gene.split("*")[0] if isinstance(c_gene, str) else ""
+            c_gene_base = c_gene.split("*")[0]
             if c_gene_base in CONSTANT_REGION_ENDINGS:
                 expected_end = CONSTANT_REGION_ENDINGS[c_gene_base]
                 if not seq.endswith(expected_end):
@@ -1562,7 +1588,7 @@ def build_assembly_qc_report(df: pd.DataFrame) -> AssemblyQCReport:
             if not isinstance(s, str) or not s:
                 return False
             c = _resolve_c_gene(row, _chain)
-            base = c.split("*")[0] if isinstance(c, str) else ""
+            base = c.split("*")[0]
             if base in CONSTANT_REGION_ENDINGS:
                 return s.endswith(CONSTANT_REGION_ENDINGS[base])
             return any(

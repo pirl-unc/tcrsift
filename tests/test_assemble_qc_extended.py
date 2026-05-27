@@ -174,6 +174,35 @@ class TestAssembleEndToEndJCOverride:
     j_gene=None and the override is bypassed in the real pipeline (#90).
     """
 
+    def test_beta_c_gene_overridden_column_marks_per_row_overrides(self):
+        """The output frame should carry a per-row bool column so users
+        can filter to the overridden clones without parsing logs."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_a = "CASS" + "A" * 100 + "EQFF"
+        vdj_b = "CASS" + "G" * 100 + "EYFF"
+        df = pd.DataFrame([
+            {  # cross-parity: J1 vs TRBC2 → overridden
+                "CDR3ab": "c1", "CDR3_alpha": vdj_a, "CDR3_beta": vdj_b,
+                "VDJ_alpha_aa": vdj_a, "VDJ_beta_aa": vdj_b,
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC2",
+                "beta_j_gene": "TRBJ1-1", "samples": "S1",
+            },
+            {  # consistent: J1 with TRBC1 → not overridden
+                "CDR3ab": "c2", "CDR3_alpha": vdj_a + "X", "CDR3_beta": vdj_b + "X",
+                "VDJ_alpha_aa": vdj_a + "X", "VDJ_beta_aa": vdj_b + "X",
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+                "beta_j_gene": "TRBJ1-2", "samples": "S1",
+            },
+        ])
+        out = assemble_full_sequences(
+            df, alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        assert "beta_c_gene_overridden" in out.columns
+        assert bool(out["beta_c_gene_overridden"].iloc[0]) is True
+        assert bool(out["beta_c_gene_overridden"].iloc[1]) is False
+
     def test_aggregate_override_warning_fires_at_end_of_assembly(self, caplog):
         """Regression: the aggregate `Overrode CellRanger TRBC call on
         N / M β clones` warning must actually be logged when verbose=True
