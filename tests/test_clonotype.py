@@ -1350,7 +1350,8 @@ class TestSingleMethodMethodOverlap:
 # coupled per-cell columns (V/J/C genes, VDJ AA, VDJ NT, CDR3_alpha
 # under CDR3b_only grouping) from a single representative source cell.
 #
-# Previously each column went through ``safe_mode`` independently;
+# Previously each column went through ``most_common`` (then named
+# ``safe_mode``) independently;
 # under tied modes ``iloc[0]`` chose the lex-first value per column,
 # which made AA and NT sort independently and end up sourced from
 # different cells. The new round-trip validator from #91 caught this
@@ -1428,7 +1429,7 @@ class TestAggregatorCouplingFix:
         """Mimics the CAVKGVHNFNKFYF_CASSLGRRNTEAFF bug case from #94:
         three cells in one clonotype, three unique (AA, NT) pairs, each
         cell internally consistent. The lex-first AA and lex-first NT
-        come from different cells under per-column safe_mode (the bug)."""
+        come from different cells under per-column ``most_common`` (the bug)."""
         # AA / NT chosen so lex-first AA is row 2 ("AAA..."), but
         # lex-first NT is row 0 ("GCT...") — opposite cells.
         aas = ["BBB", "CCC", "AAA"]

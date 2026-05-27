@@ -241,7 +241,7 @@ def _aggregate_clone_data(
         else:
             # For CDR3b_only grouping, pull the α-chain identity from
             # the cell with the strongest α-UMI evidence (#94). Using
-            # per-column safe_mode here would risk decoupling
+            # per-column ``most_common`` here would risk decoupling
             # CDR3_alpha from V/J/AA/NT picked elsewhere if a future
             # change ever reads more α columns at this site.
             record["CDR3_beta"] = cdr3ab
