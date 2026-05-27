@@ -170,6 +170,48 @@ class TestPickCanonicalConstant:
         name, _ = pick_canonical_constant("beta")
         assert name == "TRBC1"
 
+    def test_beta_jgene_overrides_conflicting_cgene_trbj1(self):
+        """#90: TRBJ1 is in-cis with TRBC1; a CellRanger TRBC2 call
+        must be overridden."""
+        name, aa = pick_canonical_constant(
+            "beta", c_gene="TRBC2", j_gene="TRBJ1-1"
+        )
+        assert name == "TRBC1"
+        assert aa == HUMAN_TRBC1_AA
+
+    def test_beta_jgene_overrides_conflicting_cgene_trbj2(self):
+        """#90: TRBJ2 is in-cis with TRBC2; a CellRanger TRBC1 call
+        must be overridden."""
+        name, aa = pick_canonical_constant(
+            "beta", c_gene="TRBC1", j_gene="TRBJ2-5"
+        )
+        assert name == "TRBC2"
+        assert aa == HUMAN_TRBC2_AA
+
+    def test_beta_jgene_with_allele_suffix(self):
+        """``"TRBJ1-1*02"`` and ``"TRBC2*01"`` are common allele forms;
+        family parsing must strip the allele before deciding."""
+        name, _ = pick_canonical_constant(
+            "beta", c_gene="TRBC2*01", j_gene="TRBJ1-1*02"
+        )
+        assert name == "TRBC1"
+
+    def test_beta_jgene_lowercase_handled(self):
+        """Defensive: lowercase / whitespace input should still drive
+        the J-family override (some upstream tools emit lowercase)."""
+        name, _ = pick_canonical_constant(
+            "beta", c_gene="TRBC2", j_gene="  trbj1-2  "
+        )
+        assert name == "TRBC1"
+
+    def test_beta_empty_j_falls_back_to_c_gene(self):
+        """When J is missing or empty, c_gene drives the call."""
+        for j in (None, "", "   "):
+            name, _ = pick_canonical_constant(
+                "beta", c_gene="TRBC2", j_gene=j
+            )
+            assert name == "TRBC2", f"failed for j_gene={j!r}"
+
 
 class TestVerifyCanonicalConstantStart:
     """Cross-checking observed contig prefix against the canonical."""

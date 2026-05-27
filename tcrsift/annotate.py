@@ -1381,8 +1381,19 @@ def _annotate_match(
 ):
     """Annotate a single clonotype with match information.
 
-    For multi-row matches, picks the most common value per field
-    (``.mode().iloc[0]``). Two exceptions (#83):
+    For multi-row matches, the antigen-identity columns
+    (``db_protein``, ``db_protein_canonical``, ``db_species``,
+    ``db_epitope``, ``db_mhc``) are taken from a single picked DB row
+    so the canonical name doesn't get crossed with another antigen's
+    raw protein / species (#88). The picking rule:
+
+    1. Pick the most common ``db_protein_canonical`` (the user-facing
+       antigen label) — that's the "winning" antigen.
+    2. Restrict the match frame to rows tagged with that canonical
+       antigen, and take ``antigen_gene`` / ``species`` / ``epitope`` /
+       ``mhc_allele`` modes from that subset.
+
+    Two unrelated multi-row aggregations stay as-is (#83):
 
     - ``db_category`` is set to :data:`CATEGORY_CONTRADICTORY` when
       matches disagree on an informative category, while
@@ -1396,41 +1407,75 @@ def _annotate_match(
     if len(matches) == 0:
         return
 
-    # Cross-species detection — applied before strength is recorded.
-    host_species_match: str | None = None
-    if "host_species" in matches.columns:
-        hs = canonicalize_species_labels(matches["host_species"]).dropna()
+    # Antigen-identity columns: pick a single representative DB row
+    # group so canonical/protein/species/epitope all describe the same
+    # antigen (#88). Try db_protein_canonical first (it's the
+    # user-facing label); fall back to antigen_gene when the canonical
+    # column is absent or all-NaN for this match set.
+    antigen_matches = matches
+    for group_col in ("db_protein_canonical", "antigen_gene"):
+        if group_col not in matches.columns:
+            continue
+        group_values = matches[group_col].dropna()
+        if len(group_values) == 0:
+            continue
+        picked = group_values.mode().iloc[0]
+        antigen_matches = matches[matches[group_col] == picked]
+        break
+
+    # If we grouped on antigen_gene because canonical was unavailable,
+    # the antigen_gene-restricted subset may still carry mixed
+    # db_protein_canonical values (e.g. "SARS-CoV Spike" and
+    # "SARS-CoV-2 Spike" sharing antigen_gene="Spike glycoprotein").
+    # Drill down so the written canonical matches the rows the rest
+    # of the antigen-identity columns come from.
+    if (
+        "db_protein_canonical" in antigen_matches.columns
+        and antigen_matches["db_protein_canonical"].nunique(dropna=True) > 1
+    ):
+        canonicals = antigen_matches["db_protein_canonical"].dropna()
+        if len(canonicals) > 0:
+            picked_canonical = canonicals.mode().iloc[0]
+            antigen_matches = antigen_matches[
+                antigen_matches["db_protein_canonical"] == picked_canonical
+            ]
+
+    # Cross-species detection. Pulled from the antigen-restricted
+    # subset so the host_species and _cross suffix describe the same
+    # antigen group as db_protein / db_species (same archetype as #88).
+    # A mouse-model row that contributed nothing to the picked antigen
+    # mustn't flip the host call or add ``_cross`` to the strength.
+    if "host_species" in antigen_matches.columns:
+        hs = canonicalize_species_labels(antigen_matches["host_species"]).dropna()
         if len(hs) > 0:
-            host_species_match = hs.mode().iloc[0]
-            df.loc[idx, "db_host_species"] = host_species_match
-            any_non_human = (hs != "Homo sapiens").any()
-            if any_non_human:
+            df.loc[idx, "db_host_species"] = hs.mode().iloc[0]
+            if (hs != "Homo sapiens").any():
                 strength = f"{strength}_cross"
 
     df.loc[idx, "db_match"] = True
     df.loc[idx, "db_match_strength"] = strength
 
-    epitopes = matches["epitope"].dropna()
+    epitopes = antigen_matches["epitope"].dropna()
     if len(epitopes) > 0:
         df.loc[idx, "db_epitope"] = epitopes.mode().iloc[0]
 
-    if "species" in matches.columns:
-        species = canonicalize_species_labels(matches["species"]).dropna()
+    if "species" in antigen_matches.columns:
+        species = canonicalize_species_labels(antigen_matches["species"]).dropna()
         if len(species) > 0:
             df.loc[idx, "db_species"] = species.mode().iloc[0]
 
-    if "antigen_gene" in matches.columns:
-        proteins = matches["antigen_gene"].dropna()
+    if "antigen_gene" in antigen_matches.columns:
+        proteins = antigen_matches["antigen_gene"].dropna()
         if len(proteins) > 0:
             df.loc[idx, "db_protein"] = proteins.mode().iloc[0]
 
-    if "db_protein_canonical" in matches.columns:
-        canonicals = matches["db_protein_canonical"].dropna()
+    if "db_protein_canonical" in antigen_matches.columns:
+        canonicals = antigen_matches["db_protein_canonical"].dropna()
         if len(canonicals) > 0:
             df.loc[idx, "db_protein_canonical"] = canonicals.mode().iloc[0]
 
-    if "mhc_allele" in matches.columns:
-        mhcs = matches["mhc_allele"].dropna()
+    if "mhc_allele" in antigen_matches.columns:
+        mhcs = antigen_matches["mhc_allele"].dropna()
         if len(mhcs) > 0:
             df.loc[idx, "db_mhc"] = mhcs.mode().iloc[0]
 

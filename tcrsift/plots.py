@@ -2657,7 +2657,7 @@ def create_tcr_sequence_pdf(
     label_font_size: int = 11,
     title_font_size: int = 12,
     chars_per_line: int = 60,
-    strict: bool = True,
+    strict: bool | str = True,
 ):
     """
     Create a PDF with color-coded TCR sequences.
@@ -2686,13 +2686,22 @@ def create_tcr_sequence_pdf(
         Font size for titles
     chars_per_line : int
         Characters per line before wrapping
-    strict : bool
-        Refuse to render when :func:`tcrsift.assemble.validate_sequences`
-        reports load-bearing failures (CDR3 missing from full sequence,
-        canonical C-terminus mismatch, length outside 200–450 aa, etc.).
-        Set to ``False`` to render anyway with a warning banner per
-        suspect row. Defaults to ``True`` so users don't accidentally
-        export PDFs of structurally-invalid TCRs (#68).
+    strict : bool or str
+        How to handle :func:`tcrsift.assemble.validate_sequences`
+        load-bearing failures (CDR3 missing, canonical C-terminus
+        mismatch, length window, etc.):
+
+        - ``True`` (default) — autocorrect β J→C parity mismatches
+          in-place (locus rule overrides CellRanger TRBC ambiguity;
+          #89), then raise on any remaining load-bearing failures.
+        - ``"skip"`` — autocorrect J/C parity, drop rows that still
+          have load-bearing failures from the PDF, and render the rest.
+        - ``False`` — render every row with a warning banner; no
+          autocorrect or filtering.
+
+        Defaults to ``True`` so users don't accidentally export PDFs
+        of structurally-invalid TCRs (#68) while still tolerating the
+        common upstream-CellRanger TRBC ambiguity case (#89).
     """
     # Sanity-gate the input. The PDF rendered nonsense in earlier
     # versions because nothing checked that the sequences it was
@@ -2701,12 +2710,14 @@ def create_tcr_sequence_pdf(
     # construction regressions silently producing broken figures.
     from .assemble import validate_sequences
 
-    qc_messages = validate_sequences(df, strict=False)
-    load_bearing = [
-        m
-        for m in qc_messages
-        if "unverifiable" not in m  # "didn't check" notes are informational
-    ]
+    apply_fix = strict is True or strict == "skip"
+    qc_messages = validate_sequences(df, strict=False, fix=apply_fix)
+    autocorrect_msgs = [m for m in qc_messages if m.severity == "autocorrect"]
+    for m in autocorrect_msgs:
+        logger.warning("create_tcr_sequence_pdf: %s", m)
+
+    load_bearing = [m for m in qc_messages if m.severity == "load_bearing"]
+
     if load_bearing:
         preview = "\n  ".join(load_bearing[:10])
         more = f"\n  ... ({len(load_bearing) - 10} more)" if len(load_bearing) > 10 else ""
@@ -2714,13 +2725,38 @@ def create_tcr_sequence_pdf(
             f"create_tcr_sequence_pdf: {len(load_bearing)} load-bearing "
             f"validation failures:\n  {preview}{more}"
         )
-        if strict:
+        if strict == "skip":
+            # Each ValidationMessage carries its source row index, so
+            # filtering is a simple set membership check (no string
+            # parsing of the message text).
+            failing_labels = {m.idx for m in load_bearing if m.idx is not None}
+            n_before = len(df)
+            df = df.loc[~df.index.isin(failing_labels)]
+            logger.warning(
+                "create_tcr_sequence_pdf: dropping %d / %d clones with "
+                "load-bearing validation failures (strict='skip'); "
+                "rendering remaining %d.\n%s",
+                n_before - len(df), n_before, len(df), msg,
+            )
+            if df.empty:
+                from .validation import TCRsiftValidationError
+
+                raise TCRsiftValidationError(
+                    "create_tcr_sequence_pdf: every clone failed "
+                    "validation (strict='skip' filtered all rows); "
+                    "nothing to render.\n" + msg,
+                    hint="Inspect the validation failures above. "
+                    "Pass strict=False to render anyway with a warning "
+                    "banner, or fix the upstream assembly.",
+                )
+        elif strict:
             from .validation import TCRsiftValidationError
 
             raise TCRsiftValidationError(
                 msg,
-                hint="Pass strict=False to render anyway, or fix the input "
-                "with `tcrsift.assemble.validate_sequences(df)`.",
+                hint="Pass strict='skip' to drop failing clones and "
+                "render the rest, or strict=False to render every row "
+                "with a warning banner.",
             )
         else:
             logger.warning(msg)

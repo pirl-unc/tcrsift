@@ -263,26 +263,96 @@ def pick_canonical_constant(
     """Choose the canonical constant-region AA for a chain.
 
     - Alpha → always TRAC.
-    - Beta → TRBC1 vs TRBC2 by ``c_gene`` call when available; falls
-      back to the in-cis J→C rule (TRBJ1-* with TRBC1, TRBJ2-* with
-      TRBC2) when ``c_gene`` is missing.
+    - Beta → J family decides when known (TRBJ1-* with TRBC1, TRBJ2-*
+      with TRBC2), because the in-cis J→C pairing is locus-determined
+      and reliable. ``c_gene`` is only consulted when ``j_gene`` is
+      missing or its family can't be parsed; CellRanger's TRBC1/TRBC2
+      call is unreliable (the two C genes share ~95% NT identity) and
+      gets silently overridden when it contradicts J (#90). Aggregate
+      override counts are surfaced at the assembly orchestrator level
+      so a per-row override doesn't produce a log flood.
 
     Returns ``(gene_name, canonical_aa)``.
     """
     if chain == "alpha":
         return "TRAC", HUMAN_TRAC_AA
 
-    c = c_gene if isinstance(c_gene, str) else ""
-    if "TRBC2" in c:
-        return "TRBC2", HUMAN_TRBC2_AA
-    if "TRBC1" in c:
+    j_family = _beta_j_family(j_gene)
+    expected_c = BETA_JC_PARITY.get(j_family) if j_family else None
+    if expected_c == "TRBC1":
         return "TRBC1", HUMAN_TRBC1_AA
-
-    j = j_gene if isinstance(j_gene, str) else ""
-    if "TRBJ2" in j:
+    if expected_c == "TRBC2":
         return "TRBC2", HUMAN_TRBC2_AA
+
+    # J family unknown — fall back to the (less reliable) c_gene call.
+    c_base = _beta_c_base(c_gene)
+    if c_base == "TRBC2":
+        return "TRBC2", HUMAN_TRBC2_AA
+    if c_base == "TRBC1":
+        return "TRBC1", HUMAN_TRBC1_AA
     # Default to TRBC1 when nothing else is known.
     return "TRBC1", HUMAN_TRBC1_AA
+
+
+def _beta_j_family(j_gene: str | None) -> str:
+    """Parse the J-family prefix (``"TRBJ1"`` / ``"TRBJ2"``) from a
+    raw J-gene call. Tolerates lowercase, whitespace, and allele
+    suffixes (``"TRBJ1-1*02"``). Returns an empty string when the
+    input doesn't look like a TRBJ call."""
+    if not isinstance(j_gene, str):
+        return ""
+    token = j_gene.strip().upper().split("*", 1)[0]
+    return token.split("-", 1)[0] if "-" in token else token
+
+
+def _count_trbc_overrides(df: pd.DataFrame) -> int:
+    """Count rows whose ``beta_c_gene_canonical`` differs from the raw
+    ``beta_c_gene`` after J-family resolution — i.e. the rows where
+    :func:`pick_canonical_constant` overrode CellRanger's TRBC call.
+
+    Used to emit a single aggregate log line at the end of assembly
+    instead of one warning per clonotype.
+    """
+    if "beta_c_gene" not in df.columns or "beta_c_gene_canonical" not in df.columns:
+        return 0
+    n = 0
+    for raw, canonical in zip(df["beta_c_gene"], df["beta_c_gene_canonical"]):
+        raw_base = _beta_c_base(raw)
+        canon_base = _beta_c_base(canonical)
+        if raw_base and canon_base and raw_base != canon_base:
+            n += 1
+    return n
+
+
+def _beta_c_base(c_gene: str | None) -> str:
+    """Parse the C-gene base (``"TRBC1"`` / ``"TRBC2"``) from a raw
+    C-gene call. Tolerates lowercase, whitespace, and allele suffixes
+    (``"TRBC2*01"``). Returns an empty string when the input doesn't
+    resolve to a known TRBC."""
+    if not isinstance(c_gene, str):
+        return ""
+    token = c_gene.strip().upper().split("*", 1)[0]
+    return token if token in {"TRBC1", "TRBC2"} else ""
+
+
+def _resolve_c_gene(row, chain: str) -> str:
+    """Coalesce ``{chain}_c_gene_canonical`` → ``{chain}_c_gene`` for a
+    single row, treating NaN as missing.
+
+    The naive ``row.get(canonical) or row.get(raw) or ""`` is wrong
+    because ``float('nan')`` is truthy: when the canonical column is
+    present but the cell is NaN, the ``or`` short-circuits to NaN and
+    the raw column is never consulted. That's silent: validation
+    downgrades structural failures to informational notes, and
+    :func:`fix_jc_parity` silently skips the correction.
+    """
+    canonical = row.get(f"{chain}_c_gene_canonical")
+    if isinstance(canonical, str) and canonical:
+        return canonical
+    raw = row.get(f"{chain}_c_gene")
+    if isinstance(raw, str) and raw:
+        return raw
+    return ""
 
 
 def verify_canonical_constant_start(
@@ -672,6 +742,20 @@ def assemble_full_sequences(
         logger.info(f"    With full beta: {n_with_beta:,}")
         logger.info(f"    Single-chain constructs: {n_single_chain:,}")
 
+    # One aggregate line for J-family overrides of CellRanger TRBC
+    # (#90). pick_canonical_constant is silent per-call to avoid a
+    # log flood on cohorts where every other clone hits the case.
+    n_overrides = _count_trbc_overrides(df)
+    if n_overrides:
+        n_beta = df["beta_c_gene"].notna().sum() if "beta_c_gene" in df.columns else 0
+        logger.warning(
+            "  Overrode CellRanger TRBC call on %d / %d β clones to match "
+            "J-family parity (TRBJ1→TRBC1, TRBJ2→TRBC2). CellRanger's "
+            "TRBC1/2 discrimination is unreliable; the locus rule is "
+            "authoritative.",
+            n_overrides, n_beta,
+        )
+
     return df
 
 
@@ -696,10 +780,15 @@ def _assemble_clone(
         if vdj_nt_col in row and pd.notna(row.get(vdj_nt_col)):
             result[f"vdj_{chain}_nt"] = row[vdj_nt_col]
 
-        # Get C gene for constant region lookup
-        c_gene_col = f"{chain}_c_gene"
-        if c_gene_col in row:
-            result[f"{chain}_c_gene"] = row[c_gene_col]
+        # Get C gene and J gene for constant-region lookup. J gene is
+        # needed by ``pick_canonical_constant`` to override
+        # CellRanger's unreliable TRBC call via locus-determined
+        # J-family parity (#90); without it the J-based override is
+        # silently bypassed in the real assembly path.
+        for gene in ("c_gene", "j_gene"):
+            col = f"{chain}_{gene}"
+            if col in row:
+                result[col] = row[col]
 
     # Add leader sequences based on per-chain config
     for chain in ["alpha", "beta"]:
@@ -881,7 +970,15 @@ def _extract_c_region_start_from_contig(
 
 
 def _add_constant_from_row(row: pd.Series, result: dict):
-    """Add constant region sequences directly from row columns if present."""
+    """Add constant region sequences directly from row columns if present.
+
+    Also writes ``{chain}_c_gene_canonical`` so the from-data path
+    surfaces the same audit column as the canonical path — without it,
+    downstream code (``validate_sequences``, ``fix_jc_parity``,
+    ``_count_trbc_overrides``) only sees the raw CellRanger
+    ``{chain}_c_gene`` and the J-family override / parity checks
+    silently degrade.
+    """
     for chain in ["alpha", "beta"]:
         aa_col = f"{chain}_constant_aa"
         nt_col = f"{chain}_constant_nt"
@@ -897,6 +994,15 @@ def _add_constant_from_row(row: pd.Series, result: dict):
             if pd.isna(aa_val):
                 const_aa, _ = translate_dna(str(nt_val))
                 result[f"{chain}_constant_aa"] = const_aa
+
+        # Record the canonical gene name so the from-data path produces
+        # the same downstream audit column as the canonical path.
+        canonical_name, _ = pick_canonical_constant(
+            chain,
+            c_gene=row.get(f"{chain}_c_gene"),
+            j_gene=row.get(f"{chain}_j_gene"),
+        )
+        result[f"{chain}_c_gene_canonical"] = canonical_name
 
 
 def _build_full_sequences(
@@ -983,9 +1089,91 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     return df
 
 
+class ValidationMessage(str):
+    """A validation/autocorrect message tagged with its clone index
+    and severity.
+
+    Subclasses :class:`str` so existing callers that treat the return
+    value of :func:`validate_sequences` as a list of strings continue
+    to work (substring tests, joins, length checks). New callers can
+    filter on ``.severity`` and route on ``.idx`` instead of parsing
+    the ``"Clone {idx}: ..."`` prefix back out of the string.
+
+    Severities:
+
+    - ``"load_bearing"`` — a structural failure (CDR3 missing, length
+      out of window, premature stop, etc.) that justifies raising in
+      strict mode.
+    - ``"informational"`` — a "didn't have enough info to check" note;
+      never raises.
+    - ``"autocorrect"`` — emitted by :func:`fix_jc_parity` (and by
+      :func:`validate_sequences` when ``fix=True``) to record an
+      in-place correction that was applied.
+    """
+    idx: object
+    severity: str
+
+    def __new__(cls, text: str, *, idx: object = None, severity: str = "load_bearing"):
+        obj = super().__new__(cls, text)
+        obj.idx = idx
+        obj.severity = severity
+        return obj
+
+
+def fix_jc_parity(df: pd.DataFrame) -> list[ValidationMessage]:
+    """Autocorrect β J→C parity mismatches in-place (#89).
+
+    Locus structure guarantees TRBJ1-* rearranges with TRBC1 and TRBJ2-*
+    with TRBC2. When the called C-gene disagrees, J is authoritative —
+    overwrite ``beta_c_gene_canonical`` to match the J family.
+
+    This only updates ``beta_c_gene_canonical`` (the column
+    :func:`validate_sequences` and :func:`assemble_qc_report` consult
+    first); the raw ``beta_c_gene`` is left alone as a record of what
+    CellRanger originally called. ``full_beta_aa`` itself is not
+    regenerated — use this when you have an already-assembled frame
+    whose J/C parity annotation is wrong but the assembled sequence
+    is correct (e.g. data from an older assembler that trusted
+    CellRanger's TRBC call).
+
+    Returns a list of :class:`ValidationMessage` with
+    ``severity="autocorrect"``, one per row that was changed. The
+    input DataFrame is mutated.
+    """
+    messages: list[ValidationMessage] = []
+    if "beta_j_gene" not in df.columns:
+        return messages
+    # Make sure the canonical column exists with an object dtype that
+    # accepts string writes (a float64 NaN column would emit a
+    # FutureWarning on the first `df.at[idx, col] = "TRBC1"`).
+    if "beta_c_gene_canonical" not in df.columns:
+        df["beta_c_gene_canonical"] = df.get("beta_c_gene")
+    df["beta_c_gene_canonical"] = df["beta_c_gene_canonical"].astype(object)
+
+    for idx, row in df.iterrows():
+        j_gene = row.get("beta_j_gene", "")
+        j_family = _beta_j_family(j_gene)
+        expected_c = BETA_JC_PARITY.get(j_family) if j_family else None
+        if not expected_c:
+            continue
+        current = _resolve_c_gene(row, "beta")
+        current_base = _beta_c_base(current)
+        if current_base and current_base != expected_c:
+            df.at[idx, "beta_c_gene_canonical"] = expected_c
+            messages.append(
+                ValidationMessage(
+                    f"Clone {idx}: autocorrected β c_gene {current!r} → "
+                    f"{expected_c} based on {j_gene} (J family rules)",
+                    idx=idx,
+                    severity="autocorrect",
+                )
+            )
+    return messages
+
+
 def validate_sequences(
-    df: pd.DataFrame, strict: bool = False
-) -> list[str]:
+    df: pd.DataFrame, strict: bool = False, fix: bool = False
+) -> list[ValidationMessage]:
     """Validate assembled sequences end-to-end per row (#67, #68).
 
     Per-chain checks on each ``full_{chain}_aa`` row:
@@ -1011,14 +1199,35 @@ def validate_sequences(
     - Per-row ``qc_warnings`` (stashed by ``_add_constant_regions``)
       are surfaced.
 
-    Returns a flat list of "Clone {idx}: ..." messages. When ``strict``
-    is True, raises :class:`TCRsiftValidationError` if any load-bearing
-    checks fail. Non-load-bearing notes ("didn't have enough info to
-    check") are returned but never raise — distinguishing those from a
-    silent pass was the gap that hid #66.
+    Returns a flat list of :class:`ValidationMessage` (a ``str``
+    subclass with ``.idx`` and ``.severity`` attributes). When
+    ``strict`` is True, raises :class:`TCRsiftValidationError` if any
+    load-bearing checks fail. Informational notes ("didn't have enough
+    info to check") are returned but never raise — distinguishing
+    those from a silent pass was the gap that hid #66.
+
+    When ``fix`` is True, autocorrect β J→C parity mismatches in-place
+    via :func:`fix_jc_parity` before validating (#89). Autocorrection
+    notes are prepended to the returned messages and the input frame
+    is mutated *unconditionally* — the mutation survives even when a
+    later check fails and ``strict=True`` raises.
     """
-    load_bearing: list[str] = []
-    informational: list[str] = []
+    load_bearing: list[ValidationMessage] = []
+    informational: list[ValidationMessage] = []
+    autocorrect_notes: list[ValidationMessage] = []
+
+    def _lb(idx, text):
+        load_bearing.append(
+            ValidationMessage(f"Clone {idx}: {text}", idx=idx, severity="load_bearing")
+        )
+
+    def _info(idx, text):
+        informational.append(
+            ValidationMessage(f"Clone {idx}: {text}", idx=idx, severity="informational")
+        )
+
+    if fix:
+        autocorrect_notes = fix_jc_parity(df)
 
     # 1. Per-chain, per-row shape and content checks.
     for chain in ["alpha", "beta"]:
@@ -1031,46 +1240,37 @@ def validate_sequences(
                 continue
 
             if len(seq) < 200:
-                load_bearing.append(
-                    f"Clone {idx}: {chain} chain too short ({len(seq)} aa)"
-                )
+                _lb(idx, f"{chain} chain too short ({len(seq)} aa)")
             elif len(seq) > 450:
-                load_bearing.append(
-                    f"Clone {idx}: {chain} chain too long ({len(seq)} aa)"
-                )
+                _lb(idx, f"{chain} chain too long ({len(seq)} aa)")
 
             # Standard residue alphabet only.
             invalid = sorted(set(seq) - _VALID_AA_CHARS)
             if invalid:
-                load_bearing.append(
-                    f"Clone {idx}: full_{chain}_aa has invalid residues "
-                    f"{''.join(invalid)!r}"
-                )
+                _lb(idx,
+                    f"full_{chain}_aa has invalid residues {''.join(invalid)!r}")
 
             # Premature stop codon: ``*`` anywhere except the final position.
             body = seq.rstrip("*")
             if "*" in body:
                 pos = body.index("*")
-                load_bearing.append(
-                    f"Clone {idx}: full_{chain}_aa has premature stop "
-                    f"at position {pos} of {len(seq)}"
-                )
+                _lb(idx,
+                    f"full_{chain}_aa has premature stop "
+                    f"at position {pos} of {len(seq)}")
 
             # Methionine start (only when leader was included).
             leader = row.get(f"{chain}_leader_aa")
             if isinstance(leader, str) and leader and not seq.startswith("M"):
-                load_bearing.append(
-                    f"Clone {idx}: full_{chain}_aa doesn't start with M "
-                    f"(starts with {seq[:5]!r}; leader present)"
-                )
+                _lb(idx,
+                    f"full_{chain}_aa doesn't start with M "
+                    f"(starts with {seq[:5]!r}; leader present)")
 
             cdr3_col = f"CDR3_{chain}"
             if cdr3_col in row:
                 cdr3 = row[cdr3_col]
                 if isinstance(cdr3, str) and cdr3 and cdr3 not in seq:
-                    load_bearing.append(
-                        f"Clone {idx}: CDR3_{chain}={cdr3!r} not found in full sequence"
-                    )
+                    _lb(idx,
+                        f"CDR3_{chain}={cdr3!r} not found in full sequence")
 
             # Constant region length floor (separate from full-chain
             # length check — catches truncations that hid behind a
@@ -1079,10 +1279,9 @@ def validate_sequences(
             if isinstance(const, str) and const:
                 floor = CONSTANT_AA_FLOOR[chain]
                 if len(const) < floor:
-                    load_bearing.append(
-                        f"Clone {idx}: {chain}_constant_aa too short "
-                        f"({len(const)} aa, floor {floor})"
-                    )
+                    _lb(idx,
+                        f"{chain}_constant_aa too short "
+                        f"({len(const)} aa, floor {floor})")
 
             # Byte-for-byte: full == leader + vdj + constant when all
             # parts are available. Catches dropped/added residues
@@ -1095,11 +1294,9 @@ def validate_sequences(
             ):
                 expected = leader + vdj + const
                 if expected != seq:
-                    load_bearing.append(
-                        f"Clone {idx}: full_{chain}_aa != "
-                        f"leader+vdj+constant "
-                        f"(len {len(seq)} vs {len(expected)})"
-                    )
+                    _lb(idx,
+                        f"full_{chain}_aa != leader+vdj+constant "
+                        f"(len {len(seq)} vs {len(expected)})")
 
             # Canonical-ending / canonical-start checks. Prefer
             # ``{chain}_c_gene_canonical`` (written by
@@ -1108,58 +1305,44 @@ def validate_sequences(
             # to a known canonical gene name, emit an informational
             # "did-not-check" note so the user knows validation was
             # incomplete.
-            c_gene = (
-                row.get(f"{chain}_c_gene_canonical")
-                or row.get(f"{chain}_c_gene")
-                or ""
-            )
+            c_gene = _resolve_c_gene(row, chain)
             # Strip any allele suffix (e.g. "TRBC1*01" → "TRBC1").
             c_gene_base = c_gene.split("*")[0] if isinstance(c_gene, str) else ""
             if c_gene_base in CONSTANT_REGION_ENDINGS:
                 expected_end = CONSTANT_REGION_ENDINGS[c_gene_base]
                 if not seq.endswith(expected_end):
-                    load_bearing.append(
-                        f"Clone {idx}: {chain} doesn't end with canonical "
+                    _lb(idx,
+                        f"{chain} doesn't end with canonical "
                         f"{c_gene_base} C-terminus ({expected_end!r}); "
-                        f"got {seq[-len(expected_end):]!r}"
-                    )
+                        f"got {seq[-len(expected_end):]!r}")
                 canonical_aa = HUMAN_CONSTANT_REGIONS_AA.get(c_gene_base)
                 if canonical_aa and not verify_canonical_constant_start(
                     _expected_constant_start_from_full(seq, row, chain),
                     canonical_aa,
                     min_match=8,
                 ):
-                    load_bearing.append(
-                        f"Clone {idx}: {chain} constant start doesn't match "
-                        f"canonical {c_gene_base} (expected start "
-                        f"{canonical_aa[:15]!r})"
-                    )
+                    _lb(idx,
+                        f"{chain} constant start doesn't match canonical "
+                        f"{c_gene_base} (expected start "
+                        f"{canonical_aa[:15]!r})")
             else:
-                informational.append(
-                    f"Clone {idx}: {chain} c_gene={c_gene!r} not in "
-                    "CONSTANT_REGION_ENDINGS — canonical ending/start unverifiable"
-                )
+                _info(idx,
+                    f"{chain} c_gene={c_gene!r} not in "
+                    "CONSTANT_REGION_ENDINGS — canonical ending/start unverifiable")
 
     # 2. β-chain J→C in-cis parity disagreement (#67).
     if "beta_j_gene" in df.columns:
         for idx, row in df.iterrows():
             j_gene = row.get("beta_j_gene", "")
-            c_gene = (
-                row.get("beta_c_gene_canonical")
-                or row.get("beta_c_gene")
-                or ""
-            )
-            if not isinstance(j_gene, str) or not isinstance(c_gene, str):
-                continue
-            j_family = j_gene.split("-", 1)[0] if "-" in j_gene else j_gene
-            c_base = c_gene.split("*")[0] if c_gene else ""
-            expected_c = BETA_JC_PARITY.get(j_family)
+            c_gene = _resolve_c_gene(row, "beta")
+            j_family = _beta_j_family(j_gene)
+            c_base = _beta_c_base(c_gene)
+            expected_c = BETA_JC_PARITY.get(j_family) if j_family else None
             if expected_c and c_base and c_base != expected_c:
-                load_bearing.append(
-                    f"Clone {idx}: β J→C parity mismatch — "
+                _lb(idx,
+                    f"β J→C parity mismatch — "
                     f"{j_gene} (family {j_family}) should pair with "
-                    f"{expected_c}, got {c_base}"
-                )
+                    f"{expected_c}, got {c_base}")
 
     # 3. Single-chain (β-linker-α) construct integrity. Three checks:
     #    a) the linker appears in ``single_chain_aa`` exactly once,
@@ -1177,14 +1360,11 @@ def validate_sequences(
                 continue
             count = sc.count(linker)
             if count == 0:
-                load_bearing.append(
-                    f"Clone {idx}: single_chain_aa missing linker {linker!r}"
-                )
+                _lb(idx, f"single_chain_aa missing linker {linker!r}")
             elif count > 1:
-                load_bearing.append(
-                    f"Clone {idx}: single_chain_aa contains linker "
-                    f"{linker!r} {count} times (expected 1)"
-                )
+                _lb(idx,
+                    f"single_chain_aa contains linker "
+                    f"{linker!r} {count} times (expected 1)")
 
             beta = row.get("full_beta_aa")
             alpha = row.get("full_alpha_aa")
@@ -1195,10 +1375,9 @@ def validate_sequences(
             ):
                 expected_sc = beta.rstrip("*") + linker + alpha
                 if sc != expected_sc:
-                    load_bearing.append(
-                        f"Clone {idx}: single_chain_aa != "
-                        f"β+linker+α (len {len(sc)} vs {len(expected_sc)})"
-                    )
+                    _lb(idx,
+                        f"single_chain_aa != β+linker+α "
+                        f"(len {len(sc)} vs {len(expected_sc)})")
 
     # 4. Surface any per-row qc_warnings the assembler stashed (e.g.
     # contig-vs-canonical start mismatch detected during assembly).
@@ -1206,9 +1385,9 @@ def validate_sequences(
         for idx, qcs in df["qc_warnings"].items():
             if isinstance(qcs, list):
                 for msg in qcs:
-                    load_bearing.append(f"Clone {idx}: {msg}")
+                    _lb(idx, str(msg))
 
-    all_messages = load_bearing + informational
+    all_messages = autocorrect_notes + load_bearing + informational
     if strict and load_bearing:
         raise TCRsiftValidationError(
             f"Sequence validation failed ({len(load_bearing)} load-bearing issues):\n  "
@@ -1372,11 +1551,7 @@ def build_assembly_qc_report(df: pd.DataFrame) -> AssemblyQCReport:
             s = row.get(f"full_{_chain}_aa", "")
             if not isinstance(s, str) or not s:
                 return False
-            c = (
-                row.get(f"{_chain}_c_gene_canonical")
-                or row.get(f"{_chain}_c_gene")
-                or ""
-            )
+            c = _resolve_c_gene(row, _chain)
             base = c.split("*")[0] if isinstance(c, str) else ""
             if base in CONSTANT_REGION_ENDINGS:
                 return s.endswith(CONSTANT_REGION_ENDINGS[base])
@@ -1468,16 +1643,10 @@ def build_assembly_qc_report(df: pd.DataFrame) -> AssemblyQCReport:
     if "beta_j_gene" in df.columns:
         def _jc_parity_ok(row):
             j = row.get("beta_j_gene", "")
-            c = (
-                row.get("beta_c_gene_canonical")
-                or row.get("beta_c_gene")
-                or ""
-            )
-            if not isinstance(j, str) or not isinstance(c, str):
-                return True
-            fam = j.split("-", 1)[0] if "-" in j else j
-            cbase = c.split("*")[0] if c else ""
-            expected = BETA_JC_PARITY.get(fam)
+            c = _resolve_c_gene(row, "beta")
+            fam = _beta_j_family(j)
+            cbase = _beta_c_base(c)
+            expected = BETA_JC_PARITY.get(fam) if fam else None
             if not expected or not cbase:
                 return True
             return cbase == expected
