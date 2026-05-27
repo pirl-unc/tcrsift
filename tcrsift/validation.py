@@ -496,32 +496,53 @@ def safe_percentage(
     return (part / total) * 100
 
 
-def safe_mode(series: pd.Series, default: Any = None) -> Any:
+def most_common(series: pd.Series, default: Any = None) -> Any:
     """
-    Safely get the mode of a pandas Series, returning default if empty.
+    Return the most frequent value in a pandas Series, with empty/NaN
+    fallback.
 
-    This is useful when aggregating data where some groups may be empty
-    or have no valid values.
+    Drops NaN before computing the mode. Falls back to ``default``
+    when the series is empty, all-NaN, or pandas yields no mode.
 
     Parameters
     ----------
     series : pd.Series
-        Series to get mode from
+        Series to summarise.
     default : Any
-        Value to return if series is empty or has no mode (default: None)
+        Value to return when no mode is available (default: ``None``).
 
     Returns
     -------
     Any
-        The mode value or default
+        The most common value, or ``default``.
+
+    Notes
+    -----
+    **Tie-break is lex-first.** When multiple values share the highest
+    count, ``pd.Series.mode()`` returns all of them sorted, and this
+    function picks the first. That's deterministic but it's a
+    *positional* choice, not a semantic one.
+
+    **Do not call on coupled columns.** If you're aggregating multiple
+    columns that should describe the same underlying record (e.g.
+    ``VDJ_aa`` and ``VDJ_nt``, or ``v_gene`` and ``j_gene``),
+    independent ``most_common`` calls can pick from different source
+    rows and decouple them. Use
+    :func:`pick_representative_cell` instead — it picks one row and
+    you copy all coupled columns from there.
+
+    The 0.16.0 name for this function was ``safe_mode``; it was
+    renamed in 1.0 because "safe" oversold what the function provides
+    (it handles empty/NaN fallback, but the lex-first tie-break and
+    coupled-column hazard above are real and surprising).
 
     Examples
     --------
-    >>> safe_mode(pd.Series(['A', 'A', 'B']))
+    >>> most_common(pd.Series(['A', 'A', 'B']))
     'A'
-    >>> safe_mode(pd.Series([]))
+    >>> most_common(pd.Series([]))
     None
-    >>> safe_mode(pd.Series([np.nan, np.nan]), default='Unknown')
+    >>> most_common(pd.Series([np.nan, np.nan]), default='Unknown')
     'Unknown'
     """
     if series is None or len(series) == 0:
@@ -557,8 +578,8 @@ def pick_representative_cell(
     Use this whenever aggregating multiple correlated columns from a
     group of cells (CDR3 AA, CDR3 NT, V/J/C gene calls, contig IDs,
     leader, constant region — anything that should describe a single
-    biological molecule). Never call :func:`safe_mode` independently on
-    coupled columns: it picks per-column modes with lex tie-breaking,
+    biological molecule). Never call :func:`most_common` independently
+    on coupled columns: it picks per-column modes with lex tie-breaking,
     so AA and NT can end up sourced from different cells and produce
     an internally-inconsistent (AA, NT) pair.
 

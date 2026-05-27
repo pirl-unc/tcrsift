@@ -182,7 +182,7 @@ _MODULE_EXPORTS = {
         "validate_cdr3_dataframe",
         "safe_divide",
         "safe_percentage",
-        "safe_mode",
+        "most_common",
         "pick_representative_cell",
     ),
 }

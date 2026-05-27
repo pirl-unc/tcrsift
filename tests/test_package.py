@@ -43,3 +43,26 @@ def test_root_export_table_drives_public_api():
 
     assert tcrsift.__all__ == expected_exports
     assert set(expected_exports).issubset(set(dir(tcrsift)))
+
+
+def test_most_common_replaces_safe_mode_in_1_0():
+    """1.0 breaking rename: ``safe_mode`` is gone; the same function is
+    now exposed as ``most_common``. Lock both halves so a future
+    accidental restoration of the old name doesn't sneak back in."""
+    import pandas as pd
+
+    import tcrsift
+
+    assert hasattr(tcrsift, "most_common")
+    assert tcrsift.most_common(pd.Series(["A", "A", "B"])) == "A"
+    assert tcrsift.most_common(pd.Series([], dtype=object), default="x") == "x"
+
+    # The old name must not be importable from the package root.
+    assert not hasattr(tcrsift, "safe_mode")
+
+    # And not from the submodule either — the rename should be in the
+    # function definition itself, not just an export shim.
+    from tcrsift import validation
+
+    assert hasattr(validation, "most_common")
+    assert not hasattr(validation, "safe_mode")
