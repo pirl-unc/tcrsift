@@ -165,6 +165,157 @@ class TestBetaJCParity:
         assert BETA_JC_PARITY == {"TRBJ1": "TRBC1", "TRBJ2": "TRBC2"}
 
 
+class TestAssembleEndToEndNTRoundTrip:
+    """End-to-end: NT columns the assembler emits must back-translate
+    to the corresponding AA columns. The original #91 (+1 trailing nt
+    in VDJ_*_nt was not trimmed before concatenation, shifting frame
+    past the VDJ→C boundary) was invisible to per-component unit
+    tests; only the round-trip catches it. These tests lock that in.
+    """
+
+    @staticmethod
+    def _build_clone(*, vdj_nt_overshoot: int = 1):
+        """Construct a single-clone fixture whose VDJ_*_nt has the
+        documented CellRanger overshoot (default: +1 nt past the J
+        segment). The fix should trim that before splicing so all
+        downstream NT columns translate cleanly.
+        """
+        from tcrsift.assemble import back_translate
+
+        vdj_alpha_aa = "CASS" + "A" * 60 + "VLPHA"   # 69 aa
+        vdj_beta_aa  = "CASS" + "G" * 60 + "VETA"    # 69 aa
+        # Build VDJ_*_nt as the canonical back-translation PLUS a
+        # trailing nucleotide to mimic the CellRanger contig artifact.
+        overshoot = "A" * vdj_nt_overshoot
+        vdj_alpha_nt = back_translate(vdj_alpha_aa) + overshoot
+        vdj_beta_nt  = back_translate(vdj_beta_aa) + overshoot
+        return {
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha_aa,
+            "CDR3_beta":  vdj_beta_aa,
+            "VDJ_alpha_aa": vdj_alpha_aa,
+            "VDJ_beta_aa":  vdj_beta_aa,
+            "VDJ_alpha_nt": vdj_alpha_nt,
+            "VDJ_beta_nt":  vdj_beta_nt,
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene":  "TRBC1",
+            "beta_j_gene":  "TRBJ1-2",
+            "samples": "S1",
+        }
+
+    def test_vdj_nt_trimmed_to_exact_aa_length(self):
+        """Regression: VDJ_*_nt should land in the output frame with
+        len(nt) == 3 * len(aa) — the CellRanger +1 overshoot is
+        trimmed at read time."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        df = pd.DataFrame([self._build_clone(vdj_nt_overshoot=1)])
+        out = assemble_full_sequences(
+            df, alpha_leader="CD28", beta_leader="CD8A",
+            verbose=False, show_progress=False,
+        )
+        for chain in ("alpha", "beta"):
+            nt = out[f"vdj_{chain}_nt"].iloc[0]
+            aa = out[f"vdj_{chain}_aa"].iloc[0]
+            assert len(nt) == 3 * len(aa), (
+                f"vdj_{chain}_nt len {len(nt)} != 3 × vdj_{chain}_aa "
+                f"len {3 * len(aa)}"
+            )
+
+    def test_full_chain_nt_translates_to_full_chain_aa(self):
+        """The integration check that #91 missed: full_*_nt → full_*_aa."""
+        from tcrsift.assemble import assemble_full_sequences, translate_dna
+
+        df = pd.DataFrame([self._build_clone(vdj_nt_overshoot=1)])
+        out = assemble_full_sequences(
+            df, alpha_leader="CD28", beta_leader="CD8A",
+            verbose=False, show_progress=False,
+        )
+        for chain in ("alpha", "beta"):
+            nt = out[f"full_{chain}_nt"].iloc[0]
+            aa = out[f"full_{chain}_aa"].iloc[0]
+            # Strip the trailing stop codon before back-translation.
+            assert nt[-3:] in {"TAA", "TAG", "TGA"}
+            translated, ragged = translate_dna(nt[:-3])
+            assert ragged == ""
+            assert translated == aa, (
+                f"full_{chain}_nt does not translate to full_{chain}_aa; "
+                f"first diff at pos "
+                f"{next((i for i, (a, b) in enumerate(zip(translated, aa)) if a != b), 'N/A')}"
+            )
+
+    def test_single_chain_nt_translates_to_single_chain_aa(self):
+        """β + T2A + α at the NT level should be a clean single ORF."""
+        from tcrsift.assemble import assemble_full_sequences, translate_dna
+
+        df = pd.DataFrame([self._build_clone(vdj_nt_overshoot=1)])
+        out = assemble_full_sequences(
+            df, alpha_leader="CD28", beta_leader="CD8A",
+            linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        sc_nt = out["single_chain_nt"].iloc[0]
+        sc_aa = out["single_chain_aa"].iloc[0]
+        assert sc_nt[-3:] in {"TAA", "TAG", "TGA"}
+        translated, ragged = translate_dna(sc_nt[:-3])
+        assert ragged == ""
+        assert translated == sc_aa
+
+    def test_validate_sequences_passes_strict_after_fix(self):
+        """With the trim in place, strict validate_sequences should
+        not fire any NT→AA round-trip failures."""
+        from tcrsift.assemble import assemble_full_sequences, validate_sequences
+
+        df = pd.DataFrame([self._build_clone(vdj_nt_overshoot=1)])
+        out = assemble_full_sequences(
+            df, alpha_leader="CD28", beta_leader="CD8A",
+            linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        msgs = validate_sequences(out, strict=False)
+        nt_failures = [
+            m for m in msgs
+            if m.severity == "load_bearing" and "translate to" in m
+        ]
+        assert nt_failures == [], f"unexpected NT round-trip failures: {nt_failures}"
+
+    def test_validator_catches_synthetic_frame_break(self):
+        """Hand-craft a frame where full_beta_nt is intentionally
+        off-by-one and assert validate_sequences flags it. Locks in
+        the integration check itself — without this, the validator
+        could regress silently."""
+        from tcrsift.assemble import HUMAN_TRBC1_AA, back_translate, validate_sequences
+
+        # Build a "good" assembled β chain.
+        leader_aa = "M" + "A" * 19
+        leader_nt = back_translate(leader_aa)
+        vdj_aa = "CASS" + "G" * 60 + "VETA"
+        vdj_nt = back_translate(vdj_aa)
+        constant_aa = HUMAN_TRBC1_AA
+        constant_nt = back_translate(constant_aa) + "TAA"
+
+        full_aa = leader_aa + vdj_aa + constant_aa
+        # Inject one stray nt at the VDJ→C boundary to mimic #91.
+        full_nt_broken = leader_nt + vdj_nt + "A" + constant_nt
+
+        df = pd.DataFrame([{
+            "vdj_beta_aa": vdj_aa,
+            "vdj_beta_nt": vdj_nt,
+            "beta_leader_aa": leader_aa,
+            "beta_leader_nt": leader_nt,
+            "beta_constant_aa": constant_aa,
+            "beta_constant_nt": constant_nt,
+            "full_beta_aa": full_aa,
+            "full_beta_nt": full_nt_broken,
+        }])
+        msgs = validate_sequences(df)
+        assert any(
+            m.severity == "load_bearing"
+            and "full_beta_nt does not translate to full_beta_aa" in m
+            for m in msgs
+        ), "round-trip validator failed to flag a known frame break"
+
+
 class TestAssembleEndToEndJCOverride:
     """End-to-end: when CellRanger's β c_gene conflicts with the J
     family, assemble_full_sequences must propagate J-gene through the
