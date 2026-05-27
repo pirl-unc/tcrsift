@@ -205,3 +205,188 @@ class TestContradictoryCategory:
         assert out["db_category_dominant"].iloc[0] is None
         assert out["db_category_detail"].iloc[0] == "unknown"
         assert out["db_category_counts"].iloc[0] == "unknown:2"
+
+
+class TestAntigenIdentityCoherence:
+    """#88: db_protein / db_protein_canonical / db_species / db_epitope
+    must all describe the SAME antigen when matches span multiple DB
+    rows. Previously each column took an independent mode, so the
+    canonical label could be from one row, protein/species/epitope
+    from another."""
+
+    def test_mart1_majority_picks_consistent_mart1_metadata(self):
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        # Three MART1 matches, one SARS-CoV-2 ORF1ab match. Previously
+        # mode-per-column could pick MART1 as the raw protein but
+        # SARS-CoV-2 ORF1ab as the canonical if the latter had a
+        # higher count there (or even on tiebreaker quirks). With the
+        # group-by-canonical fix, all antigen-identity columns come
+        # from the MART1 rows.
+        db = _db([
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Homo sapiens", "antigen_gene": "MLANA",
+             "epitope": "ALGIGILTV", "db_protein_canonical": "MART-1"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Homo sapiens", "antigen_gene": "MLANA",
+             "epitope": "ALGIGILTV", "db_protein_canonical": "MART-1"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Homo sapiens", "antigen_gene": "MLANA",
+             "epitope": "ALGIGILTV", "db_protein_canonical": "MART-1"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "SARS-CoV-2", "antigen_gene": "ORF1ab",
+             "epitope": "APKEIIFLEGETL",
+             "db_protein_canonical": "SARS-CoV-2 ORF1ab"},
+        ])
+        out = match_clonotypes(clones, db)
+        assert out["db_protein_canonical"].iloc[0] == "MART-1"
+        assert out["db_protein"].iloc[0] == "MLANA"
+        assert out["db_species"].iloc[0] == "Homo sapiens"
+        assert out["db_epitope"].iloc[0] == "ALGIGILTV"
+
+    def test_canonical_and_raw_protein_stay_coupled_on_tie(self):
+        """Even when raw protein has more rows than the canonical, the
+        canonical (user-facing label) is the grouping key — and once
+        chosen, raw protein/species/epitope come from the rows tagged
+        with that canonical."""
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        db = _db([
+            # 2 SARS-CoV-2 matches (canonical wins by majority)
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "SARS-CoV-2", "antigen_gene": "ORF1ab",
+             "epitope": "APKEIIFLEGETL",
+             "db_protein_canonical": "SARS-CoV-2 ORF1ab"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "SARS-CoV-2", "antigen_gene": "ORF1ab",
+             "epitope": "APKEIIFLEGETL",
+             "db_protein_canonical": "SARS-CoV-2 ORF1ab"},
+            # 1 HIV match
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "HIV-1", "antigen_gene": "Gag",
+             "epitope": "SLYNTVATL",
+             "db_protein_canonical": "HIV-1 Gag"},
+        ])
+        out = match_clonotypes(clones, db)
+        assert out["db_protein_canonical"].iloc[0] == "SARS-CoV-2 ORF1ab"
+        assert out["db_protein"].iloc[0] == "ORF1ab"
+        assert out["db_species"].iloc[0] == "SARS-CoV-2"
+        assert out["db_epitope"].iloc[0] == "APKEIIFLEGETL"
+
+    def test_single_row_match_passes_through_metadata_intact(self):
+        """The smallest match-set: one DB row. The antigen-group
+        machinery must reduce to a no-op restriction and pass all
+        antigen-identity columns through verbatim."""
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        db = _db([{
+            "cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+            "species": "Homo sapiens", "antigen_gene": "MLANA",
+            "epitope": "ALGIGILTV", "db_protein_canonical": "MART-1",
+        }])
+        out = match_clonotypes(clones, db)
+        assert out["db_protein"].iloc[0] == "MLANA"
+        assert out["db_protein_canonical"].iloc[0] == "MART-1"
+        assert out["db_species"].iloc[0] == "Homo sapiens"
+        assert out["db_epitope"].iloc[0] == "ALGIGILTV"
+
+    def test_falls_back_to_antigen_gene_when_canonical_all_nan(self):
+        """If `db_protein_canonical` column exists but is entirely
+        empty/NaN for this match set, fall through to `antigen_gene`
+        for grouping rather than silently un-grouping."""
+        import numpy as np
+
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        db = _db([
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Homo sapiens", "antigen_gene": "MLANA",
+             "epitope": "ALGIGILTV", "db_protein_canonical": np.nan},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Homo sapiens", "antigen_gene": "MLANA",
+             "epitope": "ALGIGILTV", "db_protein_canonical": np.nan},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "SARS-CoV-2", "antigen_gene": "ORF1ab",
+             "epitope": "APKEIIFLEGETL", "db_protein_canonical": np.nan},
+        ])
+        out = match_clonotypes(clones, db)
+        assert out["db_protein"].iloc[0] == "MLANA"
+        assert out["db_species"].iloc[0] == "Homo sapiens"
+        assert out["db_epitope"].iloc[0] == "ALGIGILTV"
+
+    def test_host_species_and_cross_strength_come_from_antigen_matches(self):
+        """Regression: previously host_species and the _cross strength
+        suffix were derived from the full matches frame BEFORE the
+        antigen group was picked. A mouse-model row in the match set
+        could flip db_host_species and add _cross even when the
+        winning canonical antigen came from a human-host row. Same
+        archetype as #88 but on the cross-species columns."""
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        db = _db([
+            # Two human-host EBV rows (the winning antigen)
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Epstein-Barr virus", "antigen_gene": "EBNA-3",
+             "host_species": "Homo sapiens",
+             "db_protein_canonical": "EBV EBNA-3"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Epstein-Barr virus", "antigen_gene": "EBNA-3",
+             "host_species": "Homo sapiens",
+             "db_protein_canonical": "EBV EBNA-3"},
+            # An unrelated mouse-host row tagged with a different antigen
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "OVA", "antigen_gene": "OVA",
+             "host_species": "Mus musculus",
+             "db_protein_canonical": "OVA"},
+        ])
+        out = match_clonotypes(clones, db)
+        assert out["db_protein_canonical"].iloc[0] == "EBV EBNA-3"
+        assert out["db_host_species"].iloc[0] == "Homo sapiens"
+        assert out["db_match_strength"].iloc[0] == "ab"  # NOT ab_cross
+
+    def test_canonical_drills_down_within_antigen_gene_group(self):
+        """When grouped on antigen_gene (because db_protein_canonical
+        was all-NaN or absent for the picked rows), the picked subset
+        may still carry multiple canonical values. The fix drills down
+        so the written canonical comes from the same rows as
+        species/epitope."""
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        db = _db([
+            # Two rows share antigen_gene="Spike glycoprotein" but
+            # differ on canonical (and on species/epitope).
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "SARS-CoV-2", "antigen_gene": "Spike glycoprotein",
+             "epitope": "VYAWNRKRI",
+             "db_protein_canonical": "SARS-CoV-2 Spike"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "SARS-CoV-2", "antigen_gene": "Spike glycoprotein",
+             "epitope": "VYAWNRKRI",
+             "db_protein_canonical": "SARS-CoV-2 Spike"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "SARS-CoV-1", "antigen_gene": "Spike glycoprotein",
+             "epitope": "DIFFERENT_EPI",
+             "db_protein_canonical": "SARS-CoV-1 Spike"},
+        ])
+        out = match_clonotypes(clones, db)
+        # The dominant canonical (the SARS-CoV-2 pair) should drive
+        # both protein_canonical AND species/epitope — they must
+        # describe the same DB rows.
+        assert out["db_protein_canonical"].iloc[0] == "SARS-CoV-2 Spike"
+        assert out["db_species"].iloc[0] == "SARS-CoV-2"
+        assert out["db_epitope"].iloc[0] == "VYAWNRKRI"
+
+    def test_falls_back_to_antigen_gene_when_canonical_absent(self):
+        """If no `db_protein_canonical` column exists, group on
+        `antigen_gene` instead."""
+        clones = pd.DataFrame({"CDR3_alpha": ["CAS"], "CDR3_beta": ["CASS"]})
+        db = _db([
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Homo sapiens", "antigen_gene": "MLANA",
+             "epitope": "ALGIGILTV"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "Homo sapiens", "antigen_gene": "MLANA",
+             "epitope": "ALGIGILTV"},
+            {"cdr3_alpha": "CAS", "cdr3_beta": "CASS",
+             "species": "SARS-CoV-2", "antigen_gene": "ORF1ab",
+             "epitope": "APKEIIFLEGETL"},
+        ])
+        out = match_clonotypes(clones, db)
+        assert out["db_protein"].iloc[0] == "MLANA"
+        # When grouped by antigen_gene, species/epitope stay coupled.
+        assert out["db_species"].iloc[0] == "Homo sapiens"
+        assert out["db_epitope"].iloc[0] == "ALGIGILTV"

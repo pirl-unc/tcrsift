@@ -40,7 +40,9 @@ from tcrsift.assemble import (
     HUMAN_TRAC_AA,
     HUMAN_TRBC1_AA,
     HUMAN_TRBC2_AA,
+    ValidationMessage,
     assemble_qc_report,
+    fix_jc_parity,
     validate_sequences,
 )
 from tcrsift.validation import TCRsiftValidationError
@@ -161,6 +163,354 @@ class TestBetaJCParity:
     def test_parity_table_complete(self):
         """Defensive: every TRBJ family should map to one TRBC."""
         assert BETA_JC_PARITY == {"TRBJ1": "TRBC1", "TRBJ2": "TRBC2"}
+
+
+class TestAssembleEndToEndJCOverride:
+    """End-to-end: when CellRanger's β c_gene conflicts with the J
+    family, assemble_full_sequences must propagate J-gene through the
+    assembly path and produce a full_beta_aa with the J-correct
+    canonical C-terminus. Without J-gene propagation in
+    ``_assemble_clone``, ``pick_canonical_constant`` silently sees
+    j_gene=None and the override is bypassed in the real pipeline (#90).
+    """
+
+    def test_beta_c_gene_overridden_column_marks_per_row_overrides(self):
+        """The output frame should carry a per-row bool column so users
+        can filter to the overridden clones without parsing logs."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_a = "CASS" + "A" * 100 + "EQFF"
+        vdj_b = "CASS" + "G" * 100 + "EYFF"
+        df = pd.DataFrame([
+            {  # cross-parity: J1 vs TRBC2 → overridden
+                "CDR3ab": "c1", "CDR3_alpha": vdj_a, "CDR3_beta": vdj_b,
+                "VDJ_alpha_aa": vdj_a, "VDJ_beta_aa": vdj_b,
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC2",
+                "beta_j_gene": "TRBJ1-1", "samples": "S1",
+            },
+            {  # consistent: J1 with TRBC1 → not overridden
+                "CDR3ab": "c2", "CDR3_alpha": vdj_a + "X", "CDR3_beta": vdj_b + "X",
+                "VDJ_alpha_aa": vdj_a + "X", "VDJ_beta_aa": vdj_b + "X",
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+                "beta_j_gene": "TRBJ1-2", "samples": "S1",
+            },
+        ])
+        out = assemble_full_sequences(
+            df, alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        assert "beta_c_gene_overridden" in out.columns
+        assert bool(out["beta_c_gene_overridden"].iloc[0]) is True
+        assert bool(out["beta_c_gene_overridden"].iloc[1]) is False
+
+    def test_aggregate_override_warning_fires_at_end_of_assembly(self, caplog):
+        """Regression: the aggregate `Overrode CellRanger TRBC call on
+        N / M β clones` warning must actually be logged when verbose=True
+        and overrides occurred. Existing tests check side effects on
+        the output frame; this checks the audit trail."""
+        import logging
+
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_a = "CASS" + "A" * 100 + "EQFF"
+        vdj_b = "CASS" + "G" * 100 + "EYFF"
+        df = pd.DataFrame([
+            # Two clones with cross-parity, one OK.
+            {
+                "CDR3ab": "c1", "CDR3_alpha": vdj_a, "CDR3_beta": vdj_b,
+                "VDJ_alpha_aa": vdj_a, "VDJ_beta_aa": vdj_b,
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC2",
+                "beta_j_gene": "TRBJ1-1", "samples": "S1",
+            },
+            {
+                "CDR3ab": "c2", "CDR3_alpha": vdj_a + "X", "CDR3_beta": vdj_b + "X",
+                "VDJ_alpha_aa": vdj_a + "X", "VDJ_beta_aa": vdj_b + "X",
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+                "beta_j_gene": "TRBJ2-5", "samples": "S1",  # also cross-parity
+            },
+            {
+                "CDR3ab": "c3", "CDR3_alpha": vdj_a + "Y", "CDR3_beta": vdj_b + "Y",
+                "VDJ_alpha_aa": vdj_a + "Y", "VDJ_beta_aa": vdj_b + "Y",
+                "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+                "beta_j_gene": "TRBJ1-1", "samples": "S1",  # consistent
+            },
+        ])
+        with caplog.at_level(logging.WARNING, logger="tcrsift.assemble"):
+            assemble_full_sequences(
+                df, alpha_leader=None, beta_leader=None,
+                verbose=True, show_progress=False,
+            )
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(
+            "Overrode CellRanger TRBC call on 2 / 3" in m for m in msgs
+        ), f"expected aggregate override warning, got: {msgs}"
+
+    def test_aggregate_override_warning_silenced_when_verbose_false(
+        self, caplog
+    ):
+        """`verbose=False` should suppress the audit warning — useful
+        for batch / notebook contexts. The override still happens; only
+        the log line is gated."""
+        import logging
+
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_a = "CASS" + "A" * 100 + "EQFF"
+        vdj_b = "CASS" + "G" * 100 + "EYFF"
+        df = pd.DataFrame([{
+            "CDR3ab": "c1", "CDR3_alpha": vdj_a, "CDR3_beta": vdj_b,
+            "VDJ_alpha_aa": vdj_a, "VDJ_beta_aa": vdj_b,
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC2",
+            "beta_j_gene": "TRBJ1-1", "samples": "S1",
+        }])
+        with caplog.at_level(logging.WARNING, logger="tcrsift.assemble"):
+            out = assemble_full_sequences(
+                df, alpha_leader=None, beta_leader=None,
+                verbose=False, show_progress=False,
+            )
+        # Override still applied.
+        assert out["beta_c_gene_canonical"].iloc[0] == "TRBC1"
+        # But the audit log line wasn't emitted.
+        assert not any(
+            "Overrode CellRanger TRBC call" in r.getMessage()
+            for r in caplog.records
+        )
+
+    @pytest.mark.parametrize(
+        "j_gene,cellranger_c,expected_c,expected_tail",
+        [
+            ("TRBJ1-1", "TRBC2", "TRBC1", "VKRKDF"),
+            ("TRBJ1-4", "TRBC2", "TRBC1", "VKRKDF"),
+            ("TRBJ2-5", "TRBC1", "TRBC2", "VKRKDSRG"),
+        ],
+    )
+    def test_cross_parity_overridden_through_full_assembly(
+        self, j_gene, cellranger_c, expected_c, expected_tail
+    ):
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_a = "M" + "A" * 19 + "CASS" + "V" * 100 + "EQFF"
+        vdj_b = "M" + "A" * 19 + "CASS" + "G" * 100 + "EYFF"
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": "CASS" + "V" * 100 + "EQFF",
+            "CDR3_beta":  "CASS" + "G" * 100 + "EYFF",
+            "VDJ_alpha_aa": vdj_a,
+            "VDJ_beta_aa":  vdj_b,
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene":  cellranger_c,
+            "beta_j_gene":  j_gene,
+            "samples": "S1",
+        }])
+        out = assemble_full_sequences(
+            df, alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        assert out["beta_c_gene_canonical"].iloc[0] == expected_c
+        assert out["full_beta_aa"].iloc[0].endswith(expected_tail)
+        # Raw CellRanger call preserved as audit trail.
+        assert out["beta_c_gene"].iloc[0] == cellranger_c
+        # And validate_sequences should no longer fire parity mismatch.
+        msgs = validate_sequences(out, strict=False)
+        assert not any(
+            m.severity == "load_bearing" and "parity mismatch" in m
+            for m in msgs
+        )
+
+
+class TestFromDataConstantWritesCanonical:
+    """Regression: ``constant_source='from-data'`` was leaving
+    ``{chain}_c_gene_canonical`` unset, which silently degraded the
+    autocorrect (#89) and aggregate-override warning (#90) on that
+    branch. After the fix, the canonical name should be recorded with
+    the J-family override applied."""
+
+    def test_from_data_writes_canonical_with_jfamily_override(self):
+        from tcrsift.assemble import (
+            HUMAN_TRAC_AA,
+            HUMAN_TRBC1_AA,
+            assemble_full_sequences,
+        )
+
+        vdj_a = "CASS" + "A" * 100 + "EQFF"
+        vdj_b = "CASS" + "G" * 100 + "EYFF"
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_a,
+            "CDR3_beta": vdj_b,
+            "VDJ_alpha_aa": vdj_a,
+            "VDJ_beta_aa": vdj_b,
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene": "TRBC2",   # CellRanger
+            "beta_j_gene": "TRBJ1-1", # J says TRBC1
+            "alpha_constant_aa": HUMAN_TRAC_AA,
+            "beta_constant_aa": HUMAN_TRBC1_AA,
+            "samples": "S1",
+        }])
+        out = assemble_full_sequences(
+            df, alpha_leader=None, beta_leader=None,
+            constant_source="from-data",
+            verbose=False, show_progress=False,
+        )
+        # The canonical column was written even though we took the
+        # AA from the row, AND it reflects the J-family override.
+        assert out["beta_c_gene_canonical"].iloc[0] == "TRBC1"
+        assert out["alpha_c_gene_canonical"].iloc[0] == "TRAC"
+
+
+class TestFixJCParity:
+    """#89: autocorrect β J→C parity mismatches in-place via
+    :func:`fix_jc_parity`, and via ``validate_sequences(fix=True)``."""
+
+    def test_trbj1_with_trbc2_autocorrected(self):
+        row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-1")
+        row["beta_c_gene_canonical"] = "TRBC2"
+        row["beta_c_gene"] = "TRBC2"
+        df = pd.DataFrame([row])
+        messages = fix_jc_parity(df)
+        assert df.loc[df.index[0], "beta_c_gene_canonical"] == "TRBC1"
+        assert any("autocorrected" in m and "TRBC1" in m for m in messages)
+
+    def test_trbj2_with_trbc1_autocorrected(self):
+        row = _ok_clone(c_beta_canonical="TRBC2", beta_j_gene="TRBJ2-5")
+        row["beta_c_gene_canonical"] = "TRBC1"
+        row["beta_c_gene"] = "TRBC1"
+        df = pd.DataFrame([row])
+        messages = fix_jc_parity(df)
+        assert df.loc[df.index[0], "beta_c_gene_canonical"] == "TRBC2"
+        assert any("autocorrected" in m and "TRBC2" in m for m in messages)
+
+    def test_fix_jc_parity_with_no_raw_beta_c_gene_column(self):
+        """A frame produced by a path that wrote only
+        `beta_c_gene_canonical` (no raw `beta_c_gene`) should still
+        autocorrect when the canonical disagrees with J."""
+        row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-1")
+        row["beta_c_gene_canonical"] = "TRBC2"
+        # Explicitly NOT setting beta_c_gene.
+        row.pop("beta_c_gene", None)
+        df = pd.DataFrame([row])
+        assert "beta_c_gene" not in df.columns
+        messages = fix_jc_parity(df)
+        assert df.loc[df.index[0], "beta_c_gene_canonical"] == "TRBC1"
+        assert any("autocorrected" in m for m in messages)
+
+    def test_no_correction_when_parity_already_consistent(self):
+        row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-2")
+        df = pd.DataFrame([row])
+        messages = fix_jc_parity(df)
+        assert messages == []
+        assert df.loc[df.index[0], "beta_c_gene_canonical"] == "TRBC1"
+
+    def test_validate_with_fix_clears_parity_mismatch(self):
+        """``validate_sequences(fix=True)`` should run the autocorrect
+        first so the J/C parity check no longer fires."""
+        row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-1")
+        row["beta_c_gene_canonical"] = "TRBC2"
+        row["beta_c_gene"] = "TRBC2"
+        df = pd.DataFrame([row])
+        warnings = validate_sequences(df, fix=True)
+        assert not any("J→C parity mismatch" in w for w in warnings)
+        # And the autocorrect note is reported.
+        assert any("autocorrected" in w for w in warnings)
+
+    def test_fix_jc_parity_recovers_when_canonical_is_nan(self):
+        """Regression: ``float('nan')`` is truthy in Python, so the
+        old ``row.get(canonical) or row.get(raw)`` short-circuited to
+        NaN when canonical was NaN — fallback to raw never fired,
+        autocorrect silently no-op'd."""
+        import numpy as np
+
+        row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-1")
+        row["beta_c_gene"] = "TRBC2"
+        row["beta_c_gene_canonical"] = np.nan  # the failure case
+        df = pd.DataFrame([row])
+        messages = fix_jc_parity(df)
+        assert df.loc[df.index[0], "beta_c_gene_canonical"] == "TRBC1"
+        assert any("autocorrected" in m for m in messages)
+
+    def test_validate_jc_parity_fires_when_canonical_is_nan(self):
+        """The parity check inside ``validate_sequences`` also has to
+        fall back to raw ``beta_c_gene`` when canonical is NaN."""
+        import numpy as np
+
+        row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-1")
+        row["beta_c_gene"] = "TRBC2"  # disagrees with TRBJ1
+        row["beta_c_gene_canonical"] = np.nan
+        df = pd.DataFrame([row])
+        warnings = validate_sequences(df)
+        assert any("J→C parity mismatch" in w for w in warnings)
+
+    def test_validate_with_fix_does_not_mask_other_failures(self):
+        """Autocorrect only fixes J/C parity; other load-bearing
+        failures (e.g. CDR3 not in full chain) must still fire."""
+        row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-1")
+        row["beta_c_gene_canonical"] = "TRBC2"
+        row["beta_c_gene"] = "TRBC2"
+        row["CDR3_alpha"] = "NOT_IN_SEQUENCE_XYZ"
+        df = pd.DataFrame([row])
+        warnings = validate_sequences(df, fix=True)
+        assert not any("J→C parity mismatch" in w for w in warnings)
+        assert any("CDR3_alpha" in w and "not found" in w for w in warnings)
+
+
+class TestValidationMessageStructure:
+    """validate_sequences returns ValidationMessage(str) instances
+    carrying .idx and .severity, so callers don't have to parse
+    'Clone {idx}:' back out of the text."""
+
+    def test_is_str_subclass_preserves_text(self):
+        row = _ok_clone()
+        df = pd.DataFrame([row])
+        msgs = validate_sequences(df)
+        for m in msgs:
+            assert isinstance(m, ValidationMessage)
+            assert isinstance(m, str)
+
+    def test_idx_attribute_matches_row_index(self):
+        """The idx attribute should be the DataFrame index label of
+        the failing row, not a parsed-out string."""
+        row = _ok_clone()
+        row["CDR3_alpha"] = "NOT_IN_SEQ_XYZ"  # load-bearing failure
+        df = pd.DataFrame([row], index=["custom-clone-id"])
+        msgs = validate_sequences(df)
+        load_bearing = [m for m in msgs if m.severity == "load_bearing"]
+        assert load_bearing
+        assert all(m.idx == "custom-clone-id" for m in load_bearing)
+
+    def test_metadata_survives_pickle_and_copy(self):
+        """`copy.copy` and `pickle.loads(pickle.dumps(...))` preserve
+        idx/severity even though plain str operations don't.
+        Documented behavior — locked in so a refactor to `__slots__`
+        or `__reduce__` doesn't silently break it."""
+        import copy
+        import pickle
+
+        m = ValidationMessage("Clone 7: chain too short", idx=7, severity="load_bearing")
+        m2 = copy.copy(m)
+        assert m2.idx == 7 and m2.severity == "load_bearing"
+        m3 = pickle.loads(pickle.dumps(m))
+        assert m3.idx == 7 and m3.severity == "load_bearing"
+
+    def test_severity_classifies_messages(self):
+        """Failures are load_bearing; 'unverifiable' notes are
+        informational; autocorrect-from-fix is autocorrect."""
+        row = _ok_clone(c_beta_canonical="TRBC1", beta_j_gene="TRBJ1-1")
+        row["beta_c_gene_canonical"] = "TRBC2"
+        row["beta_c_gene"] = "TRBC2"
+        # Also drop both c_gene_canonical columns on alpha to trigger
+        # the informational "unverifiable" note.
+        row["alpha_c_gene"] = "MYSTERY"
+        row["alpha_c_gene_canonical"] = "MYSTERY"
+        df = pd.DataFrame([row])
+        msgs = validate_sequences(df, fix=True)
+        severities = {m.severity for m in msgs}
+        assert "autocorrect" in severities
+        assert "informational" in severities
+        # The parity issue should be cleared by the autocorrect.
+        assert not any(
+            m.severity == "load_bearing" and "parity mismatch" in m
+            for m in msgs
+        )
 
 
 class TestByteForByteEquality:

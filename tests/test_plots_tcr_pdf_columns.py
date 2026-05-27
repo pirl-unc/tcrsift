@@ -227,3 +227,139 @@ class TestCreateTcrSequencePdfStrict:
         assert any(
             "validation failures" in r.message for r in caplog.records
         )
+
+    def _trbc1_full_beta(self, vdj_beta):
+        """Build a full β chain that passes everything except possibly
+        J/C parity (helper for the autocorrect / skip tests)."""
+        from tcrsift.assemble import HUMAN_TRBC1_AA
+
+        leader = "M" + "A" * 19
+        return leader + vdj_beta + HUMAN_TRBC1_AA
+
+    def _trac_full_alpha(self, vdj_alpha):
+        from tcrsift.assemble import HUMAN_TRAC_AA
+
+        leader = "M" + "A" * 19
+        return leader + vdj_alpha + HUMAN_TRAC_AA
+
+    def test_strict_autocorrects_jc_parity_then_renders(
+        self, tmp_path, caplog
+    ):
+        """#89: parity-only mismatches should autocorrect (not raise)
+        and the PDF render should succeed."""
+        import logging
+
+        pytest.importorskip("reportlab")
+        from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
+        from tcrsift.plots import create_tcr_sequence_pdf
+
+        leader = "M" + "A" * 19
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 30 + "VETA"
+        df = pd.DataFrame(
+            [
+                {
+                    "CDR3_alpha": vdj_alpha,
+                    "CDR3_beta": vdj_beta,
+                    "alpha_leader_aa": leader,
+                    "beta_leader_aa": leader,
+                    "vdj_alpha_aa": vdj_alpha,
+                    "vdj_beta_aa": vdj_beta,
+                    "alpha_constant_aa": HUMAN_TRAC_AA,
+                    "beta_constant_aa": HUMAN_TRBC1_AA,
+                    "alpha_c_gene": "TRAC",
+                    "beta_c_gene": "TRBC2",  # CellRanger says TRBC2 ...
+                    "alpha_c_gene_canonical": "TRAC",
+                    "beta_c_gene_canonical": "TRBC2",
+                    "beta_j_gene": "TRBJ1-1",  # ... but J says TRBC1
+                    "full_alpha_aa": leader + vdj_alpha + HUMAN_TRAC_AA,
+                    "full_beta_aa": leader + vdj_beta + HUMAN_TRBC1_AA,
+                }
+            ]
+        )
+        out = tmp_path / "autocorrected.pdf"
+        with caplog.at_level(logging.WARNING, logger="tcrsift.plots"):
+            create_tcr_sequence_pdf(df, out, strict=True)
+        # The autocorrect happened and the PDF was actually written.
+        assert df.loc[df.index[0], "beta_c_gene_canonical"] == "TRBC1"
+        assert any("autocorrected" in r.message for r in caplog.records)
+        assert out.exists() and out.stat().st_size > 0
+
+    def test_strict_skip_drops_failing_clones_and_renders_rest(
+        self, tmp_path, caplog
+    ):
+        """#89: strict='skip' should drop rows with load-bearing failures
+        (other than J/C parity, which is autocorrected) and render the
+        rest rather than aborting the whole PDF."""
+        import logging
+
+        pytest.importorskip("reportlab")
+        from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
+        from tcrsift.plots import create_tcr_sequence_pdf
+
+        leader = "M" + "A" * 19
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 30 + "VETA"
+        good_row = {
+            "CDR3_alpha": vdj_alpha,
+            "CDR3_beta": vdj_beta,
+            "alpha_leader_aa": leader,
+            "beta_leader_aa": leader,
+            "vdj_alpha_aa": vdj_alpha,
+            "vdj_beta_aa": vdj_beta,
+            "alpha_constant_aa": HUMAN_TRAC_AA,
+            "beta_constant_aa": HUMAN_TRBC1_AA,
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene": "TRBC1",
+            "alpha_c_gene_canonical": "TRAC",
+            "beta_c_gene_canonical": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "full_alpha_aa": leader + vdj_alpha + HUMAN_TRAC_AA,
+            "full_beta_aa": leader + vdj_beta + HUMAN_TRBC1_AA,
+        }
+        broken_row = {**good_row, "alpha_constant_aa": "RT",
+                      "full_alpha_aa": leader + vdj_alpha + "RT"}
+        df = pd.DataFrame([good_row, broken_row])
+        out = tmp_path / "skip.pdf"
+        with caplog.at_level(logging.WARNING, logger="tcrsift.plots"):
+            create_tcr_sequence_pdf(df, out, strict="skip")
+        # Skip-mode warns about the drop and renders the rest.
+        assert any(
+            "dropping" in r.message and "validation failures" in r.message
+            for r in caplog.records
+        )
+        assert out.exists() and out.stat().st_size > 0
+
+    def test_strict_skip_raises_when_all_clones_fail(self, tmp_path):
+        """When every clone fails load-bearing validation under
+        strict='skip', raise rather than silently writing nothing."""
+        from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
+        from tcrsift.plots import create_tcr_sequence_pdf
+        from tcrsift.validation import TCRsiftValidationError
+
+        leader = "M" + "A" * 19
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 30 + "VETA"
+        # Both rows have a truncated alpha constant — load-bearing failure.
+        bad_row = {
+            "CDR3_alpha": vdj_alpha,
+            "CDR3_beta": vdj_beta,
+            "alpha_leader_aa": leader,
+            "beta_leader_aa": leader,
+            "vdj_alpha_aa": vdj_alpha,
+            "vdj_beta_aa": vdj_beta,
+            "alpha_constant_aa": "RT",  # truncated
+            "beta_constant_aa": HUMAN_TRBC1_AA,
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene": "TRBC1",
+            "alpha_c_gene_canonical": "TRAC",
+            "beta_c_gene_canonical": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "full_alpha_aa": leader + vdj_alpha + "RT",
+            "full_beta_aa": leader + vdj_beta + HUMAN_TRBC1_AA,
+        }
+        df = pd.DataFrame([bad_row, bad_row])
+        out = tmp_path / "empty.pdf"
+        with pytest.raises(TCRsiftValidationError, match="every clone"):
+            create_tcr_sequence_pdf(df, out, strict="skip")
+        assert not out.exists()
