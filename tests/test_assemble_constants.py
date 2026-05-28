@@ -72,18 +72,17 @@ class TestCanonicalSequences:
         )
 
     @pytest.mark.parametrize(
-        "gene,min_len,max_len",
+        "gene,expected_len",
         [
-            ("TRAC", 130, 145),    # mature TRAC ~138 aa
-            ("TRBC1", 170, 185),   # mature TRBC1 ~178 aa
-            ("TRBC2", 170, 185),   # mature TRBC2 ~178 aa
+            ("TRAC", 140),    # mature TRAC, post-X-strip from pyensembl ENST00000611116
+            ("TRBC1", 176),   # mature TRBC1, post-X-strip from ENST00000633705 (no synthetic E since 2.0)
+            ("TRBC2", 178),   # mature TRBC2, post-X-strip from ENST00000466254
         ],
     )
-    def test_lengths_in_expected_range(self, gene, min_len, max_len):
+    def test_mature_chain_length_exact(self, gene, expected_len):
         aa = HUMAN_CONSTANT_REGIONS_AA[gene]
-        assert min_len <= len(aa) <= max_len, (
-            f"{gene} length {len(aa)} outside expected window "
-            f"[{min_len}, {max_len}]"
+        assert len(aa) == expected_len, (
+            f"{gene} length {len(aa)} != UniProt mature length {expected_len}"
         )
 
     def test_all_three_present(self):
@@ -96,65 +95,325 @@ class TestCanonicalSequences:
         pinning them here makes any future hand-edit drift loud. Indices
         are 0-indexed Python slices into the stored AA constants.
 
-        TRAC: stored as bare mature, so stored index ``i`` == UniProt
-        position ``i+1``.
-
-        TRBC1/2: ``E`` prepended for the J→C junction residue, so stored
-        index ``i`` == UniProt position ``i`` (i.e., stored position 1
-        is the synthetic ``E``; mature pos 1 is at stored index 1).
+        As of 2.0 (#105) all three canonical sequences are stored as
+        BARE MATURE (no synthetic prepend on β chains). UniProt mature
+        position N → stored index N-1 for all three genes.
         """
         # TRAC mature position 47 → stored index 46 — the conserved Thr.
         # Pre-#100 had 'C' here.
         assert HUMAN_TRAC_AA[46] == "T", (
-            f"TRAC position 47 must be T (UniProt P01848); got "
+            f"TRAC mature pos 47 must be T (UniProt P01848); got "
             f"{HUMAN_TRAC_AA[46]!r} (pre-#100 had 'C')"
         )
 
-        # TRBC1 mature position 135 → stored index 135 (since E is at
-        # stored idx 0, mature 1 is at stored idx 1, mature N at stored
-        # idx N). Pre-#100 had 'E' here, swapped with TRBC2.
-        assert HUMAN_TRBC1_AA[135] == "V", (
-            f"TRBC1 mature position 135 must be V (UniProt P01850); got "
-            f"{HUMAN_TRBC1_AA[135]!r} (pre-#100 had 'E')"
+        # TRBC1 mature pos 135 (idx 134). Pre-#100 had 'E', swapped with TRBC2.
+        assert HUMAN_TRBC1_AA[134] == "V", (
+            f"TRBC1 mature pos 135 must be V (UniProt P01850); got "
+            f"{HUMAN_TRBC1_AA[134]!r} (pre-#100 had 'E')"
         )
 
-        # TRBC2 mature positions that drifted in #100.
-        # Mature pos 3 (stored idx 3): K (was N pre-#100 — JOVI.1 epitope swap)
-        assert HUMAN_TRBC2_AA[3] == "K", (
+        # TRBC2 mature diagnostic positions (bare-mature, 1-indexed).
+        # Mature pos 3 (idx 2): K (JOVI.1 distinguishing — TRBC1 has N here)
+        assert HUMAN_TRBC2_AA[2] == "K", (
             f"TRBC2 mature pos 3 must be K (JOVI.1 epitope); got "
+            f"{HUMAN_TRBC2_AA[2]!r}"
+        )
+        # Mature pos 4 (idx 3): N (JOVI.1 distinguishing — TRBC1 has K here)
+        assert HUMAN_TRBC2_AA[3] == "N", (
+            f"TRBC2 mature pos 4 must be N (JOVI.1 epitope); got "
             f"{HUMAN_TRBC2_AA[3]!r}"
         )
-        # Mature pos 4 (stored idx 4): N (was K pre-#100 — JOVI.1 epitope swap)
-        assert HUMAN_TRBC2_AA[4] == "N", (
-            f"TRBC2 mature pos 4 must be N (JOVI.1 epitope); got "
-            f"{HUMAN_TRBC2_AA[4]!r}"
-        )
-        # Mature pos 9 (stored idx 9): K (was E pre-#100)
-        assert HUMAN_TRBC2_AA[9] == "K"
-        # Mature pos 56 (stored idx 56): S (was C pre-#100)
-        assert HUMAN_TRBC2_AA[56] == "S"
-        # Mature pos 135 (stored idx 135): E (was V pre-#100, swapped with TRBC1)
-        assert HUMAN_TRBC2_AA[135] == "E"
+        # Mature pos 9 (idx 8): K (was E pre-#100; TRBC1 has E here)
+        assert HUMAN_TRBC2_AA[8] == "K"
+        # Mature pos 56 (idx 55): S (was C pre-#100; TRBC1 has S too — not diagnostic)
+        assert HUMAN_TRBC2_AA[55] == "S"
+        # Mature pos 135 (idx 134): E (was V pre-#100, swapped with TRBC1)
+        assert HUMAN_TRBC2_AA[134] == "E"
 
     def test_jovi1_distinguishing_residues_differ_between_trbc1_and_trbc2(self):
         """JOVI.1 antibody distinguishes TRBC1 (`DLNK...`) from TRBC2
-        (`DLKN...`) at positions 4-5 of the mature C — these must differ
-        between the two canonical sequences, otherwise every β chain
-        we ship will look like TRBC1 to a JOVI.1 flow stain regardless
-        of its actual TRBC identity. Pre-#100 both started ``EDLNKVF``."""
-        # Strip the prepended E to get back to mature positions
-        trbc1_mature = HUMAN_TRBC1_AA[1:]
-        trbc2_mature = HUMAN_TRBC2_AA[1:]
-        assert trbc1_mature[2:4] == "NK", f"TRBC1 mature pos 3-4: {trbc1_mature[2:4]}"
-        assert trbc2_mature[2:4] == "KN", f"TRBC2 mature pos 3-4: {trbc2_mature[2:4]}"
+        (`DLKN...`) at mature positions 3-4. These must differ between
+        the two canonical sequences, otherwise every β chain we ship
+        will look like TRBC1 to a JOVI.1 flow stain regardless of its
+        actual TRBC identity. Pre-#100 both started ``EDLNKVF``."""
+        assert HUMAN_TRBC1_AA[2:4] == "NK", (
+            f"TRBC1 mature pos 3-4: {HUMAN_TRBC1_AA[2:4]!r}"
+        )
+        assert HUMAN_TRBC2_AA[2:4] == "KN", (
+            f"TRBC2 mature pos 3-4: {HUMAN_TRBC2_AA[2:4]!r}"
+        )
 
     def test_trbc1_trbc2_position_135_is_swapped(self):
         """TRBC1 has ``V`` at mature pos 135, TRBC2 has ``E`` — the
         opposite of what tcrsift had pre-#100."""
-        trbc1_mature = HUMAN_TRBC1_AA[1:]
-        trbc2_mature = HUMAN_TRBC2_AA[1:]
-        assert trbc1_mature[134] == "V"
-        assert trbc2_mature[134] == "E"
+        assert HUMAN_TRBC1_AA[134] == "V"
+        assert HUMAN_TRBC2_AA[134] == "E"
+
+
+class TestTRACBiology:
+    """Detailed biology pins on the canonical TRAC sequence.
+
+    UniProt P01848 (TRAC_HUMAN) mature chain; pyensembl ENST00000611116
+    canonical transcript. Stored as bare mature since 2.0 (#105) — no
+    synthetic prepend, matches UniProt directly.
+    """
+
+    def test_starts_with_iqnpdpavy(self):
+        """TRAC mature starts at I (residue 1 of UniProt P01848 chain)."""
+        assert HUMAN_TRAC_AA.startswith("IQNPDPAVY"), (
+            f"TRAC mature must start with IQNPDPAVY; got {HUMAN_TRAC_AA[:9]!r}"
+        )
+
+    def test_ends_with_llmtlrlwss(self):
+        """The TRAC C-terminus is the last 10 residues of the cytoplasmic
+        tail. Mismatches here are a reliable signal of either truncation
+        (the #66 frame bug produced 2–11 aa truncations) or wrong-frame
+        translation."""
+        assert HUMAN_TRAC_AA.endswith("LLMTLRLWSS"), (
+            f"TRAC tail must be LLMTLRLWSS; got {HUMAN_TRAC_AA[-10:]!r}"
+        )
+
+    def test_no_internal_stop(self):
+        """No premature stop in the mature chain — sanity check
+        against accidental in-frame stops from a corrupted FASTA."""
+        assert "*" not in HUMAN_TRAC_AA
+
+    def test_no_unknown_residue(self):
+        """The X splice-boundary placeholder must be stripped at load
+        time; an X in the stored constant would indicate the strip
+        logic in ``_load_canonical_constants_fasta`` regressed."""
+        assert "X" not in HUMAN_TRAC_AA
+
+    def test_thr47_conserved_residue(self):
+        """TRAC position 47 (idx 46) is a conserved Thr. Pre-#100 had
+        Cys here — a hand-typing drift that this test pins for the
+        future. Position cited in UniProt P01848 annotations."""
+        assert HUMAN_TRAC_AA[46] == "T"
+
+    def test_alphabet_is_standard(self):
+        """Only the 20 standard residues — no X, no *, no stops, no
+        lowercase, no non-AA characters."""
+        valid = set("ACDEFGHIKLMNPQRSTVWY")
+        assert set(HUMAN_TRAC_AA).issubset(valid), (
+            f"unexpected residues in TRAC: {set(HUMAN_TRAC_AA) - valid}"
+        )
+
+
+class TestTRBC1Biology:
+    """Detailed biology pins on the canonical TRBC1 sequence.
+
+    UniProt P01850 (TRBC1_HUMAN) mature chain; pyensembl ENST00000633705
+    canonical transcript. Stored as bare mature since 2.0 (#105) — pre-2.0
+    had a synthetic E prepended. The J→C junction E is now read per-clone
+    from the contig in ``_add_constant_regions``.
+    """
+
+    def test_starts_with_dlnk(self):
+        """TRBC1 mature C-region starts at D (residue 1 of UniProt P01850
+        chain). The JOVI.1-distinguishing tetrad NK at positions 3-4."""
+        assert HUMAN_TRBC1_AA.startswith("DLNKVF"), (
+            f"TRBC1 must start with DLNKVF; got {HUMAN_TRBC1_AA[:6]!r}"
+        )
+
+    def test_jovi1_signature_at_positions_3_4(self):
+        """JOVI.1 antibody recognises the NK epitope at TRBC1 positions
+        3-4 of the mature chain. A flow stain against TRBC1-expressing
+        T cells uses this exact tetrad."""
+        assert HUMAN_TRBC1_AA[2:4] == "NK"
+
+    def test_glu_at_mature_position_9(self):
+        """TRBC1 has E at mature position 9 — the residue that
+        distinguishes it from TRBC2's K at the same position."""
+        assert HUMAN_TRBC1_AA[8] == "E"
+
+    def test_phe_at_mature_position_36(self):
+        """TRBC1 has F at mature position 36 (idx 35). TRBC2 has Y."""
+        assert HUMAN_TRBC1_AA[35] == "F"
+
+    def test_val_at_mature_position_135(self):
+        """TRBC1 has V at mature position 135 (idx 134) — pre-#100 had
+        an E here, swapped with TRBC2. The V/E swap at this position is
+        one of the four TRBC1 vs TRBC2 distinguishing residues."""
+        assert HUMAN_TRBC1_AA[134] == "V"
+
+    def test_ends_with_vkrkdf(self):
+        """TRBC1 C-terminus is ``VKRKDF`` — 2 aa shorter than TRBC2's
+        ``VKRKDSRG``. The terminal motif distinguishes the two genes
+        in nucleic-acid validation."""
+        assert HUMAN_TRBC1_AA.endswith("VKRKDF")
+
+    def test_does_not_have_trbc2_ctail(self):
+        """The 2-aa C-terminal extension is unique to TRBC2; TRBC1 must
+        not have RG at the end."""
+        assert not HUMAN_TRBC1_AA.endswith("VKRKDSRG")
+        assert not HUMAN_TRBC1_AA.endswith("RG")
+
+    def test_no_internal_stop_or_x(self):
+        assert "*" not in HUMAN_TRBC1_AA
+        assert "X" not in HUMAN_TRBC1_AA
+
+    def test_alphabet_is_standard(self):
+        valid = set("ACDEFGHIKLMNPQRSTVWY")
+        assert set(HUMAN_TRBC1_AA).issubset(valid)
+
+    def test_no_synthetic_e_at_start_since_2_0(self):
+        """Pre-2.0 the stored TRBC1 started with a synthetic E (prepended
+        at FASTA-write time). Since 2.0 the per-clone junction residue
+        is sourced from the contig; the canonical is bare mature
+        starting at D."""
+        assert HUMAN_TRBC1_AA[0] == "D"
+        assert not HUMAN_TRBC1_AA.startswith("E")
+
+
+class TestTRBC2Biology:
+    """Detailed biology pins on the canonical TRBC2 sequence.
+
+    UniProt A0A5B9 (TRBC2_HUMAN) mature chain; pyensembl ENST00000466254
+    canonical transcript. Stored as bare mature since 2.0 (#105).
+
+    NB: the original tcrsift comment cited ``A0A075B6Y0`` as the TRBC2
+    UniProt reference — that's actually TRAJ49 (a 19-aa fragment).
+    A0A5B9 is the correct canonical TRBC2 entry; #100 fixed the trace.
+    """
+
+    def test_starts_with_dlkn(self):
+        """TRBC2 mature C-region starts at D (residue 1 of UniProt A0A5B9
+        chain). The JOVI.1-distinguishing tetrad is KN at positions 3-4
+        — the opposite order from TRBC1's NK."""
+        assert HUMAN_TRBC2_AA.startswith("DLKNVF"), (
+            f"TRBC2 must start with DLKNVF; got {HUMAN_TRBC2_AA[:6]!r}"
+        )
+
+    def test_jovi1_signature_at_positions_3_4(self):
+        """JOVI.1 antibody recognises the NK epitope on TRBC1; the KN
+        order on TRBC2 means JOVI.1 does NOT bind. Pre-#100 both genes
+        were ``EDLNKVF`` — every TRBC2-expressing T cell would have
+        falsely stained JOVI.1+, and any TRBC1 vs TRBC2 frequency
+        analysis derived from tcrsift output would have been bunk."""
+        assert HUMAN_TRBC2_AA[2:4] == "KN"
+
+    def test_lys_at_mature_position_9(self):
+        """TRBC2 has K at mature position 9 — pre-#100 had E (matching
+        TRBC1). The K is what makes TRBC2 distinguishable here."""
+        assert HUMAN_TRBC2_AA[8] == "K"
+
+    def test_tyr_at_mature_position_36(self):
+        """TRBC2 has Y at mature position 36 (idx 35). TRBC1 has F.
+        One of the four TRBC1 vs TRBC2 distinguishing residues."""
+        assert HUMAN_TRBC2_AA[35] == "Y"
+
+    def test_ser_at_mature_position_56(self):
+        """TRBC2 has S at mature position 56 (idx 55) — pre-#100 had C.
+        TRBC1 has S too at this position, so this isn't a TRBC1-vs-TRBC2
+        distinguishing residue, but it's a #100 drift to pin."""
+        assert HUMAN_TRBC2_AA[55] == "S"
+
+    def test_glu_at_mature_position_135(self):
+        """TRBC2 has E at mature position 135 (idx 134). TRBC1 has V.
+        The V/E swap at this position is the fourth and last TRBC1 vs
+        TRBC2 distinguishing residue in the shared region. Pre-#100
+        the two genes were swapped at this position."""
+        assert HUMAN_TRBC2_AA[134] == "E"
+
+    def test_ends_with_vkrkdsrg(self):
+        """TRBC2 has a 2-aa C-terminal extension over TRBC1 — ``VKRKDSRG``
+        vs ``VKRKDF``. The RG tail is the simplest way to tell the two
+        genes apart in protein output."""
+        assert HUMAN_TRBC2_AA.endswith("VKRKDSRG")
+
+    def test_two_aa_longer_than_trbc1_in_ctail(self):
+        """Length delta between the two genes is exactly 2 aa, all of
+        it in the C-terminal extension."""
+        assert len(HUMAN_TRBC2_AA) == len(HUMAN_TRBC1_AA) + 2
+
+    def test_no_internal_stop_or_x(self):
+        assert "*" not in HUMAN_TRBC2_AA
+        assert "X" not in HUMAN_TRBC2_AA
+
+    def test_alphabet_is_standard(self):
+        valid = set("ACDEFGHIKLMNPQRSTVWY")
+        assert set(HUMAN_TRBC2_AA).issubset(valid)
+
+    def test_no_synthetic_e_at_start_since_2_0(self):
+        assert HUMAN_TRBC2_AA[0] == "D"
+        assert not HUMAN_TRBC2_AA.startswith("E")
+
+
+class TestTRBC1VsTRBC2DistinguishingResidues:
+    """The TRBC1 vs TRBC2 comparison: exactly which positions differ,
+    in what direction, and why each one matters."""
+
+    @pytest.mark.parametrize(
+        "pos,trbc1,trbc2,note",
+        [
+            (3,   "N", "K", "JOVI.1 epitope position 1 (NK vs KN)"),
+            (4,   "K", "N", "JOVI.1 epitope position 2 (NK vs KN)"),
+            (9,   "E", "K", "diagnostic — pre-#100 TRBC2 had E here"),
+            (36,  "F", "Y", "shared-region #100 swap (F in TRBC1, Y in TRBC2)"),
+            (135, "V", "E", "shared-region #100 swap (V in TRBC1, E in TRBC2)"),
+        ],
+    )
+    def test_distinguishing_position(self, pos, trbc1, trbc2, note):
+        """Each TRBC1 vs TRBC2 distinguishing position pinned with the
+        biological rationale. Cited in #100 / JOVI.1 documentation."""
+        idx = pos - 1
+        assert HUMAN_TRBC1_AA[idx] == trbc1, (
+            f"TRBC1 mature pos {pos} ({note}): expected {trbc1}, got "
+            f"{HUMAN_TRBC1_AA[idx]!r}"
+        )
+        assert HUMAN_TRBC2_AA[idx] == trbc2, (
+            f"TRBC2 mature pos {pos} ({note}): expected {trbc2}, got "
+            f"{HUMAN_TRBC2_AA[idx]!r}"
+        )
+        assert HUMAN_TRBC1_AA[idx] != HUMAN_TRBC2_AA[idx]
+
+    def test_internal_region_distinguishing_positions(self):
+        """The two genes share the same internal-region length (residues
+        1..170) and differ at exactly 5 positions there. After residue
+        170 the C-terminal tails structurally diverge: TRBC1 ends at
+        ``VKRKDF`` while TRBC2 continues to ``VKRKDSRG``. The C-tail
+        divergence isn't counted here — it's tested as a separate
+        structural feature in :meth:`test_ctail_structural_divergence`."""
+        # Internal-region check: residues 1..170 (idx 0..169) share a
+        # length, and have exactly 5 substitution differences.
+        internal_end = 170
+        diffs = [
+            i for i in range(internal_end)
+            if HUMAN_TRBC1_AA[i] != HUMAN_TRBC2_AA[i]
+        ]
+        diff_positions = [i + 1 for i in diffs]
+        assert diff_positions == [3, 4, 9, 36, 135], (
+            f"TRBC1 vs TRBC2 internal-region distinguishing positions: "
+            f"{diff_positions} (expected [3, 4, 9, 36, 135])"
+        )
+
+    def test_internal_region_is_otherwise_identical(self):
+        """Outside the 5 distinguishing positions in residues 1..170,
+        TRBC1 and TRBC2 agree byte-for-byte. Anything else is a FASTA
+        drift — pre-#100 there were many such drifts."""
+        internal_end = 170
+        distinguishing = {2, 3, 8, 35, 134}  # 0-indexed
+        for i in range(internal_end):
+            if i in distinguishing:
+                continue
+            assert HUMAN_TRBC1_AA[i] == HUMAN_TRBC2_AA[i], (
+                f"unexpected TRBC1/TRBC2 difference at idx {i}: "
+                f"{HUMAN_TRBC1_AA[i]!r} vs {HUMAN_TRBC2_AA[i]!r}"
+            )
+
+    def test_ctail_structural_divergence(self):
+        """Both genes share the ``VKRKD`` motif (positions 171-175);
+        TRBC1 then ends with a single ``F`` while TRBC2 extends with
+        ``SRG``. The shared motif anchors NT-level alignment of the
+        two genes' C-tails; the extension is the unambiguous protein-
+        level marker of TRBC2."""
+        # Shared VKRKD anchor.
+        assert HUMAN_TRBC1_AA[170:175] == "VKRKD"
+        assert HUMAN_TRBC2_AA[170:175] == "VKRKD"
+        # TRBC1 single-residue tail.
+        assert HUMAN_TRBC1_AA[175:] == "F"
+        # TRBC2 three-residue tail.
+        assert HUMAN_TRBC2_AA[175:] == "SRG"
 
 
 class TestCanonicalMatchesPyensembl:
@@ -163,9 +422,9 @@ class TestCanonicalMatchesPyensembl:
     pyensembl isn't installed or the GRCh38 release isn't cached."""
 
     PROVENANCE = {
-        "TRAC":  ("ENST00000611116", HUMAN_TRAC_AA, False),   # no prepend
-        "TRBC1": ("ENST00000633705", HUMAN_TRBC1_AA, True),    # prepend E
-        "TRBC2": ("ENST00000466254", HUMAN_TRBC2_AA, True),    # prepend E
+        "TRAC":  ("ENST00000611116", HUMAN_TRAC_AA),
+        "TRBC1": ("ENST00000633705", HUMAN_TRBC1_AA),
+        "TRBC2": ("ENST00000466254", HUMAN_TRBC2_AA),
     }
 
     @pytest.fixture(scope="class")
@@ -181,7 +440,7 @@ class TestCanonicalMatchesPyensembl:
         return ens
 
     @pytest.mark.parametrize(
-        "gene,tx_id,expected_aa,prepend_e",
+        "gene,tx_id,expected_aa",
         [
             ("TRAC", *PROVENANCE["TRAC"]),
             ("TRBC1", *PROVENANCE["TRBC1"]),
@@ -189,16 +448,15 @@ class TestCanonicalMatchesPyensembl:
         ],
     )
     def test_fasta_matches_pyensembl(
-        self, ensembl_release, gene, tx_id, expected_aa, prepend_e
+        self, ensembl_release, gene, tx_id, expected_aa
     ):
+        """As of 2.0 (#105) all three canonical sequences are stored
+        BARE MATURE (no synthetic prepend), so the comparison is direct."""
         prot = ensembl_release.transcript_by_id(tx_id).protein_sequence
         # Strip the X splice-boundary placeholder pyensembl emits at
         # the J→C junction of TR_C_gene transcripts.
         if prot.startswith("X"):
             prot = prot[1:]
-        # Apply tcrsift's prepend-E convention for β chains.
-        if prepend_e:
-            prot = "E" + prot
         assert prot == expected_aa, (
             f"{gene}: packaged FASTA differs from pyensembl ENST {tx_id}. "
             f"Regenerate with `python -m tcrsift._regen_canonical_constants` "
@@ -877,3 +1135,418 @@ class TestAssembleEndToEndContigBlend:
         assert translation_failures == [], (
             f"unexpected NT round-trip failures: {translation_failures}"
         )
+
+
+class TestJunctionResidueUniformly:
+    """#105 (2.0): the J→C junction residue is read per-clone from the
+    contig's first codon past trimmed VDJ — same code path for both
+    α and β. β's junction is universally E (GAG codon, 118/118 audited
+    B1 clones); α's is J-dependent (N/Y/D/H seen in the same audit).
+    Pre-2.0 β had a synthetic E baked into the stored canonical and α
+    had nothing — every α chain was 1 aa short."""
+
+    @staticmethod
+    def _build_alpha_fixture(tmp_path, junction_codon: str):
+        """Return ``(df, contigs_dir)`` for an α-only assembly test.
+        ``junction_codon`` is the 3-nt junction codon (one of AAT, TAT,
+        GAT, CAT for N, Y, D, H respectively) that the contig provides
+        immediately after the trimmed VDJ."""
+        leader_aa = "M" + "A" * 19
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_alpha_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_alpha)
+        # +1 overshoot on the row's VDJ_alpha_nt so the #91 trim fires.
+        overshoot = "A"
+        # Contig: leader + vdj + junction codon + first 8 canonical TRAC codons.
+        trac_first_8_nt = "".join(
+            HUMAN_PREFERRED_CODONS[r] for r in HUMAN_TRAC_AA[:8]
+        )
+        alpha_contig_seq = (
+            "".join(HUMAN_PREFERRED_CODONS[r] for r in leader_aa)
+            + vdj_alpha_nt
+            + junction_codon
+            + trac_first_8_nt
+        )
+        # Minimal β placeholder (β is unaffected by #105 — its canonical
+        # already carries the prepended E).
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha,
+            "CDR3_beta": vdj_beta,
+            "VDJ_alpha_aa": vdj_alpha,
+            "VDJ_beta_aa": vdj_beta,
+            "VDJ_alpha_nt": vdj_alpha_nt + overshoot,
+            "VDJ_beta_nt": "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_beta),
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "samples": "S1",
+            "alpha_contig_ids": "contig_a1",
+        }])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_a1\n{alpha_contig_seq}\n"
+        )
+        return df, tmp_path
+
+    @pytest.mark.parametrize(
+        "codon,residue",
+        [
+            ("AAT", "N"),  # most common α junction in the B1 cohorts
+            ("TAT", "Y"),
+            ("GAT", "D"),
+            ("CAT", "H"),
+        ],
+    )
+    def test_alpha_junction_residue_prepended_from_contig(
+        self, codon, residue, tmp_path
+    ):
+        """The α junction residue from the contig must be prepended to
+        ``alpha_constant_aa`` so the assembled mature α matches the
+        donor's expressed protein."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        df, contigs_dir = self._build_alpha_fixture(tmp_path, codon)
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(contigs_dir),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        # The constant AA now begins with the junction residue, then
+        # the canonical TRAC start.
+        assert out["alpha_constant_aa"].iloc[0].startswith(residue + HUMAN_TRAC_AA[:8])
+        # And the audit column records what was inserted.
+        assert out["alpha_junction_residue"].iloc[0] == residue
+        # full_alpha_aa = leader + vdj + (junction + TRAC), so the
+        # junction residue appears immediately after the VDJ.
+        full_aa = out["full_alpha_aa"].iloc[0]
+        vdj_alpha = df["VDJ_alpha_aa"].iloc[0]
+        assert vdj_alpha + residue + HUMAN_TRAC_AA[:8] in full_aa
+
+    def test_full_alpha_nt_round_trips_to_full_alpha_aa(self, tmp_path):
+        """With the prepend in place, ``translate(full_alpha_nt)`` must
+        still equal ``full_alpha_aa`` (the #91 invariant)."""
+        from tcrsift.assemble import (
+            assemble_full_sequences,
+            translate_dna,
+            validate_sequences,
+        )
+
+        df, contigs_dir = self._build_alpha_fixture(tmp_path, "AAT")
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(contigs_dir),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        full_nt = out["full_alpha_nt"].iloc[0]
+        full_aa = out["full_alpha_aa"].iloc[0]
+        nt_for_translation = (
+            full_nt[:-3] if full_nt[-3:] in {"TAA", "TAG", "TGA"} else full_nt
+        )
+        translated, _ = translate_dna(nt_for_translation)
+        assert translated == full_aa
+        # validate_sequences also flags no NT round-trip failures.
+        msgs = validate_sequences(out, strict=False)
+        translation_failures = [
+            m for m in msgs
+            if m.severity == "load_bearing"
+            and ("translate to" in m or "frame likely broken" in m)
+        ]
+        assert translation_failures == []
+
+    def test_no_contig_emits_warning_and_skips_prepend(self, tmp_path):
+        """When contigs are loaded but α has no contig past VDJ, the
+        assembly preserves pre-#105 behavior (no junction residue) and
+        surfaces a QC warning so users know α is 1 aa short."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        df, contigs_dir = self._build_alpha_fixture(tmp_path, "AAT")
+        # Remove the contig contents so find(vdj_nt) returns None.
+        for sample_dir in contigs_dir.iterdir():
+            if sample_dir.is_dir():
+                for fasta in sample_dir.glob("*.fasta"):
+                    fasta.write_text(">contig_a1\nACGT\n")  # no VDJ match
+
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(contigs_dir),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        # alpha_constant_aa starts at the canonical (no prepend).
+        assert out["alpha_constant_aa"].iloc[0].startswith(HUMAN_TRAC_AA[:8])
+        assert out["alpha_junction_residue"].iloc[0] is None
+        # And a QC warning records the gap.
+        qc = out["qc_warnings"].iloc[0] or []
+        assert any(
+            "no contig coverage past VDJ" in m for m in qc
+        ), f"expected α-no-contig warning, got {qc}"
+
+    def test_no_contigs_dir_silent_pre_105_behavior(self):
+        """When ``contigs_dir`` isn't provided at all (user opted out
+        of contig-derived NT entirely), the assembly stays silent and
+        produces pre-#105 alpha output. No warning."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha,
+            "CDR3_beta": vdj_beta,
+            "VDJ_alpha_aa": vdj_alpha,
+            "VDJ_beta_aa": vdj_beta,
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "samples": "S1",
+        }])
+        out = assemble_full_sequences(
+            df, alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        # alpha_junction_residue isn't populated (None or column absent).
+        if "alpha_junction_residue" in out.columns:
+            assert out["alpha_junction_residue"].iloc[0] is None
+        # And no warning about missing contig coverage.
+        qc = out.get("qc_warnings", pd.Series([[]])).iloc[0] or []
+        assert not any(
+            "no contig coverage past VDJ" in m for m in qc
+        )
+
+    def test_stop_or_unknown_junction_codon_warns(self, tmp_path):
+        """If the contig's junction codon is a stop (TAA/TAG/TGA) or
+        a codon with N, we don't prepend — instead emit a QC warning."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        df, contigs_dir = self._build_alpha_fixture(tmp_path, "TAA")  # stop
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(contigs_dir),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        # No prepend.
+        assert out["alpha_constant_aa"].iloc[0].startswith(HUMAN_TRAC_AA[:8])
+        assert out["alpha_junction_residue"].iloc[0] is None
+        # Warning surfaces the stop codon and names α.
+        qc = out["qc_warnings"].iloc[0] or []
+        assert any(
+            "alpha" in m and "junction codon" in m and "TAA" in m for m in qc
+        ), f"expected α stop-codon warning, got {qc}"
+
+    # ------------------------------------------------------------
+    # β junction tests — same code path as α since 2.0 (#105).
+    # ------------------------------------------------------------
+
+    @staticmethod
+    def _build_beta_fixture(tmp_path, junction_codon: str, c_gene: str = "TRBC1"):
+        """Return ``(df, contigs_dir)`` for a β-only assembly test.
+        ``junction_codon`` is the 3-nt codon (universally GAG = E in real
+        biology, but the test parametrises across other residues to
+        exercise the same uniform code path)."""
+        leader_aa = "M" + "A" * 19
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        vdj_beta_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_beta)
+        overshoot = "A"
+        canonical_aa = HUMAN_TRBC1_AA if c_gene == "TRBC1" else HUMAN_TRBC2_AA
+        canonical_start_nt = "".join(
+            HUMAN_PREFERRED_CODONS[r] for r in canonical_aa[:8]
+        )
+        beta_contig_seq = (
+            "".join(HUMAN_PREFERRED_CODONS[r] for r in leader_aa)
+            + vdj_beta_nt
+            + junction_codon
+            + canonical_start_nt
+        )
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha, "CDR3_beta": vdj_beta,
+            "VDJ_alpha_aa": vdj_alpha, "VDJ_beta_aa": vdj_beta,
+            "VDJ_alpha_nt": "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_alpha),
+            "VDJ_beta_nt": vdj_beta_nt + overshoot,
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene": c_gene,
+            "beta_j_gene": "TRBJ1-1" if c_gene == "TRBC1" else "TRBJ2-1",
+            "samples": "S1",
+            "beta_contig_ids": "contig_b1",
+        }])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True, exist_ok=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_b1\n{beta_contig_seq}\n"
+        )
+        return df, tmp_path
+
+    @pytest.mark.parametrize("c_gene", ["TRBC1", "TRBC2"])
+    def test_beta_universal_e_junction_from_contig(self, c_gene, tmp_path):
+        """The β J→C junction is universally E (GAG codon) across all
+        118/118 audited B1 clones — the J segment's terminal nt plus
+        the C exon's first 2 nt always spell GAG. Both TRBC1 and TRBC2
+        get the E prepended uniformly when the contig provides GAG."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        df, contigs_dir = self._build_beta_fixture(
+            tmp_path, "GAG", c_gene=c_gene
+        )
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(contigs_dir),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        canonical = HUMAN_TRBC1_AA if c_gene == "TRBC1" else HUMAN_TRBC2_AA
+        # Per-clone canonical = E + bare mature.
+        assert out["beta_constant_aa"].iloc[0].startswith("E" + canonical[:8])
+        assert out["beta_junction_residue"].iloc[0] == "E"
+        # And the assembled full β has the E at the J→C boundary.
+        full_aa = out["full_beta_aa"].iloc[0]
+        vdj_beta = df["VDJ_beta_aa"].iloc[0]
+        assert vdj_beta + "E" + canonical[:8] in full_aa
+
+    def test_beta_trbc1_jovi1_signature_with_junction_e(self, tmp_path):
+        """For a TRBC1 clone with junction E, the assembled chain reads
+        ``…VDJ + EDLNK…`` at the J→C boundary. The JOVI.1 NK epitope
+        ends up at AA positions 3-4 of the assembled β-constant chunk."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        df, contigs_dir = self._build_beta_fixture(tmp_path, "GAG", c_gene="TRBC1")
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(contigs_dir),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        full_aa = out["full_beta_aa"].iloc[0]
+        vdj_beta = df["VDJ_beta_aa"].iloc[0]
+        # Junction + JOVI.1 epitope appears at the boundary: E D L N K
+        assert vdj_beta + "EDLNK" in full_aa, (
+            "expected ...VDJ + EDLNK... at TRBC1 J→C boundary"
+        )
+
+    def test_beta_trbc2_jovi1_signature_with_junction_e(self, tmp_path):
+        """For a TRBC2 clone, the boundary reads ``…VDJ + EDLKN…`` —
+        the KN order (NOT NK) is the JOVI.1-negative signature."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        df, contigs_dir = self._build_beta_fixture(tmp_path, "GAG", c_gene="TRBC2")
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(contigs_dir),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        full_aa = out["full_beta_aa"].iloc[0]
+        vdj_beta = df["VDJ_beta_aa"].iloc[0]
+        # KN instead of NK — JOVI.1-negative TRBC2 boundary.
+        assert vdj_beta + "EDLKN" in full_aa
+        assert vdj_beta + "EDLNK" not in full_aa, (
+            "TRBC2 must NOT have the JOVI.1 NK epitope; that'd indicate "
+            "the canonical sequence regressed to pre-#100"
+        )
+
+    def test_beta_constant_ends_correctly_by_gene(self, tmp_path):
+        """TRBC1 ends with ``VKRKDF``; TRBC2 ends with ``VKRKDSRG``. The
+        2-aa tail difference is preserved through the assembly path."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        for c_gene, expected_tail in [
+            ("TRBC1", "VKRKDF"),
+            ("TRBC2", "VKRKDSRG"),
+        ]:
+            df, contigs_dir = self._build_beta_fixture(
+                tmp_path / c_gene, "GAG", c_gene=c_gene
+            )
+            out = assemble_full_sequences(
+                df,
+                contigs_dir=str(contigs_dir),
+                alpha_leader=None, beta_leader=None,
+                verbose=False, show_progress=False,
+            )
+            # The mature β-constant chunk ends with the gene-specific tail.
+            assert out["beta_constant_aa"].iloc[0].endswith(expected_tail), (
+                f"{c_gene} should end with {expected_tail!r}; got "
+                f"{out['beta_constant_aa'].iloc[0][-12:]!r}"
+            )
+
+    def test_no_synthetic_e_when_no_contig_for_beta(self, tmp_path):
+        """Pre-2.0, β chains got a synthetic E even without contigs.
+        Since 2.0, no contig means no E — bare mature TRBC, with a
+        QC warning indicating the assembled chain is 1 aa short of the
+        donor's expressed β protein. This is the 2.0 behaviour change."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        df, contigs_dir = self._build_beta_fixture(tmp_path, "GAG", c_gene="TRBC1")
+        # Wipe the contig contents so find(vdj_nt) fails.
+        for sample_dir in contigs_dir.iterdir():
+            if sample_dir.is_dir():
+                for fasta in sample_dir.glob("*.fasta"):
+                    fasta.write_text(">contig_b1\nACGT\n")
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(contigs_dir),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        # β-constant starts at bare mature D, NOT synthetic E.
+        assert out["beta_constant_aa"].iloc[0].startswith("DLNK")
+        assert not out["beta_constant_aa"].iloc[0].startswith("EDLN")
+        assert out["beta_junction_residue"].iloc[0] is None
+        # And the QC warning explicitly names β.
+        qc = out["qc_warnings"].iloc[0] or []
+        assert any(
+            "beta" in m and "no contig coverage past VDJ" in m for m in qc
+        )
+
+    def test_alpha_and_beta_use_same_code_path(self, tmp_path):
+        """Uniform treatment: the same junction-peel logic runs for both
+        chains. We assert that α and β handle their respective junction
+        codons in lockstep — both get a non-None ``{chain}_junction_residue``
+        when their contigs provide a valid codon."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        # Build a combined fixture with both an α and β contig.
+        leader_aa = "M" + "A" * 19
+        leader_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in leader_aa)
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        vdj_alpha_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_alpha)
+        vdj_beta_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_beta)
+        trac_start = "".join(HUMAN_PREFERRED_CODONS[r] for r in HUMAN_TRAC_AA[:8])
+        trbc1_start = "".join(HUMAN_PREFERRED_CODONS[r] for r in HUMAN_TRBC1_AA[:8])
+        alpha_contig = leader_nt + vdj_alpha_nt + "AAT" + trac_start  # N junction
+        beta_contig = leader_nt + vdj_beta_nt + "GAG" + trbc1_start   # E junction
+
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_a1\n{alpha_contig}\n>contig_b1\n{beta_contig}\n"
+        )
+
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha, "CDR3_beta": vdj_beta,
+            "VDJ_alpha_aa": vdj_alpha, "VDJ_beta_aa": vdj_beta,
+            "VDJ_alpha_nt": vdj_alpha_nt + "A",  # +1 overshoot for #91 trim
+            "VDJ_beta_nt": vdj_beta_nt + "A",
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "samples": "S1",
+            "alpha_contig_ids": "contig_a1",
+            "beta_contig_ids": "contig_b1",
+        }])
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        # Both chains have a junction residue from the same code path.
+        assert out["alpha_junction_residue"].iloc[0] == "N"
+        assert out["beta_junction_residue"].iloc[0] == "E"
+        # Both constant_aa start with the per-clone junction.
+        assert out["alpha_constant_aa"].iloc[0].startswith("N" + HUMAN_TRAC_AA[:8])
+        assert out["beta_constant_aa"].iloc[0].startswith("E" + HUMAN_TRBC1_AA[:8])
