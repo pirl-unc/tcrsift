@@ -85,6 +85,7 @@ _MODULE_EXPORTS = {
         "assign_tiers_threshold",
         "split_by_tier",
         "strictest_tier_met",
+        "per_sample_tier",
         "get_filter_summary",
     ),
     ".annotate": (

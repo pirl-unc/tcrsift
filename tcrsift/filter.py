@@ -36,45 +36,49 @@ logger = logging.getLogger(__name__)
 
 # Default tier definitions for threshold-based filtering
 #
-# These are configurable defaults - adjust based on your data and use case.
-# The general principle is that higher tiers (tier1) have stricter criteria,
-# while lower tiers (tier5) are more permissive.
+# As of 1.1.0 (#99) the default tiers encode **abundance only** — the
+# specificity dimension (how broadly a clone is distributed across
+# antigen conditions) is no longer baked into the tier label. Mixing
+# the two made the tier opaque ("tier3" could mean a borderline-cells
+# clone OR a strongly-enriched clone demoted by ``max_conditions``)
+# and impossible to interpret per-sample.
 #
-# Criteria:
-#   - min_cells: Minimum number of cells sharing this clonotype
-#   - min_frequency: Minimum frequency within any single sample
-#   - max_conditions: Maximum number of antigen conditions the clone appears in
-#     when that information is available, otherwise sample count is used as a
-#     proxy (lower values favor condition-specific clones)
+# Tier criteria (abundance):
+#   - min_cells: minimum cells sharing the clonotype (global cell_count)
+#   - min_frequency: minimum within-sample frequency (max_frequency)
 #
-# To customize, pass your own tier_definitions dict to assign_tiers_threshold()
-# or filter_clonotypes().
+# Specificity is now an explicit, separate downstream filter — use
+# ``n_conditions <= K`` on the assembled frame, or pass
+# ``max_conditions=K`` to :func:`filter_clonotypes_threshold`. The
+# tier label answers "how strong is the enrichment?"; ``n_conditions``
+# answers "how narrowly does it appear?". Keeping them orthogonal
+# makes the tier interpretable per-sample (via
+# :func:`per_sample_tier`) and easier to audit downstream.
+#
+# Back-compat: :func:`clone_clears_tier` still honors ``max_conditions``
+# when present in a *user-supplied* tier dict — only the bundled
+# defaults dropped the key.
 #
 DEFAULT_THRESHOLD_TIERS = {
-    "tier1": {  # Strictest criteria
+    "tier1": {  # Strictest abundance criteria
         "min_cells": 10,
         "min_frequency": 0.01,  # 1%
-        "max_conditions": 2,
     },
     "tier2": {
         "min_cells": 5,
         "min_frequency": 0.005,  # 0.5%
-        "max_conditions": 3,
     },
     "tier3": {
         "min_cells": 3,
         "min_frequency": 0.001,  # 0.1%
-        "max_conditions": 5,
     },
     "tier4": {
         "min_cells": 2,
         "min_frequency": 0.0005,  # 0.05%
-        "max_conditions": 10,
     },
     "tier5": {  # Most permissive
         "min_cells": 2,
         "min_frequency": 0.0,
-        "max_conditions": 999,
     },
 }
 
@@ -139,6 +143,52 @@ def strictest_tier_met(
         ):
             return name
     return None
+
+
+def per_sample_tier(
+    cells: int | float,
+    frequency: float,
+    tier_defs: dict[str, dict] | None = None,
+    *,
+    tier_order: tuple[str, ...] = ("tier1", "tier2", "tier3", "tier4", "tier5"),
+) -> str | None:
+    """Return the abundance tier for a single (clone, sample) row (#99).
+
+    Thin wrapper over :func:`strictest_tier_met` aimed at downstream
+    report code (per-method PDFs, per-sample heatmaps) that needs to
+    label a clone's enrichment within ONE sample rather than across
+    the whole cohort.
+
+    The global ``tier`` column on a clonotype frame summarises the
+    clone's peak signal across all samples; downstream callers showing
+    per-sample breakdowns previously had to re-implement the threshold
+    table to get a per-sample equivalent. This helper centralises that
+    so the tier definitions stay in one place.
+
+    Parameters
+    ----------
+    cells
+        Number of cells supporting this clone in this sample.
+    frequency
+        Within-sample frequency of this clone (cells / sample-total).
+    tier_defs
+        Tier definition dict; defaults to :data:`DEFAULT_THRESHOLD_TIERS`
+        (abundance-only since #99). Passing a custom dict that includes
+        ``max_conditions`` is supported but unused here — per-sample
+        tiers ignore specificity by definition.
+    tier_order
+        Walk order from strictest to most permissive. Override only
+        if you've defined custom tier names.
+
+    Returns
+    -------
+    str | None
+        Tier label (e.g. ``"tier1"``) or ``None`` when the row clears
+        no tier.
+    """
+    return strictest_tier_met(
+        cells, frequency, tier_defs=tier_defs, tier_order=tier_order
+    )
 
 
 # Named filter modes (#15). Pre-canned compositions of the donor/method
@@ -537,9 +587,14 @@ def assign_tiers_threshold(
         else:
             freq_mask = pd.Series(True, index=df.index)
 
+        # max_conditions is optional in the tier definition (#99):
+        # the bundled defaults dropped it, but user-supplied tier
+        # dicts may still include it. Skip the specificity check when
+        # absent — that's the new abundance-only semantics.
+        max_cond = tier_def.get("max_conditions")
         condition_counts, _ = _get_condition_count_info(df)
-        if condition_counts is not None:
-            cond_mask = condition_counts <= tier_def["max_conditions"]
+        if max_cond is not None and condition_counts is not None:
+            cond_mask = condition_counts <= max_cond
         else:
             cond_mask = pd.Series(True, index=df.index)
 
