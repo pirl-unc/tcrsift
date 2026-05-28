@@ -65,7 +65,10 @@ full = [
 version = {attr = "tcrsift.version.__version__"}
 
 [tool.setuptools]
-packages = ["tcrsift"]
+packages = ["tcrsift", "tcrsift.refseqs"]
+
+[tool.setuptools.package-data]
+"tcrsift.refseqs" = ["*.fasta"]
 
 [project.urls]
 "Homepage" = "https://github.com/pirl-unc/tcrsift"

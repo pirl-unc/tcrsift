@@ -10,11 +10,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the constant-region pipeline after #66 / #67.
+"""Tests for the constant-region pipeline after #66 / #67 / #100.
 
 Covers:
 - Canonical AA constants are present and end with the canonical
   C-terminus from ``CONSTANT_REGION_ENDINGS``.
+- The packaged ``tcrsift/data/canonical_constants.fasta`` matches the
+  pyensembl protein_sequence for each canonical transcript (#100 fix).
+- The canonical AAs match UniProt P01848 / P01850 / A0A5B9 at a set of
+  diagnostic positions (the residues that drifted in #100).
 - ``get_constant_region_sequences`` returns back-translated NT that
   round-trips through ``translate_dna`` to the canonical AA.
 - ``pick_canonical_constant`` resolves chain + c_gene + j_gene to
@@ -23,8 +27,6 @@ Covers:
 - ``verify_canonical_constant_start`` accepts close matches and
   rejects clear mismatches.
 - ``_extract_c_region_start_from_contig`` finds the post-VDJ residues.
-- The pyensembl import is no longer present (the old offset-2 bug
-  surface is gone).
 """
 
 from __future__ import annotations
@@ -82,6 +84,122 @@ class TestCanonicalSequences:
 
     def test_all_three_present(self):
         assert set(HUMAN_CONSTANT_REGIONS_AA) == {"TRAC", "TRBC1", "TRBC2"}
+
+    def test_diagnostic_positions_match_uniprot(self):
+        """Lock the specific residues that previously drifted (#100).
+
+        These positions were wrong in the pre-#100 hardcoded sequences;
+        pinning them here makes any future hand-edit drift loud. Indices
+        are 0-indexed Python slices into the stored AA constants.
+
+        TRAC: stored as bare mature, so stored index ``i`` == UniProt
+        position ``i+1``.
+
+        TRBC1/2: ``E`` prepended for the J→C junction residue, so stored
+        index ``i`` == UniProt position ``i`` (i.e., stored position 1
+        is the synthetic ``E``; mature pos 1 is at stored index 1).
+        """
+        # TRAC mature position 47 → stored index 46 — the conserved Thr.
+        # Pre-#100 had 'C' here.
+        assert HUMAN_TRAC_AA[46] == "T", (
+            f"TRAC position 47 must be T (UniProt P01848); got "
+            f"{HUMAN_TRAC_AA[46]!r} (pre-#100 had 'C')"
+        )
+
+        # TRBC1 mature position 135 → stored index 135 (since E is at
+        # stored idx 0, mature 1 is at stored idx 1, mature N at stored
+        # idx N). Pre-#100 had 'E' here, swapped with TRBC2.
+        assert HUMAN_TRBC1_AA[135] == "V", (
+            f"TRBC1 mature position 135 must be V (UniProt P01850); got "
+            f"{HUMAN_TRBC1_AA[135]!r} (pre-#100 had 'E')"
+        )
+
+        # TRBC2 mature positions that drifted in #100.
+        # Mature pos 3 (stored idx 3): K (was N pre-#100 — JOVI.1 epitope swap)
+        assert HUMAN_TRBC2_AA[3] == "K", (
+            f"TRBC2 mature pos 3 must be K (JOVI.1 epitope); got "
+            f"{HUMAN_TRBC2_AA[3]!r}"
+        )
+        # Mature pos 4 (stored idx 4): N (was K pre-#100 — JOVI.1 epitope swap)
+        assert HUMAN_TRBC2_AA[4] == "N", (
+            f"TRBC2 mature pos 4 must be N (JOVI.1 epitope); got "
+            f"{HUMAN_TRBC2_AA[4]!r}"
+        )
+        # Mature pos 9 (stored idx 9): K (was E pre-#100)
+        assert HUMAN_TRBC2_AA[9] == "K"
+        # Mature pos 56 (stored idx 56): S (was C pre-#100)
+        assert HUMAN_TRBC2_AA[56] == "S"
+        # Mature pos 135 (stored idx 135): E (was V pre-#100, swapped with TRBC1)
+        assert HUMAN_TRBC2_AA[135] == "E"
+
+    def test_jovi1_distinguishing_residues_differ_between_trbc1_and_trbc2(self):
+        """JOVI.1 antibody distinguishes TRBC1 (`DLNK...`) from TRBC2
+        (`DLKN...`) at positions 4-5 of the mature C — these must differ
+        between the two canonical sequences, otherwise every β chain
+        we ship will look like TRBC1 to a JOVI.1 flow stain regardless
+        of its actual TRBC identity. Pre-#100 both started ``EDLNKVF``."""
+        # Strip the prepended E to get back to mature positions
+        trbc1_mature = HUMAN_TRBC1_AA[1:]
+        trbc2_mature = HUMAN_TRBC2_AA[1:]
+        assert trbc1_mature[2:4] == "NK", f"TRBC1 mature pos 3-4: {trbc1_mature[2:4]}"
+        assert trbc2_mature[2:4] == "KN", f"TRBC2 mature pos 3-4: {trbc2_mature[2:4]}"
+
+    def test_trbc1_trbc2_position_135_is_swapped(self):
+        """TRBC1 has ``V`` at mature pos 135, TRBC2 has ``E`` — the
+        opposite of what tcrsift had pre-#100."""
+        trbc1_mature = HUMAN_TRBC1_AA[1:]
+        trbc2_mature = HUMAN_TRBC2_AA[1:]
+        assert trbc1_mature[134] == "V"
+        assert trbc2_mature[134] == "E"
+
+
+class TestCanonicalMatchesPyensembl:
+    """Source-of-truth check (#100): the packaged FASTA must match what
+    pyensembl returns for each canonical transcript. Skips cleanly if
+    pyensembl isn't installed or the GRCh38 release isn't cached."""
+
+    PROVENANCE = {
+        "TRAC":  ("ENST00000611116", HUMAN_TRAC_AA, False),   # no prepend
+        "TRBC1": ("ENST00000633705", HUMAN_TRBC1_AA, True),    # prepend E
+        "TRBC2": ("ENST00000466254", HUMAN_TRBC2_AA, True),    # prepend E
+    }
+
+    @pytest.fixture(scope="class")
+    def ensembl_release(self):
+        pyensembl = pytest.importorskip("pyensembl")
+        ens = pyensembl.EnsemblRelease(110)
+        # Trigger a cheap lookup; if data isn't cached, skip rather than
+        # downloading multi-GB at test time.
+        try:
+            ens.transcript_by_id("ENST00000611116")
+        except Exception as exc:
+            pytest.skip(f"pyensembl GRCh38 release 110 not cached: {exc}")
+        return ens
+
+    @pytest.mark.parametrize(
+        "gene,tx_id,expected_aa,prepend_e",
+        [
+            ("TRAC", *PROVENANCE["TRAC"]),
+            ("TRBC1", *PROVENANCE["TRBC1"]),
+            ("TRBC2", *PROVENANCE["TRBC2"]),
+        ],
+    )
+    def test_fasta_matches_pyensembl(
+        self, ensembl_release, gene, tx_id, expected_aa, prepend_e
+    ):
+        prot = ensembl_release.transcript_by_id(tx_id).protein_sequence
+        # Strip the X splice-boundary placeholder pyensembl emits at
+        # the J→C junction of TR_C_gene transcripts.
+        if prot.startswith("X"):
+            prot = prot[1:]
+        # Apply tcrsift's prepend-E convention for β chains.
+        if prepend_e:
+            prot = "E" + prot
+        assert prot == expected_aa, (
+            f"{gene}: packaged FASTA differs from pyensembl ENST {tx_id}. "
+            f"Regenerate with `python -m tcrsift._regen_canonical_constants` "
+            f"and verify against UniProt before committing."
+        )
 
 
 class TestBackTranslate:
