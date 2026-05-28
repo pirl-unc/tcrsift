@@ -216,10 +216,15 @@ _VALID_AA_CHARS = frozenset("ACDEFGHIKLMNPQRSTVWYX*")
 # not TRBC2). This loader replaces those hand-typed strings with FASTA
 # regenerated from pyensembl so the same class of drift can't recur silently.
 #
-# β-chain sequences are stored with a prepended ``E`` for the J→C splice-
-# junction residue (matches the original tcrsift assembly convention; the
-# bare mature sequence from UniProt starts with ``D``). α-chain has no
-# such prepend — its J→C junction does not contribute an extra residue.
+# As of 2.0 (#105), all three sequences are stored as BARE MATURE protein
+# matching the UniProt chain annotations exactly — no synthetic residue is
+# prepended. The J→C junction residue (universally E for β chains because
+# the splice combines J's terminal nt with the C-exon's first 2 nt to spell
+# GAG; J-dependent N/Y/D/H for α chains) is read per-clone from the
+# CellRanger contig in :func:`_add_constant_regions`. Pre-2.0 versions
+# baked a synthetic E into the stored TRBC1/TRBC2; that worked but
+# couldn't represent α's per-clone variation and meant the canonical
+# constants didn't match UniProt directly.
 #
 # Each sequence ends with the canonical C-terminus stored in
 # ``CONSTANT_REGION_ENDINGS`` — see ``validate_sequences``.
@@ -989,9 +994,6 @@ def _add_constant_regions(
         j_gene = result.get(f"{chain}_j_gene")
         canonical_name, canonical_aa = pick_canonical_constant(chain, c_gene, j_gene)
 
-        # Splice in canonical AA. NT is built below — possibly with a
-        # contig-derived prefix at the J→C junction.
-        result[f"{chain}_constant_aa"] = canonical_aa
         # `constant_seqs` already holds codon-optimized back-translated
         # DNA for the canonical AA; keep it pluggable in case a caller
         # patches the dict (the keys are gene names).
@@ -1013,6 +1015,54 @@ def _add_constant_regions(
             if (row is not None and sample_contigs)
             else None
         )
+
+        # J→C junction residue, peeled from the contig — UNIFORMLY for
+        # both chains (#105 in 2.0). The mature TCR mRNA in the donor
+        # encodes a residue at the J→C splice that is NOT part of the
+        # C-exon's canonical AA: the splice combines the J segment's
+        # terminal partial codon (1-2 nt) with the C-exon's first 1-2
+        # nt to spell the junction codon. For β chains the result is
+        # universally E (GAG, across 118/118 audited B1 clones). For α
+        # the junction is J-dependent — N (most common), Y, D, or H.
+        #
+        # Pre-2.0 versions baked an E into the stored HUMAN_TRBC1/2_AA;
+        # α had no analogous handling and every α chain was 1 aa short.
+        # Reading the junction codon from the contig handles both
+        # chains the same way and lets β's per-clone junction NT be
+        # the donor's actual bytes instead of codon-optimized AAC.
+        junction_residue: str | None = None
+        if contig_nt_past_vdj and len(contig_nt_past_vdj) >= 3:
+            junction_codon = contig_nt_past_vdj[:3]
+            translated = CODON_TABLE.get(junction_codon, "X")
+            if translated and translated not in {"*", "X"}:
+                junction_residue = translated
+                canonical_aa = junction_residue + canonical_aa
+                canonical_nt_codon_opt = (
+                    back_translate(junction_residue) + canonical_nt_codon_opt
+                )
+            else:
+                result.setdefault("qc_warnings", []).append(
+                    f"{chain}: junction codon {junction_codon!r} translates "
+                    f"to {translated!r}; not prepended to "
+                    f"{chain}_constant_aa. The assembled {chain} may be 1 "
+                    "aa shorter than the donor's expressed protein at the "
+                    "J→C junction."
+                )
+        elif sample_contigs:
+            # Contigs were loaded but this clone's contig didn't
+            # extend past VDJ — assembled chain is 1 aa short.
+            result.setdefault("qc_warnings", []).append(
+                f"{chain}: no contig coverage past VDJ; "
+                f"{chain}_constant_aa will be missing the J→C junction "
+                f"residue (1 aa shorter than the donor's expressed "
+                f"{chain} protein)."
+            )
+        # else: no contigs_dir provided at all — silent. The user opted
+        # out of contig-derived NT entirely; assembly uses bare mature
+        # canonical, same as if the clone had no contig.
+        result[f"{chain}_junction_residue"] = junction_residue
+
+        result[f"{chain}_constant_aa"] = canonical_aa
         blended_nt, blend_debug = _blend_constant_nt_with_contig(
             contig_nt_past_vdj or "",
             canonical_aa,

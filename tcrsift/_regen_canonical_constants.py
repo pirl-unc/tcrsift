@@ -39,8 +39,11 @@ def fetch_canonical_constants(release: int = 110) -> dict[str, str]:
     """Fetch canonical TCR constant-region AA sequences from pyensembl.
 
     Strips the leading ``X`` (splice-boundary partial codon) that pyensembl
-    emits and prepends ``E`` for β chains per tcrsift's J→C junction
-    convention. α chains return the bare mature sequence.
+    emits and returns the bare mature C-region for all three genes.
+    The J→C junction residue (universally E for β chains, J-dependent for
+    α chains) is no longer baked into the canonical sequence; it's read
+    per-clone from the CellRanger contig at assembly time (see #105).
+    Pre-2.0 versions prepended a synthetic E to β chains.
 
     Parameters
     ----------
@@ -71,8 +74,6 @@ def fetch_canonical_constants(release: int = 110) -> dict[str, str]:
             )
         if prot.startswith("X"):
             prot = prot[1:]
-        if gene.startswith("TRBC"):
-            prot = "E" + prot
         out[gene] = prot
     return out
 

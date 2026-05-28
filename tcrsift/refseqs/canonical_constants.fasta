@@ -2,22 +2,24 @@
 # Source: Ensembl release 110 protein_sequence for each canonical transcript
 # Verified against UniProt P01848 (TRAC), P01850 (TRBC1), A0A5B9 (TRBC2)
 #
-# pyensembl's protein_sequence emits a leading 'X' for the J-C splice-boundary
-# partial codon. We strip that X and instead retain tcrsift's prepend-E convention
-# for β-chain C-regions (the splice junction residue is E for the canonical
-# TRBJ-TRBC1/2 pairs). α-chain stores the bare mature sequence (no prepend).
+# All three sequences are stored as BARE MATURE protein, matching the
+# UniProt chain annotations exactly. No synthetic residue is prepended.
+# The J→C junction residue (universally E for β chains, J-dependent
+# N/Y/D/H for α chains) is read per-clone from the CellRanger contig at
+# assembly time — see _add_constant_regions in assemble.py and #105.
+# Pre-2.0 versions baked a synthetic E into the stored TRBC1/TRBC2.
 #
 # To regenerate this file:
-#   python -m tcrsift.assemble._regen_canonical_constants  # see _regen.py
->TRAC|UniProt:P01848|Ensembl:ENST00000611116|release:110|prepended-E:false
+#   python -m tcrsift._regen_canonical_constants
+>TRAC|UniProt:P01848|Ensembl:ENST00000611116|release:110
 IQNPDPAVYQLRDSKSSDKSVCLFTDFDSQTNVSQSKDSDVYITDKTVLDMRSMDFKSNS
 AVAWSNKSDFACANAFNNSIIPEDTFFPSPESSCDVKLVEKSFETDTNLNFQNLSVIGFR
 ILLLKVAGFNLLMTLRLWSS
->TRBC1|UniProt:P01850|Ensembl:ENST00000633705|release:110|prepended-E:true
-EDLNKVFPPEVAVFEPSEAEISHTQKATLVCLATGFFPDHVELSWWVNGKEVHSGVSTDP
-QPLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQI
-VSAEAWGRADCGFTSVSYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDF
->TRBC2|UniProt:A0A5B9|Ensembl:ENST00000466254|release:110|prepended-E:true
-EDLKNVFPPKVAVFEPSEAEISHTQKATLVCLATGFYPDHVELSWWVNGKEVHSGVSTDP
-QPLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQI
-VSAEAWGRADCGFTSESYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDSRG
+>TRBC1|UniProt:P01850|Ensembl:ENST00000633705|release:110
+DLNKVFPPEVAVFEPSEAEISHTQKATLVCLATGFFPDHVELSWWVNGKEVHSGVSTDPQ
+PLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIV
+SAEAWGRADCGFTSVSYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDF
+>TRBC2|UniProt:A0A5B9|Ensembl:ENST00000466254|release:110
+DLKNVFPPKVAVFEPSEAEISHTQKATLVCLATGFYPDHVELSWWVNGKEVHSGVSTDPQ
+PLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIV
+SAEAWGRADCGFTSESYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDSRG
