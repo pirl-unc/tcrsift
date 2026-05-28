@@ -1,0 +1,23 @@
+# tcrsift canonical TCR constant-region AA sequences
+# Source: Ensembl release 110 protein_sequence for each canonical transcript
+# Verified against UniProt P01848 (TRAC), P01850 (TRBC1), A0A5B9 (TRBC2)
+#
+# pyensembl's protein_sequence emits a leading 'X' for the J-C splice-boundary
+# partial codon. We strip that X and instead retain tcrsift's prepend-E convention
+# for β-chain C-regions (the splice junction residue is E for the canonical
+# TRBJ-TRBC1/2 pairs). α-chain stores the bare mature sequence (no prepend).
+#
+# To regenerate this file:
+#   python -m tcrsift.assemble._regen_canonical_constants  # see _regen.py
+>TRAC|UniProt:P01848|Ensembl:ENST00000611116|release:110|prepended-E:false
+IQNPDPAVYQLRDSKSSDKSVCLFTDFDSQTNVSQSKDSDVYITDKTVLDMRSMDFKSNS
+AVAWSNKSDFACANAFNNSIIPEDTFFPSPESSCDVKLVEKSFETDTNLNFQNLSVIGFR
+ILLLKVAGFNLLMTLRLWSS
+>TRBC1|UniProt:P01850|Ensembl:ENST00000633705|release:110|prepended-E:true
+EDLNKVFPPEVAVFEPSEAEISHTQKATLVCLATGFFPDHVELSWWVNGKEVHSGVSTDP
+QPLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQI
+VSAEAWGRADCGFTSVSYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDF
+>TRBC2|UniProt:A0A5B9|Ensembl:ENST00000466254|release:110|prepended-E:true
+EDLKNVFPPKVAVFEPSEAEISHTQKATLVCLATGFYPDHVELSWWVNGKEVHSGVSTDP
+QPLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQI
+VSAEAWGRADCGFTSESYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDSRG

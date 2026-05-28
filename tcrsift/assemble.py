@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
+from importlib.resources import files as _pkg_files
 from pathlib import Path
 
 import pandas as pd
@@ -197,31 +198,92 @@ _VALID_AA_CHARS = frozenset("ACDEFGHIKLMNPQRSTVWYX*")
 # These are the mature constant regions (post signal-cleavage), spanning
 # the connecting peptide, transmembrane helix, and cytoplasmic tail —
 # everything that goes downstream of the J-gene boundary in a cloned
-# TCR construct. Hardcoding rather than fetching from Ensembl because:
+# TCR construct.
 #
-#   * Pyensembl introduces an external dependency and a frame-handling
-#     bug surface (#66) for sequences that don't actually change.
-#   * The protein sequences are well-established (UniProt P01848 /
-#     P01850 / A0A075B6Y0) and stable across releases.
-#   * The Sarah TIL pipeline already substitutes canonical strings
-#     downstream as a workaround; this brings the pipeline upstream.
+# Sequences live in the packaged FASTA ``tcrsift/data/canonical_constants.fasta``
+# (sourced from pyensembl GRCh38 release 110 ``transcript.protein_sequence``
+# for transcripts ENST00000611116 / ENST00000633705 / ENST00000466254, then
+# cross-checked against UniProt P01848 / P01850 / A0A5B9). The FASTA is the
+# single source of truth at runtime; CI re-runs the pyensembl fetch and asserts
+# the FASTA hasn't drifted (``test_canonical_matches_pyensembl``).
+#
+# History: an earlier hardcoded-string implementation (PR #69, fixing #66's
+# pyensembl frame bug) drifted from the cited UniProt entries — TRAC had a
+# C↔T error at the conserved Thr46 position, TRBC1 had E↔V at position 135
+# of mature, TRBC2 had 5 errors including the JOVI.1-distinguishing K/N swap
+# at positions 3-4. #100 traced the drift to a wrong UniProt accession in
+# the source-of-truth comment (the cited A0A075B6Y0 is actually TRAJ49,
+# not TRBC2). This loader replaces those hand-typed strings with FASTA
+# regenerated from pyensembl so the same class of drift can't recur silently.
+#
+# β-chain sequences are stored with a prepended ``E`` for the J→C splice-
+# junction residue (matches the original tcrsift assembly convention; the
+# bare mature sequence from UniProt starts with ``D``). α-chain has no
+# such prepend — its J→C junction does not contribute an extra residue.
 #
 # Each sequence ends with the canonical C-terminus stored in
 # ``CONSTANT_REGION_ENDINGS`` — see ``validate_sequences``.
-HUMAN_TRAC_AA = (
-    "IQNPDPAVYQLRDSKSSDKSVCLFTDFDSQTNVSQSKDSDVYITDKCVLDMRSMDFKSNSAVAWSNKSDFAC"
-    "ANAFNNSIIPEDTFFPSPESSCDVKLVEKSFETDTNLNFQNLSVIGFRILLLKVAGFNLLMTLRLWSS"
-)
-HUMAN_TRBC1_AA = (
-    "EDLNKVFPPEVAVFEPSEAEISHTQKATLVCLATGFFPDHVELSWWVNGKEVHSGVSTDPQPLKEQPALND"
-    "SRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIVSAEAWGRADCGFTSESYQQGV"
-    "LSATILYEILLGKATLYAVLVSALVLMAMVKRKDF"
-)
-HUMAN_TRBC2_AA = (
-    "EDLNKVFPPEVAVFEPSEAEISHTQKATLVCLATGFYPDHVELSWWVNGKEVHSGVCTDPQPLKEQPALND"
-    "SRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIVSAEAWGRADCGFTSVSYQQGV"
-    "LSATILYEILLGKATLYAVLVSALVLMAMVKRKDSRG"
-)
+
+_CANONICAL_CONSTANTS_FASTA = "canonical_constants.fasta"
+
+
+def _load_canonical_constants_fasta() -> dict[str, str]:
+    """Parse the packaged canonical-constants FASTA into a {gene: AA} dict.
+
+    The FASTA is shipped in ``tcrsift/data/`` and is the runtime source of
+    truth for the human canonical TCR constant-region AA sequences. See
+    the module-level note above for the provenance chain.
+    """
+    fasta_text = (
+        _pkg_files("tcrsift.refseqs").joinpath(_CANONICAL_CONSTANTS_FASTA).read_text()
+    )
+    out: dict[str, str] = {}
+    name: str | None = None
+    seq_parts: list[str] = []
+    for raw_line in fasta_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith(">"):
+            if name is not None:
+                out[name] = "".join(seq_parts)
+            # Header format: >NAME|...|... — first token after ">" is the gene name
+            name = line[1:].split("|", 1)[0].strip()
+            seq_parts = []
+        else:
+            seq_parts.append(line)
+    if name is not None:
+        out[name] = "".join(seq_parts)
+    expected = {"TRAC", "TRBC1", "TRBC2"}
+    missing = expected - out.keys()
+    if missing:
+        raise RuntimeError(
+            f"{_CANONICAL_CONSTANTS_FASTA} is missing canonical entries: {sorted(missing)}"
+        )
+    return out
+
+
+_canonical = _load_canonical_constants_fasta()
+HUMAN_TRAC_AA: str = _canonical["TRAC"]
+HUMAN_TRBC1_AA: str = _canonical["TRBC1"]
+HUMAN_TRBC2_AA: str = _canonical["TRBC2"]
+del _canonical
+
+# Load-time invariant: each canonical AA must end with the C-terminus
+# advertised in ``CONSTANT_REGION_ENDINGS``. Catching FASTA drift here is
+# cheaper than discovering it in the assembly stage.
+for _gene, _aa in (
+    ("TRAC", HUMAN_TRAC_AA),
+    ("TRBC1", HUMAN_TRBC1_AA),
+    ("TRBC2", HUMAN_TRBC2_AA),
+):
+    _expected_tail = CONSTANT_REGION_ENDINGS[_gene]
+    if not _aa.endswith(_expected_tail):
+        raise RuntimeError(
+            f"{_CANONICAL_CONSTANTS_FASTA}: {_gene} canonical AA tail {_aa[-15:]!r} "
+            f"doesn't match CONSTANT_REGION_ENDINGS[{_gene!r}]={_expected_tail!r}"
+        )
+del _gene, _aa, _expected_tail
 
 HUMAN_CONSTANT_REGIONS_AA: dict[str, str] = {
     "TRAC": HUMAN_TRAC_AA,
