@@ -35,11 +35,15 @@ import pandas as pd
 import pytest
 
 from tcrsift.assemble import (
+    CODON_TABLE,
     CONSTANT_REGION_ENDINGS,
     HUMAN_CONSTANT_REGIONS_AA,
+    HUMAN_PREFERRED_CODONS,
     HUMAN_TRAC_AA,
     HUMAN_TRBC1_AA,
     HUMAN_TRBC2_AA,
+    _blend_constant_nt_with_contig,
+    _extract_c_region_nt_from_contig,
     _extract_c_region_start_from_contig,
     back_translate,
     get_constant_region_sequences,
@@ -421,4 +425,455 @@ class TestExtractCRegionStartFromContig:
                 row, sample_contigs, vdj_aa, "alpha", n_aa=15
             )
             is None
+        )
+
+
+class TestExtractCRegionNtFromContig:
+    """The NT-level extractor used by the contig-aware C region assembly."""
+
+    def _make_contig(self, vdj_aa: str, post_vdj_extra_nt: str) -> tuple[pd.Series, dict, str]:
+        leader_aa = "MAGT"
+        # Build a contig: leader + VDJ + extra post-VDJ NT
+        contig_dna = (
+            "".join(HUMAN_PREFERRED_CODONS[r] for r in leader_aa + vdj_aa)
+            + post_vdj_extra_nt
+        )
+        vdj_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_aa)
+        row = pd.Series({"samples": "S1", "beta_contig_ids": "c1"})
+        sample_contigs = {"S1": {"c1": contig_dna}}
+        return row, sample_contigs, vdj_nt
+
+    def test_returns_post_vdj_nt(self):
+        row, sample_contigs, vdj_nt = self._make_contig("CASSAY", "GAGGAC")
+        result = _extract_c_region_nt_from_contig(row, sample_contigs, vdj_nt, "beta")
+        assert result == "GAGGAC"
+
+    def test_returns_none_when_no_contig(self):
+        row = pd.Series({"samples": "S1"})  # no beta_contig_ids
+        assert (
+            _extract_c_region_nt_from_contig(row, {}, "ACGTACG", "beta") is None
+        )
+
+    def test_returns_none_when_vdj_nt_empty(self):
+        row = pd.Series({"samples": "S1", "beta_contig_ids": "c1"})
+        assert (
+            _extract_c_region_nt_from_contig(row, {"S1": {"c1": "ACGT"}}, "", "beta")
+            is None
+        )
+
+    def test_returns_none_when_vdj_nt_not_in_contig(self):
+        row = pd.Series({"samples": "S1", "beta_contig_ids": "c1"})
+        contigs = {"S1": {"c1": "AAAACCCCGGGGTTTT"}}
+        # vdj_nt isn't anywhere in this contig
+        assert (
+            _extract_c_region_nt_from_contig(row, contigs, "GAGGAC", "beta") is None
+        )
+
+
+class TestBlendConstantNtWithContig:
+    """The hybrid contig-derived + canonical-codon-optimized C region NT builder.
+
+    Strategy under test:
+    * Junction codon and downstream codons come from the contig as far as
+      they agree with the canonical AA.
+    * Any partial codon at the contig 3' edge is completed using canonical
+      NT (preferring the codon-optimized choice when compatible).
+    * Everything past the contig coverage is codon-optimized canonical NT.
+    * AA mismatches between contig translation and canonical trigger an
+      early switch back to canonical, recorded in the debug dict.
+    """
+
+    def test_no_contig_returns_canonical(self):
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        result, debug = _blend_constant_nt_with_contig("", canonical_aa, canonical_nt)
+        assert result == canonical_nt
+        assert debug["n_contig_codons"] == 0
+        assert debug["aa_mismatch_at"] is None
+
+    def test_uses_all_matching_contig_codons(self):
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)  # codon-optimized
+        # Build a contig NT that translates to EDL (matches canonical 0..2)
+        # using non-codon-optimized codons so we can prove the result
+        # comes from the contig and not from canonical NT.
+        contig_nt = "GAAGATCTC"  # GAA=E, GAT=D, CTC=L — all valid, none preferred
+        # Sanity check the fixture: the contig codons are deliberately
+        # NOT the codon-optimized choices, so equality of result[:9]
+        # with contig_nt below proves the bytes came from the contig.
+        for c in (contig_nt[:3], contig_nt[3:6], contig_nt[6:9]):
+            assert CODON_TABLE[c] in {"E", "D", "L"}
+            assert c != HUMAN_PREFERRED_CODONS[CODON_TABLE[c]]
+        result, debug = _blend_constant_nt_with_contig(contig_nt, canonical_aa, canonical_nt)
+        # First 9 nt should be the contig bytes; positions 9.. should be canonical_nt[9:]
+        assert result[:9] == contig_nt
+        assert result[9:] == canonical_nt[9:]
+        assert debug["n_contig_codons"] == 3
+        assert debug["aa_mismatch_at"] is None
+
+    def test_completes_partial_codon_compatible(self):
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        # Contig provides 1 full codon (E) plus 1 partial nt 'G'
+        # The next canonical AA is 'D'; codons for D are GAT and GAC.
+        # 'G' is a compatible prefix → completed codon is GAT or GAC.
+        contig_nt = "GAAG"  # GAA=E, then partial 'G'
+        result, debug = _blend_constant_nt_with_contig(contig_nt, canonical_aa, canonical_nt)
+        # First 3 nt = contig E codon; next 3 nt = completed D codon
+        assert result[:3] == "GAA"
+        # Completed codon should start with the partial nt 'G' and code for D
+        completed = result[3:6]
+        assert completed.startswith("G")
+        assert CODON_TABLE[completed] == "D"
+        assert debug["partial_codon_completed"] is True
+        # Positions 6.. should be canonical_nt[6:] (the L and N codons)
+        assert result[6:] == canonical_nt[6:]
+
+    def test_incompatible_partial_codon_falls_back_to_canonical(self):
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        # Partial nt 'T' is incompatible with D codons (which all start
+        # with G). The partial bytes get discarded and canonical takes
+        # over at the next codon boundary.
+        contig_nt = "GAAT"  # GAA=E, then partial 'T' (no D codon starts with T)
+        result, debug = _blend_constant_nt_with_contig(contig_nt, canonical_aa, canonical_nt)
+        assert result[:3] == "GAA"  # contig E
+        assert result[3:] == canonical_nt[3:]  # canonical from D onward
+        assert debug["partial_codon_completed"] is False
+        assert debug["partial_codon_dropped"] is True  # distinct from "no partial"
+        assert debug["n_contig_codons"] == 1
+        # And the human-readable source string flags the drop so the
+        # audit trail makes it visible.
+        assert "partial dropped" in debug["source"]
+
+    def test_aa_mismatch_switches_to_canonical(self):
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        # Contig codes for E, then a wrong residue (Q instead of D), then
+        # other codons we don't care about — the algorithm should switch
+        # to canonical the moment it sees Q != D at position 1.
+        contig_nt = "GAA" + "CAG" + "CTC" + "AAC"  # E, Q, L, N
+        result, debug = _blend_constant_nt_with_contig(contig_nt, canonical_aa, canonical_nt)
+        assert result[:3] == "GAA"  # the matching E codon from contig
+        assert result[3:] == canonical_nt[3:]  # canonical from position 1 (the D)
+        assert debug["n_contig_codons"] == 1
+        assert debug["aa_mismatch_at"] == 2  # 1-indexed canonical AA pos
+
+    def test_mismatch_at_first_codon_returns_pure_canonical(self):
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        # Contig codes for Q at position 0 — no contig codons match.
+        contig_nt = "CAG" + "GAT"
+        result, debug = _blend_constant_nt_with_contig(contig_nt, canonical_aa, canonical_nt)
+        assert result == canonical_nt
+        assert debug["n_contig_codons"] == 0
+        assert debug["aa_mismatch_at"] == 1
+
+    def test_translates_back_to_canonical_aa(self):
+        """The blended NT must translate to the canonical AA — the whole
+        point is that the protein is preserved while the NT respects the
+        donor at the junction."""
+        canonical_aa = HUMAN_TRBC1_AA[:50]
+        canonical_nt = back_translate(canonical_aa)
+        contig_nt = canonical_nt[:30]  # contig covers first 10 codons exactly
+        result, debug = _blend_constant_nt_with_contig(contig_nt, canonical_aa, canonical_nt)
+        translated_back, _ = translate_dna(result)
+        assert translated_back == canonical_aa
+        assert debug["n_contig_codons"] == 10
+
+    # ------------------------------------------------------------
+    # Audit-driven additions (issue surfaced during PR #103 review)
+    # ------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "contig_nt,expected_n_codons,desc",
+        [
+            ("", 0, "no contig at all"),
+            ("GAA", 1, "exactly one full codon"),
+            ("GAAGAT", 2, "two full codons"),
+            ("GAAGATCTCAAT", 4, "all four full codons (matches EDLN)"),
+            ("GAAGATCTCAATTTT", 4, "contig overruns canonical_aa"),
+            ("GAAG", 1, "1 full + partial completed"),
+            ("GAAT", 1, "1 full + partial dropped"),
+        ],
+    )
+    def test_length_invariant_holds_across_paths(
+        self, contig_nt, expected_n_codons, desc
+    ):
+        """Regardless of which branch was taken — pure canonical fallback,
+        contig + canonical, contig + completed-partial + canonical,
+        contig + dropped-partial + canonical, or AA mismatch switch —
+        the blended NT must be exactly ``3 * len(canonical_aa)`` long.
+        That's the contract every downstream consumer relies on; it
+        wasn't asserted directly before this PR."""
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        blended, debug = _blend_constant_nt_with_contig(
+            contig_nt, canonical_aa, canonical_nt
+        )
+        assert len(blended) == 3 * len(canonical_aa), (
+            f"length invariant violated for {desc!r}: "
+            f"got {len(blended)}, expected {3 * len(canonical_aa)}; debug={debug}"
+        )
+
+    def test_pure_partial_one_nt_compatible(self):
+        """Pure partial codon (1 byte, no full codons) where the byte
+        is a valid prefix for the canonical residue's codon. Untested
+        before this PR — code path exists but wasn't exercised."""
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        # 'G' is a compatible prefix for E (GAA, GAG).
+        blended, debug = _blend_constant_nt_with_contig(
+            "G", canonical_aa, canonical_nt
+        )
+        assert len(blended) == 3 * len(canonical_aa)
+        assert blended[:3].startswith("G")
+        assert CODON_TABLE[blended[:3]] == "E"
+        assert debug["n_contig_codons"] == 0
+        assert debug["partial_codon_completed"] is True
+        assert debug["partial_codon_dropped"] is False
+        # Rest of the chain comes from canonical-codon-opt.
+        assert blended[3:] == canonical_nt[3:]
+
+    def test_pure_partial_two_nt_compatible(self):
+        """Pure partial codon, 2 bytes."""
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        # 'GA' is a compatible prefix for E (GAA, GAG).
+        blended, debug = _blend_constant_nt_with_contig(
+            "GA", canonical_aa, canonical_nt
+        )
+        assert len(blended) == 3 * len(canonical_aa)
+        assert blended[:3].startswith("GA")
+        assert CODON_TABLE[blended[:3]] == "E"
+        assert debug["partial_codon_completed"] is True
+
+    def test_pure_partial_one_nt_incompatible(self):
+        """Pure partial codon whose byte doesn't start ANY codon for the
+        canonical residue → dropped. The whole canonical NT is returned
+        and ``partial_codon_dropped`` is set so the audit trail records
+        that donor fidelity was available but discarded."""
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        # 'T' starts no E codon (E codons are GAA, GAG).
+        blended, debug = _blend_constant_nt_with_contig(
+            "T", canonical_aa, canonical_nt
+        )
+        assert len(blended) == 3 * len(canonical_aa)
+        assert blended == canonical_nt  # everything canonical
+        assert debug["n_contig_codons"] == 0
+        assert debug["partial_codon_completed"] is False
+        assert debug["partial_codon_dropped"] is True
+        assert "partial dropped" in debug["source"]
+
+    def test_contig_longer_than_canonical_truncated(self):
+        """Excess bytes past ``3 * len(canonical_aa)`` are silently
+        dropped — length invariant must hold."""
+        canonical_aa = "EDLN"  # 4 residues → 12 nt
+        canonical_nt = back_translate(canonical_aa)
+        contig_nt = canonical_nt + "AAATTT"  # 6 excess bytes
+        blended, debug = _blend_constant_nt_with_contig(
+            contig_nt, canonical_aa, canonical_nt
+        )
+        assert len(blended) == 3 * len(canonical_aa)
+        # All four canonical residues sourced from contig (since contig_nt
+        # starts with canonical_nt byte-for-byte).
+        assert debug["n_contig_codons"] == 4
+        assert debug["aa_mismatch_at"] is None
+
+    def test_partial_dropped_distinct_from_no_partial(self):
+        """The ``partial_codon_dropped`` flag is what makes the audit
+        trail useful — without it, the source string couldn't tell
+        whether the donor had no partial at all vs. the donor had a
+        partial that we threw away. Pin both signals separately."""
+        canonical_aa = "EDLN"
+        canonical_nt = back_translate(canonical_aa)
+        # No partial.
+        _, debug_no_partial = _blend_constant_nt_with_contig(
+            "GAA", canonical_aa, canonical_nt
+        )
+        # Partial dropped.
+        _, debug_dropped = _blend_constant_nt_with_contig(
+            "GAAT", canonical_aa, canonical_nt
+        )
+        assert debug_no_partial["partial_codon_dropped"] is False
+        assert debug_dropped["partial_codon_dropped"] is True
+        assert "partial dropped" not in debug_no_partial["source"]
+        assert "partial dropped" in debug_dropped["source"]
+
+
+class TestExtractCRegionNtMultiContig:
+    """Audit-driven coverage of the multi-sample / multi-contig path of
+    ``_extract_c_region_nt_from_contig`` — the consensus picker over
+    ``Counter.most_common`` was undocumented in tests before this PR."""
+
+    def _make_multi_contig_row(self, vdj_nt, contigs):
+        """``contigs`` is a list of ``(sample, contig_id, full_contig_seq)``
+        tuples. The row stitches contig_ids across all entries."""
+        row = pd.Series({
+            "samples": ";".join(sorted({c[0] for c in contigs})),
+            "beta_contig_ids": ";".join(c[1] for c in contigs),
+        })
+        sample_contigs = {}
+        for sample, contig_id, seq in contigs:
+            sample_contigs.setdefault(sample, {})[contig_id] = seq
+        return row, sample_contigs
+
+    def test_picks_most_common_post_vdj_nt(self):
+        """When multiple cells' contigs all contain the representative
+        ``vdj_nt`` but disagree on the post-VDJ bytes, the most-common
+        post-VDJ NT wins. Two contigs end in ``GAGGAC`` vs one in
+        ``GAGGAA`` → ``GAGGAC`` is the consensus."""
+        vdj_nt = "TGTGCATCTAGT"  # arbitrary 12-nt VDJ
+        row, sample_contigs = self._make_multi_contig_row(
+            vdj_nt,
+            [
+                ("S1", "c1", "AAA" + vdj_nt + "GAGGAC"),
+                ("S1", "c2", "AAA" + vdj_nt + "GAGGAC"),
+                ("S2", "c3", "AAA" + vdj_nt + "GAGGAA"),
+            ],
+        )
+        result = _extract_c_region_nt_from_contig(
+            row, sample_contigs, vdj_nt, "beta"
+        )
+        assert result == "GAGGAC"
+
+    def test_filters_contigs_that_dont_contain_vdj_nt(self):
+        """Cross-source hazard mitigation: contigs whose VDJ doesn't
+        match the representative ``vdj_nt`` byte-for-byte must NOT
+        contribute to the consensus. (#94 archetype — protects against
+        post-VDJ bytes being mixed across cells whose underlying VDJ
+        differs.)"""
+        vdj_nt = "TGTGCATCTAGT"
+        row, sample_contigs = self._make_multi_contig_row(
+            vdj_nt,
+            [
+                # Contains the rep vdj_nt → its post-VDJ contributes.
+                ("S1", "c1", "AAA" + vdj_nt + "GAGGAC"),
+                # Different VDJ ("TGTGCAACGAGT") — must be ignored even
+                # though it's in the contig list.
+                ("S1", "c2", "AAA" + "TGTGCAACGAGT" + "GAGGAA"),
+            ],
+        )
+        result = _extract_c_region_nt_from_contig(
+            row, sample_contigs, vdj_nt, "beta"
+        )
+        # Only c1's post-VDJ bytes contribute; c2's "GAGGAA" is filtered out.
+        assert result == "GAGGAC"
+
+    def test_trailing_semicolon_in_samples_field_handled(self):
+        """The aggregator's join can produce trailing ``;`` artifacts.
+        ``split(";")`` then yields empty strings that won't match any
+        ``sample_contigs`` key — they should be silently skipped
+        without affecting the consensus."""
+        vdj_nt = "TGTGCATCTAGT"
+        row = pd.Series({
+            "samples": "S1;",  # trailing semicolon
+            "beta_contig_ids": "c1",
+        })
+        sample_contigs = {"S1": {"c1": "AAA" + vdj_nt + "GAGGAC"}}
+        result = _extract_c_region_nt_from_contig(
+            row, sample_contigs, vdj_nt, "beta"
+        )
+        assert result == "GAGGAC"
+
+
+class TestAssembleEndToEndContigBlend:
+    """E2E: drive ``assemble_full_sequences`` with contigs and verify the
+    NT→AA round-trip invariant (#91) still holds with the new blend
+    path active. Unit tests cover the blend function directly; this
+    locks in the integration through ``_add_constant_regions`` →
+    ``_build_full_sequences`` → ``validate_sequences``."""
+
+    def test_full_beta_nt_translates_to_full_beta_aa_with_blend(self, tmp_path):
+        from tcrsift.assemble import (
+            HUMAN_PREFERRED_CODONS,
+            HUMAN_TRBC1_AA,
+            assemble_full_sequences,
+            translate_dna,
+            validate_sequences,
+        )
+
+        # Build a clone with realistic VDJ_aa and a contig whose bytes
+        # immediately after the trimmed VDJ are codon-aligned to the
+        # first few canonical C-region residues. (In real CellRanger
+        # output the bytes between VDJ and C are the J/C junction codon
+        # split across the J overshoot and the C exon's first 1-2 nt;
+        # for this E2E test of the blend integration we just put them
+        # codon-aligned so the contig's first 8 codons match canonical
+        # C[0:8]. The blend function's biology is exercised in unit
+        # tests above; this one verifies the orchestration end-to-end.)
+        leader_aa = "M" + "A" * 19
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        vdj_beta_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_beta)
+        # +1 overshoot only on the ROW's VDJ_beta_nt (so the #91 trim
+        # actually fires); the contig itself is codon-aligned.
+        overshoot = "A"
+        c_region_start_nt = "".join(
+            HUMAN_PREFERRED_CODONS[r] for r in HUMAN_TRBC1_AA[:8]
+        )
+        beta_contig_seq = (
+            "".join(HUMAN_PREFERRED_CODONS[r] for r in leader_aa)
+            + vdj_beta_nt
+            + c_region_start_nt
+        )
+
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha,
+            "CDR3_beta": vdj_beta,
+            "VDJ_alpha_aa": vdj_alpha,
+            "VDJ_beta_aa": vdj_beta,
+            "VDJ_alpha_nt": "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_alpha),
+            "VDJ_beta_nt": vdj_beta_nt + overshoot,
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "samples": "S1",
+            "beta_contig_ids": "contig_b1",
+        }])
+
+        # Build a fake CellRanger contig directory. ``load_contigs``
+        # uses the FASTA's parent-directory name as the sample key, so
+        # the sample subdirectory IS the sample name.
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        fasta = contig_dir / "filtered_contig.fasta"
+        fasta.write_text(f">contig_b1\n{beta_contig_seq}\n")
+
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+
+        # Round-trip invariant on the spliced NT.
+        full_nt = out["full_beta_nt"].iloc[0]
+        full_aa = out["full_beta_aa"].iloc[0]
+        # Strip trailing stop codon if present.
+        nt_for_translation = full_nt[:-3] if full_nt[-3:] in {"TAA", "TAG", "TGA"} else full_nt
+        translated, _ = translate_dna(nt_for_translation)
+        assert translated == full_aa, (
+            "full_beta_nt does not translate to full_beta_aa — the "
+            "blend path broke the round-trip invariant from #91."
+        )
+
+        # The source label records the contig contribution.
+        source = out["beta_constant_source"].iloc[0]
+        assert "contig(" in source, (
+            f"expected contig contribution in beta_constant_source, got {source!r}"
+        )
+
+        # validate_sequences (which runs _validate_nt_aa_roundtrip) should
+        # not produce load-bearing NT-translation failures.
+        msgs = validate_sequences(out, strict=False)
+        translation_failures = [
+            m for m in msgs
+            if m.severity == "load_bearing"
+            and ("translate to" in m or "frame likely broken" in m)
+        ]
+        assert translation_failures == [], (
+            f"unexpected NT round-trip failures: {translation_failures}"
         )

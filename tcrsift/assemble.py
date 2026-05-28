@@ -746,12 +746,14 @@ def assemble_full_sequences(
                 "Constants will be omitted."
             )
 
-    # Load contigs if needed for leader extraction
-    sample_contigs = {}
-    needs_contigs = (
-        leader_config["alpha"] == "from_contig" or leader_config["beta"] == "from_contig"
-    )
-    if contigs_dir and needs_contigs:
+    # Load contigs whenever a contigs_dir is given. Pre-1.3 we only
+    # loaded when a leader was "from_contig"; that gate is too narrow
+    # now that the C-region NT blend (#103) also consumes contigs to
+    # splice donor-real bytes into the J→C boundary. Loading is cheap
+    # relative to assembly and avoids a silent "contigs given but
+    # blend silently noop'd" failure mode.
+    sample_contigs: dict = {}
+    if contigs_dir:
         contigs_dir = validate_directory_exists(Path(contigs_dir), "contigs directory")
         if verbose:
             logger.info(f"  Loading contigs from {contigs_dir}...")
@@ -987,15 +989,36 @@ def _add_constant_regions(
         j_gene = result.get(f"{chain}_j_gene")
         canonical_name, canonical_aa = pick_canonical_constant(chain, c_gene, j_gene)
 
-        # Splice in canonical AA + back-translated NT.
+        # Splice in canonical AA. NT is built below — possibly with a
+        # contig-derived prefix at the J→C junction.
         result[f"{chain}_constant_aa"] = canonical_aa
-        # `constant_seqs` already holds back-translated DNA for the
-        # canonical AA; keep it pluggable in case a caller patches
-        # the dict (the keys are gene names).
-        result[f"{chain}_constant_nt"] = constant_seqs.get(
+        # `constant_seqs` already holds codon-optimized back-translated
+        # DNA for the canonical AA; keep it pluggable in case a caller
+        # patches the dict (the keys are gene names).
+        canonical_nt_codon_opt = constant_seqs.get(
             canonical_name, back_translate(canonical_aa)
         )
         result[f"{chain}_c_gene_canonical"] = canonical_name
+
+        # If we have CellRanger contigs for this clone, splice the
+        # donor's actual NT at the J→C junction into the front of the C
+        # region NT (see :func:`_blend_constant_nt_with_contig` for the
+        # full strategy). This keeps the assembled NT faithful to the
+        # donor at the boundary, while the deep C region — invariant
+        # across donors — stays codon-optimized for synthesis.
+        contig_nt_past_vdj = (
+            _extract_c_region_nt_from_contig(
+                row, sample_contigs, result.get(f"vdj_{chain}_nt", ""), chain
+            )
+            if (row is not None and sample_contigs)
+            else None
+        )
+        blended_nt, blend_debug = _blend_constant_nt_with_contig(
+            contig_nt_past_vdj or "",
+            canonical_aa,
+            canonical_nt_codon_opt,
+        )
+        result[f"{chain}_constant_nt"] = blended_nt
 
         # Verify the observed contig C-region start against canonical.
         observed = (
@@ -1006,14 +1029,18 @@ def _add_constant_regions(
             else None
         )
         if observed is None:
-            result[f"{chain}_constant_source"] = f"canonical:{canonical_name}"
+            result[f"{chain}_constant_source"] = (
+                f"canonical:{canonical_name} [{blend_debug['source']}]"
+            )
         elif verify_canonical_constant_start(observed, canonical_aa):
             result[f"{chain}_constant_source"] = (
-                f"canonical:{canonical_name} (contig-verified)"
+                f"canonical:{canonical_name} (contig-verified) "
+                f"[{blend_debug['source']}]"
             )
         else:
             result[f"{chain}_constant_source"] = (
-                f"canonical:{canonical_name} (UNVERIFIED — start mismatch)"
+                f"canonical:{canonical_name} (UNVERIFIED — start mismatch) "
+                f"[{blend_debug['source']}]"
             )
             result.setdefault("qc_warnings", []).append(
                 f"{chain} constant start mismatch: observed "
@@ -1021,6 +1048,260 @@ def _add_constant_regions(
                 f"(expected start {canonical_aa[:len(observed)]!r}). "
                 "Using canonical anyway; c_gene assignment may be wrong."
             )
+        if blend_debug["aa_mismatch_at"] is not None:
+            result.setdefault("qc_warnings", []).append(
+                f"{chain} constant: contig diverged from canonical at AA "
+                f"position {blend_debug['aa_mismatch_at']}; switched to "
+                f"codon-optimized canonical from that point."
+            )
+        if blend_debug.get("partial_codon_dropped"):
+            result.setdefault("qc_warnings", []).append(
+                f"{chain} constant: contig provided a partial codon at the "
+                "C-region boundary, but its bytes were incompatible with "
+                "the canonical residue; dropped donor fidelity at that "
+                "codon and used canonical."
+            )
+
+
+def _extract_c_region_nt_from_contig(
+    row: pd.Series,
+    sample_contigs: dict,
+    vdj_nt: str,
+    chain: str,
+) -> str | None:
+    """Pull NT bytes observed immediately after the VDJ end in the CellRanger
+    contig — the donor's real, unedited sequence at the J→C boundary.
+
+    Returns the contig NT starting one nt after the last nt of ``vdj_nt`` in
+    the contig. The returned NT is **frame-aligned** to the next codon: in
+    the assembled construct, this is the first nt of the J→C junction codon
+    (whose first 1-2 nt are biologically encoded by the J's terminal partial
+    codon and whose remaining nt come from the C exon's start). The donor's
+    actual junction codon and the first several downstream C-region codons
+    live here, so :func:`_blend_constant_nt_with_contig` can splice them in
+    before falling back to a codon-optimized canonical for the rest.
+
+    Notes
+    -----
+    * ``vdj_nt`` is the frame-aligned (no +1 overshoot) lowercase
+      ``vdj_{chain}_nt`` written by the assembler after #91. The original
+      CellRanger contig (``filtered_contig.fasta`` parsed into ``sample_contigs``)
+      retains the J→C boundary nt that were trimmed during clonotype-aggregation.
+    * Returns ``None`` when no contig contains ``vdj_nt`` exactly — usually a
+      sign that the canonical-from-contigs path isn't available for this
+      clonotype (e.g., contigs_dir wasn't loaded, or VDJ_nt was re-derived
+      from a different cell than the one whose contig we have).
+    * When multiple contigs contain ``vdj_nt`` (multi-sample clonotype), the
+      most-common post-VDJ NT is returned.
+    * **Cross-source hazard mitigation (#94 archetype).** ``contig_ids`` is
+      the semicolon-joined list of EVERY cell's contig — not just the
+      representative cell whose ``vdj_nt`` was kept by the clonotype
+      aggregator. We rely on ``contig_seq.find(vdj_nt)`` to filter: contigs
+      whose own VDJ doesn't contain the representative ``vdj_nt`` byte-for-
+      byte are skipped. Cells with cell-to-cell polymorphism inside the VDJ
+      therefore contribute nothing to the post-VDJ consensus, and the
+      blended NT stays sourced from a coherent biological signal. Don't
+      remove the ``find`` filter without re-deriving the safety argument.
+    """
+    if not vdj_nt:
+        return None
+    samples = str(row.get("samples", "")).split(";")
+    contig_col = f"{chain}_contig_ids"
+    if contig_col not in row or pd.isna(row[contig_col]):
+        return None
+
+    contig_ids = str(row[contig_col]).split(";")
+    candidates: Counter = Counter()
+    for sample in samples:
+        if sample not in sample_contigs:
+            continue
+        for contig_id in contig_ids:
+            if contig_id not in sample_contigs[sample]:
+                continue
+            contig_seq = sample_contigs[sample][contig_id]
+            # Locate vdj_nt as an exact substring. Try both the contig as
+            # given and its reverse complement (CellRanger contigs are
+            # already oriented, but defensive).
+            idx = contig_seq.find(vdj_nt)
+            if idx >= 0:
+                after = contig_seq[idx + len(vdj_nt):]
+                if after:
+                    candidates[after] += 1
+    if candidates:
+        return candidates.most_common(1)[0][0]
+    return None
+
+
+def _blend_constant_nt_with_contig(
+    contig_nt_past_vdj: str,
+    canonical_aa: str,
+    canonical_nt_codon_opt: str,
+) -> tuple[str, dict]:
+    """Splice contig-derived NT for the J→C junction into a codon-optimized
+    canonical C region NT.
+
+    The result respects three principles, listed in order of precedence:
+
+    1. **Junction-residue codon comes from the donor where possible.**
+       The first nt(s) past the (trimmed) VDJ are biologically encoded by
+       the J segment's terminal partial codon; the next nt(s) come from
+       the C exon. Together they spell the J→C junction codon. Using the
+       contig's actual bytes here keeps the assembled NT faithful to the
+       donor's real sequence at this site.
+    2. **Incomplete codons at the contig edge are completed using the
+       canonical reference.** If the contig provides 1-2 nt of an
+       otherwise-incomplete codon at its 3' end, we extend with the
+       canonical codon's bytes (preferring the codon that matches both
+       the contig prefix AND the canonical residue, so the protein output
+       is preserved).
+    3. **Everything past the contig coverage uses codon-optimized canonical
+       NT.** Synthesis vendors prefer codon-optimized constructs, and the
+       deep C region is invariant across donors — there's no donor-specific
+       NT to preserve there.
+
+    Stops at the first AA mismatch between the contig-translated codon and
+    the canonical AA at that position — at that point the contig and
+    canonical disagree about the protein, and we trust the canonical (the
+    contig may be carrying a sequencing error or a non-canonical variant).
+    The mismatch surfaces in the returned ``debug`` dict so callers can
+    emit a QC warning.
+
+    Parameters
+    ----------
+    contig_nt_past_vdj : str
+        NT extracted from the contig starting one nt past the VDJ. Frame
+        offset 0 — i.e., position 0 is the first nt of the J→C junction
+        codon. May be empty (no contig coverage); in that case the entire
+        ``canonical_nt_codon_opt`` is returned.
+    canonical_aa : str
+        Canonical AA sequence of the constant region (from the packaged
+        FASTA, post-#100). Position 0 corresponds to the J→C junction
+        residue (for β chains) or the first mature residue (for α).
+    canonical_nt_codon_opt : str
+        Codon-optimized back-translated NT for ``canonical_aa``, length
+        ``3 * len(canonical_aa)`` (no stop codon).
+
+    Returns
+    -------
+    tuple[str, dict]
+        ``(blended_nt, debug)`` where ``blended_nt`` is the assembled C
+        region NT (still no stop codon — the caller appends one), and
+        ``debug`` carries:
+
+        - ``n_contig_codons``: number of full codons spliced from contig.
+        - ``partial_codon_completed``: True when a partial codon at the
+          contig 3' edge was extended with canonical bytes to spell the
+          canonical residue (donor fidelity preserved in the partial nt).
+        - ``partial_codon_dropped``: True when a partial codon WAS present
+          but its bytes were incompatible with every canonical codon
+          for the expected residue — partial bytes discarded and the
+          full canonical codon used. Distinct from ``partial_codon_completed=False``
+          when there simply was no partial codon to begin with.
+        - ``aa_mismatch_at``: 1-indexed canonical AA position where the
+          contig translation first disagreed with canonical (or ``None``
+          if no mismatch was hit before the contig ran out).
+        - ``source``: human-readable summary for the
+          ``{chain}_constant_source`` column.
+
+    Length invariant: ``len(blended_nt) == 3 * len(canonical_aa)`` always,
+    regardless of which path was taken. Tested in
+    ``TestBlendConstantNtWithContig``.
+    """
+    debug = {
+        "n_contig_codons": 0,
+        "partial_codon_completed": False,
+        "partial_codon_dropped": False,
+        "aa_mismatch_at": None,
+        "source": "canonical-codon-opt",
+    }
+    if not contig_nt_past_vdj or not canonical_aa:
+        return canonical_nt_codon_opt, debug
+
+    n_full_codons_in_contig = len(contig_nt_past_vdj) // 3
+    partial_nt = contig_nt_past_vdj[n_full_codons_in_contig * 3 :]
+
+    # Find longest contig prefix whose per-codon translation matches the
+    # canonical AA byte-for-byte. First mismatch ends the contig-derived
+    # run; everything past that point uses canonical codon-optimized NT.
+    n_matching = 0
+    for i in range(min(n_full_codons_in_contig, len(canonical_aa))):
+        codon = contig_nt_past_vdj[i * 3 : (i + 1) * 3]
+        translated = CODON_TABLE.get(codon, "X")
+        if translated == canonical_aa[i]:
+            n_matching += 1
+        else:
+            debug["aa_mismatch_at"] = i + 1
+            break
+
+    contig_part = contig_nt_past_vdj[: n_matching * 3]
+    debug["n_contig_codons"] = n_matching
+
+    # Try to complete a partial codon at the contig 3' edge — only if
+    # every full codon matched (otherwise we've already switched to
+    # canonical for this position).
+    completed_codon = ""
+    canonical_offset = n_matching
+    if (
+        n_matching == n_full_codons_in_contig
+        and partial_nt
+        and canonical_offset < len(canonical_aa)
+    ):
+        expected_aa = canonical_aa[canonical_offset]
+        # All codons that translate to expected_aa AND start with partial_nt.
+        compatible = [
+            cdn
+            for cdn, aa in CODON_TABLE.items()
+            if aa == expected_aa and cdn.startswith(partial_nt)
+        ]
+        if compatible:
+            # If the codon-optimized choice is among the compatible ones,
+            # prefer it (keeps downstream consistency). Otherwise pick any.
+            preferred = HUMAN_PREFERRED_CODONS.get(expected_aa)
+            if preferred in compatible:
+                completed_codon = preferred
+            else:
+                completed_codon = compatible[0]
+            canonical_offset += 1
+            debug["partial_codon_completed"] = True
+        else:
+            # Contig partial bytes incompatible with canonical residue —
+            # discard the partial bytes and let canonical drive this codon.
+            # Recorded separately from "no partial at all" so the audit
+            # trail can flag clones where donor fidelity at the boundary
+            # WAS available but had to be dropped.
+            debug["partial_codon_dropped"] = True
+
+    canonical_rest = canonical_nt_codon_opt[canonical_offset * 3 :]
+    blended = contig_part + completed_codon + canonical_rest
+
+    if n_matching > 0 and debug["aa_mismatch_at"] is None:
+        suffix_parts = []
+        if debug["partial_codon_completed"]:
+            suffix_parts.append("partial completed")
+        elif debug["partial_codon_dropped"]:
+            suffix_parts.append("partial dropped — incompatible with canonical AA")
+        suffix = (", " + "; ".join(suffix_parts)) if suffix_parts else ""
+        debug["source"] = f"contig({n_matching} codons{suffix}) + canonical-codon-opt"
+    elif n_matching > 0:
+        debug["source"] = (
+            f"contig({n_matching} codons) + canonical-codon-opt "
+            f"(switched at AA mismatch pos {debug['aa_mismatch_at']})"
+        )
+    elif debug["partial_codon_completed"]:
+        # No full codons, but a partial was completed — still donor-derived
+        # at the J→C boundary even though nothing matched at the codon level.
+        debug["source"] = "contig(partial completed) + canonical-codon-opt"
+    elif debug["partial_codon_dropped"]:
+        # No full codons AND partial dropped — purely canonical output, but
+        # surface the dropped partial so the audit trail records that donor
+        # fidelity was available and discarded.
+        debug["source"] = (
+            "canonical-codon-opt (partial dropped — incompatible with canonical AA)"
+        )
+    # else: no contig codons spliced and no partial — keep default
+    #       "canonical-codon-opt"
+
+    return blended, debug
 
 
 def _extract_c_region_start_from_contig(

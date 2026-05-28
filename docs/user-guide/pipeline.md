@@ -180,8 +180,57 @@ Output includes:
 
 - Leader peptide (from contigs)
 - Variable region (VDJ)
-- Constant region (from Ensembl)
+- Constant region (canonical TRAC / TRBC1 / TRBC2 — see below)
 - Single-chain construct (beta-T2A-alpha)
+
+### How the constant region NT is built
+
+The C region's amino-acid sequence comes from a packaged canonical FASTA
+(`tcrsift/refseqs/canonical_constants.fasta`, sourced from pyensembl GRCh38
+release 110 and cross-checked against UniProt P01848 / P01850 / A0A5B9 —
+see issue #100 for the provenance story).
+
+The C region's **nucleotide** sequence is built as a hybrid of donor-real
+contig bytes and codon-optimized canonical:
+
+1. **J→C junction codon and surrounding C-region codons come from the
+   CellRanger contig where possible.** The contig retains the donor's
+   actual NT at the boundary (which the #91 fix trimmed off `vdj_*_nt`
+   at the clonotype-aggregation step). When contigs are available, the
+   assembler locates `vdj_{chain}_nt` in the contig and copies the bytes
+   immediately past it for as many codons as agree with the canonical
+   AA. This keeps the assembled NT faithful to what's actually in the
+   donor's cells at the J→C boundary.
+2. **Incomplete codons at the contig 3' edge are completed using the
+   canonical reference.** If the contig provides 1-2 nt of an otherwise-
+   incomplete codon, the assembler picks a codon that:
+   - starts with the contig's partial bytes (preserving donor fidelity), AND
+   - codes for the canonical AA at that position.
+
+   When the codon-optimized canonical codon matches both constraints,
+   it's used; otherwise any compatible codon is chosen. If no codon can
+   satisfy both (donor partial bytes are incompatible with the canonical
+   residue), the partial bytes are discarded and the canonical codon
+   takes that position.
+3. **Everything past the contig's coverage uses codon-optimized canonical
+   NT.** The deep C region is invariant across donors and benefits from
+   codon optimization for downstream synthesis.
+
+The breakdown is recorded in `{chain}_constant_source`, e.g.:
+
+```
+canonical:TRBC1 (contig-verified) [contig(8 codons, partial completed) + canonical-codon-opt]
+```
+
+If the contig translation disagrees with the canonical AA at some position,
+the assembler switches to canonical-codon-optimized at that point and adds
+a QC warning naming the AA position of the divergence. The protein is
+always canonical; only the NT can carry donor-specific bytes at the boundary.
+
+To opt out and force codon-optimized canonical for the whole C region —
+e.g., when reproducing pre-1.3 assemblies — omit `--contigs-dir` so no
+contigs are loaded. `_blend_constant_nt_with_contig` then sees no contig
+NT and returns the canonical-codon-optimized sequence unchanged.
 
 ## Running the Complete Pipeline
 
