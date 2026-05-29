@@ -1550,3 +1550,117 @@ class TestJunctionResidueUniformly:
         # Both constant_aa start with the per-clone junction.
         assert out["alpha_constant_aa"].iloc[0].startswith("N" + HUMAN_TRAC_AA[:8])
         assert out["beta_constant_aa"].iloc[0].startswith("E" + HUMAN_TRBC1_AA[:8])
+
+    def test_validate_sequences_accepts_junction_prepended_layout(self, tmp_path):
+        """#107 regression: after 2.0's #105 fix, ``{chain}_constant_aa``
+        starts with the per-clone junction residue. The validator's
+        canonical-start check was comparing observed (with junction)
+        against the bare-mature canonical from
+        :data:`HUMAN_CONSTANT_REGIONS_AA` (without junction) and flagged
+        every clone. ``tcrsift run --contigs-dir`` raised at the PDF
+        gate even though all output data was correct.
+
+        Now: validate_sequences should source the expected canonical
+        start from the row's own ``{chain}_constant_aa`` column, which
+        already reflects whatever junction was prepended. No false
+        positives on contig-aware output."""
+        from tcrsift.assemble import assemble_full_sequences, validate_sequences
+
+        # Same combined α+β fixture used in the uniformity test above.
+        leader_aa = "M" + "A" * 19
+        leader_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in leader_aa)
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        vdj_alpha_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_alpha)
+        vdj_beta_nt = "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_beta)
+        trac_start = "".join(HUMAN_PREFERRED_CODONS[r] for r in HUMAN_TRAC_AA[:8])
+        trbc1_start = "".join(HUMAN_PREFERRED_CODONS[r] for r in HUMAN_TRBC1_AA[:8])
+        alpha_contig = leader_nt + vdj_alpha_nt + "AAT" + trac_start   # N junction
+        beta_contig = leader_nt + vdj_beta_nt + "GAG" + trbc1_start    # E junction
+
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_a1\n{alpha_contig}\n>contig_b1\n{beta_contig}\n"
+        )
+
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha, "CDR3_beta": vdj_beta,
+            "VDJ_alpha_aa": vdj_alpha, "VDJ_beta_aa": vdj_beta,
+            "VDJ_alpha_nt": vdj_alpha_nt + "A",
+            "VDJ_beta_nt": vdj_beta_nt + "A",
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "samples": "S1",
+            "alpha_contig_ids": "contig_a1",
+            "beta_contig_ids": "contig_b1",
+        }])
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+
+        # Sanity: junction residues were prepended per #105.
+        assert out["alpha_junction_residue"].iloc[0] == "N"
+        assert out["beta_junction_residue"].iloc[0] == "E"
+        assert out["alpha_constant_aa"].iloc[0].startswith("N")
+        assert out["beta_constant_aa"].iloc[0].startswith("E")
+
+        # The actual #107 assertion: validator emits NO load-bearing
+        # "constant start doesn't match canonical" messages for either
+        # chain. Pre-fix this would fire for both α and β.
+        msgs = validate_sequences(out, strict=False)
+        start_failures = [
+            m for m in msgs
+            if m.severity == "load_bearing"
+            and "constant start doesn't match canonical" in m
+        ]
+        assert start_failures == [], (
+            f"#107 regression: validate_sequences flagged "
+            f"junction-prepended constants as failing the canonical-start "
+            f"check. {len(start_failures)} failures: "
+            f"{start_failures[:3]}"
+        )
+
+        # And no NT round-trip failures (#91 invariant) either — the
+        # blend preserves the junction codon.
+        rt_failures = [
+            m for m in msgs
+            if m.severity == "load_bearing"
+            and ("translate to" in m or "frame likely broken" in m)
+        ]
+        assert rt_failures == []
+
+    def test_validate_sequences_still_catches_real_start_mismatch(self):
+        """Defensive: the #107 fix mustn't soften the canonical-start
+        check past the point of usefulness. Pin that a clone whose
+        ``full_{chain}_aa`` doesn't match its own ``{chain}_constant_aa``
+        after VDJ still gets flagged."""
+        from tcrsift.assemble import validate_sequences
+
+        # Hand-craft a row where the body after VDJ in full_alpha_aa is
+        # wrong but alpha_constant_aa claims the correct canonical.
+        leader = "M" + "A" * 19
+        vdj = "CASS" + "A" * 60 + "VLPHA"
+        good_canonical = "N" + HUMAN_TRAC_AA  # what the row claims
+        bad_observed_constant = "WRONG" + "X" * (len(good_canonical) - 5 - 8) + "MTLRLWSS"
+        df = pd.DataFrame([{
+            "alpha_leader_aa": leader,
+            "vdj_alpha_aa": vdj,
+            "alpha_constant_aa": good_canonical,
+            "alpha_c_gene": "TRAC",
+            "alpha_c_gene_canonical": "TRAC",
+            "full_alpha_aa": leader + vdj + bad_observed_constant,
+        }])
+        msgs = validate_sequences(df, strict=False)
+        start_failures = [
+            m for m in msgs
+            if m.severity == "load_bearing"
+            and "constant start doesn't match canonical" in m
+        ]
+        assert start_failures, (
+            "validator should still flag genuine start mismatches; the "
+            "#107 fix may have softened the check too far"
+        )
