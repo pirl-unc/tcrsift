@@ -293,6 +293,21 @@ MATCH_STRICTNESS_MODES = ("strict_ab", "ab_with_partial", "b_only")
 MATCH_MODES = ("exact", "levenshtein")
 
 
+def _canonical_v_gene(value: object) -> str:
+    """Normalize a V-gene call so VDJdb / IEDB / CellRanger spellings
+    compare cleanly (#56).
+
+    Strips allele suffix (``TRBV6-1*01`` → ``TRBV6-1``), uppercases,
+    and trims whitespace. Returns ``""`` when the input isn't a string
+    or is empty / NaN so the downstream comparison can be a simple
+    ``a == b and a``.
+    """
+    if not isinstance(value, str):
+        return ""
+    base = value.strip().upper().split("*", 1)[0]
+    return base
+
+
 def _canonical_variants(s: str):
     """Yield ``{s} ∪ {s with one character deleted at each position}``.
 
@@ -789,6 +804,8 @@ def _normalize_vdjdb_paired(df: pd.DataFrame) -> pd.DataFrame:
     column_mapping = {
         "cdr3.alpha": "cdr3_alpha",
         "cdr3.beta": "cdr3_beta",
+        "v.alpha": "v_alpha",
+        "v.beta": "v_beta",
         "antigen.epitope": "epitope",
         "antigen.gene": "antigen_gene",
         "mhc.a": "mhc_allele",
@@ -826,6 +843,7 @@ def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
 
     column_mapping = {
         "cdr3": "cdr3_beta",
+        "v.segm": "v_beta",  # long format calls the V-gene column 'v.segm'
         "antigen.epitope": "epitope",
         "antigen.gene": "antigen_gene",
         "mhc.a": "mhc_allele",
@@ -841,6 +859,7 @@ def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
     # No α data in this format; explicit empty column keeps the
     # downstream schema stable.
     df["cdr3_alpha"] = pd.NA
+    df["v_alpha"] = pd.NA
     return df
 
 
@@ -1409,6 +1428,10 @@ def match_clonotypes(
     df["db_match_partial"] = False
     df["db_match_strength"] = None
     df["db_match_distance"] = None  # #57: edit distance to matched DB β
+    df["db_match_score"] = None     # #56: composite confidence ∈ [0, 1]
+    df["db_v_gene_agreement"] = None
+    df["db_n_studies"] = None
+    df["db_category_votes"] = None
     df["db_epitope"] = None
     df["db_protein"] = None
     df["db_protein_canonical"] = None
@@ -1681,6 +1704,113 @@ def _annotate_match(
     if partial:
         df.loc[idx, "db_match_partial"] = True
 
+    # #56: structured match-confidence signals + composite score. Each
+    # signal is None when the underlying data isn't available so
+    # downstream code can recognise "couldn't be checked" vs "checked
+    # and found no agreement".
+    if "v_beta" in matches.columns:
+        clone_v_beta = _canonical_v_gene(df.loc[idx].get("beta_v_gene"))
+        if clone_v_beta:
+            db_v_betas = matches["v_beta"].dropna().map(_canonical_v_gene)
+            db_v_betas = db_v_betas[db_v_betas != ""]
+            if len(db_v_betas) > 0:
+                df.loc[idx, "db_v_gene_agreement"] = float(
+                    (db_v_betas == clone_v_beta).mean()
+                )
+
+    if "reference" in matches.columns:
+        refs = matches["reference"].dropna().astype(str)
+        refs = refs[refs.str.strip() != ""]
+        df.loc[idx, "db_n_studies"] = int(refs.nunique())
+
+    if "db_category" in matches.columns:
+        cat_counts = matches["db_category"].dropna().value_counts()
+        if len(cat_counts) > 0:
+            total = int(cat_counts.sum())
+            df.loc[idx, "db_category_votes"] = ";".join(
+                f"{cat}:{cnt / total:.2f}"
+                for cat, cnt in cat_counts.items()
+            )
+
+    df.loc[idx, "db_match_score"] = _compute_match_score(
+        strength=strength,
+        distance=distance,
+        n_studies=df.loc[idx].get("db_n_studies"),
+        v_gene_agreement=df.loc[idx].get("db_v_gene_agreement"),
+    )
+
+
+# Base scores per match strength label. ``_cross`` and ``_near`` suffixes
+# get multiplicative penalties, applied in :func:`_compute_match_score`.
+_BASE_STRENGTH_SCORE = {
+    "ab": 1.0,
+    "b_only": 0.7,
+}
+_NEAR_PENALTY = 0.7   # b_only_near = b_only * 0.7
+_CROSS_PENALTY = 0.5  # *_cross = base * 0.5
+
+
+def _compute_match_score(
+    strength: str,
+    distance: int | None,
+    n_studies: object,
+    v_gene_agreement: object,
+) -> float:
+    """Combine the structured-confidence signals into a single
+    ``db_match_score`` ∈ [0, 1] (#56).
+
+    Formula:
+
+    1. Start from ``base = _BASE_STRENGTH_SCORE[strength_stem]`` —
+       1.0 for αβ exact, 0.7 for β-only.
+    2. Apply ``_NEAR_PENALTY`` (0.7×) if the strength carries the
+       ``_near`` suffix (Lev-1 fuzzy β match, #57).
+    3. Apply ``_CROSS_PENALTY`` (0.5×) if the strength carries the
+       ``_cross`` suffix (non-human host species, #83 / #54).
+    4. Reduce by up to 30% for V-gene disagreement when measurable:
+       ``factor = 1 - 0.3 * (1 - v_gene_agreement)``. ``None`` (unknown
+       — DB or clone missing V-gene info) is treated as 1.0 (neutral).
+    5. Reduce for single-study evidence (Britanova / Emerson style
+       repeats-from-one-paper concern from #56):
+       ``factor = 1 - 0.3 / max(n_studies, 1)``. So 1 study → 0.7,
+       2 → 0.85, 3+ → 0.9 and approaching 1.0. ``None`` and 0 are
+       treated as 1 study.
+
+    Returns a float rounded to 3 decimals so the score is stable
+    across pandas/numpy float representations and reads cleanly in
+    CSV output.
+    """
+    stem = strength
+    # Suffixes can stack as ``..._near_cross``; peel ``_cross`` first
+    # because it's always outermost (added in ``_annotate_match`` after
+    # ``_near`` is already on the strength label).
+    has_cross = stem.endswith("_cross")
+    if has_cross:
+        stem = stem[: -len("_cross")]
+    has_near = stem.endswith("_near")
+    if has_near:
+        stem = stem[: -len("_near")]
+    base = _BASE_STRENGTH_SCORE.get(stem, 0.5)
+    if has_near:
+        base *= _NEAR_PENALTY
+    if has_cross:
+        base *= _CROSS_PENALTY
+
+    if isinstance(v_gene_agreement, (int, float)) and not pd.isna(v_gene_agreement):
+        v_factor = 1.0 - 0.3 * (1.0 - float(v_gene_agreement))
+    else:
+        v_factor = 1.0
+
+    try:
+        n = int(n_studies) if n_studies is not None and not pd.isna(n_studies) else 0
+    except (TypeError, ValueError):
+        n = 0
+    n = max(n, 1)
+    studies_factor = 1.0 - 0.3 / n
+
+    score = base * v_factor * studies_factor
+    return round(min(1.0, max(0.0, score)), 3)
+
 
 def annotate_clonotypes(
     clonotypes: pd.DataFrame,
@@ -1746,6 +1876,10 @@ def annotate_clonotypes(
         "db_match_partial": False,
         "db_match_strength": None,
         "db_match_distance": None,
+        "db_match_score": None,
+        "db_v_gene_agreement": None,
+        "db_n_studies": None,
+        "db_category_votes": None,
         "db_epitope": None,
         "db_protein": None,
         "db_protein_canonical": None,
