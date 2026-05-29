@@ -45,6 +45,26 @@ logger = logging.getLogger(__name__)
 sns.set_theme(style="whitegrid", context="talk")
 plt.rcParams["figure.facecolor"] = "#f8f9fa"
 
+# Configure matplotlib to use a Unicode-complete sans-serif so the
+# ``pretty_sample`` / ``pretty_method`` strings (which use
+# U+207A SUPERSCRIPT PLUS SIGN and U+207B SUPERSCRIPT MINUS for the
+# ``AIM⁺`` / ``CTY⁻`` style) render correctly (#109 category 2).
+# Pre-fix the fallback was Arial, which lacks both glyphs, producing
+# empty boxes plus "Glyph 8314/8315 missing from font(s) Arial"
+# warnings on every render. DejaVu Sans is bundled with matplotlib,
+# carries the full Unicode range we need, and is the canonical
+# matplotlib default — so the only thing to do is make it explicit
+# at the head of the family-fallback list so Arial doesn't get a
+# chance to claim the render first.
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = [
+    "DejaVu Sans",
+    *[
+        f for f in plt.rcParams.get("font.sans-serif", [])
+        if f != "DejaVu Sans"
+    ],
+]
+
 
 def save_figure(fig: plt.Figure, output_path: str | Path, dpi: int = 300):
     """Save figure with consistent settings."""
@@ -430,7 +450,7 @@ def plot_qc(adata: ad.AnnData, output_dir: str | Path):
         fig, ax = plt.subplots(figsize=(10, 6))
         for sample in adata.obs["sample"].unique():
             sample_data = adata.obs[adata.obs["sample"] == sample]["n_counts"]
-            ax.hist(sample_data, bins=50, alpha=0.5, label=sample)
+            ax.hist(sample_data, bins=50, alpha=0.5, label=pretty_sample(sample))
         ax.set_xlabel("Total Counts per Cell")
         ax.set_ylabel("Number of Cells")
         ax.set_title("Read Count Distribution by Sample")
@@ -445,7 +465,7 @@ def plot_qc(adata: ad.AnnData, output_dir: str | Path):
         data = [adata.obs[adata.obs["sample"] == s]["n_genes"].values for s in samples]
         ax.violinplot(data, positions=range(len(samples)))
         ax.set_xticks(range(len(samples)))
-        ax.set_xticklabels(samples, rotation=45, ha="right")
+        ax.set_xticklabels(pretty_samples(samples), rotation=45, ha="right")
         ax.set_ylabel("Genes Detected")
         ax.set_title("Gene Detection by Sample")
         save_figure(fig, output_dir / "qc_genes_detected.png")
@@ -457,7 +477,7 @@ def plot_qc(adata: ad.AnnData, output_dir: str | Path):
         data = [adata.obs[adata.obs["sample"] == s]["percent_mt"].values for s in samples]
         ax.violinplot(data, positions=range(len(samples)))
         ax.set_xticks(range(len(samples)))
-        ax.set_xticklabels(samples, rotation=45, ha="right")
+        ax.set_xticklabels(pretty_samples(samples), rotation=45, ha="right")
         ax.set_ylabel("Mitochondrial %")
         ax.set_title("Mitochondrial Content by Sample")
         ax.axhline(y=8, color="red", linestyle="--", alpha=0.5, label="Max threshold")
@@ -526,6 +546,9 @@ def plot_phenotype(adata: ad.AnnData, output_dir: str | Path):
 
         df_plot = pd.DataFrame(data)
         df_plot = df_plot.set_index("sample")
+        # pandas bar plot uses the index as tick labels — pretty-rename
+        # so the x-axis renders ``AIM⁺`` etc. instead of ``AIMpos-2`` (#109).
+        df_plot.index = pretty_samples(df_plot.index)
 
         df_plot.plot(kind="bar", stacked=True, ax=ax, colormap="viridis")
         ax.set_ylabel("Percentage")
@@ -607,16 +630,17 @@ def plot_clonotypes(clonotypes: pd.DataFrame, output_dir: str | Path):
                     jaccard_matrix[i, j] = intersection / union if union > 0 else 0
 
             fig, ax = plt.subplots(figsize=(10, 8))
+            pretty = pretty_samples(samples)
             sns.heatmap(
                 jaccard_matrix,
-                xticklabels=samples,
-                yticklabels=samples,
+                xticklabels=pretty,
+                yticklabels=pretty,
                 annot=True,
                 fmt=".2f",
                 cmap="viridis",
                 ax=ax,
             )
-            ax.set_title("Clone Sharing Between Samples (Jaccard Similarity)")
+            ax.set_title("Sample Sharing (Jaccard Similarity)")
             plt.xticks(rotation=45, ha="right")
             save_figure(fig, output_dir / "clonotype_sharing_heatmap.png")
 
@@ -1618,8 +1642,10 @@ def plot_clone_tracking_slopes(
         ax.set_ylim(floor / 2, y_max)
         ax.axvline(0, color="#dc2626", linewidth=0.7, alpha=0.5, zorder=1)
         ax.set_xticks(x_pos)
-        ax.set_xticklabels(x_order, rotation=30, ha="right", fontsize=8)
-        ax.set_title(source, loc="left", fontsize=10)
+        # x_order is a list of sample names; pretty-print so AIM⁺ etc.
+        # render instead of AIMpos-2 (#109).
+        ax.set_xticklabels(pretty_samples(x_order), rotation=30, ha="right", fontsize=8)
+        ax.set_title(pretty_sample(source), loc="left", fontsize=10)
         ax.grid(True, which="both", linewidth=0.3, alpha=0.4)
         draw_reference_fractions(ax)
 
