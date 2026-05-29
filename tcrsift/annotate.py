@@ -30,6 +30,7 @@ from .validation import (
     validate_clonotype_df,
     validate_dataframe,
     validate_file_exists,
+    validate_numeric_param,
 )
 
 logger = logging.getLogger(__name__)
@@ -284,6 +285,120 @@ DB_CATEGORY_DETAIL_CONTRADICTORY_DOMINANT = "contradictory_dominant"
 # Valid strictness modes for match_clonotypes. The function dispatches
 # on this string directly — there's no further internal translation.
 MATCH_STRICTNESS_MODES = ("strict_ab", "ab_with_partial", "b_only")
+
+# Valid match modes for match_clonotypes (#57). ``"exact"`` is the
+# pre-2.1 behaviour; ``"levenshtein"`` adds β-only neighbor search at
+# the given ``max_distance`` for clones that don't hit exactly. TCRdist
+# is intentionally out-of-scope here — it'd pull an optional dep tree.
+MATCH_MODES = ("exact", "levenshtein")
+
+
+def _canonical_variants(s: str):
+    """Yield ``{s} ∪ {s with one character deleted at each position}``.
+
+    Two strings within Levenshtein distance 1 of each other always
+    share at least one element of this set:
+      - identical strings → ``s`` itself is in both sets;
+      - single substitution → the deletion at the differing position
+        matches in both sets;
+      - single indel → the longer string's deletion-at-the-extra-
+        position equals the shorter string, which is in its own
+        canonical set.
+
+    Used to build a small candidate set per query CDR3 in O(L) lookup
+    instead of brute-forcing pairwise distance against every DB entry.
+    """
+    if not s:
+        return
+    yield s
+    for i in range(len(s)):
+        yield s[:i] + s[i + 1 :]
+
+
+def _levenshtein_distance_at_most_1(s: str, t: str) -> int | None:
+    """Return the Levenshtein distance when it's ≤ 1, else ``None``.
+
+    Fast path for the post-canonical-set candidate filtering: we only
+    care about distance ≤ 1 (max_distance for #57's default fuzzy
+    matching), and the candidate set is already filtered to near-
+    neighbors. Returns 0 for identical strings, 1 for single
+    substitution / single indel, ``None`` for everything else.
+    """
+    if s == t:
+        return 0
+    ls, lt = len(s), len(t)
+    if abs(ls - lt) > 1:
+        return None
+    if ls == lt:
+        # Substitution path: count mismatches; bail if >1.
+        diffs = 0
+        for a, b in zip(s, t):
+            if a != b:
+                diffs += 1
+                if diffs > 1:
+                    return None
+        return diffs if diffs <= 1 else None
+    # Indel path: short is one shorter than long; find the insertion
+    # position and verify the surrounding chars match.
+    short, long_ = (s, t) if ls < lt else (t, s)
+    i = j = 0
+    while i < len(short) and short[i] == long_[j]:
+        i += 1
+        j += 1
+    # Skip one character in long_ (the inserted one).
+    j += 1
+    while i < len(short):
+        if short[i] != long_[j]:
+            return None
+        i += 1
+        j += 1
+    return 1
+
+
+def _build_cdr3_neighbor_index(cdr3_series: pd.Series) -> dict[str, set[str]]:
+    """Build a deletion-canonical index over a CDR3 column for O(L)
+    Levenshtein-1 candidate lookup (#57).
+
+    Map: canonical variant → set of DB CDR3 source strings that
+    produced it. To find Lev-1 neighbors of a query CDR3, compute its
+    canonical variants and union the indexed sets — the result is
+    every DB CDR3 within Lev distance ≤ 1 (with some false positives
+    at Lev distance 2 that the caller filters out via
+    :func:`_levenshtein_distance_at_most_1`).
+    """
+    index: dict[str, set[str]] = {}
+    for cdr3 in cdr3_series.dropna().unique():
+        if not isinstance(cdr3, str) or not cdr3:
+            continue
+        for variant in _canonical_variants(cdr3):
+            index.setdefault(variant, set()).add(cdr3)
+    return index
+
+
+def _find_lev_neighbors(
+    query: str,
+    index: dict[str, set[str]],
+    max_distance: int,
+) -> list[tuple[str, int]]:
+    """Return ``[(neighbor_cdr3, distance), ...]`` sorted by distance,
+    excluding the exact match (caller handles exact separately).
+
+    Uses the canonical-variant index for candidate generation, then
+    confirms distance with :func:`_levenshtein_distance_at_most_1`.
+    """
+    if not query:
+        return []
+    candidates: set[str] = set()
+    for variant in _canonical_variants(query):
+        candidates.update(index.get(variant, set()))
+    candidates.discard(query)  # exact match handled separately
+    results: list[tuple[str, int]] = []
+    for cand in candidates:
+        d = _levenshtein_distance_at_most_1(query, cand)
+        if d is not None and 0 < d <= max_distance:
+            results.append((cand, d))
+    results.sort(key=lambda x: x[1])
+    return results
 
 
 def _species_alias_key(value: str) -> str:
@@ -1173,6 +1288,8 @@ def match_clonotypes(
     database: pd.DataFrame,
     match_by: str = "CDR3ab",
     match_strictness: str | None = None,
+    match_mode: str = "exact",
+    max_distance: int = 1,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -1199,6 +1316,18 @@ def match_clonotypes(
           (equivalent to legacy ``match_by="CDR3ab"``).
         - ``"b_only"`` — β-only across the board (equivalent to legacy
           ``match_by="CDR3b_only"``).
+    match_mode : str, default ``"exact"``
+        Distance regime for the β-only match (#57). When ``"exact"``,
+        only exact-string β matches are recorded — pre-2.1 behaviour.
+        When ``"levenshtein"``, clones that don't hit exactly fall
+        through to a Levenshtein-≤``max_distance`` neighbor search
+        against the database's β CDR3s. αβ matching stays strict-exact
+        in both modes — fuzzy αβ is too noisy biologically.
+    max_distance : int, default 1
+        Maximum edit distance for fuzzy β matching (only used when
+        ``match_mode == "levenshtein"``). Currently capped at 1 in
+        the implementation; higher values fall back to 1 with a
+        warning.
     verbose : bool
         Print progress information
     show_progress : bool
@@ -1210,8 +1339,13 @@ def match_clonotypes(
         Clonotypes with match annotations: ``db_match``,
         ``db_match_partial`` (β-only fallback flag — back-compat),
         ``db_match_strength`` (``"ab"`` / ``"b_only"`` / ``"ab_cross"``
-        / ``"b_only_cross"`` / None; ``_cross`` suffix indicates a
-        non-human host-species match per #83),
+        / ``"b_only_cross"`` / ``"b_only_near"`` /
+        ``"b_only_near_cross"`` / None; ``_cross`` suffix indicates a
+        non-human host-species match per #83; ``_near`` suffix
+        indicates a Levenshtein-≤1 β-only fuzzy match per #57),
+        ``db_match_distance`` (int — edit distance to the matched DB
+        β CDR3; 0 for exact, 1 for Levenshtein-1, ``None`` when
+        unmatched),
         ``db_epitope``, ``db_protein``, ``db_protein_canonical``,
         ``db_species`` (canonical antigen source organism),
         ``db_host_species`` (canonical TCR donor organism, new in #83),
@@ -1245,10 +1379,25 @@ def match_clonotypes(
             )
         strictness = "ab_with_partial" if match_by == "CDR3ab" else "b_only"
 
+    # #57: validate fuzzy-match parameters before doing any DB work.
+    if match_mode not in MATCH_MODES:
+        raise TCRsiftValidationError(
+            f"Invalid match_mode: {match_mode!r}",
+            hint=f"Valid options are: {list(MATCH_MODES)}",
+        )
+    validate_numeric_param(max_distance, "max_distance", min_value=1)
+    if match_mode == "levenshtein" and max_distance > 1:
+        logger.warning(
+            "match_mode='levenshtein' currently supports max_distance=1 "
+            "only; clamping max_distance=%d → 1.", max_distance,
+        )
+        max_distance = 1
+
     if verbose:
         logger.info(
             f"Matching {len(clonotypes):,} clonotypes against "
-            f"{len(database):,} database entries (strictness={strictness})"
+            f"{len(database):,} database entries "
+            f"(strictness={strictness}, mode={match_mode})"
         )
 
     df = clonotypes.copy()
@@ -1259,6 +1408,7 @@ def match_clonotypes(
     df["db_match"] = False
     df["db_match_partial"] = False
     df["db_match_strength"] = None
+    df["db_match_distance"] = None  # #57: edit distance to matched DB β
     df["db_epitope"] = None
     df["db_protein"] = None
     df["db_protein_canonical"] = None
@@ -1316,7 +1466,17 @@ def match_clonotypes(
     if new_columns:
         database = database.assign(**new_columns)
 
-    # Build lookup sets for fast matching
+    # Build lookup sets for fast matching. #57: when match_mode is
+    # ``"levenshtein"``, also build the β-only deletion-canonical
+    # neighbor index used as a fuzzy fallback for clones that don't hit
+    # exactly. αβ matching stays strict-exact regardless of match_mode
+    # — fuzzy αβ would inflate spurious cross-paper near-hits.
+    beta_neighbor_index: dict[str, set[str]] | None = (
+        _build_cdr3_neighbor_index(database["cdr3_beta"])
+        if match_mode == "levenshtein"
+        else None
+    )
+
     if strictness in ("strict_ab", "ab_with_partial"):
         allow_b_fallback = strictness == "ab_with_partial"
         db_alpha_beta = set(
@@ -1342,10 +1502,24 @@ def match_clonotypes(
                 matches = database[
                     (database["cdr3_alpha"] == alpha) & (database["cdr3_beta"] == beta)
                 ]
-                _annotate_match(df, idx, matches, strength="ab")
+                _annotate_match(df, idx, matches, strength="ab", distance=0)
             elif allow_b_fallback and beta and beta in db_beta_values:
                 matches = database[database["cdr3_beta"] == beta]
-                _annotate_match(df, idx, matches, strength="b_only", partial=True)
+                _annotate_match(
+                    df, idx, matches, strength="b_only", partial=True, distance=0,
+                )
+            elif beta_neighbor_index is not None and beta:
+                # #57: Lev-1 β neighbor fallback. Find the nearest
+                # database β CDR3 and aggregate matches against it.
+                neighbors = _find_lev_neighbors(beta, beta_neighbor_index, max_distance)
+                if neighbors:
+                    best_d = neighbors[0][1]
+                    best_cdr3s = [c for c, d in neighbors if d == best_d]
+                    matches = database[database["cdr3_beta"].isin(best_cdr3s)]
+                    _annotate_match(
+                        df, idx, matches,
+                        strength="b_only_near", partial=True, distance=best_d,
+                    )
 
     else:  # strictness == "b_only"
         db_beta_set = set(database["cdr3_beta"].dropna())
@@ -1362,7 +1536,17 @@ def match_clonotypes(
             beta = row.get("CDR3_beta", "") or ""
             if beta in db_beta_set:
                 matches = database[database["cdr3_beta"] == beta]
-                _annotate_match(df, idx, matches, strength="b_only")
+                _annotate_match(df, idx, matches, strength="b_only", distance=0)
+            elif beta_neighbor_index is not None and beta:
+                neighbors = _find_lev_neighbors(beta, beta_neighbor_index, max_distance)
+                if neighbors:
+                    best_d = neighbors[0][1]
+                    best_cdr3s = [c for c, d in neighbors if d == best_d]
+                    matches = database[database["cdr3_beta"].isin(best_cdr3s)]
+                    _annotate_match(
+                        df, idx, matches,
+                        strength="b_only_near", distance=best_d,
+                    )
 
     n_matches = df["db_match"].sum()
     n_viral = df["is_viral"].sum()
@@ -1378,6 +1562,7 @@ def _annotate_match(
     matches: pd.DataFrame,
     strength: str = "ab",
     partial: bool = False,
+    distance: int | None = None,
 ):
     """Annotate a single clonotype with match information.
 
@@ -1454,6 +1639,8 @@ def _annotate_match(
 
     df.loc[idx, "db_match"] = True
     df.loc[idx, "db_match_strength"] = strength
+    if distance is not None:
+        df.loc[idx, "db_match_distance"] = distance
 
     epitopes = antigen_matches["epitope"].dropna()
     if len(epitopes) > 0:
@@ -1503,6 +1690,8 @@ def annotate_clonotypes(
     iedb_epitope_path: str | Path | None = None,
     match_by: str = "CDR3ab",
     match_strictness: str | None = None,
+    match_mode: str = "exact",
+    max_distance: int = 1,
     exclude_viral: bool = False,
     flag_only: bool = False,
     *,
@@ -1556,6 +1745,7 @@ def annotate_clonotypes(
         "db_match": False,
         "db_match_partial": False,
         "db_match_strength": None,
+        "db_match_distance": None,
         "db_epitope": None,
         "db_protein": None,
         "db_protein_canonical": None,
@@ -1601,6 +1791,8 @@ def annotate_clonotypes(
         database,
         match_by=match_by,
         match_strictness=match_strictness,
+        match_mode=match_mode,
+        max_distance=max_distance,
     )
 
     # Handle viral exclusion
