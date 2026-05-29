@@ -37,6 +37,7 @@ import pytest
 from tcrsift.assemble import (
     CODON_TABLE,
     CONSTANT_REGION_ENDINGS,
+    HUMAN_CONSTANT_ALLELES,
     HUMAN_CONSTANT_REGIONS_AA,
     HUMAN_PREFERRED_CODONS,
     HUMAN_TRAC_AA,
@@ -123,8 +124,13 @@ class TestCanonicalSequences:
             f"TRBC2 mature pos 4 must be N (JOVI.1 epitope); got "
             f"{HUMAN_TRBC2_AA[3]!r}"
         )
-        # Mature pos 9 (idx 8): K (was E pre-#100; TRBC1 has E here)
-        assert HUMAN_TRBC2_AA[8] == "K"
+        # Mature pos 9 (idx 8): E. As of 2.3 (#113) the packaged
+        # TRBC2 default is the TRBC2*01-protein form (E at pos 9 —
+        # major-allele in humans). Pre-2.3 versions shipped the *03
+        # form with K here. The *03 sequence is still available via
+        # the allele picker (auto-detect, or explicit
+        # ``trbc2_allele="03"``).
+        assert HUMAN_TRBC2_AA[8] == "E"
         # Mature pos 56 (idx 55): S (was C pre-#100; TRBC1 has S too — not diagnostic)
         assert HUMAN_TRBC2_AA[55] == "S"
         # Mature pos 135 (idx 134): E (was V pre-#100, swapped with TRBC1)
@@ -292,10 +298,19 @@ class TestTRBC2Biology:
         analysis derived from tcrsift output would have been bunk."""
         assert HUMAN_TRBC2_AA[2:4] == "KN"
 
-    def test_lys_at_mature_position_9(self):
-        """TRBC2 has K at mature position 9 — pre-#100 had E (matching
-        TRBC1). The K is what makes TRBC2 distinguishable here."""
-        assert HUMAN_TRBC2_AA[8] == "K"
+    def test_glu_at_mature_position_9_in_default_allele(self):
+        """As of 2.3 (#113) the default TRBC2 is the *01-protein form,
+        which has **E** at mature position 9 — same as TRBC1. So this
+        position no longer distinguishes the two genes at the protein
+        level under the default canonical. The *03-protein form (K at
+        pos 9) is still available as a packaged allele under
+        ``HUMAN_CONSTANT_ALLELES['TRBC2']['03']`` and is picked
+        automatically when the donor's contig codes for K."""
+        assert HUMAN_TRBC2_AA[8] == "E"
+        # Sanity: the *03 form is still packaged and still has K.
+        from tcrsift.assemble import HUMAN_CONSTANT_ALLELES
+
+        assert HUMAN_CONSTANT_ALLELES["TRBC2"]["03"][8] == "K"
 
     def test_tyr_at_mature_position_36(self):
         """TRBC2 has Y at mature position 36 (idx 35). TRBC1 has F.
@@ -348,14 +363,18 @@ class TestTRBC1VsTRBC2DistinguishingResidues:
         [
             (3,   "N", "K", "JOVI.1 epitope position 1 (NK vs KN)"),
             (4,   "K", "N", "JOVI.1 epitope position 2 (NK vs KN)"),
-            (9,   "E", "K", "diagnostic — pre-#100 TRBC2 had E here"),
             (36,  "F", "Y", "shared-region #100 swap (F in TRBC1, Y in TRBC2)"),
             (135, "V", "E", "shared-region #100 swap (V in TRBC1, E in TRBC2)"),
         ],
     )
     def test_distinguishing_position(self, pos, trbc1, trbc2, note):
         """Each TRBC1 vs TRBC2 distinguishing position pinned with the
-        biological rationale. Cited in #100 / JOVI.1 documentation."""
+        biological rationale (in the *01-protein default since 2.3 /
+        #113). Pos 9 was previously a distinguisher but only because
+        we shipped the TRBC2*03-protein form — both *01-protein forms
+        of the two genes have E at pos 9. See
+        :meth:`test_trbc2_03_variant_adds_pos_9_distinguisher` for the
+        *03 case."""
         idx = pos - 1
         assert HUMAN_TRBC1_AA[idx] == trbc1, (
             f"TRBC1 mature pos {pos} ({note}): expected {trbc1}, got "
@@ -368,31 +387,41 @@ class TestTRBC1VsTRBC2DistinguishingResidues:
         assert HUMAN_TRBC1_AA[idx] != HUMAN_TRBC2_AA[idx]
 
     def test_internal_region_distinguishing_positions(self):
-        """The two genes share the same internal-region length (residues
-        1..170) and differ at exactly 5 positions there. After residue
-        170 the C-terminal tails structurally diverge: TRBC1 ends at
-        ``VKRKDF`` while TRBC2 continues to ``VKRKDSRG``. The C-tail
-        divergence isn't counted here — it's tested as a separate
-        structural feature in :meth:`test_ctail_structural_divergence`."""
-        # Internal-region check: residues 1..170 (idx 0..169) share a
-        # length, and have exactly 5 substitution differences.
+        """The two genes' default canonicals (TRBC1*01 and TRBC2*01)
+        share the same internal-region length (residues 1..170) and
+        differ at exactly 4 positions there. Pos 9 is NOT a
+        distinguisher between the *01-protein forms — only the *03
+        variant has K there. After residue 170 the C-terminal tails
+        structurally diverge: TRBC1 ends at ``VKRKDF`` while TRBC2
+        continues to ``VKRKDSRG``."""
         internal_end = 170
         diffs = [
             i for i in range(internal_end)
             if HUMAN_TRBC1_AA[i] != HUMAN_TRBC2_AA[i]
         ]
         diff_positions = [i + 1 for i in diffs]
-        assert diff_positions == [3, 4, 9, 36, 135], (
+        assert diff_positions == [3, 4, 36, 135], (
             f"TRBC1 vs TRBC2 internal-region distinguishing positions: "
-            f"{diff_positions} (expected [3, 4, 9, 36, 135])"
+            f"{diff_positions} (expected [3, 4, 36, 135])"
         )
 
+    def test_trbc2_03_variant_adds_pos_9_distinguisher(self):
+        """The TRBC2*03-protein form (still packaged in
+        ``HUMAN_CONSTANT_ALLELES``) has K at pos 9, which DOES
+        distinguish it from TRBC1's E. Auto-detect picks this when the
+        donor's contig codes K there."""
+        from tcrsift.assemble import HUMAN_CONSTANT_ALLELES
+
+        trbc2_03 = HUMAN_CONSTANT_ALLELES["TRBC2"]["03"]
+        assert trbc2_03[8] == "K"
+        assert HUMAN_TRBC1_AA[8] == "E"
+
     def test_internal_region_is_otherwise_identical(self):
-        """Outside the 5 distinguishing positions in residues 1..170,
-        TRBC1 and TRBC2 agree byte-for-byte. Anything else is a FASTA
-        drift — pre-#100 there were many such drifts."""
+        """Outside the 4 distinguishing positions in residues 1..170,
+        TRBC1*01 and TRBC2*01 agree byte-for-byte. Anything else is a
+        FASTA drift — pre-#100 there were many such drifts."""
         internal_end = 170
-        distinguishing = {2, 3, 8, 35, 134}  # 0-indexed
+        distinguishing = {2, 3, 35, 134}  # 0-indexed (pos 9 dropped at #113)
         for i in range(internal_end):
             if i in distinguishing:
                 continue
@@ -417,14 +446,25 @@ class TestTRBC1VsTRBC2DistinguishingResidues:
 
 
 class TestCanonicalMatchesPyensembl:
-    """Source-of-truth check (#100): the packaged FASTA must match what
-    pyensembl returns for each canonical transcript. Skips cleanly if
-    pyensembl isn't installed or the GRCh38 release isn't cached."""
+    """Source-of-truth check (#100, refined in #113): the packaged
+    FASTA's allele entries must match what pyensembl / NCBI / UniProt
+    return for each canonical transcript. Skips cleanly if pyensembl
+    isn't installed or the GRCh38 release isn't cached.
+
+    Note: as of 2.3 (#113), ``HUMAN_TRBC2_AA`` defaults to the
+    TRBC2*01-protein form (NCBI AAA60662). Ensembl transcript
+    ``ENST00000466254`` encodes the TRBC2*03-protein form (UniProt
+    A0A5B9). The pyensembl comparison for TRBC2 therefore uses the
+    *03 entry from ``HUMAN_CONSTANT_ALLELES['TRBC2']`` rather than
+    ``HUMAN_TRBC2_AA``."""
 
     PROVENANCE = {
         "TRAC":  ("ENST00000611116", HUMAN_TRAC_AA),
         "TRBC1": ("ENST00000633705", HUMAN_TRBC1_AA),
-        "TRBC2": ("ENST00000466254", HUMAN_TRBC2_AA),
+        # Ensembl returns the TRBC2*03-protein form; the default
+        # ``HUMAN_TRBC2_AA`` is *01 since 2.3 (#113), so this row
+        # uses the *03 entry from the packaged multi-allele FASTA.
+        "TRBC2": ("ENST00000466254", HUMAN_CONSTANT_ALLELES["TRBC2"]["03"]),
     }
 
     @pytest.fixture(scope="class")

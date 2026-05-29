@@ -556,6 +556,9 @@ def cmd_assemble(args):
         include_constant=args.include_constant,
         constant_source=args.constant_source,
         linker=args.linker if args.single_chain else None,
+        trac_allele=args.trac_allele,
+        trbc1_allele=args.trbc1_allele,
+        trbc2_allele=args.trbc2_allele,
     )
 
     # Validate (per-row warnings + aggregate QC report).
@@ -1190,6 +1193,11 @@ def cmd_run(args):
             include_constant=config.assemble.include_constant,
             constant_source=config.assemble.constant_source,
             linker=config.assemble.linker if config.assemble.single_chain else None,
+            # #113 allele controls: ``tcrsift run`` uses defaults
+            # (``auto``); fine-tune via ``tcrsift assemble`` if needed.
+            trac_allele=getattr(config.assemble, "trac_allele", "auto"),
+            trbc1_allele=getattr(config.assemble, "trbc1_allele", "auto"),
+            trbc2_allele=getattr(config.assemble, "trbc2_allele", "auto"),
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -2191,6 +2199,27 @@ CONDITIONALLY REQUIRED:
         choices=["ensembl", "from-data"],
         default="ensembl",
         help="Source for constant regions (default: ensembl)",
+    )
+    asm_seq.add_argument(
+        "--trac-allele",
+        default="auto",
+        help="TRAC allele override (#113). 'auto' (default) scores "
+        "packaged alleles against contig translation; pass an allele "
+        "label like '01' to force a specific canonical.",
+    )
+    asm_seq.add_argument(
+        "--trbc1-allele",
+        default="auto",
+        help="TRBC1 allele override (#113). 'auto' (default) or an "
+        "allele label like '01'.",
+    )
+    asm_seq.add_argument(
+        "--trbc2-allele",
+        default="auto",
+        help="TRBC2 allele override (#113). 'auto' (default) picks "
+        "between *01-protein (E at mature pos 9 — major-allele) and "
+        "*03-protein (K at pos 9) based on the donor's contig. Pass "
+        "'01' or '03' to force.",
     )
     asm_seq.add_argument(
         "--single-chain",

@@ -1,0 +1,65 @@
+# tcrsift multi-allele canonical TCR constant-region AA sequences (#113).
+#
+# This file ships per-allele sequences for the three human TCR constant
+# genes. The auto-detect logic in `_pick_best_allele` scores each
+# candidate allele against the donor's contig translation past VDJ and
+# picks the highest-scoring match per clonotype. The chosen allele is
+# recorded in `{chain}_allele_called`; alternatives that score above
+# the configured agreement floor are listed in
+# `{chain}_allele_alternatives` for the audit trail.
+#
+# Sources and provenance (NB: IMGT has more allele *numbers* than there
+# are distinct PROTEIN forms — the 5 known human TRBC2 alleles collapse
+# to only 2 distinct mature protein sequences, so this FASTA stores 2
+# TRBC2 entries, not 5):
+#
+#   - All sequences are BARE MATURE protein (no synthetic J→C junction
+#     prepend — that residue is read per-clone from contigs since #105).
+#   - TRAC*01: UniProt P01848 / Ensembl ENST00000611116. The only known
+#     human TRAC allele.
+#   - TRBC1*01: UniProt P01850 / Ensembl ENST00000633705. The only
+#     human TRBC1 protein form with an accessible authoritative
+#     reference. IMGT lists TRBC1*02 but the only *02 protein-level
+#     references found are non-human (gorilla / ferret / orangutan);
+#     not packaged here.
+#   - TRBC2*01-protein: NCBI AAA60662. **The most common TRBC2 protein
+#     form in human populations.** Encoded by IMGT alleles *01, *02,
+#     and *04 — the nucleotide variants among these three are
+#     synonymous, all coding for the same mature protein. Pre-2.3
+#     versions shipped only the *03-protein form (the Ensembl/UniProt
+#     canonical entry) which silently stomped donor-truth E at position
+#     9 for the ~99% of donors carrying this allele; see #113 audit.
+#   - TRBC2*03-protein: UniProt A0A5B9 / Ensembl ENST00000466254. The
+#     minor human TRBC2 protein form. K at mature position 9 — the
+#     auto-detect picks this when the donor's contig codes for K.
+#   - TRBC2*05-protein: not packaged — protein sequence not findable
+#     in public databases without IMGT access. Users carrying *05
+#     donors should add the entry manually.
+#
+# To regenerate this file:
+#   python -m tcrsift._regen_canonical_constants --alleles
+#
+# To extend with additional alleles (e.g. TRBC2*02 / *04 / *05, or
+# TRBC1*02), append a new FASTA entry with the convention
+# `>{GENE}*{NN}|provenance|notes` — the loader keys on `{GENE}*{NN}`.
+# The allele picker will scan it automatically.
+
+>TRAC*01|UniProt:P01848|Ensembl:ENST00000611116|release:110
+IQNPDPAVYQLRDSKSSDKSVCLFTDFDSQTNVSQSKDSDVYITDKTVLDMRSMDFKSNS
+AVAWSNKSDFACANAFNNSIIPEDTFFPSPESSCDVKLVEKSFETDTNLNFQNLSVIGFR
+ILLLKVAGFNLLMTLRLWSS
+
+>TRBC1*01|UniProt:P01850|Ensembl:ENST00000633705|release:110
+DLNKVFPPEVAVFEPSEAEISHTQKATLVCLATGFFPDHVELSWWVNGKEVHSGVSTDPQ
+PLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIV
+SAEAWGRADCGFTSVSYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDF
+
+>TRBC2*01|NCBI:AAA60662|note:major-allele,E-at-pos-9
+DLKNVFPPEVAVFEPSEAEISHTQKATLVCLATGFYPDHVELSWWVNGKEVHSGVSTDPQ
+PLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIV
+SAEAWGRADCGFTSESYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDSRG
+
+>TRBC2*03|UniProt:A0A5B9|Ensembl:ENST00000466254|release:110|note:minor-allele,K-at-pos-9
+DLKNVFPPKVAVFEPSEAEISHTQKATLVCLATGFYPDHVELSWWVNGKEVHSGVSTDPQ
+PLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIV
+SAEAWGRADCGFTSESYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDSRG
