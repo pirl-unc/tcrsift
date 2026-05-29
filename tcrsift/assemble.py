@@ -1755,16 +1755,26 @@ def validate_sequences(
                         f"{chain} doesn't end with canonical "
                         f"{c_gene_base} C-terminus ({expected_end!r}); "
                         f"got {seq[-len(expected_end):]!r}")
-                canonical_aa = HUMAN_CONSTANT_REGIONS_AA.get(c_gene_base)
-                if canonical_aa and not verify_canonical_constant_start(
+                # Prefer the row's actual ``{chain}_constant_aa`` as the
+                # expected start. After 2.0 (#105) this carries the
+                # per-clone junction residue prepend (e.g.
+                # ``NIQNPDPAVY...`` for α with N junction;
+                # ``EDLNKVFP...`` for β with universal-E junction).
+                # Falling back to ``HUMAN_CONSTANT_REGIONS_AA[base]``
+                # — the bare-mature canonical — was the #107 regression:
+                # observed includes the junction; expected didn't.
+                expected_const = row.get(f"{chain}_constant_aa")
+                if not isinstance(expected_const, str) or not expected_const:
+                    expected_const = HUMAN_CONSTANT_REGIONS_AA.get(c_gene_base)
+                if expected_const and not verify_canonical_constant_start(
                     _expected_constant_start_from_full(seq, row, chain),
-                    canonical_aa,
+                    expected_const,
                     min_match=8,
                 ):
                     _lb(idx,
                         f"{chain} constant start doesn't match canonical "
                         f"{c_gene_base} (expected start "
-                        f"{canonical_aa[:15]!r})")
+                        f"{expected_const[:15]!r})")
             else:
                 _info(idx,
                     f"{chain} c_gene={c_gene!r} not in "
