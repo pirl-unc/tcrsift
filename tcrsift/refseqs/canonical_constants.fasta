@@ -1,25 +1,35 @@
-# tcrsift canonical TCR constant-region AA sequences
-# Source: Ensembl release 110 protein_sequence for each canonical transcript
-# Verified against UniProt P01848 (TRAC), P01850 (TRBC1), A0A5B9 (TRBC2)
+# tcrsift canonical TCR constant-region AA sequences (single-allele defaults).
 #
-# All three sequences are stored as BARE MATURE protein, matching the
-# UniProt chain annotations exactly. No synthetic residue is prepended.
-# The J→C junction residue (universally E for β chains, J-dependent
-# N/Y/D/H for α chains) is read per-clone from the CellRanger contig at
-# assembly time — see _add_constant_regions in assemble.py and #105.
-# Pre-2.0 versions baked a synthetic E into the stored TRBC1/TRBC2.
+# This file is the runtime source for the module-level constants
+# `HUMAN_TRAC_AA`, `HUMAN_TRBC1_AA`, `HUMAN_TRBC2_AA` (and the dict
+# `HUMAN_CONSTANT_REGIONS_AA`). See `canonical_constants_alleles.fasta`
+# for the per-allele references used by the auto-detect picker added
+# in 2.3 (#113).
 #
-# To regenerate this file:
-#   python -m tcrsift._regen_canonical_constants
->TRAC|UniProt:P01848|Ensembl:ENST00000611116|release:110
+# Defaults:
+#   - TRAC*01 (the only widely-referenced TRAC allele)
+#   - TRBC1*01 (the major TRBC1 allele)
+#   - TRBC2*01 — the major TRBC2 allele in human populations.
+#     Pre-2.3 shipped TRBC2*03 (the Ensembl/UniProt entry) which has
+#     K at mature position 9; ~99% of humans carry E at that position
+#     (TRBC2*01). #113 audit on B1-2/B1-3 showed both donors uniformly
+#     TRBC2*01.
+#
+# All three sequences are BARE MATURE protein. The J→C junction
+# residue is read per-clone from the CellRanger contig at assembly
+# time — see _add_constant_regions in assemble.py and #105.
+
+>TRAC|UniProt:P01848|Ensembl:ENST00000611116|release:110|allele:01
 IQNPDPAVYQLRDSKSSDKSVCLFTDFDSQTNVSQSKDSDVYITDKTVLDMRSMDFKSNS
 AVAWSNKSDFACANAFNNSIIPEDTFFPSPESSCDVKLVEKSFETDTNLNFQNLSVIGFR
 ILLLKVAGFNLLMTLRLWSS
->TRBC1|UniProt:P01850|Ensembl:ENST00000633705|release:110
+
+>TRBC1|UniProt:P01850|Ensembl:ENST00000633705|release:110|allele:01
 DLNKVFPPEVAVFEPSEAEISHTQKATLVCLATGFFPDHVELSWWVNGKEVHSGVSTDPQ
 PLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIV
 SAEAWGRADCGFTSVSYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDF
->TRBC2|UniProt:A0A5B9|Ensembl:ENST00000466254|release:110
-DLKNVFPPKVAVFEPSEAEISHTQKATLVCLATGFYPDHVELSWWVNGKEVHSGVSTDPQ
+
+>TRBC2|NCBI:AAA60662|allele:01|note:major-allele,E-at-pos-9,2.3-default
+DLKNVFPPEVAVFEPSEAEISHTQKATLVCLATGFYPDHVELSWWVNGKEVHSGVSTDPQ
 PLKEQPALNDSRYCLSSRLRVSATFWQNPRNHFRCQVQFYGLSENDEWTQDRAKPVTQIV
 SAEAWGRADCGFTSESYQQGVLSATILYEILLGKATLYAVLVSALVLMAMVKRKDSRG

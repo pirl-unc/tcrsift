@@ -230,6 +230,7 @@ _VALID_AA_CHARS = frozenset("ACDEFGHIKLMNPQRSTVWYX*")
 # ``CONSTANT_REGION_ENDINGS`` — see ``validate_sequences``.
 
 _CANONICAL_CONSTANTS_FASTA = "canonical_constants.fasta"
+_CANONICAL_ALLELES_FASTA = "canonical_constants_alleles.fasta"
 
 
 def _load_canonical_constants_fasta() -> dict[str, str]:
@@ -273,6 +274,191 @@ HUMAN_TRAC_AA: str = _canonical["TRAC"]
 HUMAN_TRBC1_AA: str = _canonical["TRBC1"]
 HUMAN_TRBC2_AA: str = _canonical["TRBC2"]
 del _canonical
+
+
+def _load_canonical_alleles_fasta() -> dict[str, dict[str, str]]:
+    """Parse the packaged multi-allele FASTA into a {gene: {allele: AA}}
+    nested dict. Used by the per-clone allele picker (#113).
+
+    Header convention: ``>{GENE}*{NN}|provenance|notes`` — e.g.
+    ``>TRBC2*01|NCBI:AAA60662|note:major-allele``. The loader keys on
+    everything before the first ``|``, splits ``GENE`` from ``allele``
+    around ``*``, and ignores allele *numbers* — only the protein
+    sequence matters. Multiple IMGT allele numbers can collapse to the
+    same protein form (TRBC2 *01/*02/*04 all encode the same mature
+    protein); we ship them as a single entry under the lowest-numbered
+    allele label.
+    """
+    fasta_text = (
+        _pkg_files("tcrsift.refseqs").joinpath(_CANONICAL_ALLELES_FASTA).read_text()
+    )
+    out: dict[str, dict[str, str]] = {}
+    name: str | None = None
+    seq_parts: list[str] = []
+
+    def _commit():
+        if name is None:
+            return
+        gene, _, allele = name.partition("*")
+        if not allele:
+            allele = "01"
+        out.setdefault(gene, {})[allele] = "".join(seq_parts)
+
+    for raw_line in fasta_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith(">"):
+            _commit()
+            name = line[1:].split("|", 1)[0].strip()
+            seq_parts = []
+        else:
+            seq_parts.append(line)
+    _commit()
+    expected = {"TRAC", "TRBC1", "TRBC2"}
+    missing = expected - out.keys()
+    if missing:
+        raise RuntimeError(
+            f"{_CANONICAL_ALLELES_FASTA} is missing canonical gene entries: "
+            f"{sorted(missing)}"
+        )
+    return out
+
+
+# Per-gene allele dict: ``HUMAN_CONSTANT_ALLELES[gene][allele] = AA``.
+# Populated at import. Users can extend in-place to register their own
+# alleles before calling :func:`assemble_full_sequences`.
+HUMAN_CONSTANT_ALLELES: dict[str, dict[str, str]] = _load_canonical_alleles_fasta()
+
+
+def _score_allele_against_contig(
+    contig_aa: str,
+    allele_aa: str,
+) -> tuple[int, int]:
+    """Score one allele's mature protein against a per-clone contig
+    translation past the J→C junction codon.
+
+    Returns ``(n_agreeing, n_compared)`` where ``n_agreeing`` is the
+    number of canonical positions where contig matches the allele
+    and ``n_compared`` is the number of positions actually scored
+    (the lesser of ``len(contig_aa)`` and ``len(allele_aa)``).
+
+    Callers should pass ``contig_aa`` already trimmed past the J→C
+    junction codon — the picker compares against the bare-mature
+    canonical AA, which by convention doesn't include the junction
+    residue (that's a per-clone concern handled at NT level in
+    :func:`_add_constant_regions`, #105). For both chains the slice
+    happens uniformly at NT level (``contig_nt_past_vdj[3:]``).
+    """
+    n = min(len(contig_aa), len(allele_aa))
+    if n == 0:
+        return 0, 0
+    n_agree = sum(1 for a, b in zip(contig_aa[:n], allele_aa[:n]) if a == b)
+    return n_agree, n
+
+
+# Minimum number of residues the picker needs to score before it'll
+# commit to an allele call. Set just past the deepest known
+# distinguishing position so the comparison window always includes the
+# residue that actually disambiguates the alleles we ship.
+#
+# Current floor: 10. TRBC2*01 vs *03 differ only at mature pos 9
+# (idx 8). With a 5-codon contig the window is [0:5] which is too
+# short to see idx 8 — the picker would tie and silently fall back
+# to FASTA order. 10 codons covers idx 0..9 inclusive and gives a
+# small safety margin.
+_DEFAULT_MIN_PICKER_POSITIONS = 10
+
+
+def _verify_first_codon_frame(
+    contig_nt_past_junction: str,
+    allele_aa: str,
+) -> bool:
+    """NT-level sanity check that the contig is codon-aligned to the
+    allele (#113 follow-up).
+
+    AA-level scoring is robust to synonymous donor codon variation but
+    blind to a frame-off-by-N bug upstream (e.g. if the #91 vdj_nt
+    trim regressed and ``contig_nt_past_vdj`` no longer starts on a
+    clean codon boundary). This check translates the contig's first
+    codon past the junction and asserts it matches the allele's first
+    expected residue at the protein level — failure means our offset
+    is wrong, regardless of how good the downstream AA score looks.
+    """
+    if len(contig_nt_past_junction) < 3 or not allele_aa:
+        return False
+    first_codon = contig_nt_past_junction[:3]
+    translated = CODON_TABLE.get(first_codon, "X")
+    return translated == allele_aa[0]
+
+
+def _pick_best_allele(
+    contig_aa: str,
+    gene: str,
+    candidate_alleles: dict[str, str] | None = None,
+    *,
+    min_compared: int = _DEFAULT_MIN_PICKER_POSITIONS,
+) -> tuple[str | None, float, dict[str, float]]:
+    """Pick the best-matching allele for ``gene`` (#113).
+
+    Scans every candidate allele in ``candidate_alleles`` (defaulting to
+    :data:`HUMAN_CONSTANT_ALLELES[gene]`), scores each against the
+    contig's mature C-region translation, and returns ``(allele, score,
+    all_scores)`` for the highest-scoring one.
+
+    ``score`` is ``n_agreeing / n_compared`` (a fraction in [0, 1]).
+    Ties are broken by the dict-iteration order, which is FASTA file
+    order — the user's preferred allele can be listed first in the
+    FASTA to bias tied calls. The audit-column format
+    ``"GENE*ALLELE:score;..."`` (see
+    :func:`_add_constant_regions`) is sorted by score descending and
+    relies on the same tie-break rule.
+
+    When coverage is too thin to commit to a call (``n_compared <
+    min_compared`` for every allele), the function returns
+    ``(None, 0.0, {})`` — the caller should fall back to the
+    user-specified default. Pre-2.3 the first allele in the pool was
+    returned as a "best-effort" signal; this caused silent
+    fall-throughs when the comparison window didn't include any
+    distinguishing position. ``None`` makes the no-decision explicit.
+
+    Parameters
+    ----------
+    contig_aa
+        Translation of the contig PAST the J→C junction codon. The
+        picker compares position-wise against the bare-mature
+        canonical (no junction residue prepended).
+    gene
+        ``"TRAC"`` / ``"TRBC1"`` / ``"TRBC2"``.
+    candidate_alleles
+        Override the FASTA-derived allele set (mostly for testing).
+    min_compared
+        Skip the call when the comparison window for every candidate
+        allele is shorter than this. Default
+        :data:`_DEFAULT_MIN_PICKER_POSITIONS` (10) — past the
+        deepest known distinguishing position so a tie isn't
+        silently broken by FASTA order.
+    """
+    pool = candidate_alleles if candidate_alleles is not None else HUMAN_CONSTANT_ALLELES.get(gene, {})
+    if not pool:
+        return None, 0.0, {}
+    all_scores: dict[str, float] = {}
+    best_allele: str | None = None
+    best_n_agree = -1
+    for allele, allele_aa in pool.items():
+        n_agree, n_compared = _score_allele_against_contig(contig_aa, allele_aa)
+        if n_compared >= min_compared:
+            score = n_agree / n_compared
+            all_scores[allele] = round(score, 3)
+            # Prefer higher absolute n_agree (more positions matched);
+            # tie-break by FASTA order (dict iteration is insertion
+            # order in Python 3.7+).
+            if n_agree > best_n_agree:
+                best_n_agree = n_agree
+                best_allele = allele
+    if best_allele is None:
+        return None, 0.0, {}
+    return best_allele, all_scores[best_allele], all_scores
 
 # Load-time invariant: each canonical AA must end with the C-terminus
 # advertised in ``CONSTANT_REGION_ENDINGS``. Catching FASTA drift here is
@@ -610,6 +796,9 @@ def assemble_full_sequences(
     include_constant: bool = True,
     constant_source: str = "ensembl",
     linker: str = "T2A",
+    trac_allele: str = "auto",
+    trbc1_allele: str = "auto",
+    trbc2_allele: str = "auto",
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -650,6 +839,16 @@ def assemble_full_sequences(
           ``{chain}_constant_nt`` directly from the input frame.
     linker : str
         Linker sequence for single-chain constructs: "T2A", "P2A", "E2A", "F2A"
+    trac_allele, trbc1_allele, trbc2_allele : str
+        Per-gene allele selection (#113). Default ``"auto"`` runs the
+        allele picker over packaged alleles in
+        :data:`HUMAN_CONSTANT_ALLELES` scoring each against the
+        donor's contig translation; pass an explicit allele label
+        (e.g. ``"01"`` or ``"03"``) to force a specific canonical.
+        Invalid labels emit a QC warning and fall back to the
+        default. ``constant_source="from-data"`` ignores these knobs
+        (the constant comes from the input frame, not the FASTA);
+        a warning is logged in that combination.
     verbose : bool
         Print progress information
     show_progress : bool
@@ -658,7 +857,18 @@ def assemble_full_sequences(
     Returns
     -------
     pd.DataFrame
-        Clonotypes with full sequences added
+        Clonotypes with full sequences added. Allele audit columns
+        emitted per clone (#113):
+
+        - ``{chain}_allele_called`` — e.g. ``"TRBC2*01"`` or ``None``
+          when no contig + non-explicit override.
+        - ``{chain}_allele_score`` — float ∈ [0, 1] (1.0 = perfect AA
+          agreement; 1.0 also when the user forced an allele).
+        - ``{chain}_allele_alternatives`` — semicolon-joined string
+          of runner-up alleles + scores, sorted by score desc with
+          FASTA order as tie-break. Example: ``"TRBC2*01:1.000;TRBC2*03:0.933"``.
+          ``None`` when the picker no-decided or only one allele was
+          packaged.
 
     Examples
     --------
@@ -687,6 +897,23 @@ def assemble_full_sequences(
         raise TCRsiftValidationError(
             f"Invalid constant_source: '{constant_source}'",
             hint=f"Valid options are: {valid_constant_sources}",
+        )
+
+    # #113: warn if the user combined ``constant_source="from-data"``
+    # with an explicit allele override — the from-data path reads the
+    # constant directly from the input frame and doesn't consult the
+    # packaged FASTA, so allele kwargs are silently ignored. Surfacing
+    # this loudly prevents a "I set --trbc2-allele 03 but my output is
+    # still *01" confusion.
+    if constant_source == "from-data" and any(
+        a != "auto" for a in (trac_allele, trbc1_allele, trbc2_allele)
+    ):
+        logger.warning(
+            "constant_source='from-data' ignores trac_allele / "
+            "trbc1_allele / trbc2_allele — the constant comes from "
+            "the input frame, not the packaged canonical FASTA. "
+            "Reset the allele kwargs to 'auto' or switch to "
+            "constant_source='canonical' to use them."
         )
 
     # Validate and resolve leader options for each chain
@@ -773,6 +1000,13 @@ def assemble_full_sequences(
 
     assembly_results = []
 
+    # Build per-gene allele override dict for the picker (#113).
+    allele_overrides = {
+        "TRAC": trac_allele,
+        "TRBC1": trbc1_allele,
+        "TRBC2": trbc2_allele,
+    }
+
     # Create iterator with optional progress bar
     row_iter = df.iterrows()
     if show_progress:
@@ -790,6 +1024,7 @@ def assemble_full_sequences(
             leader_config,
             include_constant,
             constant_source,
+            allele_overrides=allele_overrides,
         )
         assembly_results.append(result)
 
@@ -857,6 +1092,7 @@ def _assemble_clone(
     leader_config: dict,
     include_constant: bool,
     constant_source: str,
+    allele_overrides: dict[str, str] | None = None,
 ) -> dict:
     """Assemble full sequence for a single clone."""
     result = {}
@@ -913,7 +1149,11 @@ def _assemble_clone(
             # ``canonical`` / ``ensembl`` (back-compat alias) flow:
             # pick the canonical TRAC / TRBC1 / TRBC2, splice the AA
             # in, and verify against the contig start when available.
-            _add_constant_regions(result, constant_seqs, row=row, sample_contigs=sample_contigs)
+            _add_constant_regions(
+                result, constant_seqs,
+                row=row, sample_contigs=sample_contigs,
+                allele_overrides=allele_overrides,
+            )
 
     # Determine which chains have leaders for building full sequences
     include_alpha_leader = leader_config.get("alpha") is not None
@@ -976,6 +1216,7 @@ def _add_constant_regions(
     constant_seqs: dict,
     row: pd.Series | None = None,
     sample_contigs: dict | None = None,
+    allele_overrides: dict[str, str] | None = None,
 ):
     """Add constant-region sequences and verify against the observed
     CellRanger contig start where possible.
@@ -988,7 +1229,15 @@ def _add_constant_regions(
     start. Mismatches surface as ``{chain}_constant_qc`` warnings on
     the result; the canonical is still used so downstream
     cloning-construct outputs are at least biologically valid.
+
+    ``allele_overrides`` controls per-gene allele picking (#113). Each
+    key is a gene name (``"TRAC"`` / ``"TRBC1"`` / ``"TRBC2"``); each
+    value is either ``"auto"`` (default — score every packaged allele
+    against the contig translation and pick the best), or an explicit
+    allele label (e.g. ``"01"`` or ``"03"``) to force a specific
+    canonical. Missing keys default to ``"auto"``.
     """
+    allele_overrides = allele_overrides or {}
     for chain in ["alpha", "beta"]:
         c_gene = result.get(f"{chain}_c_gene")
         j_gene = result.get(f"{chain}_j_gene")
@@ -1015,6 +1264,75 @@ def _add_constant_regions(
             if (row is not None and sample_contigs)
             else None
         )
+
+        # Allele auto-detect (#113). After 2.3, ``HUMAN_TRBC2_AA``
+        # defaults to the TRBC2*01-protein form (E at mature pos 9 —
+        # major-allele in humans), but the auto-detect can pick the
+        # TRBC2*03-protein form (K at pos 9) for the ~1% of donors who
+        # carry it. ``allele_overrides[gene]`` controls the call:
+        # ``"auto"`` scores all packaged alleles against contig
+        # translation; an explicit allele label forces that allele.
+        allele_choice = allele_overrides.get(canonical_name, "auto")
+        allele_pool = HUMAN_CONSTANT_ALLELES.get(canonical_name, {})
+        allele_called: str | None = None
+        allele_score: float | None = None
+        allele_alternatives: dict[str, float] = {}
+        if allele_pool:
+            if allele_choice != "auto":
+                # Explicit user override. Validate against the pool
+                # so a typo like ``trbc2_allele='3'`` (vs the right
+                # ``'03'``) doesn't silently fall through to the
+                # default — surface it via a QC warning so the audit
+                # trail records the invalid label.
+                if allele_choice in allele_pool:
+                    canonical_aa = allele_pool[allele_choice]
+                    canonical_nt_codon_opt = back_translate(canonical_aa)
+                    allele_called = allele_choice
+                    allele_score = 1.0  # by definition; user chose it
+                else:
+                    result.setdefault("qc_warnings", []).append(
+                        f"{chain}: invalid allele override "
+                        f"{canonical_name}*{allele_choice!s} (available: "
+                        f"{sorted(allele_pool.keys())}); falling back to "
+                        f"default allele."
+                    )
+            elif contig_nt_past_vdj:
+                # Auto-detect. Translate contig past J→C junction codon
+                # (uniformly skip 3 nt at NT level) and score every
+                # allele. The picker returns ``None`` for "couldn't
+                # decide" when coverage is too thin to discriminate.
+                contig_post_junction_nt = contig_nt_past_vdj[3:]
+                contig_aa, _ = translate_dna(contig_post_junction_nt)
+                if contig_aa:
+                    best_allele, best_score, all_scores = _pick_best_allele(
+                        contig_aa, canonical_name, allele_pool,
+                    )
+                    if best_allele is not None and best_score > 0:
+                        candidate_aa = allele_pool[best_allele]
+                        # NT-level frame sanity check (#115 review).
+                        # AA-level scoring is robust to synonymous
+                        # codon variation but blind to frame-off-by-N
+                        # bugs upstream. Verify the contig's first
+                        # codon past the junction translates to the
+                        # picked allele's first expected residue.
+                        if _verify_first_codon_frame(
+                            contig_post_junction_nt, candidate_aa,
+                        ):
+                            canonical_aa = candidate_aa
+                            canonical_nt_codon_opt = back_translate(canonical_aa)
+                            allele_called = best_allele
+                            allele_score = best_score
+                            allele_alternatives = all_scores
+                        else:
+                            result.setdefault("qc_warnings", []).append(
+                                f"{chain}: allele picker selected "
+                                f"{canonical_name}*{best_allele} (AA score "
+                                f"{best_score:.3f}) but the contig's first "
+                                "codon past the junction does not translate "
+                                "to that allele's expected first residue — "
+                                "possible frame error upstream. Falling "
+                                "back to default."
+                            )
 
         # J→C junction residue, peeled from the contig — UNIFORMLY for
         # both chains (#105 in 2.0). The mature TCR mRNA in the donor
@@ -1061,6 +1379,25 @@ def _add_constant_regions(
         # out of contig-derived NT entirely; assembly uses bare mature
         # canonical, same as if the clone had no contig.
         result[f"{chain}_junction_residue"] = junction_residue
+
+        # Record the allele-picker audit (#113). When auto-detect ran
+        # we have a winning allele + score + the per-allele score
+        # dict. When the user forced an allele or the picker couldn't
+        # run (no contig, no allele pool), the audit fields are None.
+        result[f"{chain}_allele_called"] = (
+            f"{canonical_name}*{allele_called}" if allele_called else None
+        )
+        result[f"{chain}_allele_score"] = allele_score
+        if allele_alternatives:
+            # Format: "allele:score;allele:score;..." sorted by score desc.
+            result[f"{chain}_allele_alternatives"] = ";".join(
+                f"{canonical_name}*{a}:{s:.3f}"
+                for a, s in sorted(
+                    allele_alternatives.items(), key=lambda kv: -kv[1]
+                )
+            )
+        else:
+            result[f"{chain}_allele_alternatives"] = None
 
         result[f"{chain}_constant_aa"] = canonical_aa
         blended_nt, blend_debug = _blend_constant_nt_with_contig(
