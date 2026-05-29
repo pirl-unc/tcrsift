@@ -548,7 +548,7 @@ def cmd_assemble(args):
     clonotypes = pd.read_csv(args.input)
     print(f"Loaded {len(clonotypes)} clonotypes from {args.input}")
 
-    # Parse --stop-codons (#117). Empty string → no stops.
+    # Parse --stop-codons (#116). Empty string → no stops.
     stop_codons = tuple(
         c.strip().upper() for c in args.stop_codons.split(",") if c.strip()
     )
@@ -1204,7 +1204,7 @@ def cmd_run(args):
             trac_allele=getattr(config.assemble, "trac_allele", "auto"),
             trbc1_allele=getattr(config.assemble, "trbc1_allele", "auto"),
             trbc2_allele=getattr(config.assemble, "trbc2_allele", "auto"),
-            # #117 stop codons: default to dual-stop. Config-driven
+            # #116 stop codons: default to dual-stop. Config-driven
             # callers can pass a list via config.assemble.stop_codons.
             stop_codons=tuple(
                 getattr(config.assemble, "stop_codons", ("TAA", "TGA"))
@@ -2236,7 +2236,7 @@ CONDITIONALLY REQUIRED:
         "--stop-codons",
         default="TAA,TGA",
         help="Comma-separated stop codons to append to codon-"
-        "optimized constants (#117). Default 'TAA,TGA' = two non-"
+        "optimized constants (#116). Default 'TAA,TGA' = two non-"
         "redundant stops (different release factors, reduces "
         "read-through). Pass 'TAA' for single-stop (pre-2.4 "
         "behavior) or '' to omit. Each entry must be one of "

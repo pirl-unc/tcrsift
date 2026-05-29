@@ -980,7 +980,7 @@ def get_constant_region_sequences(
 
     Sources NT from :data:`HUMAN_CONSTANT_REGIONS_AA` and
     :func:`optimize_codons` (motif-aware — avoids 5+ mononucleotide
-    runs and common Type-II restriction sites; see #117). The earlier
+    runs and common Type-II restriction sites; see #116). The earlier
     pyensembl-backed implementation read the full mRNA at frame
     offset 2 and silently truncated TRAC / TRBC1 / TRBC2 to 2–11
     residues for every assembled clonotype (#66). Hardcoding
@@ -1103,7 +1103,7 @@ def assemble_full_sequences(
           ``None`` when the picker no-decided or only one allele was
           packaged.
 
-        Constant NT triad emitted per chain (#117):
+        Constant NT triad emitted per chain (#116):
 
         - ``{chain}_constant_nt_assembly`` — pure CellRanger contig
           NT past the J→C junction (no canonical splicing, no
@@ -1511,7 +1511,7 @@ def _add_constant_regions(
     stop codons (e.g. ``"TAATGA"`` for the default
     ``("TAA", "TGA")``). It's appended to every codon-optimized
     canonical NT — including the picker-override and J-junction
-    branches that previously dropped stops (#117). Pass ``""`` for no
+    branches that previously dropped stops (#116). Pass ``""`` for no
     stops.
     """
     allele_overrides = allele_overrides or {}
@@ -1522,7 +1522,7 @@ def _add_constant_regions(
 
         # `constant_seqs` already holds codon-optimized back-translated
         # DNA for the canonical AA (built via `optimize_codons` with
-        # the same stop_codons config — see #117); fall back to a
+        # the same stop_codons config — see #116); fall back to a
         # fresh `optimize_codons + stops_nt` build in case a caller
         # patched the dict with a missing key.
         canonical_nt_codon_opt = constant_seqs.get(
@@ -1565,7 +1565,7 @@ def _add_constant_regions(
                 # trail records the invalid label.
                 if allele_choice in allele_pool:
                     canonical_aa = allele_pool[allele_choice]
-                    # #117: also append stops here. Pre-2.4 this
+                    # #116: also append stops here. Pre-2.4 this
                     # branch silently dropped the stop, so the
                     # constant for a user-overridden allele had no
                     # terminator while the auto-picked one did.
@@ -1604,7 +1604,7 @@ def _add_constant_regions(
                             contig_post_junction_nt, candidate_aa,
                         ):
                             canonical_aa = candidate_aa
-                            # #117: append stops on the auto-pick
+                            # #116: append stops on the auto-pick
                             # branch too. Pre-2.4 dropped the stop
                             # whenever the picker overrode the
                             # default — affecting any donor where
@@ -1706,7 +1706,7 @@ def _add_constant_regions(
             canonical_nt_codon_opt,
         )
 
-        # New (#117) NT triad. Three views of the constant-region NT:
+        # New (#116) NT triad. Three views of the constant-region NT:
         # (1) ``_assembly`` — pure CellRanger bytes past the J→C
         #     junction. Truncated where contig coverage ends. Useful
         #     for QC, allele detection, and any downstream that
@@ -1718,7 +1718,7 @@ def _add_constant_regions(
         # (3) ``_constant_nt`` — the legacy column, kept as alias for
         #     the assembly-aware blend (donor bytes where they
         #     agree with canonical AA, ``_optimized`` for the rest).
-        #     This is unchanged behavior pre/post #117 for callers
+        #     This is unchanged behavior pre/post #116 for callers
         #     that didn't ask for the new views.
         result[f"{chain}_constant_nt_assembly"] = (
             contig_nt_past_vdj if contig_nt_past_vdj else None
@@ -1886,7 +1886,7 @@ def _blend_constant_nt_with_contig(
     canonical_nt_codon_opt : str
         Codon-optimized back-translated NT for ``canonical_aa`` with
         stop codons already appended at the tail. Length
-        ``3 * len(canonical_aa) + 3 * n_stops``. (Pre-#117 this was
+        ``3 * len(canonical_aa) + 3 * n_stops``. (Pre-#116 this was
         single-stop; from 2.4 onward it defaults to dual-stop.)
 
     Returns
@@ -2099,7 +2099,7 @@ def _build_full_sequences(
     """Build complete sequences from parts.
 
     Emits the standard ``full_{chain}_aa`` / ``full_{chain}_nt`` plus
-    (when constants are included) the NT triad introduced in #117:
+    (when constants are included) the NT triad introduced in #116:
 
     * ``full_{chain}_nt_assembly`` — leader + VDJ + pure contig bytes
       for the constant. ``None`` when no contig is available for the
@@ -2192,7 +2192,7 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
 
     if "full_beta_nt" in df.columns and "full_alpha_nt" in df.columns and linker_nt:
         # Remove ALL trailing stop codons from beta DNA. The dual-stop
-        # default introduced in #117 (TAA + TGA) means a single
+        # default introduced in #116 (TAA + TGA) means a single
         # "strip one codon" pass would leave the upstream stop in
         # frame with the linker — breaking the 2A construct. Loop
         # until no trailing stop remains.
@@ -2905,7 +2905,7 @@ def _nt_translates_to(nt: str, aa: str, strip_trailing_stop: bool = True) -> boo
     so it can include which column failed.
 
     The ``strip_trailing_stop`` flag strips *every* trailing stop, not
-    just one. This was a one-stop strip pre-#117, which broke when the
+    just one. This was a one-stop strip pre-#116, which broke when the
     constant CDS picked up its second non-redundant stop (e.g. the
     default ``"TAATGA"`` suffix).
     """
@@ -2974,17 +2974,17 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
     - ``{chain}_constant_nt`` translates to ``{chain}_constant_aa``
       after dropping any trailing stop codons.
     - ``{chain}_constant_nt_optimized`` translates to
-      ``{chain}_constant_aa`` after dropping trailing stops (#117).
+      ``{chain}_constant_aa`` after dropping trailing stops (#116).
     - ``{chain}_constant_nt_assembly`` (when not None) is in-frame
       and free of premature stops — donor polymorphisms vs. canonical
       AA are NOT flagged (the blender handles them); only frame
-      errors or non-coding contigs surface here (#117).
+      errors or non-coding contigs surface here (#116).
     - ``full_{chain}_nt`` translates to ``full_{chain}_aa`` after
       dropping the trailing stop codon. **This is the integration
       check that would have caught #91 (+1 nt overshoot at the
       VDJ→C boundary) on day one.**
     - ``full_{chain}_nt_optimized`` translates to ``full_{chain}_aa``
-      after dropping trailing stops (#117).
+      after dropping trailing stops (#116).
     - ``single_chain_nt`` translates to ``single_chain_aa`` (trailing
       stop dropped).
     """
@@ -3016,7 +3016,7 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
                                 f"{nt_col} does not translate to {aa_col} "
                                 f"(after stripping trailing stops)")
 
-        # `_constant_nt_assembly` (#117): pure donor NT. May end mid-
+        # `_constant_nt_assembly` (#116): pure donor NT. May end mid-
         # codon or extend past the AA — translate the largest 3·N
         # prefix and check it matches the AA prefix of equal length.
         nt_col = f"{chain}_constant_nt_assembly"

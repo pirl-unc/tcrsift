@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for #117 — motif-aware codon optimization + dual stops +
+"""Tests for #116 — motif-aware codon optimization + dual stops +
 NT-triad (assembly / optimized / blend).
 
 Covers:
@@ -31,9 +31,9 @@ Covers:
 * :func:`_add_single_chain` strips ALL trailing stops, not just one
   (single-chain construct stays in frame with the 2A linker under
   dual-stop default).
-* The picker stop-codon bug from #117: user-overridden alleles
+* The picker stop-codon bug from #116: user-overridden alleles
   and auto-picked alleles both end with the configured stops
-  (pre-#117 they silently dropped them).
+  (pre-#116 they silently dropped them).
 """
 
 from __future__ import annotations
@@ -467,7 +467,7 @@ class TestSingleChainDualStopStripping:
 
 
 class TestPickerStopBugRegression:
-    """#117: the picker overrides used to call ``back_translate`` without
+    """#116: the picker overrides used to call ``back_translate`` without
     appending stops, so user-overridden alleles (and any allele picked
     by auto-detect) silently dropped the stops while default-allele
     rows kept them. Verify dual stops are present in both branches."""
@@ -496,7 +496,7 @@ class TestPickerStopBugRegression:
         )
         nt = out["beta_constant_nt_optimized"].iloc[0]
         assert nt.endswith("TAATGA"), (
-            "Explicit allele override branch dropped stops (#117 regression)"
+            "Explicit allele override branch dropped stops (#116 regression)"
         )
         # And the blended _constant_nt also has stops.
         nt_blend = out["beta_constant_nt"].iloc[0]
