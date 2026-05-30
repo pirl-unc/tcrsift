@@ -331,6 +331,96 @@ def _load_canonical_alleles_fasta() -> dict[str, dict[str, str]]:
 HUMAN_CONSTANT_ALLELES: dict[str, dict[str, str]] = _load_canonical_alleles_fasta()
 
 
+# Allele-called-reason enum (#118). Surfaces the *cause* of every
+# allele call (or no-call) as a single machine-readable string so
+# downstream consumers don't have to parse the human-readable
+# ``{chain}_constant_source`` text or the ``qc_warnings`` list. Each
+# clone receives exactly one value in ``{chain}_allele_called_reason``.
+ALLELE_REASON_AUTO_DETECTED = "auto_detected"
+ALLELE_REASON_OVERRIDDEN = "overridden"
+ALLELE_REASON_INVALID_OVERRIDE = "invalid_override"
+ALLELE_REASON_DIVERGENT_CONTIG = "divergent_contig"
+ALLELE_REASON_DIVERGENT_AT_POLYMORPHIC_POSITION = "divergent_at_polymorphic_position"
+ALLELE_REASON_SPARSE_CONTIG = "sparse_contig"
+ALLELE_REASON_NO_CONTIG = "no_contig"
+ALLELE_REASON_NO_ALLELE_POOL = "no_allele_pool"
+ALLELE_REASON_FRAME_ERROR = "frame_error"
+
+# All valid values, for validation + cohort audit grouping.
+ALLELE_REASON_VALUES: tuple[str, ...] = (
+    ALLELE_REASON_AUTO_DETECTED,
+    ALLELE_REASON_OVERRIDDEN,
+    ALLELE_REASON_INVALID_OVERRIDE,
+    ALLELE_REASON_DIVERGENT_CONTIG,
+    ALLELE_REASON_DIVERGENT_AT_POLYMORPHIC_POSITION,
+    ALLELE_REASON_SPARSE_CONTIG,
+    ALLELE_REASON_NO_CONTIG,
+    ALLELE_REASON_NO_ALLELE_POOL,
+    ALLELE_REASON_FRAME_ERROR,
+)
+
+
+def _polymorphic_positions(allele_pool: dict[str, str]) -> set[int]:
+    """Return the set of mature-residue positions (0-indexed) where
+    alleles in ``allele_pool`` disagree (#120).
+
+    These are the residues that DISTINGUISH alleles from one another —
+    e.g., mature TRBC2 position 8 (0-indexed) where *01 has E and *03
+    has K. A contig that disagrees with the picked allele at one of
+    these positions almost certainly indicates a novel polymorphism
+    (or sequencing noise); the picker should refuse to commit rather
+    than silently flip to a sibling on overall score.
+
+    Positions past the shortest allele are excluded — we can't
+    distinguish "polymorphic" from "absent" there.
+    """
+    if len(allele_pool) < 2:
+        return set()
+    alleles = list(allele_pool.values())
+    n_compare = min(len(a) for a in alleles)
+    polymorphic: set[int] = set()
+    for i in range(n_compare):
+        residues = {a[i] for a in alleles}
+        if len(residues) > 1:
+            polymorphic.add(i)
+    return polymorphic
+
+
+def _divergence_positions(
+    called_allele_aa: str,
+    observed_aa: str,
+    *,
+    max_positions: int = 15,
+) -> list[tuple[int, str, str]]:
+    """Return a list of ``(position_1_indexed, expected_aa, observed_aa)``
+    tuples where the observed contig translation disagrees with the
+    called allele.
+
+    Caps at the first ``max_positions`` mature residues — past that
+    the contig is rarely covered and the residues are dominated by
+    invariant regions (#120 ask 2).
+    """
+    if not called_allele_aa or not observed_aa:
+        return []
+    n = min(len(called_allele_aa), len(observed_aa), max_positions)
+    return [
+        (i + 1, called_allele_aa[i], observed_aa[i])
+        for i in range(n)
+        if called_allele_aa[i] != observed_aa[i]
+    ]
+
+
+def _format_divergence_positions(positions: list[tuple[int, str, str]]) -> str | None:
+    """Serialize divergence positions for the output column.
+
+    Format: ``"3:N->K;7:V->I"``. Empty list returns ``None`` so callers
+    can use ``df[col].notna()`` to filter divergent clones.
+    """
+    if not positions:
+        return None
+    return ";".join(f"{p}:{e}->{o}" for p, e, o in positions)
+
+
 def _score_allele_against_contig(
     contig_aa: str,
     allele_aa: str,
@@ -1410,6 +1500,16 @@ def assemble_full_sequences(
                 n_overrides, n_beta,
             )
 
+        # Cohort allele audit (#119, #120). Emits the per-chain
+        # called/no-called breakdown + any novel-allele candidates
+        # detected across the cohort. Silent on small cohorts where
+        # the heuristic thresholds don't fire.
+        if any(
+            f"{c}_allele_called_reason" in df.columns for c in ("alpha", "beta")
+        ):
+            for line in allele_audit_report(df).splitlines():
+                logger.info(line)
+
     return df
 
 
@@ -1617,76 +1717,140 @@ def _add_constant_regions(
         allele_called: str | None = None
         allele_score: float | None = None
         allele_alternatives: dict[str, float] = {}
-        if allele_pool:
-            if allele_choice != "auto":
-                # Explicit user override. Validate against the pool
-                # so a typo like ``trbc2_allele='3'`` (vs the right
-                # ``'03'``) doesn't silently fall through to the
-                # default — surface it via a QC warning so the audit
-                # trail records the invalid label.
-                if allele_choice in allele_pool:
-                    canonical_aa = allele_pool[allele_choice]
-                    # #116: also append stops here. Pre-2.4 this
-                    # branch silently dropped the stop, so the
-                    # constant for a user-overridden allele had no
-                    # terminator while the auto-picked one did.
-                    canonical_nt_codon_opt = (
-                        optimize_codons(canonical_aa) + stops_nt
-                    )
-                    allele_called = allele_choice
-                    allele_score = 1.0  # by definition; user chose it
-                else:
+        allele_called_reason: str | None = None
+
+        # Translate the contig past the J→C junction codon up-front so
+        # every code path can use it for #120's per-clone audit
+        # (observed_constant_aa_start, allele_divergence_positions).
+        contig_post_junction_nt = (
+            contig_nt_past_vdj[3:] if contig_nt_past_vdj else ""
+        )
+        contig_aa_past_junction, _ = (
+            translate_dna(contig_post_junction_nt)
+            if contig_post_junction_nt else ("", False)
+        )
+
+        if not allele_pool:
+            allele_called_reason = ALLELE_REASON_NO_ALLELE_POOL
+        elif allele_choice != "auto":
+            # Explicit user override. Validate against the pool
+            # so a typo like ``trbc2_allele='3'`` (vs the right
+            # ``'03'``) doesn't silently fall through to the default.
+            if allele_choice in allele_pool:
+                canonical_aa = allele_pool[allele_choice]
+                canonical_nt_codon_opt = (
+                    optimize_codons(canonical_aa) + stops_nt
+                )
+                allele_called = allele_choice
+                allele_score = 1.0  # by definition; user chose it
+                allele_called_reason = ALLELE_REASON_OVERRIDDEN
+            else:
+                allele_called_reason = ALLELE_REASON_INVALID_OVERRIDE
+                result.setdefault("qc_warnings", []).append(
+                    f"{chain}: invalid allele override "
+                    f"{canonical_name}*{allele_choice!s} (available: "
+                    f"{sorted(allele_pool.keys())}); falling back to "
+                    f"default allele."
+                )
+        elif not contig_nt_past_vdj:
+            allele_called_reason = ALLELE_REASON_NO_CONTIG
+            if sample_contigs:
+                # contigs_dir was given but this clone has no contig
+                # post-VDJ — surface it so #119 cohort aggregation can
+                # split "no-contig" clones from "divergent" ones.
+                result.setdefault("qc_warnings", []).append(
+                    f"{chain}: allele not called — no contig coverage "
+                    f"past VDJ for this clone."
+                )
+            # else: no contigs_dir at all — silent (user opted out).
+        else:
+            # Auto-detect. Pool exists, contig exists → run the picker.
+            best_allele, best_score, all_scores = _pick_best_allele(
+                contig_aa_past_junction, canonical_name, allele_pool,
+            )
+            if best_allele is None:
+                # Picker punted. Either the contig translation was
+                # empty (rare; handled below as "sparse") or
+                # ``n_compared`` was below the floor for every allele.
+                n_codons = len(contig_aa_past_junction) if contig_aa_past_junction else 0
+                allele_called_reason = ALLELE_REASON_SPARSE_CONTIG
+                # #118 ask 1: uniformly emit a qc_warning for sparse
+                # contigs (Mode 2 was previously silent).
+                result.setdefault("qc_warnings", []).append(
+                    f"{chain}: allele not called — contig covers only "
+                    f"{n_codons} codons past VDJ; need "
+                    f"≥{_DEFAULT_MIN_PICKER_POSITIONS} for confident "
+                    f"detection."
+                )
+            elif best_score <= 0:
+                # Contig translates but disagrees at every comparable
+                # position — likely a novel divergent allele or noise.
+                allele_called_reason = ALLELE_REASON_DIVERGENT_CONTIG
+                result.setdefault("qc_warnings", []).append(
+                    f"{chain}: allele not called — contig disagrees with "
+                    f"every packaged allele at every compared position."
+                )
+            else:
+                candidate_aa = allele_pool[best_allele]
+                # NT-level frame sanity check (#115).
+                if not _verify_first_codon_frame(
+                    contig_post_junction_nt, candidate_aa,
+                ):
+                    allele_called_reason = ALLELE_REASON_FRAME_ERROR
                     result.setdefault("qc_warnings", []).append(
-                        f"{chain}: invalid allele override "
-                        f"{canonical_name}*{allele_choice!s} (available: "
-                        f"{sorted(allele_pool.keys())}); falling back to "
-                        f"default allele."
+                        f"{chain}: allele picker selected "
+                        f"{canonical_name}*{best_allele} (AA score "
+                        f"{best_score:.3f}) but the contig's first "
+                        "codon past the junction does not translate "
+                        "to that allele's expected first residue — "
+                        "possible frame error upstream. Falling "
+                        "back to default."
                     )
-            elif contig_nt_past_vdj:
-                # Auto-detect. Translate contig past J→C junction codon
-                # (uniformly skip 3 nt at NT level) and score every
-                # allele. The picker returns ``None`` for "couldn't
-                # decide" when coverage is too thin to discriminate.
-                contig_post_junction_nt = contig_nt_past_vdj[3:]
-                contig_aa, _ = translate_dna(contig_post_junction_nt)
-                if contig_aa:
-                    best_allele, best_score, all_scores = _pick_best_allele(
-                        contig_aa, canonical_name, allele_pool,
+                else:
+                    # #120 ask 4: tighten tolerance at allele-
+                    # distinguishing positions. If the picked allele
+                    # disagrees with the contig at one of the positions
+                    # where alleles DIFFER from each other, that's a
+                    # strong signal the donor has a novel variant —
+                    # punt to NaN rather than silently committing.
+                    polymorphic = _polymorphic_positions(allele_pool)
+                    disagreed_at_polymorphic = sorted(
+                        i for i in polymorphic
+                        if i < len(contig_aa_past_junction)
+                        and i < len(candidate_aa)
+                        and contig_aa_past_junction[i] != candidate_aa[i]
                     )
-                    if best_allele is not None and best_score > 0:
-                        candidate_aa = allele_pool[best_allele]
-                        # NT-level frame sanity check (#115 review).
-                        # AA-level scoring is robust to synonymous
-                        # codon variation but blind to frame-off-by-N
-                        # bugs upstream. Verify the contig's first
-                        # codon past the junction translates to the
-                        # picked allele's first expected residue.
-                        if _verify_first_codon_frame(
-                            contig_post_junction_nt, candidate_aa,
-                        ):
-                            canonical_aa = candidate_aa
-                            # #116: append stops on the auto-pick
-                            # branch too. Pre-2.4 dropped the stop
-                            # whenever the picker overrode the
-                            # default — affecting any donor where
-                            # the auto-detected allele wasn't the
-                            # one packaged as the default.
-                            canonical_nt_codon_opt = (
-                                optimize_codons(canonical_aa) + stops_nt
-                            )
-                            allele_called = best_allele
-                            allele_score = best_score
-                            allele_alternatives = all_scores
-                        else:
-                            result.setdefault("qc_warnings", []).append(
-                                f"{chain}: allele picker selected "
-                                f"{canonical_name}*{best_allele} (AA score "
-                                f"{best_score:.3f}) but the contig's first "
-                                "codon past the junction does not translate "
-                                "to that allele's expected first residue — "
-                                "possible frame error upstream. Falling "
-                                "back to default."
-                            )
+                    if disagreed_at_polymorphic:
+                        allele_called_reason = (
+                            ALLELE_REASON_DIVERGENT_AT_POLYMORPHIC_POSITION
+                        )
+                        positions_str = ", ".join(
+                            f"{i + 1}({candidate_aa[i]}/"
+                            f"{contig_aa_past_junction[i]})"
+                            for i in disagreed_at_polymorphic
+                        )
+                        result.setdefault("qc_warnings", []).append(
+                            f"{chain}: allele not called — contig "
+                            f"disagrees with best-fit "
+                            f"{canonical_name}*{best_allele} at "
+                            f"allele-distinguishing position(s) "
+                            f"{positions_str} (canonical AA / observed AA). "
+                            f"Possible novel allele; falling back to default."
+                        )
+                        # Keep allele_alternatives populated so the
+                        # downstream cohort audit (#119) can see the
+                        # picker's runner-up scores even when no call
+                        # was committed.
+                        allele_alternatives = all_scores
+                    else:
+                        canonical_aa = candidate_aa
+                        canonical_nt_codon_opt = (
+                            optimize_codons(canonical_aa) + stops_nt
+                        )
+                        allele_called = best_allele
+                        allele_score = best_score
+                        allele_alternatives = all_scores
+                        allele_called_reason = ALLELE_REASON_AUTO_DETECTED
 
         # J→C junction residue, peeled from the contig — UNIFORMLY for
         # both chains (#105 in 2.0). The mature TCR mRNA in the donor
@@ -1741,16 +1905,14 @@ def _add_constant_regions(
         # canonical, same as if the clone had no contig.
         result[f"{chain}_junction_residue"] = junction_residue
 
-        # Record the allele-picker audit (#113). When auto-detect ran
-        # we have a winning allele + score + the per-allele score
-        # dict. When the user forced an allele or the picker couldn't
-        # run (no contig, no allele pool), the audit fields are None.
+        # Record the allele-picker audit (#113, expanded #118/#120).
         result[f"{chain}_allele_called"] = (
             f"{canonical_name}*{allele_called}" if allele_called else None
         )
         result[f"{chain}_allele_score"] = allele_score
+        # #118: machine-readable reason for the call (or no-call).
+        result[f"{chain}_allele_called_reason"] = allele_called_reason
         if allele_alternatives:
-            # Format: "allele:score;allele:score;..." sorted by score desc.
             result[f"{chain}_allele_alternatives"] = ";".join(
                 f"{canonical_name}*{a}:{s:.3f}"
                 for a, s in sorted(
@@ -1759,6 +1921,27 @@ def _add_constant_regions(
             )
         else:
             result[f"{chain}_allele_alternatives"] = None
+
+        # #120 ask 1: raw observed AA past the J→C junction codon.
+        # Lets downstream consumers see the donor's actual residues
+        # regardless of whether the picker matched a packaged allele.
+        # Capped at 15 residues — past that contig coverage is rare
+        # and the residues are dominated by invariant regions.
+        result[f"{chain}_observed_constant_aa_start"] = (
+            contig_aa_past_junction[:15] if contig_aa_past_junction else None
+        )
+
+        # #120 ask 2: per-position divergences between the called
+        # allele and the observation. Format: "3:N->K;7:V->I". None
+        # when no allele was called OR when there's no divergence.
+        if allele_called is not None and contig_aa_past_junction:
+            called_aa = allele_pool[allele_called]
+            divs = _divergence_positions(called_aa, contig_aa_past_junction)
+            result[f"{chain}_allele_divergence_positions"] = (
+                _format_divergence_positions(divs)
+            )
+        else:
+            result[f"{chain}_allele_divergence_positions"] = None
 
         result[f"{chain}_constant_aa"] = canonical_aa
         blended_nt, blend_debug = _blend_constant_nt_with_contig(
@@ -2995,6 +3178,271 @@ def assemble_qc_report(df: pd.DataFrame) -> str:
     an :class:`AssemblyQCReport` object.
     """
     return build_assembly_qc_report(df).format_text()
+
+
+def _parse_divergence_positions_string(s: str) -> list[tuple[int, str, str]]:
+    """Inverse of :func:`_format_divergence_positions`."""
+    if not isinstance(s, str) or not s:
+        return []
+    out: list[tuple[int, str, str]] = []
+    for chunk in s.split(";"):
+        if ":" not in chunk or "->" not in chunk:
+            continue
+        pos_str, change = chunk.split(":", 1)
+        exp, obs = change.split("->", 1)
+        try:
+            out.append((int(pos_str), exp, obs))
+        except ValueError:
+            continue
+    return out
+
+
+def detect_novel_alleles(
+    df: pd.DataFrame,
+    *,
+    min_pct: float = 0.05,
+    min_v_spread: int = 3,
+    min_samples: int = 2,
+) -> pd.DataFrame:
+    """Aggregate per-clone divergence positions into cohort-level
+    novel-allele candidates (#119).
+
+    For each ``(chain, position, expected_aa, observed_aa)`` tuple
+    across all clones with ``allele_called_reason`` in the set of
+    no-call reasons that surface a contig-vs-canonical divergence,
+    count:
+
+    * ``n_clones`` — number of clones carrying the variant.
+    * ``pct_chain_clones`` — fraction of in-cohort clones for that
+      chain showing the variant.
+    * ``n_v_genes`` — number of distinct V genes the variant
+      appears in.
+    * ``n_samples`` — number of distinct CellRanger samples the
+      variant appears in.
+    * ``verdict`` — ``"novel_allele_candidate"`` when ``pct >= min_pct``
+      AND ``n_v_genes >= min_v_spread`` AND ``n_samples >= min_samples``;
+      ``"likely_artifact"`` otherwise.
+
+    Returns a long-form DataFrame sorted by ``n_clones`` descending.
+    Empty DataFrame when no divergences are present.
+
+    The heuristic encodes simple population genetics: a real
+    polymorphism distributes across V-genes and samples (since V-gene
+    usage is independent of constant-region allele); an artifact
+    concentrates in one V or one sample (PCR / assembly noise tied to
+    a specific V sequence). See #119 for the full rationale and pilot
+    validation.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Output of :func:`assemble_full_sequences`. Must contain
+        ``{chain}_allele_divergence_positions`` and the per-clone
+        ``v_gene`` / ``samples`` columns; missing columns are
+        tolerated with reduced statistics.
+    min_pct : float, default 0.05
+        Minimum fraction of in-cohort clones for the variant to be
+        called a candidate. 5% is conservative for heterozygous
+        donors (~50% expected) and dominates over single-V artifacts
+        (~1%) but still surfaces minor population alleles.
+    min_v_spread : int, default 3
+        Minimum distinct V genes the variant must appear in. V-gene
+        usage is independent of constant allele, so true polymorphisms
+        spread across V's; V-concentrated variants are almost always
+        contig-assembly artifacts.
+    min_samples : int, default 2
+        Minimum distinct samples. Single-sample variants may reflect
+        a batch effect rather than a real allele.
+    """
+    contig_divergence_reasons = {
+        ALLELE_REASON_DIVERGENT_CONTIG,
+        ALLELE_REASON_DIVERGENT_AT_POLYMORPHIC_POSITION,
+    }
+
+    rows: list[dict] = []
+    chain_totals: dict[str, int] = {}
+
+    for chain in ("alpha", "beta"):
+        called_col = f"{chain}_allele_called_reason"
+        if called_col not in df.columns:
+            continue
+        chain_mask = df[called_col].notna()
+        chain_totals[chain] = int(chain_mask.sum())
+
+        # For NaN-allele clones #119 wants to use the OBSERVED AA vs
+        # the default canonical (since no allele was called). Use the
+        # observed-start column plus the run's canonical AA derived
+        # from ``{chain}_c_gene_canonical``.
+        obs_col = f"{chain}_observed_constant_aa_start"
+        gene_col = f"{chain}_c_gene_canonical"
+        v_col = f"{chain}_v_gene"
+
+        for idx, row in df.iterrows():
+            reason = row.get(called_col)
+            if reason not in contig_divergence_reasons:
+                continue
+            # Pull positions of divergence. For divergent_contig /
+            # divergent_at_polymorphic_position, the stored
+            # ``_allele_divergence_positions`` is None (no allele
+            # called), so we recompute against the canonical default.
+            observed = row.get(obs_col) if obs_col in df.columns else None
+            canonical_name = row.get(gene_col) if gene_col in df.columns else None
+            if not isinstance(observed, str) or not observed:
+                continue
+            if not isinstance(canonical_name, str):
+                continue
+            default_aa = HUMAN_CONSTANT_REGIONS_AA.get(canonical_name, "")
+            if not default_aa:
+                continue
+            divs = _divergence_positions(default_aa, observed)
+            if not divs:
+                continue
+            v_gene = row.get(v_col)
+            sample = row.get("samples")
+            for pos, exp, obs in divs:
+                rows.append({
+                    "chain": chain,
+                    "gene": canonical_name,
+                    "position": pos,
+                    "expected_aa": exp,
+                    "observed_aa": obs,
+                    "v_gene": v_gene,
+                    "sample": sample,
+                    "clone_idx": idx,
+                })
+
+    if not rows:
+        return pd.DataFrame(columns=[
+            "chain", "gene", "position", "expected_aa", "observed_aa",
+            "n_clones", "pct_chain_clones", "n_v_genes", "n_samples",
+            "verdict",
+        ])
+
+    long_df = pd.DataFrame(rows)
+    grouped = long_df.groupby(
+        ["chain", "gene", "position", "expected_aa", "observed_aa"],
+        dropna=False,
+    )
+    summary_rows: list[dict] = []
+    for (chain, gene, position, exp, obs), group in grouped:
+        n_clones = int(group["clone_idx"].nunique())
+        n_v_genes = int(group["v_gene"].dropna().nunique())
+        # Some samples columns are semicolon-joined multi-sample;
+        # split before counting.
+        sample_set: set[str] = set()
+        for s in group["sample"].dropna().astype(str):
+            for piece in s.split(";"):
+                piece = piece.strip()
+                if piece:
+                    sample_set.add(piece)
+        n_samples = len(sample_set)
+        chain_total = chain_totals.get(chain, 0) or 1
+        pct = n_clones / chain_total
+        is_candidate = (
+            pct >= min_pct
+            and n_v_genes >= min_v_spread
+            and n_samples >= min_samples
+        )
+        summary_rows.append({
+            "chain": chain,
+            "gene": gene,
+            "position": int(position),
+            "expected_aa": exp,
+            "observed_aa": obs,
+            "n_clones": n_clones,
+            "pct_chain_clones": round(pct, 4),
+            "n_v_genes": n_v_genes,
+            "n_samples": n_samples,
+            "verdict": (
+                "novel_allele_candidate"
+                if is_candidate else "likely_artifact"
+            ),
+        })
+
+    summary = pd.DataFrame(summary_rows).sort_values(
+        ["n_clones", "pct_chain_clones"], ascending=[False, False],
+    ).reset_index(drop=True)
+    return summary
+
+
+def allele_audit_report(
+    df: pd.DataFrame,
+    *,
+    min_pct: float = 0.05,
+    min_v_spread: int = 3,
+    min_samples: int = 2,
+) -> str:
+    """Human-readable cohort-level allele audit (#120 ask 3).
+
+    Combines:
+    * per-chain confident allele tally (calls vs. no-calls broken out
+      by ``allele_called_reason``)
+    * cohort-level novel-allele candidates from
+      :func:`detect_novel_alleles`
+
+    Output is suitable for printing at the end of a ``tcrsift run``
+    pipeline or as the body of ``tcrsift audit-alleles``.
+    """
+    lines: list[str] = ["[allele audit]"]
+    for chain in ("alpha", "beta"):
+        called_col = f"{chain}_allele_called"
+        reason_col = f"{chain}_allele_called_reason"
+        if called_col not in df.columns or reason_col not in df.columns:
+            continue
+        chain_mask = df[reason_col].notna()
+        n_total = int(chain_mask.sum())
+        if n_total == 0:
+            continue
+        n_called = int(df[called_col].notna().sum())
+        called_counts = df.loc[
+            df[called_col].notna(), called_col
+        ].value_counts()
+        reason_counts = df[reason_col].value_counts(dropna=False)
+        lines.append(
+            f"  {chain} chain: {n_called}/{n_total} called "
+            f"({100 * n_called / max(n_total, 1):.1f}%)"
+        )
+        for allele, n in called_counts.items():
+            lines.append(f"    {allele}: {n}")
+        no_calls = n_total - n_called
+        if no_calls > 0:
+            lines.append(f"    No-call breakdown ({no_calls} clones):")
+            for reason, n in reason_counts.items():
+                if reason == ALLELE_REASON_AUTO_DETECTED or reason == ALLELE_REASON_OVERRIDDEN:
+                    continue
+                if pd.isna(reason):
+                    continue
+                lines.append(f"      {reason}: {n}")
+
+    novel = detect_novel_alleles(
+        df,
+        min_pct=min_pct,
+        min_v_spread=min_v_spread,
+        min_samples=min_samples,
+    )
+    if not novel.empty:
+        lines.append("")
+        lines.append("  Observed polymorphisms (contig vs. canonical):")
+        for _, row in novel.iterrows():
+            verdict_tag = (
+                "← novel_allele_candidate"
+                if row["verdict"] == "novel_allele_candidate"
+                else "→ likely_artifact"
+            )
+            lines.append(
+                f"    {row['chain']} {row['gene']} pos {row['position']}  "
+                f"{row['expected_aa']}→{row['observed_aa']}  "
+                f"n={row['n_clones']} ({100 * row['pct_chain_clones']:.1f}%)  "
+                f"V-genes={row['n_v_genes']}  samples={row['n_samples']}  "
+                f"{verdict_tag}"
+            )
+        candidates = novel[novel["verdict"] == "novel_allele_candidate"]
+        if candidates.empty:
+            lines.append("  No novel-allele candidates detected.")
+    else:
+        lines.append("")
+        lines.append("  No contig-vs-canonical divergences observed.")
+    return "\n".join(lines)
 
 
 def _nt_translates_to(nt: str, aa: str, strip_trailing_stop: bool = True) -> bool:
