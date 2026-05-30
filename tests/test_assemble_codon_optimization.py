@@ -25,7 +25,7 @@ Covers:
   default dual stops appear at the tail of every codon-optimized
   constant, single-stop preserves pre-2.4 behavior, empty tuple
   omits stops entirely, invalid stops raise ``ValueError``.
-* NT-triad columns (``_constant_nt_assembly`` /
+* NT-triad columns (``_constant_nt_contig`` /
   ``_constant_nt_optimized`` / ``_constant_nt``) all appear on
   output and obey their documented round-trip invariants.
 * :func:`_add_single_chain` strips ALL trailing stops, not just one
@@ -372,7 +372,7 @@ class TestStopCodonsCli:
 
 
 class TestNtTriadColumns:
-    """The new ``_assembly`` / ``_optimized`` / ``_constant_nt`` triad."""
+    """The new ``_contig`` / ``_optimized`` / ``_constant_nt`` triad."""
 
     @staticmethod
     def _df_no_contig():
@@ -399,21 +399,21 @@ class TestNtTriadColumns:
             verbose=False, show_progress=False,
         )
         for chain in ("alpha", "beta"):
-            assert f"{chain}_constant_nt_assembly" in out.columns
+            assert f"{chain}_constant_nt_contig" in out.columns
             assert f"{chain}_constant_nt_optimized" in out.columns
             assert f"{chain}_constant_nt" in out.columns
 
     def test_assembly_none_without_contig(self):
-        # Without contigs there is no donor NT to put in _assembly.
+        # Without contigs there is no donor NT to put in _contig.
         out = assemble_full_sequences(
             self._df_no_contig(),
             alpha_leader=None, beta_leader=None,
             verbose=False, show_progress=False,
         )
         for chain in ("alpha", "beta"):
-            assert out[f"{chain}_constant_nt_assembly"].iloc[0] is None
-            # full_{chain}_nt_assembly likewise None.
-            assert out[f"full_{chain}_nt_assembly"].iloc[0] is None
+            assert out[f"{chain}_constant_nt_contig"].iloc[0] is None
+            # full_{chain}_nt_contig likewise None.
+            assert out[f"full_{chain}_nt_contig"].iloc[0] is None
 
     def test_optimized_present_without_contig(self):
         out = assemble_full_sequences(
@@ -464,9 +464,9 @@ class TestNtTriadColumns:
             verbose=False, show_progress=False,
         )
 
-        # _assembly is the raw contig bytes past VDJ — exactly
+        # _contig is the raw contig bytes past VDJ — exactly
         # c_region_start_nt for this fixture.
-        assembly = out["beta_constant_nt_assembly"].iloc[0]
+        assembly = out["beta_constant_nt_contig"].iloc[0]
         assert assembly == c_region_start_nt
         # _optimized is the codon-optimized canonical + dual stops.
         opt = out["beta_constant_nt_optimized"].iloc[0]
@@ -541,7 +541,7 @@ class TestSingleChainTriad:
     """The single-chain (β-2A-α) cassette is emitted in three flavors
     matching the constant-region triad (#116): blend / optimized /
     assembly. Synthesis users want ``_optimized``; QC users want
-    ``_assembly``; back-compat callers keep ``_constant_nt`` and
+    ``_contig``; back-compat callers keep ``_constant_nt`` and
     ``single_chain_nt`` unchanged."""
 
     @staticmethod
@@ -572,7 +572,7 @@ class TestSingleChainTriad:
         for col in (
             "single_chain_nt",
             "single_chain_nt_optimized",
-            "single_chain_nt_assembly",
+            "single_chain_nt_contig",
         ):
             assert col in out.columns
 
@@ -589,7 +589,7 @@ class TestSingleChainTriad:
         assert translated == aa
 
     def test_assembly_is_none_when_no_contig(self):
-        # Without contigs, full_*_nt_assembly is None for both chains,
+        # Without contigs, full_*_nt_contig is None for both chains,
         # so the single-chain assembly must be None too.
         out = assemble_full_sequences(
             self._df_no_contig(),
@@ -597,7 +597,7 @@ class TestSingleChainTriad:
             linker="T2A",
             verbose=False, show_progress=False,
         )
-        assert out["single_chain_nt_assembly"].iloc[0] is None
+        assert out["single_chain_nt_contig"].iloc[0] is None
 
     def test_optimized_ends_with_dual_stop(self):
         # The β CDS in the cassette has all stops stripped (the
@@ -709,21 +709,21 @@ class TestSingleChainTriad:
             linker="T2A",
             verbose=False, show_progress=False,
         )
-        sc_asm = out["single_chain_nt_assembly"].iloc[0]
+        sc_asm = out["single_chain_nt_contig"].iloc[0]
         assert isinstance(sc_asm, str), (
-            "single_chain_nt_assembly should be a string when both "
+            "single_chain_nt_contig should be a string when both "
             f"chains have contig coverage, got {type(sc_asm).__name__}"
         )
         # In-frame.
         assert len(sc_asm) % 3 == 0, (
-            f"single_chain_nt_assembly length {len(sc_asm)} not divisible "
+            f"single_chain_nt_contig length {len(sc_asm)} not divisible "
             "by 3 — frame broken"
         )
         # No mid-chain stops in the coding portion.
         translated, ragged = translate_dna(sc_asm)
         assert not ragged
         assert "*" not in translated[:-1], (
-            "single_chain_nt_assembly has a premature stop in the "
+            "single_chain_nt_contig has a premature stop in the "
             "coding region"
         )
 

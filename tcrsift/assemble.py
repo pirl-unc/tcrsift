@@ -1140,8 +1140,9 @@ def assemble_full_sequences(
         entry must be one of ``"TAA"``/``"TAG"``/``"TGA"``;
         invalid entries raise ``ValueError``. Stops are only
         appended to the ``_optimized`` columns and the final
-        ``_constant_nt`` (alias) — not to ``_assembly`` columns,
-        which preserve the contig-derived bytes verbatim.
+        ``_constant_nt`` (alias) — not to ``_contig`` columns,
+        which preserve the donor's CellRanger contig bytes verbatim
+        (and are typically truncated past the contig coverage edge).
     verbose : bool
         Print progress information
     show_progress : bool
@@ -1165,7 +1166,7 @@ def assemble_full_sequences(
 
         Constant NT triad emitted per chain (#116):
 
-        - ``{chain}_constant_nt_assembly`` — pure CellRanger contig
+        - ``{chain}_constant_nt_contig`` — pure CellRanger contig
           NT past the J→C junction (no canonical splicing, no
           codon optimization). Truncated where contig coverage
           ends. ``None`` when no contig is available for the clone.
@@ -1767,20 +1768,22 @@ def _add_constant_regions(
         )
 
         # New (#116) NT triad. Three views of the constant-region NT:
-        # (1) ``_assembly`` — pure CellRanger bytes past the J→C
-        #     junction. Truncated where contig coverage ends. Useful
-        #     for QC, allele detection, and any downstream that
-        #     wants the donor's actual NT with no canonical splice.
-        #     ``None`` when there is no contig.
+        # (1) ``_contig`` — pure CellRanger contig bytes past the J→C
+        #     junction. **Truncated at contig coverage** — typically
+        #     covers 30-150 nt of the ~430-530 nt C region (i.e.,
+        #     does NOT reach the stop). Useful for QC, allele
+        #     detection, and any downstream that wants the donor's
+        #     actual NT with no canonical splice. ``None`` when no
+        #     contig is available for the clone.
         # (2) ``_optimized`` — codon-optimized canonical CDS (+stops).
         #     Same byte string for every donor carrying the same
         #     picked allele; what synthesis pipelines order.
-        # (3) ``_constant_nt`` — the legacy column, kept as alias for
-        #     the assembly-aware blend (donor bytes where they
-        #     agree with canonical AA, ``_optimized`` for the rest).
-        #     This is unchanged behavior pre/post #116 for callers
-        #     that didn't ask for the new views.
-        result[f"{chain}_constant_nt_assembly"] = (
+        # (3) ``_constant_nt`` — the legacy column, kept for the
+        #     assembly-aware blend (donor bytes where they agree
+        #     with canonical AA, ``_optimized`` for the rest).
+        #     Unchanged behavior pre/post #116 for callers that
+        #     didn't ask for the new views.
+        result[f"{chain}_constant_nt_contig"] = (
             contig_nt_past_vdj if contig_nt_past_vdj else None
         )
         result[f"{chain}_constant_nt_optimized"] = canonical_nt_codon_opt
@@ -2161,21 +2164,25 @@ def _build_full_sequences(
     Emits the standard ``full_{chain}_aa`` / ``full_{chain}_nt`` plus
     (when constants are included) the NT triad introduced in #116:
 
-    * ``full_{chain}_nt_assembly`` — leader + VDJ + pure contig bytes
-      for the constant. ``None`` when no contig is available for the
-      clone (since the assembly view has no canonical fallback).
+    * ``full_{chain}_nt_contig`` — leader + VDJ + pure CellRanger
+      contig bytes for the constant. **Truncated at contig coverage**
+      (donor's contig typically reads ~30-150 nt into the C region,
+      not the full ~430-530 nt). ``None`` when no contig is
+      available — there is no canonical fallback for this view by
+      design.
     * ``full_{chain}_nt_optimized`` — leader + VDJ + codon-optimized
       canonical constant (+stops). Always present when constants
-      are included.
-    * ``full_{chain}_nt`` (legacy / alias) — leader + VDJ +
-      assembly-aware blend of contig + canonical.
+      are included. Synthesis-ready.
+    * ``full_{chain}_nt`` (legacy / blend) — leader + VDJ +
+      donor bytes where they agree with canonical AA, ``_optimized``
+      for the rest.
     """
     include_leader_map = {"alpha": include_alpha_leader, "beta": include_beta_leader}
 
     for chain in ["alpha", "beta"]:
         parts_aa: list[str] = []
         parts_nt_blend: list[str] = []
-        parts_nt_assembly: list[str | None] = []
+        parts_nt_contig: list[str | None] = []
         parts_nt_optimized: list[str] = []
         include_leader = include_leader_map[chain]
 
@@ -2184,7 +2191,7 @@ def _build_full_sequences(
         if include_leader and f"{chain}_leader_nt" in result:
             leader_nt = result[f"{chain}_leader_nt"]
             parts_nt_blend.append(leader_nt)
-            parts_nt_assembly.append(leader_nt)
+            parts_nt_contig.append(leader_nt)
             parts_nt_optimized.append(leader_nt)
 
         if f"vdj_{chain}_aa" in result:
@@ -2192,17 +2199,17 @@ def _build_full_sequences(
         if f"vdj_{chain}_nt" in result:
             vdj_nt = result[f"vdj_{chain}_nt"]
             parts_nt_blend.append(vdj_nt)
-            parts_nt_assembly.append(vdj_nt)
+            parts_nt_contig.append(vdj_nt)
             parts_nt_optimized.append(vdj_nt)
 
         if include_constant and f"{chain}_constant_aa" in result:
             parts_aa.append(result[f"{chain}_constant_aa"])
         if include_constant and f"{chain}_constant_nt" in result:
             parts_nt_blend.append(result[f"{chain}_constant_nt"])
-            # _assembly is None when contig had no post-VDJ coverage —
-            # propagate the None to full_{chain}_nt_assembly so callers
+            # _contig is None when contig had no post-VDJ coverage —
+            # propagate the None to full_{chain}_nt_contig so callers
             # can filter on it without parsing.
-            parts_nt_assembly.append(result.get(f"{chain}_constant_nt_assembly"))
+            parts_nt_contig.append(result.get(f"{chain}_constant_nt_contig"))
             parts_nt_optimized.append(
                 result.get(f"{chain}_constant_nt_optimized", "")
             )
@@ -2212,13 +2219,13 @@ def _build_full_sequences(
         if parts_nt_blend:
             result[f"full_{chain}_nt"] = "".join(parts_nt_blend)
         if include_constant:
-            # Assembly view: any None constant means the donor's bytes
+            # Contig view: any None constant means the donor's bytes
             # don't reach the C region; surface None instead of a
             # silently-truncated string.
-            if all(p is not None for p in parts_nt_assembly) and parts_nt_assembly:
-                result[f"full_{chain}_nt_assembly"] = "".join(parts_nt_assembly)
+            if all(p is not None for p in parts_nt_contig) and parts_nt_contig:
+                result[f"full_{chain}_nt_contig"] = "".join(parts_nt_contig)
             else:
-                result[f"full_{chain}_nt_assembly"] = None
+                result[f"full_{chain}_nt_contig"] = None
             if parts_nt_optimized:
                 result[f"full_{chain}_nt_optimized"] = "".join(parts_nt_optimized)
 
@@ -2235,11 +2242,13 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     * ``single_chain_nt_optimized`` — built from
       ``full_*_nt_optimized``. The ready-to-order synthesis construct;
       same bytes for every donor with the same picked allele.
-    * ``single_chain_nt_assembly`` — built from ``full_*_nt_assembly``.
+    * ``single_chain_nt_contig`` — built from ``full_*_nt_contig``.
       ``None`` for any clone where either chain's contig didn't cover
-      its constant region (assembly columns are ``None`` there). Useful
-      for QC and for inspecting the donor's actual cassette bytes
-      end-to-end.
+      its constant region (``_contig`` columns are ``None`` there).
+      **Truncated at contig coverage** — useful for QC and inspecting
+      the donor's actual bytes, but not a complete CDS and not
+      synthesis-ready. Reach for ``_optimized`` if you want a
+      complete cassette.
 
     The β CDS in each variant has ALL trailing stops stripped before
     the linker — the 2A construct requires a continuous ORF across
@@ -2281,13 +2290,13 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     if linker_nt:
         # Build the triad. Each variant uses its matching beta/alpha
         # input column; if either input is missing or contains None
-        # (assembly view when contig didn't cover the C region) the
+        # (contig view when contig didn't cover the C region) the
         # output is None — splicing a None into a 2A construct would
         # be silently wrong.
         for suffix, out_col in (
             ("", "single_chain_nt"),
             ("_optimized", "single_chain_nt_optimized"),
-            ("_assembly", "single_chain_nt_assembly"),
+            ("_contig", "single_chain_nt_contig"),
         ):
             beta_col = f"full_beta_nt{suffix}"
             alpha_col = f"full_alpha_nt{suffix}"
@@ -3023,11 +3032,12 @@ def _nt_translates_to(nt: str, aa: str, strip_trailing_stop: bool = True) -> boo
     return translated == aa
 
 
-def _nt_assembly_in_frame_no_premature_stop(nt: str, aa: str) -> bool:
-    """Check that an ``_assembly`` NT column (donor's CellRanger bytes
-    past the J→C junction) is in-frame and free of premature stops.
+def _nt_contig_in_frame_no_premature_stop(nt: str, aa: str) -> bool:
+    """Check that a ``_contig`` NT column (donor's CellRanger contig
+    bytes past the J→C junction) is in-frame and free of premature
+    stops.
 
-    We DON'T require AA agreement with ``aa`` — the assembly view is
+    We DON'T require AA agreement with ``aa`` — the contig view is
     raw donor bytes; polymorphisms vs. the canonical reference are
     expected (that's what the blender handles by switching at the
     mismatch). We DO require the largest 3·N prefix to:
@@ -3037,7 +3047,7 @@ def _nt_assembly_in_frame_no_premature_stop(nt: str, aa: str) -> bool:
       (only the 3' UTR past the coding region may carry stops, but
       capping at ``len(aa)`` ignores anything past the coding region).
 
-    Returns False if the assembly NT has zero in-frame codons before
+    Returns False if the contig NT has zero in-frame codons before
     the first stop, or if it appears non-coding.
     """
     if not isinstance(nt, str) or not nt:
@@ -3069,7 +3079,7 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
       after dropping any trailing stop codons.
     - ``{chain}_constant_nt_optimized`` translates to
       ``{chain}_constant_aa`` after dropping trailing stops (#116).
-    - ``{chain}_constant_nt_assembly`` (when not None) is in-frame
+    - ``{chain}_constant_nt_contig`` (when not None) is in-frame
       and free of premature stops — donor polymorphisms vs. canonical
       AA are NOT flagged (the blender handles them); only frame
       errors or non-coding contigs surface here (#116).
@@ -3110,16 +3120,16 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
                                 f"{nt_col} does not translate to {aa_col} "
                                 f"(after stripping trailing stops)")
 
-        # `_constant_nt_assembly` (#116): pure donor NT. May end mid-
+        # `_constant_nt_contig` (#116): pure donor NT. May end mid-
         # codon or extend past the AA — translate the largest 3·N
         # prefix and check it matches the AA prefix of equal length.
-        nt_col = f"{chain}_constant_nt_assembly"
+        nt_col = f"{chain}_constant_nt_contig"
         if nt_col in df.columns and aa_col in df.columns:
             for idx, row in df.iterrows():
                 nt = row.get(nt_col)
                 aa = row.get(aa_col)
                 if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
-                    if not _nt_assembly_in_frame_no_premature_stop(nt, aa):
+                    if not _nt_contig_in_frame_no_premature_stop(nt, aa):
                         _lb(idx,
                             f"{nt_col} is out-of-frame or hits a premature "
                             f"stop within the first {3 * len(aa)} nt — the "
@@ -3140,7 +3150,7 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
 
     # ``single_chain_nt`` and ``_optimized`` must translate exactly to
     # ``single_chain_aa`` (canonical AA throughout — these views use
-    # canonical bytes for the C region). ``_assembly`` uses donor
+    # canonical bytes for the C region). ``_contig`` uses donor
     # bytes for the C region and may legitimately differ from
     # canonical at polymorphisms — only require it to be in-frame
     # and free of mid-chain stops (#116).
@@ -3154,13 +3164,13 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
                         _lb(idx,
                             f"{nt_col} does not translate to single_chain_aa "
                             f"— frame likely broken at a splice boundary (#91)")
-    nt_col = "single_chain_nt_assembly"
+    nt_col = "single_chain_nt_contig"
     if nt_col in df.columns and "single_chain_aa" in df.columns:
         for idx, row in df.iterrows():
             nt = row.get(nt_col)
             aa = row.get("single_chain_aa")
             if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
-                if not _nt_assembly_in_frame_no_premature_stop(nt, aa):
+                if not _nt_contig_in_frame_no_premature_stop(nt, aa):
                     _lb(idx,
                         f"{nt_col} is out-of-frame or hits a premature "
                         f"stop within the coding region — the donor's "
