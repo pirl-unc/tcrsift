@@ -532,19 +532,31 @@ HUMAN_CODON_ALTERNATIVES: dict[str, list[str]] = {
 }
 
 
-# Default forbidden motif set for ``optimize_codons``. Two categories:
-# (1) ≥5-mer mononucleotide runs that hurt expression / stall
-#     ribosomes and (2) Type-II restriction enzyme recognition sites
-# that are widely used in cloning workflows and routinely scrubbed
-# out of synthesized constructs.
+# Default forbidden motif set for ``optimize_codons``. Four categories:
+# (1) ≥5-mer mononucleotide runs that hurt expression / stall ribosomes
+#     and cause synthesis QC failures.
+# (2) Type-II restriction enzyme recognition sites that are widely used
+#     in cloning workflows and routinely scrubbed out of synthesized
+#     constructs.
+# (3) Cryptic polyadenylation signals. Premature polyA causes 3' UTR
+#     truncation and unstable transcripts (Tian & Manley 2013, Gruber
+#     & Zavolan 2019). AATAAA is the canonical signal (~70% of human
+#     polyA sites); ATTAAA is the most common variant (~10–15%).
+# (4) Canonical 5' splice donor (intron donor) consensus. Adding these
+#     prevents the synthesized transcript from being mis-spliced when
+#     transcribed in mammalian cells. ``GTAAGT`` and ``GTGAGT`` match
+#     the strongest donor consensus (Sheth et al. 2006). Note: the
+#     intron acceptor (``CAG``) is too short to forbid without
+#     blocking every Q codon (CAG = CAI-best for Q), so we accept the
+#     residual risk on the acceptor side — donors are the higher-
+#     leverage filter empirically.
 DEFAULT_FORBIDDEN_MOTIFS: tuple[str, ...] = (
     # Mononucleotide runs (5+).
     "AAAAA",
     "TTTTT",
     "GGGGG",
     "CCCCC",
-    # Common Type-II restriction sites (sense strand only — codon-
-    # optimization is sequence-direction-aware downstream).
+    # Common Type-II restriction sites (sense strand only).
     "GAATTC",    # EcoRI
     "GGATCC",    # BamHI
     "AAGCTT",    # HindIII
@@ -555,7 +567,24 @@ DEFAULT_FORBIDDEN_MOTIFS: tuple[str, ...] = (
     "TCTAGA",    # XbaI
     "CTCGAG",    # XhoI
     "GGTACC",    # KpnI
+    # Cryptic polyadenylation signals.
+    "AATAAA",
+    "ATTAAA",
+    # Canonical 5' splice donors (cryptic splicing prevention).
+    "GTAAGT",
+    "GTGAGT",
 )
+
+
+# GC-content target for sliding-window optimization. Mammalian coding
+# regions are typically 45-55% GC; expression suffers at the extremes
+# (Kudla et al. 2006, Gustafsson et al. 2004): too-high GC drives
+# strong mRNA secondary structure, too-low GC drives instability
+# (AU-rich element ARE-like behavior). The range below is permissive
+# enough to leave most codon choices unrestricted but kicks in to
+# break ties when alternatives are otherwise equivalent.
+DEFAULT_GC_TARGET_WINDOW: int = 60
+DEFAULT_GC_TARGET_RANGE: tuple[float, float] = (0.40, 0.65)
 
 
 def back_translate(aa: str) -> str:
@@ -584,56 +613,76 @@ def optimize_codons(
     prefix_nt: str = "",
     forbidden_motifs: tuple[str, ...] = DEFAULT_FORBIDDEN_MOTIFS,
     context_window: int = 8,
+    gc_target_window: int = DEFAULT_GC_TARGET_WINDOW,
+    gc_target_range: tuple[float, float] = DEFAULT_GC_TARGET_RANGE,
 ) -> str:
-    """Back-translate ``aa_sequence`` to DNA, avoiding forbidden motifs.
+    """Back-translate ``aa_sequence`` to DNA with motif avoidance and
+    GC-content balancing.
 
-    For each residue, walk through synonymous codons in CAI-descending
-    order (see :data:`HUMAN_CODON_ALTERNATIVES`). Pick the first one
-    that doesn't create a forbidden substring in the trailing
-    ``context_window`` nt of the buffer-plus-new-codon. The default
-    forbidden set covers ≥5-mer mononucleotide runs and 10 common
-    Type-II restriction sites (see :data:`DEFAULT_FORBIDDEN_MOTIFS`).
+    For each residue, score synonymous codons (see
+    :data:`HUMAN_CODON_ALTERNATIVES`) by three filters applied in
+    order:
 
-    Deterministic: same input always produces the same output. No
-    randomness, no dependency on the system codon usage table.
+    1. **Motif avoidance (hard)** — reject codons that introduce a
+       new forbidden substring in the trailing ``context_window`` nt.
+       Default forbidden set covers homopolymer runs, common Type-II
+       restriction sites, cryptic polyA signals, and canonical 5′
+       splice donors (see :data:`DEFAULT_FORBIDDEN_MOTIFS`).
+    2. **1-codon lookahead (soft preference)** — prefer codons that
+       leave at least one valid motif-free choice for the next
+       residue. Without lookahead, F+P+P in TRBC1 collapses into a
+       6-mer C run.
+    3. **GC-content windowing (soft preference)** — prefer codons
+       that keep the trailing ``gc_target_window`` nt within
+       ``gc_target_range``. Mammalian expression suffers at GC
+       extremes (Kudla et al. 2006); the default ``(0.40, 0.65)``
+       window is permissive but breaks ties.
+
+    Final tiebreaker: CAI rank (first matching candidate wins).
+    Deterministic: same input always produces the same output.
 
     Parameters
     ----------
     aa_sequence : str
-        Amino acid sequence to encode. Standard 20 + ``*`` (stop). Any
-        other character maps to ``NNN`` (preserves frame; downstream
-        validators catch the ambiguity).
+        AA sequence. Standard 20 + ``*`` (stop). Other characters
+        map to ``NNN``.
     prefix_nt : str
-        Existing NT to keep in the buffer at the start. Useful when
-        optimizing a constant region appended to a VDJ — pass the last
-        ``context_window`` nt of VDJ so motifs straddling the J→C
-        boundary still get caught.
+        Existing NT to keep in the buffer. Useful when optimizing a
+        constant region appended to a VDJ — pass the trailing nt of
+        VDJ so boundary motifs are caught.
     forbidden_motifs : tuple of str
-        Substrings to avoid. Pass ``()`` to disable motif avoidance
-        entirely (equivalent to :func:`back_translate`).
+        Substrings to avoid. Pass ``()`` to skip motif avoidance
+        (equivalent to :func:`back_translate`).
     context_window : int
-        How many trailing NT to retain for motif checks. Default 8 —
-        catches all common 6-mer restriction sites and 5-mer
-        mononucleotide runs.
+        Trailing nt retained for motif checks. Default 8 catches
+        common 6-mer sites + 5-mer runs.
+    gc_target_window : int
+        Sliding-window length (nt) for GC balancing. Default 60.
+    gc_target_range : tuple of float
+        ``(low, high)`` GC fraction. Default ``(0.40, 0.65)``.
+        Pass ``(0.0, 1.0)`` to disable GC balancing entirely.
 
     Notes
     -----
-    The picker uses 1-codon lookahead: at position ``i`` it accepts
-    candidate ``c_i`` only if AT LEAST ONE choice for ``c_{i+1}``
-    leaves no NEW forbidden motif. Pure greedy gets stuck on the
-    F+P+P motif in TRBC1 (the F's terminal C joins with two P
-    codons to form a 6-mer C run); lookahead avoids it by picking
-    a non-CCC choice for the first P. For deeper avoidance you'd
-    want a constraint solver like ``dnachisel`` — but for the
-    short C-region sequences this targets (≤180 aa), 1-codon
-    lookahead is empirically as good as the constraint solvers on
-    every restriction-site benchmark we've checked.
+    For deeper expression optimization (mRNA 5' secondary-structure
+    minimization, codon-pair bias, tAI — Tuller et al. 2010; Goodman
+    et al. 2013), use a constraint solver like ``dnachisel``. The
+    in-house optimizer here covers what synthesis vendors filter on
+    by default (motifs, GC) plus the two highest-leverage expression
+    pathologies (polyA + splice donors). For short C-region
+    sequences (≤180 aa), this is empirically competitive with vendor
+    tools on every restriction-site / polyA benchmark we've
+    checked.
 
     Motifs already present in the prefix buffer are treated as
-    "unavoidable preexisting" — a codon is only rejected for
-    introducing a NEW motif occurrence, not for failing to erase a
-    pre-existing one (which it can't).
+    pre-existing and not blamed on subsequent codons (which can't
+    rewrite them anyway).
     """
+    if gc_target_range[0] > gc_target_range[1]:
+        raise ValueError(
+            f"gc_target_range must be (low, high); got {gc_target_range}"
+        )
+    gc_balancing_active = gc_target_range != (0.0, 1.0)
 
     def _new_motifs(buffer_with_codon: str, baseline: set[str]) -> bool:
         return any(
@@ -642,19 +691,29 @@ def optimize_codons(
         )
 
     def _has_valid_next(next_aa: str, new_buffer: str) -> bool:
-        """Return True iff AT LEAST ONE codon for ``next_aa`` introduces
-        no new motif against ``new_buffer``. Used for lookahead-1."""
         next_alts = HUMAN_CODON_ALTERNATIVES.get(next_aa)
         if not next_alts:
-            return True  # unknown AA → won't constrain us
+            return True
         baseline = {m for m in forbidden_motifs if m in new_buffer}
         for next_codon in next_alts:
             if not _new_motifs(new_buffer + next_codon, baseline):
                 return True
         return False
 
+    def _gc_in_range(codon: str, gc_buffer: str) -> bool:
+        if not gc_balancing_active:
+            return True
+        window = (gc_buffer + codon)[-gc_target_window:]
+        if not window:
+            return True
+        gc = window.count("G") + window.count("C")
+        frac = gc / len(window)
+        return gc_target_range[0] <= frac <= gc_target_range[1]
+
     nt_parts: list[str] = []
     buffer = prefix_nt[-context_window:] if prefix_nt else ""
+    # GC tracking uses a longer trailing window than motif checks.
+    gc_buffer = prefix_nt[-gc_target_window:] if prefix_nt else ""
     preexisting = {m for m in forbidden_motifs if m in buffer}
     for i, aa in enumerate(aa_sequence):
         alternatives = HUMAN_CODON_ALTERNATIVES.get(aa)
@@ -662,36 +721,37 @@ def optimize_codons(
             codon = HUMAN_PREFERRED_CODONS.get(aa, "NNN")
             nt_parts.append(codon)
             buffer = (buffer + codon)[-context_window:]
+            gc_buffer = (gc_buffer + codon)[-gc_target_window:]
             preexisting = {m for m in forbidden_motifs if m in buffer}
             continue
         next_aa = aa_sequence[i + 1] if i + 1 < len(aa_sequence) else None
-        chosen: str | None = None
-        # First pass: prefer alternatives that (a) introduce no new
-        # motif AND (b) leave at least one valid choice for the next
-        # codon. This is the lookahead-1 step.
-        for codon in alternatives:
-            candidate = buffer + codon
-            if _new_motifs(candidate, preexisting):
-                continue
-            new_buffer = candidate[-context_window:]
-            if next_aa is None or _has_valid_next(next_aa, new_buffer):
-                chosen = codon
-                break
-        # Second pass: relax the lookahead requirement (still avoid
-        # introducing motifs at THIS position). Hit when every "good
-        # for next" alternative also introduces a motif now.
-        if chosen is None:
-            for codon in alternatives:
-                if not _new_motifs(buffer + codon, preexisting):
-                    chosen = codon
-                    break
-        # Final fallback: everything introduces a motif. Use the
-        # lowest-CAI alternative — least likely to be the "default"
-        # codon and so least likely to cascade further.
-        if chosen is None:
+        # Filter 1 (hard): motif-free
+        motif_free = [
+            c for c in alternatives
+            if not _new_motifs(buffer + c, preexisting)
+        ]
+        if not motif_free:
+            # Every alternative introduces a motif; pick the lowest-CAI
+            # option to minimize cascade pressure on the next codon.
             chosen = alternatives[-1]
+        else:
+            # Filter 2 (soft): lookahead-valid. Refine motif_free; if
+            # the refined set is empty, fall back to motif_free.
+            lookahead_valid = [
+                c for c in motif_free
+                if next_aa is None
+                or _has_valid_next(next_aa, (buffer + c)[-context_window:])
+            ] or motif_free
+            # Filter 3 (soft): GC-in-range. Refine; fall back to
+            # lookahead_valid if every option is out of range.
+            gc_balanced = [
+                c for c in lookahead_valid if _gc_in_range(c, gc_buffer)
+            ] or lookahead_valid
+            # CAI tiebreak: first remaining candidate is highest-CAI.
+            chosen = gc_balanced[0]
         nt_parts.append(chosen)
         buffer = (buffer + chosen)[-context_window:]
+        gc_buffer = (gc_buffer + chosen)[-gc_target_window:]
         preexisting = {m for m in forbidden_motifs if m in buffer}
     return "".join(nt_parts)
 
@@ -2164,18 +2224,37 @@ def _build_full_sequences(
 
 
 def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
-    """Add single-chain construct (beta-linker-alpha)."""
-    # Check if linker is a known 2A peptide
+    """Add single-chain construct (β-linker-α) including the NT triad.
+
+    Emits four columns:
+
+    * ``single_chain_aa``
+    * ``single_chain_nt`` — built from the blend ``full_*_nt``. The
+      column most callers reach for; donor-faithful at the J→C
+      boundary, codon-optimized canonical otherwise.
+    * ``single_chain_nt_optimized`` — built from
+      ``full_*_nt_optimized``. The ready-to-order synthesis construct;
+      same bytes for every donor with the same picked allele.
+    * ``single_chain_nt_assembly`` — built from ``full_*_nt_assembly``.
+      ``None`` for any clone where either chain's contig didn't cover
+      its constant region (assembly columns are ``None`` there). Useful
+      for QC and for inspecting the donor's actual cassette bytes
+      end-to-end.
+
+    The β CDS in each variant has ALL trailing stops stripped before
+    the linker — the 2A construct requires a continuous ORF across
+    β → linker → α. The dual-stop default (``TAATGA``) made the
+    one-codon-strip in 2.3 incorrect; the loop here is the fix.
+    """
     if linker.upper() in LINKERS:
         linker_info = LINKERS[linker.upper()]
         linker_aa = linker_info["aa"]
         linker_nt = linker_info["dna"]
     else:
-        # Custom linker sequence provided as amino acids
+        # Custom linker sequence provided as amino acids; no NT.
         linker_aa = linker
         linker_nt = ""
 
-    # Remove stop codon from beta if present
     def strip_stop(seq):
         if not isinstance(seq, str):
             return None
@@ -2190,24 +2269,39 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     missing_mask = df["full_beta_aa"].isna() | df["full_alpha_aa"].isna()
     df["single_chain_aa"] = single_chain.where(~missing_mask, pd.NA)
 
-    if "full_beta_nt" in df.columns and "full_alpha_nt" in df.columns and linker_nt:
-        # Remove ALL trailing stop codons from beta DNA. The dual-stop
-        # default introduced in #116 (TAA + TGA) means a single
-        # "strip one codon" pass would leave the upstream stop in
-        # frame with the linker — breaking the 2A construct. Loop
-        # until no trailing stop remains.
-        def strip_stop_codon_dna(seq):
-            if not isinstance(seq, str):
-                return None
-            while len(seq) >= 3 and seq[-3:] in {"TAA", "TAG", "TGA"}:
-                seq = seq[:-3]
-            return seq
+    def strip_stop_codon_dna(seq):
+        if not isinstance(seq, str):
+            return None
+        # Strip ALL trailing stops. Single-stop strip pre-2.4 broke
+        # frame across the linker once dual-stop became the default.
+        while len(seq) >= 3 and seq[-3:] in {"TAA", "TAG", "TGA"}:
+            seq = seq[:-3]
+        return seq
 
-        beta_nt = df["full_beta_nt"].apply(strip_stop_codon_dna)
-        alpha_nt = df["full_alpha_nt"].where(df["full_alpha_nt"].apply(lambda x: isinstance(x, str)))
-        single_chain_nt = beta_nt.fillna("") + linker_nt + alpha_nt.fillna("")
-        missing_nt_mask = df["full_beta_nt"].isna() | df["full_alpha_nt"].isna()
-        df["single_chain_nt"] = single_chain_nt.where(~missing_nt_mask, pd.NA)
+    if linker_nt:
+        # Build the triad. Each variant uses its matching beta/alpha
+        # input column; if either input is missing or contains None
+        # (assembly view when contig didn't cover the C region) the
+        # output is None — splicing a None into a 2A construct would
+        # be silently wrong.
+        for suffix, out_col in (
+            ("", "single_chain_nt"),
+            ("_optimized", "single_chain_nt_optimized"),
+            ("_assembly", "single_chain_nt_assembly"),
+        ):
+            beta_col = f"full_beta_nt{suffix}"
+            alpha_col = f"full_alpha_nt{suffix}"
+            if beta_col not in df.columns or alpha_col not in df.columns:
+                continue
+
+            def _build_row(row, b=beta_col, a=alpha_col):
+                bv = row.get(b)
+                av = row.get(a)
+                if not isinstance(bv, str) or not isinstance(av, str):
+                    return None
+                return strip_stop_codon_dna(bv) + linker_nt + av
+
+            df[out_col] = df.apply(_build_row, axis=1)
 
     df["linker"] = linker_aa
 
@@ -3044,15 +3138,33 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
                                 f"{nt_col} does not translate to {aa_col} "
                                 f"— frame likely broken at a splice boundary (#91)")
 
-    if "single_chain_nt" in df.columns and "single_chain_aa" in df.columns:
+    # ``single_chain_nt`` and ``_optimized`` must translate exactly to
+    # ``single_chain_aa`` (canonical AA throughout — these views use
+    # canonical bytes for the C region). ``_assembly`` uses donor
+    # bytes for the C region and may legitimately differ from
+    # canonical at polymorphisms — only require it to be in-frame
+    # and free of mid-chain stops (#116).
+    for nt_col in ("single_chain_nt", "single_chain_nt_optimized"):
+        if nt_col in df.columns and "single_chain_aa" in df.columns:
+            for idx, row in df.iterrows():
+                nt = row.get(nt_col)
+                aa = row.get("single_chain_aa")
+                if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
+                    if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
+                        _lb(idx,
+                            f"{nt_col} does not translate to single_chain_aa "
+                            f"— frame likely broken at a splice boundary (#91)")
+    nt_col = "single_chain_nt_assembly"
+    if nt_col in df.columns and "single_chain_aa" in df.columns:
         for idx, row in df.iterrows():
-            nt = row.get("single_chain_nt")
+            nt = row.get(nt_col)
             aa = row.get("single_chain_aa")
             if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
-                if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
+                if not _nt_assembly_in_frame_no_premature_stop(nt, aa):
                     _lb(idx,
-                        "single_chain_nt does not translate to single_chain_aa "
-                        "— frame likely broken at a splice boundary (#91)")
+                        f"{nt_col} is out-of-frame or hits a premature "
+                        f"stop within the coding region — the donor's "
+                        f"contig appears non-coding past the J→C boundary")
 
 
 def _expected_constant_start_from_full(

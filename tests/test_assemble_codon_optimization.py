@@ -137,6 +137,77 @@ class TestOptimizeCodonsBasics:
         assert nt == "AAG" * 6  # CAI-best for every K
 
 
+class TestExpressionQualityMotifs:
+    """The default motif set extends past restriction sites and
+    homopolymer runs to include polyA + splice donor consensus
+    (#116 expression-quality additions)."""
+
+    @pytest.mark.parametrize("motif,kind", [
+        ("AATAAA", "polyA canonical"),
+        ("ATTAAA", "polyA cryptic"),
+        ("GTAAGT", "5' splice donor canonical"),
+        ("GTGAGT", "5' splice donor variant"),
+    ])
+    def test_canonical_constants_free_of_motif(self, motif, kind):
+        # The default optimization of every canonical constant must
+        # avoid these expression-killing motifs.
+        seqs = get_constant_region_sequences()
+        for gene, nt in seqs.items():
+            assert motif not in nt, (
+                f"{kind} motif {motif!r} appeared in optimized {gene}"
+            )
+
+    def test_polya_motif_actively_avoided(self):
+        # N-K is the natural source of AATAAA: N→AAT, K→AAA → "AATAAA".
+        # Optimizer should pick N→AAC and/or K→AAG to break the motif.
+        nt = optimize_codons("NK")
+        assert "AATAAA" not in nt
+        # Round-trip check (the avoidance shouldn't break translation).
+        translated, _ = translate_dna(nt)
+        assert translated == "NK"
+
+    def test_splice_donor_avoided_at_VS_junction(self):
+        # V-S can spell GTAAGT when V picks GTA and S picks AGT.
+        # CAI-best is V→GTG, S→AGC → GTGAGC, which is also a 5' splice
+        # donor variant. With the new GTGAGT in forbidden_motifs the
+        # optimizer should reject GTGAGT and pick alternatives.
+        nt = optimize_codons("VS")
+        assert "GTAAGT" not in nt
+        assert "GTGAGT" not in nt
+        translated, _ = translate_dna(nt)
+        assert translated == "VS"
+
+
+class TestGcWindowing:
+    """GC-content balancing (#116). Sliding window of 60 nt should be
+    biased toward 40–65% GC where alternatives permit."""
+
+    def test_gc_target_disabled_recovers_cai_pick(self):
+        # With GC balancing disabled, K should always pick CAI-best AAG.
+        nt = optimize_codons("KKKK", gc_target_range=(0.0, 1.0))
+        # CAI-best K is AAG. (Without GC bias, all 4 K's get AAG.)
+        assert nt == "AAGAAGAAGAAG"
+
+    def test_default_gc_keeps_canonical_in_range(self):
+        # The codon-optimized canonical constants should sit inside
+        # the GC target range when averaged.
+        seqs = get_constant_region_sequences()
+        for gene, nt in seqs.items():
+            # Drop trailing stops before measuring.
+            body = nt
+            while body[-3:] in {"TAA", "TAG", "TGA"}:
+                body = body[:-3]
+            gc = body.count("G") + body.count("C")
+            frac = gc / len(body)
+            assert 0.35 <= frac <= 0.70, (
+                f"{gene} optimized GC out of broad range: {frac:.2%}"
+            )
+
+    def test_gc_invalid_range_raises(self):
+        with pytest.raises(ValueError, match="gc_target_range"):
+            optimize_codons("M", gc_target_range=(0.7, 0.3))
+
+
 class TestOptimizeCodonsAvoidsRestrictionSites:
     """Restriction-site avoidance is the practical motivation for
     optimization — if these sites appear in synthesized constructs
@@ -463,6 +534,197 @@ class TestSingleChainDualStopStripping:
         assert translated == sc_aa, (
             "single_chain_nt does not translate to single_chain_aa — "
             "frame broke at the β→linker junction"
+        )
+
+
+class TestSingleChainTriad:
+    """The single-chain (β-2A-α) cassette is emitted in three flavors
+    matching the constant-region triad (#116): blend / optimized /
+    assembly. Synthesis users want ``_optimized``; QC users want
+    ``_assembly``; back-compat callers keep ``_constant_nt`` and
+    ``single_chain_nt`` unchanged."""
+
+    @staticmethod
+    def _df_no_contig():
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        return pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha,
+            "CDR3_beta": vdj_beta,
+            "VDJ_alpha_aa": vdj_alpha,
+            "VDJ_beta_aa": vdj_beta,
+            "VDJ_alpha_nt": back_translate(vdj_alpha),
+            "VDJ_beta_nt": back_translate(vdj_beta),
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "samples": "S1",
+        }])
+
+    def test_triad_columns_present(self):
+        out = assemble_full_sequences(
+            self._df_no_contig(),
+            alpha_leader=None, beta_leader=None,
+            linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        for col in (
+            "single_chain_nt",
+            "single_chain_nt_optimized",
+            "single_chain_nt_assembly",
+        ):
+            assert col in out.columns
+
+    def test_optimized_translates_to_single_chain_aa(self):
+        out = assemble_full_sequences(
+            self._df_no_contig(),
+            alpha_leader=None, beta_leader=None,
+            linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        nt = out["single_chain_nt_optimized"].iloc[0]
+        aa = out["single_chain_aa"].iloc[0]
+        translated, _ = translate_dna(nt)
+        assert translated == aa
+
+    def test_assembly_is_none_when_no_contig(self):
+        # Without contigs, full_*_nt_assembly is None for both chains,
+        # so the single-chain assembly must be None too.
+        out = assemble_full_sequences(
+            self._df_no_contig(),
+            alpha_leader=None, beta_leader=None,
+            linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        assert out["single_chain_nt_assembly"].iloc[0] is None
+
+    def test_optimized_ends_with_dual_stop(self):
+        # The β CDS in the cassette has all stops stripped (the
+        # construct is one ORF across the linker), but the ALPHA
+        # constant's stops survive at the 3' end.
+        out = assemble_full_sequences(
+            self._df_no_contig(),
+            alpha_leader=None, beta_leader=None,
+            linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        nt = out["single_chain_nt_optimized"].iloc[0]
+        assert nt.endswith("TAATGA"), (
+            f"single_chain_nt_optimized should end in dual stop; tail "
+            f"is {nt[-12:]!r}"
+        )
+
+    def test_optimized_has_no_internal_stop_before_linker(self):
+        # The 2A linker AA must appear once. The NT just before the
+        # linker NT must NOT be a stop codon — those should all be
+        # stripped from β.
+        out = assemble_full_sequences(
+            self._df_no_contig(),
+            alpha_leader=None, beta_leader=None,
+            linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        from tcrsift.assemble import LINKERS
+        linker_nt = LINKERS["T2A"]["dna"]
+        for col in ("single_chain_nt", "single_chain_nt_optimized"):
+            nt = out[col].iloc[0]
+            idx = nt.find(linker_nt)
+            assert idx > 0
+            assert nt[idx - 3 : idx] not in {"TAA", "TAG", "TGA"}, (
+                f"{col} has residual stop before T2A — "
+                f"strip_stop_codon_dna missed a trailing stop"
+            )
+
+    def test_optimized_differs_from_blend_at_constant_only(self):
+        # The blend uses canonical-optimized C-region bytes when no
+        # contig is provided, so the blend equals the optimized
+        # variant in this no-contig fixture. Verify the equivalence
+        # — it locks in the back-compat invariant.
+        out = assemble_full_sequences(
+            self._df_no_contig(),
+            alpha_leader=None, beta_leader=None,
+            linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        assert (
+            out["single_chain_nt"].iloc[0]
+            == out["single_chain_nt_optimized"].iloc[0]
+        ), (
+            "Without contigs the blend and the optimized cassette "
+            "must be byte-identical — both use the optimized canonical "
+            "for the C region."
+        )
+
+    def test_assembly_emitted_when_both_chains_have_contig(self, tmp_path):
+        # When BOTH α and β have contig bytes past the J→C junction,
+        # the assembly cassette must be a string, end with the
+        # donor's actual bytes from the α tail, and be in-frame +
+        # premature-stop-free across the whole construct.
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        leader_aa = "M" + "A" * 19
+        from tcrsift.assemble import (
+            HUMAN_TRAC_AA,
+            HUMAN_TRBC1_AA,
+        )
+
+        beta_c_start_nt = back_translate(HUMAN_TRBC1_AA[:8])
+        alpha_c_start_nt = back_translate(HUMAN_TRAC_AA[:8])
+        beta_contig_seq = (
+            back_translate(leader_aa)
+            + back_translate(vdj_beta)
+            + beta_c_start_nt
+        )
+        alpha_contig_seq = (
+            back_translate(leader_aa)
+            + back_translate(vdj_alpha)
+            + alpha_c_start_nt
+        )
+
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha,
+            "CDR3_beta": vdj_beta,
+            "VDJ_alpha_aa": vdj_alpha,
+            "VDJ_beta_aa": vdj_beta,
+            "VDJ_alpha_nt": back_translate(vdj_alpha),
+            "VDJ_beta_nt": back_translate(vdj_beta),
+            "alpha_c_gene": "TRAC",
+            "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "samples": "S1",
+            "alpha_contig_ids": "contig_a1",
+            "beta_contig_ids": "contig_b1",
+        }])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_a1\n{alpha_contig_seq}\n>contig_b1\n{beta_contig_seq}\n"
+        )
+
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        sc_asm = out["single_chain_nt_assembly"].iloc[0]
+        assert isinstance(sc_asm, str), (
+            "single_chain_nt_assembly should be a string when both "
+            f"chains have contig coverage, got {type(sc_asm).__name__}"
+        )
+        # In-frame.
+        assert len(sc_asm) % 3 == 0, (
+            f"single_chain_nt_assembly length {len(sc_asm)} not divisible "
+            "by 3 — frame broken"
+        )
+        # No mid-chain stops in the coding portion.
+        translated, ragged = translate_dna(sc_asm)
+        assert not ragged
+        assert "*" not in translated[:-1], (
+            "single_chain_nt_assembly has a premature stop in the "
+            "coding region"
         )
 
 
