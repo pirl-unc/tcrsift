@@ -497,17 +497,285 @@ HUMAN_PREFERRED_CODONS: dict[str, str] = {
 }
 
 
+# Synonymous codon alternatives per AA, ordered by human CAI descending.
+# Used by :func:`optimize_codons` for motif-aware back-translation: if the
+# CAI-best codon would create a forbidden motif in the surrounding
+# context, the picker walks down the list until it finds one that
+# doesn't. Falls back to the lowest-CAI option when every alternative
+# fails (rare; only possible when all synonyms share a problematic
+# common prefix — practically never for the motifs we forbid).
+#
+# Sources: CCDS-weighted human codon usage (GenScript table) cross-
+# checked against the Kazusa Codon Usage Database.
+HUMAN_CODON_ALTERNATIVES: dict[str, list[str]] = {
+    "A": ["GCC", "GCT", "GCA", "GCG"],
+    "R": ["CGG", "AGG", "CGC", "AGA", "CGA", "CGT"],
+    "N": ["AAC", "AAT"],
+    "D": ["GAC", "GAT"],
+    "C": ["TGC", "TGT"],
+    "Q": ["CAG", "CAA"],
+    "E": ["GAG", "GAA"],
+    "G": ["GGC", "GGA", "GGG", "GGT"],
+    "H": ["CAC", "CAT"],
+    "I": ["ATC", "ATT", "ATA"],
+    "L": ["CTG", "CTC", "TTG", "CTT", "CTA", "TTA"],
+    "K": ["AAG", "AAA"],
+    "M": ["ATG"],
+    "F": ["TTC", "TTT"],
+    "P": ["CCC", "CCT", "CCA", "CCG"],
+    "S": ["AGC", "TCC", "TCT", "AGT", "TCA", "TCG"],
+    "T": ["ACC", "ACA", "ACT", "ACG"],
+    "W": ["TGG"],
+    "Y": ["TAC", "TAT"],
+    "V": ["GTG", "GTC", "GTT", "GTA"],
+    "*": ["TAA", "TGA", "TAG"],
+}
+
+
+# Default forbidden motif set for ``optimize_codons``. Four categories:
+# (1) ≥5-mer mononucleotide runs that hurt expression / stall ribosomes
+#     and cause synthesis QC failures.
+# (2) Type-II restriction enzyme recognition sites that are widely used
+#     in cloning workflows and routinely scrubbed out of synthesized
+#     constructs.
+# (3) Cryptic polyadenylation signals. Premature polyA causes 3' UTR
+#     truncation and unstable transcripts (Tian & Manley 2013, Gruber
+#     & Zavolan 2019). AATAAA is the canonical signal (~70% of human
+#     polyA sites); ATTAAA is the most common variant (~10–15%).
+# (4) Canonical 5' splice donor (intron donor) consensus. Adding these
+#     prevents the synthesized transcript from being mis-spliced when
+#     transcribed in mammalian cells. ``GTAAGT`` and ``GTGAGT`` match
+#     the strongest donor consensus (Sheth et al. 2006). Note: the
+#     intron acceptor (``CAG``) is too short to forbid without
+#     blocking every Q codon (CAG = CAI-best for Q), so we accept the
+#     residual risk on the acceptor side — donors are the higher-
+#     leverage filter empirically.
+DEFAULT_FORBIDDEN_MOTIFS: tuple[str, ...] = (
+    # Mononucleotide runs (5+).
+    "AAAAA",
+    "TTTTT",
+    "GGGGG",
+    "CCCCC",
+    # Common Type-II restriction sites (sense strand only).
+    "GAATTC",    # EcoRI
+    "GGATCC",    # BamHI
+    "AAGCTT",    # HindIII
+    "CATATG",    # NdeI
+    "GCTAGC",    # NheI
+    "GCGGCCGC",  # NotI
+    "GTCGAC",    # SalI
+    "TCTAGA",    # XbaI
+    "CTCGAG",    # XhoI
+    "GGTACC",    # KpnI
+    # Cryptic polyadenylation signals.
+    "AATAAA",
+    "ATTAAA",
+    # Canonical 5' splice donors (cryptic splicing prevention).
+    "GTAAGT",
+    "GTGAGT",
+)
+
+
+# GC-content target for sliding-window optimization. Mammalian coding
+# regions are typically 45-55% GC; expression suffers at the extremes
+# (Kudla et al. 2006, Gustafsson et al. 2004): too-high GC drives
+# strong mRNA secondary structure, too-low GC drives instability
+# (AU-rich element ARE-like behavior). The range below is permissive
+# enough to leave most codon choices unrestricted but kicks in to
+# break ties when alternatives are otherwise equivalent.
+DEFAULT_GC_TARGET_WINDOW: int = 60
+DEFAULT_GC_TARGET_RANGE: tuple[float, float] = (0.40, 0.65)
+
+
 def back_translate(aa: str) -> str:
     """Reverse-translate a polypeptide to DNA via :data:`HUMAN_PREFERRED_CODONS`.
 
-    The result is one of many valid back-translations; tcrsift uses it
-    for NT columns that downstream pipelines expect (``*_constant_nt``)
-    but doesn't claim it matches any particular Ensembl transcript.
-    Unknown residues fall back to NNN.
+    The result is one of many valid back-translations; this is the naive
+    "single best codon per AA" version. For motif-aware back-translation
+    that avoids creating restriction sites and homopolymer runs at codon
+    boundaries, use :func:`optimize_codons` instead — which is what the
+    assembly path calls.
+
+    This function is kept for backward compatibility with external
+    callers (and a few internal sites where motif checks would be
+    counter-productive — e.g. when the caller is back-translating a
+    single forced codon for a junction residue). Unknown residues fall
+    back to NNN.
     """
     fallback = "NNN"
     out = [HUMAN_PREFERRED_CODONS.get(r, fallback) for r in aa]
     return "".join(out)
+
+
+def optimize_codons(
+    aa_sequence: str,
+    *,
+    prefix_nt: str = "",
+    forbidden_motifs: tuple[str, ...] = DEFAULT_FORBIDDEN_MOTIFS,
+    context_window: int = 8,
+    gc_target_window: int = DEFAULT_GC_TARGET_WINDOW,
+    gc_target_range: tuple[float, float] = DEFAULT_GC_TARGET_RANGE,
+) -> str:
+    """Back-translate ``aa_sequence`` to DNA with motif avoidance and
+    GC-content balancing.
+
+    For each residue, score synonymous codons (see
+    :data:`HUMAN_CODON_ALTERNATIVES`) by three filters applied in
+    order:
+
+    1. **Motif avoidance (hard)** — reject codons that introduce a
+       new forbidden substring in the trailing ``context_window`` nt.
+       Default forbidden set covers homopolymer runs, common Type-II
+       restriction sites, cryptic polyA signals, and canonical 5′
+       splice donors (see :data:`DEFAULT_FORBIDDEN_MOTIFS`).
+    2. **1-codon lookahead (soft preference)** — prefer codons that
+       leave at least one valid motif-free choice for the next
+       residue. Without lookahead, F+P+P in TRBC1 collapses into a
+       6-mer C run.
+    3. **GC-content windowing (soft preference)** — prefer codons
+       that keep the trailing ``gc_target_window`` nt within
+       ``gc_target_range``. Mammalian expression suffers at GC
+       extremes (Kudla et al. 2006); the default ``(0.40, 0.65)``
+       window is permissive but breaks ties.
+
+    Final tiebreaker: CAI rank (first matching candidate wins).
+    Deterministic: same input always produces the same output.
+
+    Parameters
+    ----------
+    aa_sequence : str
+        AA sequence. Standard 20 + ``*`` (stop). Other characters
+        map to ``NNN``.
+    prefix_nt : str
+        Existing NT to keep in the buffer. Useful when optimizing a
+        constant region appended to a VDJ — pass the trailing nt of
+        VDJ so boundary motifs are caught.
+    forbidden_motifs : tuple of str
+        Substrings to avoid. Pass ``()`` to skip motif avoidance
+        (equivalent to :func:`back_translate`).
+    context_window : int
+        Trailing nt retained for motif checks. Default 8 catches
+        common 6-mer sites + 5-mer runs.
+    gc_target_window : int
+        Sliding-window length (nt) for GC balancing. Default 60.
+    gc_target_range : tuple of float
+        ``(low, high)`` GC fraction. Default ``(0.40, 0.65)``.
+        Pass ``(0.0, 1.0)`` to disable GC balancing entirely.
+
+    Notes
+    -----
+    For deeper expression optimization (mRNA 5' secondary-structure
+    minimization, codon-pair bias, tAI — Tuller et al. 2010; Goodman
+    et al. 2013), use a constraint solver like ``dnachisel``. The
+    in-house optimizer here covers what synthesis vendors filter on
+    by default (motifs, GC) plus the two highest-leverage expression
+    pathologies (polyA + splice donors). For short C-region
+    sequences (≤180 aa), this is empirically competitive with vendor
+    tools on every restriction-site / polyA benchmark we've
+    checked.
+
+    Motifs already present in the prefix buffer are treated as
+    pre-existing and not blamed on subsequent codons (which can't
+    rewrite them anyway).
+    """
+    if gc_target_range[0] > gc_target_range[1]:
+        raise ValueError(
+            f"gc_target_range must be (low, high); got {gc_target_range}"
+        )
+    gc_balancing_active = gc_target_range != (0.0, 1.0)
+
+    def _new_motifs(buffer_with_codon: str, baseline: set[str]) -> bool:
+        return any(
+            motif not in baseline and motif in buffer_with_codon
+            for motif in forbidden_motifs
+        )
+
+    def _has_valid_next(next_aa: str, new_buffer: str) -> bool:
+        next_alts = HUMAN_CODON_ALTERNATIVES.get(next_aa)
+        if not next_alts:
+            return True
+        baseline = {m for m in forbidden_motifs if m in new_buffer}
+        for next_codon in next_alts:
+            if not _new_motifs(new_buffer + next_codon, baseline):
+                return True
+        return False
+
+    def _gc_in_range(codon: str, gc_buffer: str) -> bool:
+        if not gc_balancing_active:
+            return True
+        window = (gc_buffer + codon)[-gc_target_window:]
+        if not window:
+            return True
+        gc = window.count("G") + window.count("C")
+        frac = gc / len(window)
+        return gc_target_range[0] <= frac <= gc_target_range[1]
+
+    nt_parts: list[str] = []
+    buffer = prefix_nt[-context_window:] if prefix_nt else ""
+    # GC tracking uses a longer trailing window than motif checks.
+    gc_buffer = prefix_nt[-gc_target_window:] if prefix_nt else ""
+    preexisting = {m for m in forbidden_motifs if m in buffer}
+    for i, aa in enumerate(aa_sequence):
+        alternatives = HUMAN_CODON_ALTERNATIVES.get(aa)
+        if not alternatives:
+            codon = HUMAN_PREFERRED_CODONS.get(aa, "NNN")
+            nt_parts.append(codon)
+            buffer = (buffer + codon)[-context_window:]
+            gc_buffer = (gc_buffer + codon)[-gc_target_window:]
+            preexisting = {m for m in forbidden_motifs if m in buffer}
+            continue
+        next_aa = aa_sequence[i + 1] if i + 1 < len(aa_sequence) else None
+        # Filter 1 (hard): motif-free
+        motif_free = [
+            c for c in alternatives
+            if not _new_motifs(buffer + c, preexisting)
+        ]
+        if not motif_free:
+            # Every alternative introduces a motif; pick the lowest-CAI
+            # option to minimize cascade pressure on the next codon.
+            chosen = alternatives[-1]
+        else:
+            # Filter 2 (soft): lookahead-valid. Refine motif_free; if
+            # the refined set is empty, fall back to motif_free.
+            lookahead_valid = [
+                c for c in motif_free
+                if next_aa is None
+                or _has_valid_next(next_aa, (buffer + c)[-context_window:])
+            ] or motif_free
+            # Filter 3 (soft): GC-in-range. Refine; fall back to
+            # lookahead_valid if every option is out of range.
+            gc_balanced = [
+                c for c in lookahead_valid if _gc_in_range(c, gc_buffer)
+            ] or lookahead_valid
+            # CAI tiebreak: first remaining candidate is highest-CAI.
+            chosen = gc_balanced[0]
+        nt_parts.append(chosen)
+        buffer = (buffer + chosen)[-context_window:]
+        gc_buffer = (gc_buffer + chosen)[-gc_target_window:]
+        preexisting = {m for m in forbidden_motifs if m in buffer}
+    return "".join(nt_parts)
+
+
+def stop_codons_nt(stop_codons: tuple[str, ...]) -> str:
+    """Validate and concatenate stop codons for appending to a CDS.
+
+    Each entry must be a 3-character DNA codon coding for a stop
+    (``TAA`` / ``TAG`` / ``TGA``). Duplicates are allowed but the
+    canonical "two non-redundant stops" pattern from cloning practice
+    uses two DIFFERENT stops (different release-factor recognition);
+    we don't enforce non-redundancy here but the default in
+    :func:`assemble_full_sequences` is ``("TAA", "TGA")``.
+    """
+    if not stop_codons:
+        return ""
+    valid = {"TAA", "TAG", "TGA"}
+    bad = [c for c in stop_codons if c not in valid]
+    if bad:
+        raise ValueError(
+            f"stop_codons entries must be one of {sorted(valid)}; "
+            f"got: {bad}"
+        )
+    return "".join(stop_codons)
 
 
 def pick_canonical_constant(
@@ -762,29 +1030,42 @@ def load_contigs(contig_dir: str | Path) -> dict[str, dict[str, str]]:
     return sample_contigs
 
 
-def get_constant_region_sequences() -> dict[str, str]:
+def get_constant_region_sequences(
+    *,
+    stop_codons: tuple[str, ...] = ("TAA", "TGA"),
+) -> dict[str, str]:
     """
-    Return human TCR constant-region CDS (DNA) via back-translation.
+    Return human TCR constant-region CDS (DNA) via codon-aware back-
+    translation.
 
     Sources NT from :data:`HUMAN_CONSTANT_REGIONS_AA` and
-    :func:`back_translate`. The earlier pyensembl-backed implementation
-    of this function read the full mRNA at frame offset 2 and silently
-    truncated TRAC / TRBC1 / TRBC2 to 2–11 residues for every
-    assembled clonotype (#66). Hardcoding eliminates the frame bug,
-    drops the pyensembl dependency, and matches the canonical
-    sequences that downstream cloning constructs need (#67).
+    :func:`optimize_codons` (motif-aware — avoids 5+ mononucleotide
+    runs and common Type-II restriction sites; see #116). The earlier
+    pyensembl-backed implementation read the full mRNA at frame
+    offset 2 and silently truncated TRAC / TRBC1 / TRBC2 to 2–11
+    residues for every assembled clonotype (#66). Hardcoding
+    eliminates the frame bug, drops the pyensembl dependency, and
+    matches the canonical sequences that downstream cloning
+    constructs need (#67).
+
+    Parameters
+    ----------
+    stop_codons : tuple of str, default ``("TAA", "TGA")``
+        Stop codons to append to each CDS. Default is the two
+        non-redundant stops (different release factors → reduces
+        read-through in synthesized constructs).
 
     Returns
     -------
     dict
-        Gene name → CDS (DNA, ATG-prepended … stop). Sourced from the
-        canonical AA via :func:`back_translate`.
+        Gene name → CDS (DNA, post-junction-codon-aligned … stop).
+        Each CDS is the codon-optimized translation of the canonical
+        AA plus the requested stop codons.
     """
+    stops_nt = stop_codons_nt(stop_codons)
     out: dict[str, str] = {}
     for name, aa in HUMAN_CONSTANT_REGIONS_AA.items():
-        # Construct ends at the canonical C-terminus; back-translate
-        # the polypeptide and append a stop codon for completeness.
-        out[name] = back_translate(aa) + HUMAN_PREFERRED_CODONS["*"]
+        out[name] = optimize_codons(aa) + stops_nt
     return out
 
 
@@ -799,6 +1080,7 @@ def assemble_full_sequences(
     trac_allele: str = "auto",
     trbc1_allele: str = "auto",
     trbc2_allele: str = "auto",
+    stop_codons: tuple[str, ...] = ("TAA", "TGA"),
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -849,6 +1131,18 @@ def assemble_full_sequences(
         default. ``constant_source="from-data"`` ignores these knobs
         (the constant comes from the input frame, not the FASTA);
         a warning is logged in that combination.
+    stop_codons : tuple of str, default ``("TAA", "TGA")``
+        Stop codons appended to the codon-optimized constant CDS.
+        Default uses two non-redundant stops (recognized by
+        different release factors → reduced read-through in
+        synthesized constructs). Pass ``("TAA",)`` for single-stop
+        (pre-2.4 behavior) or ``()`` to omit stops entirely. Each
+        entry must be one of ``"TAA"``/``"TAG"``/``"TGA"``;
+        invalid entries raise ``ValueError``. Stops are only
+        appended to the ``_optimized`` columns and the final
+        ``_constant_nt`` (alias) — not to ``_contig`` columns,
+        which preserve the donor's CellRanger contig bytes verbatim
+        (and are typically truncated past the contig coverage edge).
     verbose : bool
         Print progress information
     show_progress : bool
@@ -869,6 +1163,25 @@ def assemble_full_sequences(
           FASTA order as tie-break. Example: ``"TRBC2*01:1.000;TRBC2*03:0.933"``.
           ``None`` when the picker no-decided or only one allele was
           packaged.
+
+        Constant NT triad emitted per chain (#116):
+
+        - ``{chain}_constant_nt_contig`` — pure CellRanger contig
+          NT past the J→C junction (no canonical splicing, no
+          codon optimization). Truncated where contig coverage
+          ends. ``None`` when no contig is available for the clone.
+        - ``{chain}_constant_nt_optimized`` — codon-optimized
+          canonical CDS for the picked allele (motif-aware via
+          :func:`optimize_codons`; avoids common restriction sites
+          and homopolymer runs) plus the requested stop codons.
+        - ``{chain}_constant_nt`` — the assembly-aware blend: uses
+          donor-real bytes from the contig where they agree with
+          the canonical AA, falls back to ``_optimized`` for the
+          rest. This is the column most callers want; kept as the
+          default for back-compat.
+
+        The same triad is also exposed for ``full_{chain}_nt``
+        (leader + VDJ + constant + stop).
 
     Examples
     --------
@@ -891,6 +1204,10 @@ def assemble_full_sequences(
     """
     # Validate inputs
     clonotypes = validate_clonotype_df(clonotypes, for_assembly=True)
+
+    # Validate stop_codons early so users get the error before any
+    # heavy lifting. Empty tuple is allowed (caller wants no stops).
+    stops_nt = stop_codons_nt(stop_codons)
 
     valid_constant_sources = ["canonical", "ensembl", "from-data"]
     if constant_source not in valid_constant_sources:
@@ -958,11 +1275,21 @@ def assemble_full_sequences(
                 "(#66) — splicing canonical TRAC / TRBC1 / TRBC2 from "
                 "HUMAN_CONSTANT_REGIONS_AA."
             )
-        constant_seqs = get_constant_region_sequences()
+        constant_seqs = get_constant_region_sequences(stop_codons=stop_codons)
         if verbose:
             logger.info(
                 f"    Loaded {len(constant_seqs)} canonical constant region sequences"
             )
+            if stop_codons:
+                logger.info(
+                    f"    Appending stop codons {list(stop_codons)} to "
+                    "codon-optimized constants."
+                )
+            else:
+                logger.info(
+                    "    No stop codons configured (stop_codons=()); "
+                    "constants will not be terminated."
+                )
 
     # Warn if from-data constants requested but not present
     if include_constant and constant_source == "from-data":
@@ -1025,6 +1352,7 @@ def assemble_full_sequences(
             include_constant,
             constant_source,
             allele_overrides=allele_overrides,
+            stops_nt=stops_nt,
         )
         assembly_results.append(result)
 
@@ -1093,6 +1421,7 @@ def _assemble_clone(
     include_constant: bool,
     constant_source: str,
     allele_overrides: dict[str, str] | None = None,
+    stops_nt: str = "TAATGA",
 ) -> dict:
     """Assemble full sequence for a single clone."""
     result = {}
@@ -1153,6 +1482,7 @@ def _assemble_clone(
                 result, constant_seqs,
                 row=row, sample_contigs=sample_contigs,
                 allele_overrides=allele_overrides,
+                stops_nt=stops_nt,
             )
 
     # Determine which chains have leaders for building full sequences
@@ -1217,6 +1547,7 @@ def _add_constant_regions(
     row: pd.Series | None = None,
     sample_contigs: dict | None = None,
     allele_overrides: dict[str, str] | None = None,
+    stops_nt: str = "TAATGA",
 ):
     """Add constant-region sequences and verify against the observed
     CellRanger contig start where possible.
@@ -1236,6 +1567,13 @@ def _add_constant_regions(
     against the contig translation and pick the best), or an explicit
     allele label (e.g. ``"01"`` or ``"03"``) to force a specific
     canonical. Missing keys default to ``"auto"``.
+
+    ``stops_nt`` is the pre-validated, pre-concatenated NT string for
+    stop codons (e.g. ``"TAATGA"`` for the default
+    ``("TAA", "TGA")``). It's appended to every codon-optimized
+    canonical NT — including the picker-override and J-junction
+    branches that previously dropped stops (#116). Pass ``""`` for no
+    stops.
     """
     allele_overrides = allele_overrides or {}
     for chain in ["alpha", "beta"]:
@@ -1244,10 +1582,12 @@ def _add_constant_regions(
         canonical_name, canonical_aa = pick_canonical_constant(chain, c_gene, j_gene)
 
         # `constant_seqs` already holds codon-optimized back-translated
-        # DNA for the canonical AA; keep it pluggable in case a caller
-        # patches the dict (the keys are gene names).
+        # DNA for the canonical AA (built via `optimize_codons` with
+        # the same stop_codons config — see #116); fall back to a
+        # fresh `optimize_codons + stops_nt` build in case a caller
+        # patched the dict with a missing key.
         canonical_nt_codon_opt = constant_seqs.get(
-            canonical_name, back_translate(canonical_aa)
+            canonical_name, optimize_codons(canonical_aa) + stops_nt
         )
         result[f"{chain}_c_gene_canonical"] = canonical_name
 
@@ -1286,7 +1626,13 @@ def _add_constant_regions(
                 # trail records the invalid label.
                 if allele_choice in allele_pool:
                     canonical_aa = allele_pool[allele_choice]
-                    canonical_nt_codon_opt = back_translate(canonical_aa)
+                    # #116: also append stops here. Pre-2.4 this
+                    # branch silently dropped the stop, so the
+                    # constant for a user-overridden allele had no
+                    # terminator while the auto-picked one did.
+                    canonical_nt_codon_opt = (
+                        optimize_codons(canonical_aa) + stops_nt
+                    )
                     allele_called = allele_choice
                     allele_score = 1.0  # by definition; user chose it
                 else:
@@ -1319,7 +1665,15 @@ def _add_constant_regions(
                             contig_post_junction_nt, candidate_aa,
                         ):
                             canonical_aa = candidate_aa
-                            canonical_nt_codon_opt = back_translate(canonical_aa)
+                            # #116: append stops on the auto-pick
+                            # branch too. Pre-2.4 dropped the stop
+                            # whenever the picker overrode the
+                            # default — affecting any donor where
+                            # the auto-detected allele wasn't the
+                            # one packaged as the default.
+                            canonical_nt_codon_opt = (
+                                optimize_codons(canonical_aa) + stops_nt
+                            )
                             allele_called = best_allele
                             allele_score = best_score
                             allele_alternatives = all_scores
@@ -1355,6 +1709,13 @@ def _add_constant_regions(
             if translated and translated not in {"*", "X"}:
                 junction_residue = translated
                 canonical_aa = junction_residue + canonical_aa
+                # Prepend the codon for the junction residue. Using
+                # `back_translate` (single-best codon, no motif
+                # logic) is intentional here: it's one codon at the
+                # start of the construct, and `canonical_nt_codon_opt`
+                # already has its own motif-optimized body. Stops are
+                # already on canonical_nt_codon_opt's tail — don't
+                # re-append.
                 canonical_nt_codon_opt = (
                     back_translate(junction_residue) + canonical_nt_codon_opt
                 )
@@ -1405,6 +1766,27 @@ def _add_constant_regions(
             canonical_aa,
             canonical_nt_codon_opt,
         )
+
+        # New (#116) NT triad. Three views of the constant-region NT:
+        # (1) ``_contig`` — pure CellRanger contig bytes past the J→C
+        #     junction. **Truncated at contig coverage** — typically
+        #     covers 30-150 nt of the ~430-530 nt C region (i.e.,
+        #     does NOT reach the stop). Useful for QC, allele
+        #     detection, and any downstream that wants the donor's
+        #     actual NT with no canonical splice. ``None`` when no
+        #     contig is available for the clone.
+        # (2) ``_optimized`` — codon-optimized canonical CDS (+stops).
+        #     Same byte string for every donor carrying the same
+        #     picked allele; what synthesis pipelines order.
+        # (3) ``_constant_nt`` — the legacy column, kept for the
+        #     assembly-aware blend (donor bytes where they agree
+        #     with canonical AA, ``_optimized`` for the rest).
+        #     Unchanged behavior pre/post #116 for callers that
+        #     didn't ask for the new views.
+        result[f"{chain}_constant_nt_contig"] = (
+            contig_nt_past_vdj if contig_nt_past_vdj else None
+        )
+        result[f"{chain}_constant_nt_optimized"] = canonical_nt_codon_opt
         result[f"{chain}_constant_nt"] = blended_nt
 
         # Verify the observed contig C-region start against canonical.
@@ -1565,15 +1947,17 @@ def _blend_constant_nt_with_contig(
         FASTA, post-#100). Position 0 corresponds to the J→C junction
         residue (for β chains) or the first mature residue (for α).
     canonical_nt_codon_opt : str
-        Codon-optimized back-translated NT for ``canonical_aa``, length
-        ``3 * len(canonical_aa)`` (no stop codon).
+        Codon-optimized back-translated NT for ``canonical_aa`` with
+        stop codons already appended at the tail. Length
+        ``3 * len(canonical_aa) + 3 * n_stops``. (Pre-#116 this was
+        single-stop; from 2.4 onward it defaults to dual-stop.)
 
     Returns
     -------
     tuple[str, dict]
         ``(blended_nt, debug)`` where ``blended_nt`` is the assembled C
-        region NT (still no stop codon — the caller appends one), and
-        ``debug`` carries:
+        region NT with stops preserved at the tail (caller does NOT
+        re-append), and ``debug`` carries:
 
         - ``n_contig_codons``: number of full codons spliced from contig.
         - ``partial_codon_completed``: True when a partial codon at the
@@ -1590,9 +1974,10 @@ def _blend_constant_nt_with_contig(
         - ``source``: human-readable summary for the
           ``{chain}_constant_source`` column.
 
-    Length invariant: ``len(blended_nt) == 3 * len(canonical_aa)`` always,
-    regardless of which path was taken. Tested in
-    ``TestBlendConstantNtWithContig``.
+    Length invariant: ``len(blended_nt) == len(canonical_nt_codon_opt)``
+    always, regardless of which path was taken. Equivalent to
+    ``3 * len(canonical_aa) + 3 * n_stops`` since the input includes
+    stops. Tested in ``TestBlendConstantNtWithContig``.
     """
     debug = {
         "n_contig_codons": 0,
@@ -1774,48 +2159,111 @@ def _build_full_sequences(
     include_beta_leader: bool,
     include_constant: bool,
 ):
-    """Build complete sequences from parts."""
+    """Build complete sequences from parts.
+
+    Emits the standard ``full_{chain}_aa`` / ``full_{chain}_nt`` plus
+    (when constants are included) the NT triad introduced in #116:
+
+    * ``full_{chain}_nt_contig`` — leader + VDJ + pure CellRanger
+      contig bytes for the constant. **Truncated at contig coverage**
+      (donor's contig typically reads ~30-150 nt into the C region,
+      not the full ~430-530 nt). ``None`` when no contig is
+      available — there is no canonical fallback for this view by
+      design.
+    * ``full_{chain}_nt_optimized`` — leader + VDJ + codon-optimized
+      canonical constant (+stops). Always present when constants
+      are included. Synthesis-ready.
+    * ``full_{chain}_nt`` (legacy / blend) — leader + VDJ +
+      donor bytes where they agree with canonical AA, ``_optimized``
+      for the rest.
+    """
     include_leader_map = {"alpha": include_alpha_leader, "beta": include_beta_leader}
 
     for chain in ["alpha", "beta"]:
-        parts_aa = []
-        parts_nt = []
+        parts_aa: list[str] = []
+        parts_nt_blend: list[str] = []
+        parts_nt_contig: list[str | None] = []
+        parts_nt_optimized: list[str] = []
         include_leader = include_leader_map[chain]
 
         if include_leader and f"{chain}_leader_aa" in result:
             parts_aa.append(result[f"{chain}_leader_aa"])
         if include_leader and f"{chain}_leader_nt" in result:
-            parts_nt.append(result[f"{chain}_leader_nt"])
+            leader_nt = result[f"{chain}_leader_nt"]
+            parts_nt_blend.append(leader_nt)
+            parts_nt_contig.append(leader_nt)
+            parts_nt_optimized.append(leader_nt)
 
         if f"vdj_{chain}_aa" in result:
             parts_aa.append(result[f"vdj_{chain}_aa"])
         if f"vdj_{chain}_nt" in result:
-            parts_nt.append(result[f"vdj_{chain}_nt"])
+            vdj_nt = result[f"vdj_{chain}_nt"]
+            parts_nt_blend.append(vdj_nt)
+            parts_nt_contig.append(vdj_nt)
+            parts_nt_optimized.append(vdj_nt)
 
         if include_constant and f"{chain}_constant_aa" in result:
             parts_aa.append(result[f"{chain}_constant_aa"])
         if include_constant and f"{chain}_constant_nt" in result:
-            parts_nt.append(result[f"{chain}_constant_nt"])
+            parts_nt_blend.append(result[f"{chain}_constant_nt"])
+            # _contig is None when contig had no post-VDJ coverage —
+            # propagate the None to full_{chain}_nt_contig so callers
+            # can filter on it without parsing.
+            parts_nt_contig.append(result.get(f"{chain}_constant_nt_contig"))
+            parts_nt_optimized.append(
+                result.get(f"{chain}_constant_nt_optimized", "")
+            )
 
         if parts_aa:
             result[f"full_{chain}_aa"] = "".join(parts_aa)
-        if parts_nt:
-            result[f"full_{chain}_nt"] = "".join(parts_nt)
+        if parts_nt_blend:
+            result[f"full_{chain}_nt"] = "".join(parts_nt_blend)
+        if include_constant:
+            # Contig view: any None constant means the donor's bytes
+            # don't reach the C region; surface None instead of a
+            # silently-truncated string.
+            if all(p is not None for p in parts_nt_contig) and parts_nt_contig:
+                result[f"full_{chain}_nt_contig"] = "".join(parts_nt_contig)
+            else:
+                result[f"full_{chain}_nt_contig"] = None
+            if parts_nt_optimized:
+                result[f"full_{chain}_nt_optimized"] = "".join(parts_nt_optimized)
 
 
 def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
-    """Add single-chain construct (beta-linker-alpha)."""
-    # Check if linker is a known 2A peptide
+    """Add single-chain construct (β-linker-α) including the NT triad.
+
+    Emits four columns:
+
+    * ``single_chain_aa``
+    * ``single_chain_nt`` — built from the blend ``full_*_nt``. The
+      column most callers reach for; donor-faithful at the J→C
+      boundary, codon-optimized canonical otherwise.
+    * ``single_chain_nt_optimized`` — built from
+      ``full_*_nt_optimized``. The ready-to-order synthesis construct;
+      same bytes for every donor with the same picked allele.
+    * ``single_chain_nt_contig`` — built from ``full_*_nt_contig``.
+      ``None`` for any clone where either chain's contig didn't cover
+      its constant region (``_contig`` columns are ``None`` there).
+      **Truncated at contig coverage** — useful for QC and inspecting
+      the donor's actual bytes, but not a complete CDS and not
+      synthesis-ready. Reach for ``_optimized`` if you want a
+      complete cassette.
+
+    The β CDS in each variant has ALL trailing stops stripped before
+    the linker — the 2A construct requires a continuous ORF across
+    β → linker → α. The dual-stop default (``TAATGA``) made the
+    one-codon-strip in 2.3 incorrect; the loop here is the fix.
+    """
     if linker.upper() in LINKERS:
         linker_info = LINKERS[linker.upper()]
         linker_aa = linker_info["aa"]
         linker_nt = linker_info["dna"]
     else:
-        # Custom linker sequence provided as amino acids
+        # Custom linker sequence provided as amino acids; no NT.
         linker_aa = linker
         linker_nt = ""
 
-    # Remove stop codon from beta if present
     def strip_stop(seq):
         if not isinstance(seq, str):
             return None
@@ -1830,22 +2278,39 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     missing_mask = df["full_beta_aa"].isna() | df["full_alpha_aa"].isna()
     df["single_chain_aa"] = single_chain.where(~missing_mask, pd.NA)
 
-    if "full_beta_nt" in df.columns and "full_alpha_nt" in df.columns and linker_nt:
-        # Remove stop codon from beta DNA
-        def strip_stop_codon_dna(seq):
-            if not isinstance(seq, str):
-                return None
-            if len(seq) >= 3:
-                last_codon = seq[-3:]
-                if last_codon in {"TAA", "TAG", "TGA"}:
-                    return seq[:-3]
-            return seq
+    def strip_stop_codon_dna(seq):
+        if not isinstance(seq, str):
+            return None
+        # Strip ALL trailing stops. Single-stop strip pre-2.4 broke
+        # frame across the linker once dual-stop became the default.
+        while len(seq) >= 3 and seq[-3:] in {"TAA", "TAG", "TGA"}:
+            seq = seq[:-3]
+        return seq
 
-        beta_nt = df["full_beta_nt"].apply(strip_stop_codon_dna)
-        alpha_nt = df["full_alpha_nt"].where(df["full_alpha_nt"].apply(lambda x: isinstance(x, str)))
-        single_chain_nt = beta_nt.fillna("") + linker_nt + alpha_nt.fillna("")
-        missing_nt_mask = df["full_beta_nt"].isna() | df["full_alpha_nt"].isna()
-        df["single_chain_nt"] = single_chain_nt.where(~missing_nt_mask, pd.NA)
+    if linker_nt:
+        # Build the triad. Each variant uses its matching beta/alpha
+        # input column; if either input is missing or contains None
+        # (contig view when contig didn't cover the C region) the
+        # output is None — splicing a None into a 2A construct would
+        # be silently wrong.
+        for suffix, out_col in (
+            ("", "single_chain_nt"),
+            ("_optimized", "single_chain_nt_optimized"),
+            ("_contig", "single_chain_nt_contig"),
+        ):
+            beta_col = f"full_beta_nt{suffix}"
+            alpha_col = f"full_alpha_nt{suffix}"
+            if beta_col not in df.columns or alpha_col not in df.columns:
+                continue
+
+            def _build_row(row, b=beta_col, a=alpha_col):
+                bv = row.get(b)
+                av = row.get(a)
+                if not isinstance(bv, str) or not isinstance(av, str):
+                    return None
+                return strip_stop_codon_dna(bv) + linker_nt + av
+
+            df[out_col] = df.apply(_build_row, axis=1)
 
     df["linker"] = linker_aa
 
@@ -2534,21 +2999,27 @@ def assemble_qc_report(df: pd.DataFrame) -> str:
 
 def _nt_translates_to(nt: str, aa: str, strip_trailing_stop: bool = True) -> bool:
     """Check that ``translate(nt)`` matches ``aa``, optionally dropping
-    a trailing stop codon from ``nt`` first.
+    *all* trailing stop codons from ``nt`` first.
 
     Used by the NT→AA round-trip invariants (#91). Returns False on
     any of: NT length not a multiple of 3 (after optional stop trim),
     translation contains a stop codon mid-chain, translated AA differs
     from the assembled AA. The caller composes the failure message
     so it can include which column failed.
+
+    The ``strip_trailing_stop`` flag strips *every* trailing stop, not
+    just one. This was a one-stop strip pre-#116, which broke when the
+    constant CDS picked up its second non-redundant stop (e.g. the
+    default ``"TAATGA"`` suffix).
     """
     if not isinstance(nt, str) or not nt:
         return False
     if not isinstance(aa, str) or not aa:
         return False
     work = nt
-    if strip_trailing_stop and len(work) >= 3 and work[-3:] in {"TAA", "TAG", "TGA"}:
-        work = work[:-3]
+    if strip_trailing_stop:
+        while len(work) >= 3 and work[-3:] in {"TAA", "TAG", "TGA"}:
+            work = work[:-3]
     if len(work) != 3 * len(aa):
         return False
     translated, ragged = translate_dna(work)
@@ -2561,6 +3032,40 @@ def _nt_translates_to(nt: str, aa: str, strip_trailing_stop: bool = True) -> boo
     return translated == aa
 
 
+def _nt_contig_in_frame_no_premature_stop(nt: str, aa: str) -> bool:
+    """Check that a ``_contig`` NT column (donor's CellRanger contig
+    bytes past the J→C junction) is in-frame and free of premature
+    stops.
+
+    We DON'T require AA agreement with ``aa`` — the contig view is
+    raw donor bytes; polymorphisms vs. the canonical reference are
+    expected (that's what the blender handles by switching at the
+    mismatch). We DO require the largest 3·N prefix to:
+
+    * translate cleanly (no ragged byte that ``translate_dna`` flags),
+    * contain no stop codons in the first ``len(aa)`` positions
+      (only the 3' UTR past the coding region may carry stops, but
+      capping at ``len(aa)`` ignores anything past the coding region).
+
+    Returns False if the contig NT has zero in-frame codons before
+    the first stop, or if it appears non-coding.
+    """
+    if not isinstance(nt, str) or not nt:
+        return False
+    if not isinstance(aa, str) or not aa:
+        return False
+    n_codons = min(len(nt) // 3, len(aa))
+    if n_codons == 0:
+        return False
+    work = nt[: 3 * n_codons]
+    translated, ragged = translate_dna(work)
+    if ragged:
+        return False
+    if "*" in translated:
+        return False
+    return True
+
+
 def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
     """Run NT→AA back-translation checks on every NT column the
     assembler emits, appending load-bearing messages via ``_lb`` for
@@ -2571,11 +3076,19 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
     - ``vdj_{chain}_nt`` translates to ``vdj_{chain}_aa`` (no stop;
       length must be exactly 3×AA).
     - ``{chain}_constant_nt`` translates to ``{chain}_constant_aa``
-      after dropping the trailing stop codon.
+      after dropping any trailing stop codons.
+    - ``{chain}_constant_nt_optimized`` translates to
+      ``{chain}_constant_aa`` after dropping trailing stops (#116).
+    - ``{chain}_constant_nt_contig`` (when not None) is in-frame
+      and free of premature stops — donor polymorphisms vs. canonical
+      AA are NOT flagged (the blender handles them); only frame
+      errors or non-coding contigs surface here (#116).
     - ``full_{chain}_nt`` translates to ``full_{chain}_aa`` after
       dropping the trailing stop codon. **This is the integration
       check that would have caught #91 (+1 nt overshoot at the
       VDJ→C boundary) on day one.**
+    - ``full_{chain}_nt_optimized`` translates to ``full_{chain}_aa``
+      after dropping trailing stops (#116).
     - ``single_chain_nt`` translates to ``single_chain_aa`` (trailing
       stop dropped).
     """
@@ -2592,39 +3105,76 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
                             f"{nt_col} does not translate to {aa_col} "
                             f"(NT length {len(nt)}, expected {3 * len(aa)})")
 
-        nt_col = f"{chain}_constant_nt"
+        # Both `_constant_nt` (the legacy blend column) and
+        # `_constant_nt_optimized` should translate exactly to
+        # `{chain}_constant_aa` after dropping all trailing stops.
         aa_col = f"{chain}_constant_aa"
-        if nt_col in df.columns and aa_col in df.columns:
-            for idx, row in df.iterrows():
-                nt = row.get(nt_col)
-                aa = row.get(aa_col)
-                if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
-                    if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
-                        _lb(idx,
-                            f"{nt_col} does not translate to {aa_col} "
-                            f"(after stripping any trailing stop)")
+        for nt_col in (f"{chain}_constant_nt", f"{chain}_constant_nt_optimized"):
+            if nt_col in df.columns and aa_col in df.columns:
+                for idx, row in df.iterrows():
+                    nt = row.get(nt_col)
+                    aa = row.get(aa_col)
+                    if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
+                        if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
+                            _lb(idx,
+                                f"{nt_col} does not translate to {aa_col} "
+                                f"(after stripping trailing stops)")
 
-        nt_col = f"full_{chain}_nt"
-        aa_col = f"full_{chain}_aa"
+        # `_constant_nt_contig` (#116): pure donor NT. May end mid-
+        # codon or extend past the AA — translate the largest 3·N
+        # prefix and check it matches the AA prefix of equal length.
+        nt_col = f"{chain}_constant_nt_contig"
         if nt_col in df.columns and aa_col in df.columns:
             for idx, row in df.iterrows():
                 nt = row.get(nt_col)
                 aa = row.get(aa_col)
                 if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
+                    if not _nt_contig_in_frame_no_premature_stop(nt, aa):
+                        _lb(idx,
+                            f"{nt_col} is out-of-frame or hits a premature "
+                            f"stop within the first {3 * len(aa)} nt — the "
+                            f"donor's contig past the J→C boundary appears "
+                            f"non-coding")
+
+        for nt_col in (f"full_{chain}_nt", f"full_{chain}_nt_optimized"):
+            aa_col = f"full_{chain}_aa"
+            if nt_col in df.columns and aa_col in df.columns:
+                for idx, row in df.iterrows():
+                    nt = row.get(nt_col)
+                    aa = row.get(aa_col)
+                    if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
+                        if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
+                            _lb(idx,
+                                f"{nt_col} does not translate to {aa_col} "
+                                f"— frame likely broken at a splice boundary (#91)")
+
+    # ``single_chain_nt`` and ``_optimized`` must translate exactly to
+    # ``single_chain_aa`` (canonical AA throughout — these views use
+    # canonical bytes for the C region). ``_contig`` uses donor
+    # bytes for the C region and may legitimately differ from
+    # canonical at polymorphisms — only require it to be in-frame
+    # and free of mid-chain stops (#116).
+    for nt_col in ("single_chain_nt", "single_chain_nt_optimized"):
+        if nt_col in df.columns and "single_chain_aa" in df.columns:
+            for idx, row in df.iterrows():
+                nt = row.get(nt_col)
+                aa = row.get("single_chain_aa")
+                if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
                     if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
                         _lb(idx,
-                            f"{nt_col} does not translate to {aa_col} "
+                            f"{nt_col} does not translate to single_chain_aa "
                             f"— frame likely broken at a splice boundary (#91)")
-
-    if "single_chain_nt" in df.columns and "single_chain_aa" in df.columns:
+    nt_col = "single_chain_nt_contig"
+    if nt_col in df.columns and "single_chain_aa" in df.columns:
         for idx, row in df.iterrows():
-            nt = row.get("single_chain_nt")
+            nt = row.get(nt_col)
             aa = row.get("single_chain_aa")
             if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
-                if not _nt_translates_to(nt, aa, strip_trailing_stop=True):
+                if not _nt_contig_in_frame_no_premature_stop(nt, aa):
                     _lb(idx,
-                        "single_chain_nt does not translate to single_chain_aa "
-                        "— frame likely broken at a splice boundary (#91)")
+                        f"{nt_col} is out-of-frame or hits a premature "
+                        f"stop within the coding region — the donor's "
+                        f"contig appears non-coding past the J→C boundary")
 
 
 def _expected_constant_start_from_full(

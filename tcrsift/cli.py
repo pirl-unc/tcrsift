@@ -548,6 +548,11 @@ def cmd_assemble(args):
     clonotypes = pd.read_csv(args.input)
     print(f"Loaded {len(clonotypes)} clonotypes from {args.input}")
 
+    # Parse --stop-codons (#116). Empty string → no stops.
+    stop_codons = tuple(
+        c.strip().upper() for c in args.stop_codons.split(",") if c.strip()
+    )
+
     assembled = assemble_full_sequences(
         clonotypes,
         contigs_dir=args.contigs_dir,
@@ -559,6 +564,7 @@ def cmd_assemble(args):
         trac_allele=args.trac_allele,
         trbc1_allele=args.trbc1_allele,
         trbc2_allele=args.trbc2_allele,
+        stop_codons=stop_codons,
     )
 
     # Validate (per-row warnings + aggregate QC report).
@@ -1198,6 +1204,11 @@ def cmd_run(args):
             trac_allele=getattr(config.assemble, "trac_allele", "auto"),
             trbc1_allele=getattr(config.assemble, "trbc1_allele", "auto"),
             trbc2_allele=getattr(config.assemble, "trbc2_allele", "auto"),
+            # #116 stop codons: default to dual-stop. Config-driven
+            # callers can pass a list via config.assemble.stop_codons.
+            stop_codons=tuple(
+                getattr(config.assemble, "stop_codons", ("TAA", "TGA"))
+            ),
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -2220,6 +2231,16 @@ CONDITIONALLY REQUIRED:
         "between *01-protein (E at mature pos 9 — major-allele) and "
         "*03-protein (K at pos 9) based on the donor's contig. Pass "
         "'01' or '03' to force.",
+    )
+    asm_seq.add_argument(
+        "--stop-codons",
+        default="TAA,TGA",
+        help="Comma-separated stop codons to append to codon-"
+        "optimized constants (#116). Default 'TAA,TGA' = two non-"
+        "redundant stops (different release factors, reduces "
+        "read-through). Pass 'TAA' for single-stop (pre-2.4 "
+        "behavior) or '' to omit. Each entry must be one of "
+        "TAA/TAG/TGA.",
     )
     asm_seq.add_argument(
         "--single-chain",
