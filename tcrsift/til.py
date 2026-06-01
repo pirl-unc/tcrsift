@@ -662,7 +662,11 @@ def identify_til_specific_clones(
         .reset_index()
     )
 
-    til_clones["til_cell_count"] = til_df.groupby("CDR3ab", observed=True).size().values
+    # Map by CDR3ab key rather than positional ``.values`` so the count
+    # doesn't rely on the two groupbys producing groups in the same order.
+    til_clones["til_cell_count"] = til_clones["CDR3ab"].map(
+        til_df.groupby("CDR3ab", observed=True).size()
+    )
     til_clones = til_clones[til_clones["til_cell_count"] >= min_cells]
 
     # Extract CDR3 sequences
