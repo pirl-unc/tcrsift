@@ -781,6 +781,50 @@ class TestDetectNovelAlleles:
         assert row["pct_observed_at_position"] == 0.2
         assert row["verdict"] == "novel_allele_candidate"
 
+    def test_pct_observed_never_exceeds_one_when_columns_disagree(self):
+        # The variant count comes from the stored divergence string while
+        # the position denominator comes from observed_constant_aa_start.
+        # If a clone records a divergence at a position where its observed
+        # AA is missing, the naive ratio could exceed 1.0; the denominator
+        # is clamped to >= n_clones so pct stays in [0, 1].
+        rows = []
+        for i in range(10):
+            has_observation = i < 3
+            rows.append({
+                "alpha_c_gene": "TRAC",
+                "alpha_c_gene_canonical": "TRAC",
+                "alpha_allele_called": "TRAC*01",
+                "alpha_allele_called_reason": ALLELE_REASON_AUTO_DETECTED,
+                "alpha_allele_divergence_positions": "3:N->K",
+                "alpha_observed_constant_aa_start": (
+                    HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+                    if has_observation else None
+                ),
+                "alpha_v_gene": f"TRAV{1 + (i % 5)}",
+                "samples": f"S{1 + (i % 2)}",
+            })
+        df = pd.DataFrame(rows)
+
+        result = detect_novel_alleles(
+            df,
+            min_pct=0.05,
+            min_v_spread=3,
+            min_samples=2,
+            min_cohort_size=0,
+        )
+
+        nk_rows = result[
+            (result["expected_aa"] == "N") & (result["observed_aa"] == "K")
+        ]
+        assert len(nk_rows) == 1
+        row = nk_rows.iloc[0]
+        assert row["n_clones"] == 10
+        # Only 3 clones cover position 3, but the denominator is clamped
+        # up to the variant count so the fraction never exceeds 1.0.
+        assert row["n_observed_at_position"] == 10
+        assert row["pct_observed_at_position"] == 1.0
+        assert 0.0 <= row["pct_observed_at_position"] <= 1.0
+
     def test_unused_categorical_gene_categories_do_not_crash(self):
         # AnnData/H5AD round-trips can leave unused categorical levels.
         # pandas groupby(observed=False) iterates those as empty groups,

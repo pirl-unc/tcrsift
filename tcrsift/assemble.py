@@ -386,11 +386,20 @@ def _polymorphic_positions(allele_pool: dict[str, str]) -> set[int]:
     return polymorphic
 
 
+# Number of mature C-region residues scanned for allele divergences.
+# Past this depth the contig is rarely covered and the residues are
+# dominated by invariant regions (#120 ask 2). Shared by the stored
+# divergence computation (:func:`_divergence_positions`), the recompute
+# loop, and the observed-position denominator so all three scan the same
+# window — otherwise a divergence could land outside the counted range.
+_MAX_DIVERGENCE_SCAN_POSITIONS = 15
+
+
 def _divergence_positions(
     called_allele_aa: str,
     observed_aa: str,
     *,
-    max_positions: int = 15,
+    max_positions: int = _MAX_DIVERGENCE_SCAN_POSITIONS,
 ) -> list[tuple[int, str, str]]:
     """Return a list of ``(position_1_indexed, expected_aa, observed_aa)``
     tuples where the observed contig translation disagrees with the
@@ -3250,7 +3259,13 @@ def _candidate_constant_alleles_for_chain(chain: str) -> list[tuple[str, str, st
 def _default_reference_for_gene(
     canonical_name: object,
 ) -> tuple[str | None, str | None]:
-    """Return the default packaged allele label + AA for a known gene."""
+    """Return the default packaged allele label + AA for a known gene.
+
+    The "default" is the first allele in FASTA order, which is ``*01``
+    for every packaged gene and whose AA prefix matches the legacy
+    ``HUMAN_CONSTANT_REGIONS_AA`` baseline — so the recompute path's
+    ``expected_aa`` is unchanged from before this helper existed.
+    """
     gene = str(canonical_name)
     pool = HUMAN_CONSTANT_ALLELES.get(gene, {})
     if pool:
@@ -3272,6 +3287,10 @@ def _closest_reference_for_observations(
     ``expected_aa``. For labels outside the packaged constants, choose
     the compatible chain reference with the highest aggregate prefix
     agreement across observed contig AA strings.
+
+    O(n_obs × n_alleles × prefix_len), but only reached on the
+    novel-gene path — known genes resolve via
+    :func:`_default_reference_for_gene` before this is called.
     """
     obs_values = [
         str(obs)
@@ -3361,13 +3380,13 @@ def _count_observed_positions_for_chain(
         return pd.DataFrame(columns=columns)
 
     rows: list[dict[str, object]] = []
+    # ``observed=True`` skips unused categorical levels (AnnData/H5AD
+    # round-trips leave them behind), so no empty groups reach the body.
     for canonical_name, gene_slice in observed.groupby(
         gene_col, dropna=True, observed=True,
     ):
-        if gene_slice.empty:
-            continue
         obs_series = gene_slice[obs_col]
-        max_pos = min(int(obs_series.str.len().max()), 15)
+        max_pos = min(int(obs_series.str.len().max()), _MAX_DIVERGENCE_SCAN_POSITIONS)
         for i in range(max_pos):
             n_observed = int(obs_series.str.get(i).notna().sum())
             if n_observed:
@@ -3471,11 +3490,11 @@ def _collect_divergences_for_chain(
         )
         # Process per-gene so we have one canonical AA string to
         # compare against; vectorized within each gene group.
+        # ``observed=True`` skips unused categorical levels, so no empty
+        # groups reach the body (AnnData/H5AD round-trip robustness).
         for canonical_name, gene_slice in df.loc[
             recompute_mask
         ].groupby(gene_col, dropna=True, observed=True):
-            if gene_slice.empty:
-                continue
             reference_label, reference_aa = _reference_for_gene_or_observations(
                 chain, canonical_name, gene_slice[obs_col],
             )
@@ -3488,7 +3507,7 @@ def _collect_divergences_for_chain(
             sample_series = gene_slice["samples"] if "samples" in gene_slice.columns else pd.Series(
                 [None] * len(gene_slice), index=gene_slice.index,
             )
-            max_pos = min(len(reference_aa), 15)
+            max_pos = min(len(reference_aa), _MAX_DIVERGENCE_SCAN_POSITIONS)
             per_position: list[pd.DataFrame] = []
             for i in range(max_pos):
                 canonical_residue = reference_aa[i]
@@ -3627,7 +3646,7 @@ def detect_novel_alleles(
             "chain", "gene", "reference_allele", "position",
             "expected_aa", "observed_aa",
         ],
-        dropna=False, sort=False,
+        dropna=False, sort=False, observed=True,
     )
     n_clones = grouped["clone_idx"].nunique().rename("n_clones")
     n_v_genes = grouped["v_gene"].nunique(dropna=True).rename("n_v_genes")
@@ -3653,13 +3672,21 @@ def detect_novel_alleles(
     ).round(4)
     # Prefer the position-specific observed-contig denominator. For
     # legacy CSVs that have divergence columns but not observed AA
-    # columns, fall back to the old chain-level denominator.
+    # columns, fall back to the old chain-level denominator. The
+    # observed-position count and the variant count come from different
+    # columns (``_observed_constant_aa_start`` vs the parsed divergence
+    # string), so clamp the denominator to at least ``n_clones`` — a
+    # variant clone is by definition observed at its own position, and
+    # this guarantees ``pct_observed_at_position`` stays in [0, 1] even
+    # if the two columns disagree.
     summary["n_observed_at_position"] = (
         summary["n_observed_at_position"]
         .fillna(chain_total_series)
         .astype(int)
-        .clip(lower=1)
     )
+    summary["n_observed_at_position"] = summary[
+        ["n_observed_at_position", "n_clones"]
+    ].max(axis=1).clip(lower=1)
     summary["pct_observed_at_position"] = (
         summary["n_clones"] / summary["n_observed_at_position"]
     ).round(4)
