@@ -3300,6 +3300,12 @@ def _collect_divergences_for_chain(
                 ]])
 
     # ---- Source 2: recomputed for no-call clones ----
+    # Compares against ``HUMAN_CONSTANT_REGIONS_AA`` (the *default*
+    # canonical), not the user-overridden allele. That's safe here
+    # because user-override clones get ``reason=overridden``, which
+    # is not in ``no_call_reasons`` — so we never recompute for
+    # them. The stored-source path above handles overridden clones
+    # via their own ``_allele_divergence_positions`` column.
     no_call_reasons = {
         ALLELE_REASON_DIVERGENT_CONTIG,
         ALLELE_REASON_DIVERGENT_AT_POLYMORPHIC_POSITION,
@@ -3456,10 +3462,13 @@ def detect_novel_alleles(
     n_samples = grouped["sample"].agg(_expand_samples_unique).rename("n_samples")
     summary = pd.concat([n_clones, n_v_genes, n_samples], axis=1).reset_index()
 
-    summary["pct_chain_clones"] = summary.apply(
-        lambda r: round(r["n_clones"] / max(chain_totals.get(r["chain"], 0), 1), 4),
-        axis=1,
-    )
+    # Vectorized per-row pct: map each row's chain to its total, then
+    # clip the denominator to ≥1 so zero-total chains (impossible
+    # given the gate above but cheap to guard) don't produce inf.
+    chain_total_series = summary["chain"].map(chain_totals).fillna(1).clip(lower=1)
+    summary["pct_chain_clones"] = (
+        summary["n_clones"] / chain_total_series
+    ).round(4)
     summary["verdict"] = (
         (summary["pct_chain_clones"] >= min_pct)
         & (summary["n_v_genes"] >= min_v_spread)
@@ -3524,7 +3533,7 @@ def allele_audit_report(
         if no_calls > 0:
             lines.append(f"    No-call breakdown ({no_calls} clones):")
             for reason, n in reason_counts.items():
-                if reason == ALLELE_REASON_AUTO_DETECTED or reason == ALLELE_REASON_OVERRIDDEN:
+                if reason in {ALLELE_REASON_AUTO_DETECTED, ALLELE_REASON_OVERRIDDEN}:
                     continue
                 if pd.isna(reason):
                     continue

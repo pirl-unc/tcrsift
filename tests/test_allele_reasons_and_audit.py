@@ -378,16 +378,19 @@ class TestAlleleReasonFrameError:
     translate to the picked allele's expected first residue, the
     picker punts with ``frame_error``."""
 
-    def test_misaligned_contig_yields_frame_error(self, tmp_path):
+    def test_misaligned_first_codon_yields_frame_error(self, tmp_path):
+        # Fixture rationale: contig past junction is (Q,
+        # canonical[1:14]). With min_picker_positions=10 and
+        # 13/14 AA matches, _pick_best_allele returns TRBC1*01 with
+        # score 0.929 — definitely commits to a best_allele.
+        # _verify_first_codon_frame then translates "CAG" → Q and
+        # compares to HUMAN_TRBC1_AA[0] = E → returns False →
+        # ALLELE_REASON_FRAME_ERROR fires deterministically.
         a, b = _vdj_fixture()
         leader_aa = "M" + "A" * 19
-        # Make the contig translate well in MOST positions (so the
-        # picker likes the score) but have a wrong first codon past
-        # the junction. Junction codon E + (Q at first position) +
-        # canonical TRBC1 positions 1..14.
         from tcrsift.assemble import HUMAN_TRBC1_AA
-        misaligned = "CAG" + back_translate(HUMAN_TRBC1_AA[1:14])
-        beta_c_nt = "GAG" + misaligned  # junction + (Q + canonical[1:14])
+        # Junction codon E + (Q at first position) + canonical[1:14].
+        beta_c_nt = "GAG" + "CAG" + back_translate(HUMAN_TRBC1_AA[1:14])
         beta_contig = back_translate(leader_aa) + back_translate(b) + beta_c_nt
         df = pd.DataFrame([_base_clone(a, b, beta_contig_ids="contig_b1")])
         contig_dir = tmp_path / "S1"
@@ -400,19 +403,13 @@ class TestAlleleReasonFrameError:
             alpha_leader=None, beta_leader=None,
             verbose=False, show_progress=False,
         )
-        # If the picker's score wasn't high enough to nominate this as
-        # best, the test would land on a different reason. Verify the
-        # frame_error branch fired specifically.
-        reason = out["beta_allele_called_reason"].iloc[0]
-        # Either frame_error fires directly, or the picker rejects the
-        # contig entirely as divergent. Both are acceptable safety
-        # behaviors; the key invariant is "no call committed".
         assert out["beta_allele_called"].iloc[0] is None
-        assert reason in {
-            "frame_error",  # this is what we want to lock in
-            "divergent_contig",
-            "divergent_at_polymorphic_position",
-        }
+        assert out["beta_allele_called_reason"].iloc[0] == "frame_error"
+        warnings = out["qc_warnings"].iloc[0]
+        assert any(
+            "frame error" in w.lower() or "frame error upstream" in w
+            for w in warnings
+        ), f"frame_error warning missing, got: {warnings}"
 
 
 class TestAutoDetectedDivergencesFeedNovelAlleles:
@@ -462,6 +459,64 @@ class TestAutoDetectedDivergencesFeedNovelAlleles:
         )
         assert nk_rows.iloc[0]["verdict"] == "novel_allele_candidate"
         assert nk_rows.iloc[0]["n_clones"] == 13
+
+
+class TestStoredAndRecomputedCoexist:
+    """Cohorts can carry both stored divergences (from auto_detected
+    clones where the picker called an allele but the contig still
+    disagreed at non-distinguishing positions) AND recomputed
+    divergences (from no-call clones where the picker punted). At
+    the same ``(gene, position, expected_aa, observed_aa)``, both
+    sources must aggregate into a single row."""
+
+    def test_same_substitution_from_both_sources_aggregates(self):
+        rows = []
+        # 10 auto_detected clones with stored N→K divergence at TRAC pos 3.
+        for i in range(10):
+            rows.append({
+                "alpha_c_gene": "TRAC",
+                "alpha_c_gene_canonical": "TRAC",
+                "alpha_allele_called": "TRAC*01",
+                "alpha_allele_called_reason": ALLELE_REASON_AUTO_DETECTED,
+                "alpha_allele_divergence_positions": "3:N->K",
+                "alpha_observed_constant_aa_start": (
+                    HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+                ),
+                "alpha_v_gene": f"TRAV{1 + (i % 5)}",
+                "samples": f"S{1 + (i % 2)}",
+            })
+        # 5 no-call clones with same observed substitution; recompute
+        # against the default canonical (TRAC) yields the same N→K row.
+        for i in range(5):
+            rows.append({
+                "alpha_c_gene": "TRAC",
+                "alpha_c_gene_canonical": "TRAC",
+                "alpha_allele_called": None,
+                "alpha_allele_called_reason": ALLELE_REASON_DIVERGENT_CONTIG,
+                "alpha_allele_divergence_positions": None,
+                "alpha_observed_constant_aa_start": (
+                    HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+                ),
+                "alpha_v_gene": f"TRAV{6 + (i % 5)}",
+                "samples": f"S{3 + (i % 2)}",
+            })
+        df = pd.DataFrame(rows)
+        result = detect_novel_alleles(
+            df, min_pct=0.05, min_v_spread=3, min_samples=2,
+            min_cohort_size=0,
+        )
+        nk_rows = result[
+            (result["expected_aa"] == "N") & (result["observed_aa"] == "K")
+        ]
+        # Single row aggregating both sources — n_clones = 10 + 5 = 15.
+        assert len(nk_rows) == 1, (
+            f"stored + recomputed should aggregate into one row; got "
+            f"{nk_rows.to_dict('records')}"
+        )
+        assert nk_rows.iloc[0]["n_clones"] == 15
+        # V-gene + sample union across both sources.
+        assert nk_rows.iloc[0]["n_v_genes"] == 10  # TRAV1..TRAV10
+        assert nk_rows.iloc[0]["n_samples"] == 4   # S1..S4
 
 
 class TestMinCohortSizeGate:
