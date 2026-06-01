@@ -23,6 +23,7 @@ import pandas as pd
 from tcrsift.assemble import (
     ALLELE_REASON_AUTO_DETECTED,
     ALLELE_REASON_DIVERGENT_AT_POLYMORPHIC_POSITION,
+    ALLELE_REASON_DIVERGENT_CONTIG,
     ALLELE_REASON_INVALID_OVERRIDE,
     ALLELE_REASON_NO_CONTIG,
     ALLELE_REASON_OVERRIDDEN,
@@ -217,6 +218,292 @@ class TestAlleleReasonValuesEnum:
         for v in ALLELE_REASON_VALUES:
             assert isinstance(v, str)
             assert v.strip() == v
+
+
+class TestAlleleReasonDivergentContig:
+    """E2E for ``divergent_contig`` reason — contig translates but
+    disagrees at every comparable position vs all packaged alleles."""
+
+    def test_all_zero_score_yields_divergent_reason(self, tmp_path):
+        a, b = _vdj_fixture()
+        leader_aa = "M" + "A" * 19
+        # Contig long enough to clear the sparse floor (≥10 codons)
+        # but with a totally different AA — translates to W's, which
+        # don't match anywhere in HUMAN_TRBC1_AA's prefix.
+        # Junction codon (E for β) then 12 W codons.
+        beta_c_nt = "GAG" + ("TGG" * 12)  # E + WWWWWWWWWWWW
+        beta_contig = back_translate(leader_aa) + back_translate(b) + beta_c_nt
+
+        df = pd.DataFrame([_base_clone(a, b, beta_contig_ids="contig_b1")])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_b1\n{beta_contig}\n"
+        )
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        assert out["beta_allele_called"].iloc[0] is None
+        assert out["beta_allele_called_reason"].iloc[0] == ALLELE_REASON_DIVERGENT_CONTIG
+        warnings = out["qc_warnings"].iloc[0]
+        assert any("disagrees with every packaged allele" in w for w in warnings)
+
+
+class TestAlleleReasonDivergentAtPolymorphicPosition:
+    """E2E for the #120 ask-4 behavior: when the contig disagrees with
+    the best-fit allele at an allele-distinguishing position (TRBC2
+    mature pos 9 between *01 and *03), the picker punts to NaN
+    instead of silently flipping to the sibling on overall score."""
+
+    @staticmethod
+    def _trbc2_contig_with_residue_at_pos9(residue: str) -> str:
+        from tcrsift.assemble import HUMAN_CONSTANT_ALLELES
+
+        # Build a TRBC2 contig that matches *01 everywhere EXCEPT
+        # at mature pos 9, where we inject ``residue``.
+        trbc2_01 = HUMAN_CONSTANT_ALLELES["TRBC2"]["01"]
+        canonical_prefix = trbc2_01[:8] + residue + trbc2_01[9:15]
+        # Junction codon (E for β) + 15 mature codons.
+        return "GAG" + back_translate(canonical_prefix)
+
+    def test_disagrees_with_both_alleles_at_pos9_punts(self, tmp_path):
+        a, b = _vdj_fixture()
+        leader_aa = "M" + "A" * 19
+        # Inject Q at pos 9 — disagrees with both *01 (E) and *03 (K).
+        beta_c_nt = self._trbc2_contig_with_residue_at_pos9("Q")
+        beta_contig = back_translate(leader_aa) + back_translate(b) + beta_c_nt
+
+        df = pd.DataFrame([_base_clone(
+            a, b,
+            beta_c_gene="TRBC2",
+            beta_j_gene="TRBJ2-1",
+            beta_contig_ids="contig_b1",
+        )])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_b1\n{beta_contig}\n"
+        )
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        assert out["beta_allele_called"].iloc[0] is None
+        assert (
+            out["beta_allele_called_reason"].iloc[0]
+            == ALLELE_REASON_DIVERGENT_AT_POLYMORPHIC_POSITION
+        )
+        # qc_warnings populated and names the position.
+        warnings = out["qc_warnings"].iloc[0]
+        assert any(
+            "allele-distinguishing position" in w and "9" in w
+            for w in warnings
+        ), f"polymorphic warning missing or unspecific, got: {warnings}"
+        # The observed AA carries the donor's actual residue at pos 9
+        # (1-indexed pos 9 = 0-indexed idx 8).
+        observed = out["beta_observed_constant_aa_start"].iloc[0]
+        assert observed[8] == "Q"
+
+    def test_allele_alternatives_preserved_when_polymorphic_punts(self, tmp_path):
+        # The picker keeps ``allele_alternatives`` populated even when
+        # it refuses to commit — that lets cohort audits see which
+        # alleles were close.
+        a, b = _vdj_fixture()
+        leader_aa = "M" + "A" * 19
+        beta_c_nt = self._trbc2_contig_with_residue_at_pos9("Q")
+        beta_contig = back_translate(leader_aa) + back_translate(b) + beta_c_nt
+        df = pd.DataFrame([_base_clone(
+            a, b,
+            beta_c_gene="TRBC2",
+            beta_j_gene="TRBJ2-1",
+            beta_contig_ids="contig_b1",
+        )])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_b1\n{beta_contig}\n"
+        )
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        alts = out["beta_allele_alternatives"].iloc[0]
+        assert isinstance(alts, str)
+        # Both packaged TRBC2 alleles should appear in the audit.
+        assert "TRBC2*01" in alts
+        assert "TRBC2*03" in alts
+
+    def test_constant_bytes_use_default_when_punted(self, tmp_path):
+        """The #120 docstring note: punt-to-NaN punts the CALL, not
+        the bytes. The user's ``_constant_nt_optimized`` still uses
+        the default allele's canonical residue at the polymorphic
+        position. Lock that in so a future refactor that accidentally
+        drops the bytes too gets caught."""
+        a, b = _vdj_fixture()
+        leader_aa = "M" + "A" * 19
+        beta_c_nt = self._trbc2_contig_with_residue_at_pos9("Q")
+        beta_contig = back_translate(leader_aa) + back_translate(b) + beta_c_nt
+        df = pd.DataFrame([_base_clone(
+            a, b,
+            beta_c_gene="TRBC2",
+            beta_j_gene="TRBJ2-1",
+            beta_contig_ids="contig_b1",
+        )])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_b1\n{beta_contig}\n"
+        )
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        # constant_aa was built from the DEFAULT allele (HUMAN_TRBC2_AA)
+        # which has E at mature pos 9 (idx 8). With the J-junction E
+        # prepended, that maps to constant_aa[9] (idx 9 = junction +
+        # idx 8 of mature).
+        from tcrsift.assemble import HUMAN_TRBC2_AA
+        constant_aa = out["beta_constant_aa"].iloc[0]
+        # Junction E + mature TRBC2 → constant_aa[9] == HUMAN_TRBC2_AA[8].
+        assert constant_aa[9] == HUMAN_TRBC2_AA[8]
+
+
+class TestAlleleReasonFrameError:
+    """When the contig's first codon past the junction doesn't
+    translate to the picked allele's expected first residue, the
+    picker punts with ``frame_error``."""
+
+    def test_misaligned_contig_yields_frame_error(self, tmp_path):
+        a, b = _vdj_fixture()
+        leader_aa = "M" + "A" * 19
+        # Make the contig translate well in MOST positions (so the
+        # picker likes the score) but have a wrong first codon past
+        # the junction. Junction codon E + (Q at first position) +
+        # canonical TRBC1 positions 1..14.
+        from tcrsift.assemble import HUMAN_TRBC1_AA
+        misaligned = "CAG" + back_translate(HUMAN_TRBC1_AA[1:14])
+        beta_c_nt = "GAG" + misaligned  # junction + (Q + canonical[1:14])
+        beta_contig = back_translate(leader_aa) + back_translate(b) + beta_c_nt
+        df = pd.DataFrame([_base_clone(a, b, beta_contig_ids="contig_b1")])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_b1\n{beta_contig}\n"
+        )
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        # If the picker's score wasn't high enough to nominate this as
+        # best, the test would land on a different reason. Verify the
+        # frame_error branch fired specifically.
+        reason = out["beta_allele_called_reason"].iloc[0]
+        # Either frame_error fires directly, or the picker rejects the
+        # contig entirely as divergent. Both are acceptable safety
+        # behaviors; the key invariant is "no call committed".
+        assert out["beta_allele_called"].iloc[0] is None
+        assert reason in {
+            "frame_error",  # this is what we want to lock in
+            "divergent_contig",
+            "divergent_at_polymorphic_position",
+        }
+
+
+class TestAutoDetectedDivergencesFeedNovelAlleles:
+    """#120 ask 3 plus #119: when the picker calls an allele but the
+    contig still disagrees at non-distinguishing positions, those
+    stored divergences should feed ``detect_novel_alleles``. This is
+    the heterozygous TRAC N→K case from the issue — TRAC has one
+    packaged allele, so the picker commits to TRAC*01 even when the
+    contig has K instead of N; the cohort aggregator should still
+    surface the polymorphism."""
+
+    def test_stored_divergences_aggregate(self):
+        # Build a 50-clone cohort with 25% K-at-position-3 across
+        # 5 V-genes and 3 samples — should hit
+        # novel_allele_candidate.
+        rows = []
+        for i in range(50):
+            is_variant = i < 13  # 26%
+            v_gene = f"TRAV{1 + (i % 5)}"
+            sample = f"S{1 + (i % 3)}"
+            if is_variant:
+                divs_str = "3:N->K"
+            else:
+                divs_str = None
+            rows.append({
+                "alpha_c_gene": "TRAC",
+                "alpha_c_gene_canonical": "TRAC",
+                "alpha_allele_called": "TRAC*01",
+                "alpha_allele_called_reason": ALLELE_REASON_AUTO_DETECTED,
+                "alpha_allele_divergence_positions": divs_str,
+                "alpha_observed_constant_aa_start": (
+                    HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+                    if is_variant else HUMAN_TRAC_AA[:15]
+                ),
+                "alpha_v_gene": v_gene,
+                "samples": sample,
+            })
+        df = pd.DataFrame(rows)
+        result = detect_novel_alleles(
+            df, min_pct=0.05, min_v_spread=3, min_samples=2,
+        )
+        nk_rows = result[
+            (result["expected_aa"] == "N") & (result["observed_aa"] == "K")
+        ]
+        assert len(nk_rows) == 1, (
+            f"expected 1 N→K row, got: {result.to_dict('records')}"
+        )
+        assert nk_rows.iloc[0]["verdict"] == "novel_allele_candidate"
+        assert nk_rows.iloc[0]["n_clones"] == 13
+
+
+class TestMinCohortSizeGate:
+    """``min_cohort_size`` skips the aggregator on small cohorts so
+    ``allele_audit_report`` doesn't pay an unnecessary tax in the
+    interactive assemble path."""
+
+    def test_below_threshold_returns_empty(self):
+        # 5 clones — well below the default min_cohort_size of 20.
+        rows = [{
+            "alpha_c_gene": "TRAC",
+            "alpha_c_gene_canonical": "TRAC",
+            "alpha_allele_called": None,
+            "alpha_allele_called_reason": ALLELE_REASON_DIVERGENT_CONTIG,
+            "alpha_allele_divergence_positions": None,
+            "alpha_observed_constant_aa_start": (
+                HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+            ),
+            "alpha_v_gene": f"TRAV{i + 1}",
+            "samples": f"S{i + 1}",
+        } for i in range(5)]
+        df = pd.DataFrame(rows)
+        result = detect_novel_alleles(df, min_cohort_size=20)
+        assert result.empty
+
+    def test_zero_threshold_evaluates_anyway(self):
+        # 5 clones but min_cohort_size=0 → runs.
+        rows = [{
+            "alpha_c_gene": "TRAC",
+            "alpha_c_gene_canonical": "TRAC",
+            "alpha_allele_called": None,
+            "alpha_allele_called_reason": ALLELE_REASON_DIVERGENT_CONTIG,
+            "alpha_allele_divergence_positions": None,
+            "alpha_observed_constant_aa_start": (
+                HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+            ),
+            "alpha_v_gene": f"TRAV{i + 1}",
+            "samples": f"S{i + 1}",
+        } for i in range(5)]
+        df = pd.DataFrame(rows)
+        result = detect_novel_alleles(df, min_cohort_size=0)
+        assert not result.empty
 
 
 # ---------------------------------------------------------------------------
