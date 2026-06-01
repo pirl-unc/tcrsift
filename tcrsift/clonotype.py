@@ -631,18 +631,20 @@ def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
     valid["is_complete_clone"] = is_complete
     sample_totals = valid[is_complete].groupby("sample", observed=True).size()
 
-    # Cell counts and UMI sums per (clone, sample).
+    # Cell counts and UMI sums per (clone, sample). Keep the
+    # (CDR3ab, sample) MultiIndex while assigning the UMI sums so pandas
+    # aligns them by key rather than by position, then flatten to
+    # columns. (Both Series come from the same groupby, so the order
+    # matches today — index alignment makes that irrelevant.)
     grouped = valid.groupby(["CDR3ab", "sample"], observed=True)
-    out = grouped.size().rename("cells").reset_index()
+    out = grouped.size().rename("cells").to_frame()
 
     if "TRA_1_umis" in valid.columns:
-        out["n_alpha_umis"] = (
-            grouped["TRA_1_umis"].sum().fillna(0).astype(int).values
-        )
+        out["n_alpha_umis"] = grouped["TRA_1_umis"].sum().fillna(0).astype(int)
     if "TRB_1_umis" in valid.columns:
-        out["n_beta_umis"] = (
-            grouped["TRB_1_umis"].sum().fillna(0).astype(int).values
-        )
+        out["n_beta_umis"] = grouped["TRB_1_umis"].sum().fillna(0).astype(int)
+
+    out = out.reset_index()
 
     out["frequency"] = out.apply(
         lambda r: safe_divide(r["cells"], sample_totals.get(r["sample"], 0), default=0.0),
