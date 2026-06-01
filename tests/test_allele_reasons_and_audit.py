@@ -958,3 +958,90 @@ class TestAlleleAuditReport:
         assert "[allele audit]" in report
         assert "alpha chain" in report
         assert ALLELE_REASON_NO_CONTIG in report
+
+
+class TestIssue120TracPolymorphismVisible:
+    """#120 — auto-detect emits ``TRAC*01`` for both N- and K-carrying
+    alpha chains, so a donor's real heterozygous polymorphism at mature
+    TRAC position 3 used to be invisible in the output (the only
+    breadcrumb was a human-readable ``constant_source`` string).
+
+    These acceptance tests encode the audited pilot scenario: donor B1-2
+    is ~42.9% K at mature TRAC pos 3, spread across many V genes and all
+    7 enrichment samples; donor B1-3 is homozygous N (0% K). The 2.6.0
+    audit columns must now surface B1-2's polymorphism as a
+    machine-parseable candidate and leave B1-3 clean.
+    """
+
+    def _donor_cohort(self, n_clones, k_fraction, n_v_genes, n_samples):
+        """Build a ``full_sequences``-shaped frame. Divergent clones keep
+        the auto-detected ``TRAC*01`` call (#120's exact complaint) but
+        now also carry the machine-parseable ``3:N->K`` divergence
+        breadcrumb that 2.6.0 records."""
+        k_observed = HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+        n_observed = HUMAN_TRAC_AA[:15]
+        n_k = int(round(n_clones * k_fraction))
+        rows = []
+        for i in range(n_clones):
+            is_k = i < n_k
+            rows.append({
+                "alpha_c_gene": "TRAC",
+                "alpha_c_gene_canonical": "TRAC",
+                # Auto-detect tolerated the mismatch and emitted canonical.
+                "alpha_allele_called": "TRAC*01",
+                "alpha_allele_called_reason": ALLELE_REASON_AUTO_DETECTED,
+                "alpha_allele_divergence_positions": "3:N->K" if is_k else None,
+                "alpha_observed_constant_aa_start": (
+                    k_observed if is_k else n_observed
+                ),
+                "alpha_v_gene": f"TRAV{1 + (i % n_v_genes)}",
+                "samples": f"S{1 + (i % n_samples)}",
+            })
+        return pd.DataFrame(rows)
+
+    def test_heterozygous_donor_polymorphism_is_visible(self):
+        # B1-2: 429/1000 (42.9%) K at TRAC pos 3, 12 V genes, 7 samples.
+        df = self._donor_cohort(
+            n_clones=1000, k_fraction=0.429, n_v_genes=12, n_samples=7,
+        )
+        candidates = detect_novel_alleles(
+            df, min_pct=0.05, min_v_spread=3, min_samples=2, min_cohort_size=0,
+        )
+        nk = candidates[
+            (candidates["gene"] == "TRAC")
+            & (candidates["position"] == 3)
+            & (candidates["expected_aa"] == "N")
+            & (candidates["observed_aa"] == "K")
+        ]
+        assert len(nk) == 1
+        row = nk.iloc[0]
+        # The machine-parseable identity #120 said the output was missing.
+        assert row["reference_allele"] == "TRAC*01"
+        assert row["variant_description"] == "p3N>K"
+        assert row["candidate_allele_label"] == "TRAC*01:p3N>K"
+        # 429/1000 observed contigs — the real donor fraction, not diluted
+        # by the whole-cohort denominator.
+        assert row["n_clones"] == 429
+        assert row["n_observed_at_position"] == 1000
+        assert row["pct_observed_at_position"] == 0.429
+        assert row["verdict"] == "novel_allele_candidate"
+
+        # And it is human-visible in the printed audit report.
+        report = allele_audit_report(
+            df, min_pct=0.05, min_v_spread=3, min_samples=2,
+        )
+        assert "TRAC*01:p3N>K" in report
+        assert "novel_allele_candidate" in report
+
+    def test_homozygous_donor_has_no_polymorphism_candidate(self):
+        # B1-3: 0% K — nothing to surface, no false positive.
+        df = self._donor_cohort(
+            n_clones=1000, k_fraction=0.0, n_v_genes=12, n_samples=7,
+        )
+        candidates = detect_novel_alleles(
+            df, min_pct=0.05, min_v_spread=3, min_samples=2, min_cohort_size=0,
+        )
+        nk = candidates[
+            (candidates["expected_aa"] == "N") & (candidates["observed_aa"] == "K")
+        ]
+        assert nk.empty
