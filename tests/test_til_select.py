@@ -20,7 +20,6 @@ from types import SimpleNamespace
 import anndata as ad
 import numpy as np
 import pandas as pd
-import pytest
 import scipy.sparse as sp
 
 from tcrsift.til_select import (

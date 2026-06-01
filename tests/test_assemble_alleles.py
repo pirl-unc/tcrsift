@@ -30,7 +30,6 @@ The new architecture (Option D from the issue thread):
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from tcrsift.assemble import (
     HUMAN_CONSTANT_ALLELES,
@@ -42,7 +41,6 @@ from tcrsift.assemble import (
     _score_allele_against_contig,
     assemble_full_sequences,
 )
-
 
 # ---------------------------------------------------------------------------
 # Packaging shape

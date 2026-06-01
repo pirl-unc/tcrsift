@@ -39,7 +39,6 @@ import pytest  # noqa: E402
 
 import tcrsift.plots  # noqa: F401, E402  ← triggers font-config side effects
 
-
 # ---------------------------------------------------------------------------
 # Category 2: matplotlib font config
 

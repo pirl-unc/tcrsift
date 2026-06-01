@@ -196,7 +196,7 @@ class TestCreateTcrSequencePdfStrict:
         warnings, but tell the user."""
         import logging
 
-        from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
+        from tcrsift.assemble import HUMAN_TRBC1_AA
         from tcrsift.plots import create_tcr_sequence_pdf
 
         vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
@@ -333,7 +333,7 @@ class TestCreateTcrSequencePdfStrict:
     def test_strict_skip_raises_when_all_clones_fail(self, tmp_path):
         """When every clone fails load-bearing validation under
         strict='skip', raise rather than silently writing nothing."""
-        from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
+        from tcrsift.assemble import HUMAN_TRBC1_AA
         from tcrsift.plots import create_tcr_sequence_pdf
         from tcrsift.validation import TCRsiftValidationError
 
