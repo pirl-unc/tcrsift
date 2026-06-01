@@ -617,6 +617,41 @@ def _format_size(n: int) -> str:
     return f"{n} B"
 
 
+def cmd_audit_alleles(args):
+    """Run cohort-level allele audit + novel-allele detection (#119, #120).
+
+    Reads a ``full_sequences.csv`` produced by ``tcrsift assemble`` or
+    ``tcrsift run`` and prints the audit report. When ``--output`` is
+    given, also writes the long-form novel-allele candidates CSV.
+    """
+    import pandas as pd
+
+    from .assemble import allele_audit_report, detect_novel_alleles
+
+    df = pd.read_csv(args.input)
+    print(f"Loaded {len(df)} clones from {args.input}")
+    print()
+
+    report = allele_audit_report(
+        df,
+        min_pct=args.min_pct,
+        min_v_spread=args.min_v_spread,
+        min_samples=args.min_samples,
+    )
+    print(report)
+
+    if args.output:
+        candidates = detect_novel_alleles(
+            df,
+            min_pct=args.min_pct,
+            min_v_spread=args.min_v_spread,
+            min_samples=args.min_samples,
+        )
+        candidates.to_csv(args.output, index=False)
+        print()
+        print(f"Wrote novel-allele candidate table to {args.output}")
+
+
 def cmd_data_list(args):
     """List managed reference databases and their cache state."""
     from .datacache import inspect_cache, resolve_cache_dir
@@ -2261,6 +2296,40 @@ CONDITIONALLY REQUIRED:
     )
     asm_out.add_argument("--verbose", action="store_true", help="Verbose output")
     p_asm.set_defaults(func=cmd_assemble)
+
+    # -------------------------------------------------------------------------
+    # Audit alleles subcommand (#119, #120)
+    # -------------------------------------------------------------------------
+    p_audit = subparsers.add_parser(
+        "audit-alleles",
+        help="Cohort-level allele audit + novel-allele detection",
+    )
+    p_audit.add_argument(
+        "input",
+        help="Path to full_sequences.csv from tcrsift assemble / run",
+    )
+    p_audit.add_argument(
+        "-o", "--output",
+        metavar="PATH",
+        help="Write novel-allele candidates CSV to this path "
+             "(in addition to the text report on stdout)",
+    )
+    p_audit.add_argument(
+        "--min-pct", type=float, default=0.05,
+        help="Minimum fraction of in-cohort clones for a "
+             "novel-allele candidate (default: 0.05 = 5%%)",
+    )
+    p_audit.add_argument(
+        "--min-v-spread", type=int, default=3,
+        help="Minimum distinct V genes the variant must appear "
+             "in (default: 3)",
+    )
+    p_audit.add_argument(
+        "--min-samples", type=int, default=2,
+        help="Minimum distinct samples the variant must "
+             "appear in (default: 2)",
+    )
+    p_audit.set_defaults(func=cmd_audit_alleles)
 
     # -------------------------------------------------------------------------
     # Run command (unified pipeline)
