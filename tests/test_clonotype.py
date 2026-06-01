@@ -899,9 +899,10 @@ class TestBuildCloneSampleLong:
         assert set(long["CDR3ab"]) == {"CAVA_CASS_A", "CAVB_CASS_B"}
 
     def test_raises_when_no_cdr3_columns(self):
-        from tcrsift.validation import TCRsiftValidationError
         import anndata as ad
         import numpy as np
+
+        from tcrsift.validation import TCRsiftValidationError
 
         adata = ad.AnnData(
             X=np.zeros((2, 1), dtype=np.float32),
@@ -911,13 +912,72 @@ class TestBuildCloneSampleLong:
             build_clone_sample_long(adata)
 
 
+class TestBuildCloneSampleLongCategorical:
+    """AnnData/H5AD round-trips store obs string columns as ``Categorical``,
+    often with levels that no longer appear after filtering. The grouped
+    aggregation must iterate only observed levels — otherwise unused
+    categories surface as phantom zero-cell (clone, sample) rows."""
+
+    def test_unused_categorical_levels_produce_no_phantom_rows(self):
+        import anndata as ad
+        import numpy as np
+
+        from tcrsift.clonotype import build_clone_sample_long
+
+        rows = (
+            # (sample, donor, method, alpha, beta)
+            [("S1", "D1", "AIMpos", "CAVA", "CASS_A")] * 5
+            + [("S2", "D2", "tetpos", "CAVA", "CASS_A")] * 3
+            + [("S1", "D1", "AIMpos", "CAVB", "CASS_B")] * 2
+        )
+        n = len(rows)
+        obs = pd.DataFrame(
+            {
+                "sample": [r[0] for r in rows],
+                "patient_id": [r[1] for r in rows],
+                "enrichment_method": [r[2] for r in rows],
+                "CDR3_alpha": [r[3] for r in rows],
+                "CDR3_beta": [r[4] for r in rows],
+            }
+        )
+        # Simulate the round-trip: each grouping column is categorical and
+        # carries an extra level that never appears in the data.
+        obs["sample"] = pd.Categorical(
+            obs["sample"], categories=["S1", "S2", "S3_UNUSED"]
+        )
+        obs["patient_id"] = pd.Categorical(
+            obs["patient_id"], categories=["D1", "D2", "D3_UNUSED"]
+        )
+        obs["enrichment_method"] = pd.Categorical(
+            obs["enrichment_method"], categories=["AIMpos", "tetpos", "IFN_UNUSED"]
+        )
+        adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32), obs=obs)
+
+        long_df = build_clone_sample_long(adata)
+
+        # Exactly the observed (clone, sample) pairs — no S3_UNUSED phantoms.
+        pairs = set(zip(long_df["CDR3ab"], long_df["sample"].astype(str)))
+        assert pairs == {
+            ("CAVA_CASS_A", "S1"),
+            ("CAVA_CASS_A", "S2"),
+            ("CAVB_CASS_B", "S1"),
+        }
+        # Cell counts reflect real data, not zero-filled phantom groups.
+        a_s1 = long_df[
+            (long_df["CDR3ab"] == "CAVA_CASS_A")
+            & (long_df["sample"].astype(str) == "S1")
+        ]
+        assert a_s1["cells"].iloc[0] == 5
+
+
 class TestBuildPerMethodRankings:
     """#20 chunk 2 — per-(donor, method) ranked CSVs."""
 
     def _setup(self):
-        from tcrsift.clonotype import build_clone_sample_long
         import anndata as ad
         import numpy as np
+
+        from tcrsift.clonotype import build_clone_sample_long
 
         # Two donors, three methods. Clone A is shared across both donors;
         # clone B is private to B1-2; clone C is private to B1-3.
@@ -1053,9 +1113,10 @@ class TestBuildMethodOverlapMatrices:
     """#27 chunk 3 — method × method overlap matrices per donor."""
 
     def _setup(self):
-        from tcrsift.clonotype import build_clone_sample_long
         import anndata as ad
         import numpy as np
+
+        from tcrsift.clonotype import build_clone_sample_long
 
         # B1-2: clone A in (AIM, tet, IFN); clone B in (AIM, tet);
         # clone C in (IFN). B1-3: clone A in (AIM); clone D in (AIM, tet).
@@ -1187,9 +1248,10 @@ class TestBuildMethodRecoveryTable:
     """#27 chunk 4 — per-(donor, method) recovery of a target tier."""
 
     def _setup(self):
-        from tcrsift.clonotype import build_clone_sample_long
         import anndata as ad
         import numpy as np
+
+        from tcrsift.clonotype import build_clone_sample_long
 
         # 5 tier-1 target clones; B1-2's AIMpos catches all 5; B1-2's tetpos
         # catches only 2; B1-3's AIMpos catches 4; B1-3's tetpos catches 0.

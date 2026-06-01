@@ -213,7 +213,7 @@ def _aggregate_clone_data(
         method_cell_totals = df["enrichment_method"].value_counts()
 
     # Create iterator with optional progress bar
-    grouped = df.groupby("CDR3ab")
+    grouped = df.groupby("CDR3ab", observed=True)
     if show_progress:
         grouped = tqdm(
             grouped,
@@ -286,7 +286,7 @@ def _aggregate_clone_data(
             # used by the planned --min-methods-per-donor filter.
             methods_per_donor: dict[str, list[str]] = {}
             grouped_dm = clone_df.dropna(subset=["patient_id", "enrichment_method"])
-            for donor, group in grouped_dm.groupby("patient_id"):
+            for donor, group in grouped_dm.groupby("patient_id", observed=True):
                 donor_methods = sorted(
                     group["enrichment_method"].astype(str).unique()
                 )
@@ -347,7 +347,7 @@ def _aggregate_clone_data(
         if has_donor and has_timepoint:
             timepoints_per_donor: dict[str, list[str]] = {}
             grouped_td = clone_df.dropna(subset=["patient_id", "timepoint"])
-            for donor, group in grouped_td.groupby("patient_id"):
+            for donor, group in grouped_td.groupby("patient_id", observed=True):
                 donor_tps = sorted(group["timepoint"].astype(str).unique())
                 if donor_tps:
                     timepoints_per_donor[str(donor)] = donor_tps
@@ -362,7 +362,7 @@ def _aggregate_clone_data(
         if has_donor and has_apc:
             apcs_per_donor: dict[str, list[str]] = {}
             grouped_ad = clone_df.dropna(subset=["patient_id", "apc_type"])
-            for donor, group in grouped_ad.groupby("patient_id"):
+            for donor, group in grouped_ad.groupby("patient_id", observed=True):
                 donor_apcs = sorted(group["apc_type"].astype(str).unique())
                 if donor_apcs:
                     apcs_per_donor[str(donor)] = donor_apcs
@@ -503,7 +503,9 @@ def calculate_clone_frequencies(
     df = adata.obs.copy()
 
     # Calculate total complete TCRs per sample
-    sample_totals = df.groupby("sample")["is_complete_clone"].sum().to_dict()
+    sample_totals = df.groupby(
+        "sample", observed=True,
+    )["is_complete_clone"].sum().to_dict()
 
     freq_data = []
     for _, clone_row in clonotypes.iterrows():
@@ -627,10 +629,10 @@ def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
         # No chain columns at all — fall back to the raw row count.
         is_complete = pd.Series(True, index=valid.index)
     valid["is_complete_clone"] = is_complete
-    sample_totals = valid[is_complete].groupby("sample").size()
+    sample_totals = valid[is_complete].groupby("sample", observed=True).size()
 
     # Cell counts and UMI sums per (clone, sample).
-    grouped = valid.groupby(["CDR3ab", "sample"])
+    grouped = valid.groupby(["CDR3ab", "sample"], observed=True)
     out = grouped.size().rename("cells").reset_index()
 
     if "TRA_1_umis" in valid.columns:
@@ -656,7 +658,7 @@ def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
     }
     sample_meta_cols = [c for c in axis_to_short if c in valid.columns]
     if sample_meta_cols:
-        sample_meta = valid.groupby("sample")[sample_meta_cols].first()
+        sample_meta = valid.groupby("sample", observed=True)[sample_meta_cols].first()
         for col in sample_meta_cols:
             out[axis_to_short[col]] = out["sample"].map(sample_meta[col])
 
@@ -842,7 +844,7 @@ def build_per_method_rankings(
     # Aggregate to one row per (donor, method, CDR3ab): max freq across
     # any sample replicates within that (donor, method) bucket; sum cells.
     grouped = (
-        long_df.groupby(["donor", "method", "CDR3ab"], as_index=False)
+        long_df.groupby(["donor", "method", "CDR3ab"], as_index=False, observed=True)
         .agg(cells=("cells", "sum"), frequency=("frequency", "max"))
     )
 
@@ -865,7 +867,7 @@ def build_per_method_rankings(
     grouped = grouped.merge(annot, on="CDR3ab", how="inner")
 
     rankings: dict[tuple[str, str], pd.DataFrame] = {}
-    for (donor, method), group in grouped.groupby(["donor", "method"]):
+    for (donor, method), group in grouped.groupby(["donor", "method"], observed=True):
         ranked = (
             group.sort_values("frequency", ascending=False)
             .head(top_n)
@@ -920,10 +922,10 @@ def build_method_overlap_matrices(
         selected = selected.assign(donor="all")
 
     matrices: dict[str, pd.DataFrame] = {}
-    for donor, donor_df in selected.groupby("donor"):
+    for donor, donor_df in selected.groupby("donor", observed=True):
         method_to_clones: dict[str, set[str]] = {
             str(m): set(g["CDR3ab"].unique())
-            for m, g in donor_df.groupby("method")
+            for m, g in donor_df.groupby("method", observed=True)
         }
         methods = sorted(method_to_clones)
         n = len(methods)

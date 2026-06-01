@@ -251,7 +251,7 @@ def split_clonotypes_by_donor(
     if "donor" not in long_df.columns:
         return {"all": clonotypes.copy()}
     out: dict[str, pd.DataFrame] = {}
-    for donor, group in long_df.groupby("donor"):
+    for donor, group in long_df.groupby("donor", observed=True):
         donor_clones = set(group["CDR3ab"].astype(str).unique())
         out[str(donor)] = clonotypes[
             clonotypes["CDR3ab"].astype(str).isin(donor_clones)
@@ -270,7 +270,7 @@ def split_clonotypes_by_sample(
     if "sample" not in long_df.columns:
         return {"all": clonotypes.copy()}
     out: dict[str, pd.DataFrame] = {}
-    for sample, group in long_df.groupby("sample"):
+    for sample, group in long_df.groupby("sample", observed=True):
         sample_clones = set(group["CDR3ab"].astype(str).unique())
         out[str(sample)] = clonotypes[
             clonotypes["CDR3ab"].astype(str).isin(sample_clones)

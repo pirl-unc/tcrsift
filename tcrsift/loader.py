@@ -496,7 +496,9 @@ def _pivot_vdj_by_barcode(vdj_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Create entry ID for each chain per barcode (1, 2, etc.)
-    vdj_df["entry_id"] = vdj_df.groupby(["barcode", "chain"]).cumcount() + 1
+    vdj_df["entry_id"] = vdj_df.groupby(
+        ["barcode", "chain"], observed=True,
+    ).cumcount() + 1
 
     # Columns to pivot - include all CDR/FWR segments if available
     pivot_cols = ["cdr3", "v_gene", "d_gene", "j_gene", "c_gene", "umis", "reads", "contig_id"]

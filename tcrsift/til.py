@@ -507,7 +507,9 @@ def match_til(
         if "patient_id" not in til_df.columns:
             continue
         # Note til_df["CDR3ab"] was set above; reuse it.
-        for donor, group in til_df.dropna(subset=["patient_id"]).groupby("patient_id"):
+        for donor, group in til_df.dropna(subset=["patient_id"]).groupby(
+            "patient_id", observed=True,
+        ):
             counts = group["CDR3ab"].value_counts().to_dict()
             counts.pop("", None)
             counts.pop("_", None)
@@ -608,7 +610,9 @@ def get_til_summary(
 
     # By antigen if available
     if "antigens" in matched.columns:
-        antigen_recovery = matched.groupby("antigens")["til_cell_count"].sum().to_dict()
+        antigen_recovery = matched.groupby(
+            "antigens", observed=True,
+        )["til_cell_count"].sum().to_dict()
         summary["til_cells_by_antigen"] = antigen_recovery
 
     return summary
@@ -649,7 +653,7 @@ def identify_til_specific_clones(
 
     # Aggregate TIL clones
     til_clones = (
-        til_df.groupby("CDR3ab")
+        til_df.groupby("CDR3ab", observed=True)
         .agg(
             {
                 "sample": "first",
@@ -658,7 +662,7 @@ def identify_til_specific_clones(
         .reset_index()
     )
 
-    til_clones["til_cell_count"] = til_df.groupby("CDR3ab").size().values
+    til_clones["til_cell_count"] = til_df.groupby("CDR3ab", observed=True).size().values
     til_clones = til_clones[til_clones["til_cell_count"] >= min_cells]
 
     # Extract CDR3 sequences
