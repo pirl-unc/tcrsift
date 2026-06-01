@@ -309,7 +309,7 @@ def match_clonotypes(
         )
 
     agg = (
-        db.groupby(group_cols, dropna=False, group_keys=False)
+        db.groupby(group_cols, dropna=False, group_keys=False, observed=True)
         .apply(_agg_group, include_groups=False)
         .reset_index()
     )
@@ -578,7 +578,7 @@ def _aggregate_reads_umis(df: pd.DataFrame, id_col: str) -> pd.DataFrame:
         agg["reads_sum"] = ("reads", "sum")
     if not agg:
         return pd.DataFrame({id_col: df[id_col].unique()})
-    return df.groupby(id_col, as_index=False).agg(**agg)
+    return df.groupby(id_col, as_index=False, observed=True).agg(**agg)
 
 
 def _concat_segment_fields(df: pd.DataFrame, fields: list[str]) -> pd.Series:
@@ -624,7 +624,9 @@ def _extract_paired_cdr3_from_consensus_df(
         ascending.append(False)
 
     work = work.sort_values(sort_cols, ascending=ascending)
-    work = work.groupby(["clonotype_id_norm", "chain_simple"], as_index=False).first()
+    work = work.groupby(
+        ["clonotype_id_norm", "chain_simple"], as_index=False, observed=True,
+    ).first()
     work["chain_full_aa"] = _concat_segment_fields(work, list(TCR_SEGMENTS_AA))
     work["chain_full_nt"] = _concat_segment_fields(work, list(TCR_SEGMENTS_NT))
 
@@ -792,7 +794,9 @@ def load_from_consensus(
         if col in merged.columns
     ]
 
-    counts = merged.groupby(["CDR3_alpha", "CDR3_beta"], as_index=False).agg(**sum_agg)
+    counts = merged.groupby(
+        ["CDR3_alpha", "CDR3_beta"], as_index=False, observed=True,
+    ).agg(**sum_agg)
     if meta_cols:
         if "umis_sum" in merged.columns:
             rep_source = merged.sort_values(
@@ -918,7 +922,7 @@ def _load_barcode_to_clonotype(contig_csv_path: Path) -> pd.DataFrame:
     work = work.drop(columns=[clonotype_col])
     work = work.dropna(subset=["barcode", "clonotype_id"])
     work = work.drop_duplicates(subset=["barcode", "clonotype_id"])
-    work = work.groupby("barcode", as_index=False).first()
+    work = work.groupby("barcode", as_index=False, observed=True).first()
     return work
 
 
@@ -1006,7 +1010,9 @@ def _compute_marker_scores_from_adata(
         agg[f"score_log1p_cp10k_{gene}"] = (f"log1p_cp10k_{gene}", "mean")
         agg[f"score_z_{gene}"] = (f"z_log1p_cp10k_{gene}", "mean")
     clonotype_scores = (
-        cell_df.groupby(["CDR3_alpha", "CDR3_beta", "CDR3ab"], as_index=False).agg(**agg)
+        cell_df.groupby(
+            ["CDR3_alpha", "CDR3_beta", "CDR3ab"], as_index=False, observed=True,
+        ).agg(**agg)
     )
     return cell_df, clonotype_scores
 
@@ -1073,7 +1079,9 @@ def compute_marker_scores_for_timepoint(
             agg[f"score_z_{gene}"] = (f"z_log1p_cp10k_{gene}", "mean")
 
         clonotype_scores = (
-            merged.groupby(["CDR3_alpha", "CDR3_beta", "CDR3ab"], as_index=False).agg(**agg)
+            merged.groupby(
+                ["CDR3_alpha", "CDR3_beta", "CDR3ab"], as_index=False, observed=True,
+            ).agg(**agg)
         )
         return merged, clonotype_scores
     except Exception:
@@ -1915,7 +1923,7 @@ def plot_monotonic_increase_log_lines(
     long_df["frequency_plot"] = long_df["frequency"].clip(lower=epsilon) * 100.0
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    for _, group in long_df.groupby("CDR3ab", sort=False):
+    for _, group in long_df.groupby("CDR3ab", sort=False, observed=True):
         ax.plot(
             group["timepoint"].astype(str),
             group["frequency_plot"],

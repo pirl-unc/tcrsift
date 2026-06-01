@@ -260,7 +260,7 @@ def aggregate_sct(
             agg_dict[f"{col}_bool"] = ["any", "all"]
 
     # Aggregate
-    result = df.groupby(group_cols).agg(agg_dict)
+    result = df.groupby(group_cols, observed=True).agg(agg_dict)
 
     # Flatten column names
     result.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in result.columns]
@@ -291,7 +291,7 @@ def aggregate_sct(
     mutation_col = _find_column(df, ["Top1.mutation.PE", "mutation"])
     if mutation_col:
         mutation_map = {}
-        for pair, sub_df in df.groupby("CDR3_pair"):
+        for pair, sub_df in df.groupby("CDR3_pair", observed=True):
             mutations = sub_df[mutation_col].dropna().unique()
             if len(mutations) == 1:
                 mutation_map[pair] = mutations[0]

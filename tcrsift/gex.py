@@ -280,7 +280,7 @@ def aggregate_gex_by_clonotype(
         logger.info(f"Aggregating {len(expr_cols)} expression columns by {group_col}")
 
     result_data = []
-    for clonotype, group in df.groupby(group_col):
+    for clonotype, group in df.groupby(group_col, observed=True):
         row = {group_col: clonotype, "total_cells.count": len(group)}
 
         for col in expr_cols:
@@ -482,7 +482,7 @@ def compute_cd4_cd8_counts(
         logger.info(f"Computing CD4/CD8 counts using {cd4_col} and {cd8_col}")
 
     result_data = []
-    for clonotype, group in df.groupby(group_col):
+    for clonotype, group in df.groupby(group_col, observed=True):
         cd4_vals = group[cd4_col].fillna(0)
         cd8_vals = group[cd8_col].fillna(0)
 

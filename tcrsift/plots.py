@@ -2069,7 +2069,10 @@ def plot_method_recovery(
     # Sort methods by overall (across-donor) recovery fraction so the worst
     # / best methods read off the chart at a glance.
     method_order = (
-        recovery.groupby("method")["fraction"].mean().sort_values(ascending=False).index.tolist()
+        recovery.groupby("method", observed=True)["fraction"]
+        .mean()
+        .sort_values(ascending=False)
+        .index.tolist()
     )
     donor_order = sorted(recovery["donor"].astype(str).unique())
 

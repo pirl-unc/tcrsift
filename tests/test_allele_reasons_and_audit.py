@@ -29,6 +29,7 @@ from tcrsift.assemble import (
     ALLELE_REASON_OVERRIDDEN,
     ALLELE_REASON_SPARSE_CONTIG,
     ALLELE_REASON_VALUES,
+    HUMAN_CONSTANT_ALLELES,
     HUMAN_TRAC_AA,
     HUMAN_TRBC1_AA,
     _divergence_positions,
@@ -148,6 +149,77 @@ class TestAlleleReasonExplicitOverride:
         # qc_warnings populated.
         warnings = out["qc_warnings"].iloc[0]
         assert any("invalid allele override" in w for w in warnings)
+
+
+class TestAssignedAlleleDivergences:
+    def test_auto_assigned_trac_difference_is_noted(self, tmp_path):
+        """TRAC has one packaged allele, so a tolerated N->K contig
+        observation should still leave a divergence audit trail against
+        the assigned TRAC*01 allele."""
+        a, b = _vdj_fixture()
+        leader_aa = "M" + "A" * 19
+        observed = HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+        alpha_c_nt = "TAT" + back_translate(observed)  # alpha J->C junction + mature C
+        alpha_contig = back_translate(leader_aa) + back_translate(a) + alpha_c_nt
+
+        df = pd.DataFrame([_base_clone(
+            a, b,
+            alpha_contig_ids="contig_a1",
+        )])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_a1\n{alpha_contig}\n"
+        )
+
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+
+        assert out["alpha_allele_called"].iloc[0] == "TRAC*01"
+        assert out["alpha_observed_constant_aa_start"].iloc[0].startswith(observed)
+        assert out["alpha_allele_divergence_positions"].iloc[0] == "3:N->K"
+
+    def test_explicit_override_difference_is_noted(self, tmp_path):
+        """If the user assigns a specific allele, divergence positions
+        are reported relative to that assigned allele, not the default."""
+        a, b = _vdj_fixture()
+        leader_aa = "M" + "A" * 19
+        trbc2_01 = HUMAN_CONSTANT_ALLELES["TRBC2"]["01"]
+        trbc2_03 = HUMAN_CONSTANT_ALLELES["TRBC2"]["03"]
+        diff_idx = next(
+            i for i, (aa_03, aa_01) in enumerate(zip(trbc2_03, trbc2_01))
+            if aa_03 != aa_01
+        )
+        beta_c_nt = "GAG" + back_translate(trbc2_01[:15])
+        beta_contig = back_translate(leader_aa) + back_translate(b) + beta_c_nt
+
+        df = pd.DataFrame([_base_clone(
+            a, b,
+            beta_c_gene="TRBC2",
+            beta_j_gene="TRBJ2-1",
+            beta_contig_ids="contig_b1",
+        )])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(
+            f">contig_b1\n{beta_contig}\n"
+        )
+
+        out = assemble_full_sequences(
+            df, contigs_dir=str(tmp_path),
+            alpha_leader=None, beta_leader=None,
+            trbc2_allele="03",
+            verbose=False, show_progress=False,
+        )
+
+        expected_divergence = (
+            f"{diff_idx + 1}:{trbc2_03[diff_idx]}->{trbc2_01[diff_idx]}"
+        )
+        assert out["beta_allele_called"].iloc[0] == "TRBC2*03"
+        assert expected_divergence in out["beta_allele_divergence_positions"].iloc[0]
 
 
 class TestAlleleReasonSparseContig:
@@ -658,6 +730,187 @@ class TestDetectNovelAlleles:
         ]
         assert len(nk_rows) == 1
         assert nk_rows.iloc[0]["verdict"] == "novel_allele_candidate"
+
+    def test_pct_denominator_is_observed_position_coverage(self):
+        # 100 alpha chains have audit metadata, but only 50 have contig
+        # coverage at TRAC position 3. Ten carry N->K, so the biological
+        # denominator is 10/50 observed contigs, not 10/100 chain rows.
+        rows = []
+        for i in range(100):
+            has_observation = i < 50
+            is_variant = i < 10
+            observed = None
+            if has_observation:
+                observed = (
+                    HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+                    if is_variant else HUMAN_TRAC_AA[:15]
+                )
+            rows.append({
+                "alpha_c_gene": "TRAC",
+                "alpha_c_gene_canonical": "TRAC",
+                "alpha_allele_called": "TRAC*01" if has_observation else None,
+                "alpha_allele_called_reason": (
+                    ALLELE_REASON_AUTO_DETECTED
+                    if has_observation else ALLELE_REASON_NO_CONTIG
+                ),
+                "alpha_allele_divergence_positions": (
+                    "3:N->K" if is_variant else None
+                ),
+                "alpha_observed_constant_aa_start": observed,
+                "alpha_v_gene": f"TRAV{1 + (i % 5)}",
+                "samples": f"S{1 + (i % 2)}",
+            })
+        df = pd.DataFrame(rows)
+
+        result = detect_novel_alleles(
+            df,
+            min_pct=0.15,
+            min_v_spread=3,
+            min_samples=2,
+            min_cohort_size=0,
+        )
+
+        nk_rows = result[
+            (result["expected_aa"] == "N") & (result["observed_aa"] == "K")
+        ]
+        assert len(nk_rows) == 1
+        row = nk_rows.iloc[0]
+        assert row["n_clones"] == 10
+        assert row["n_observed_at_position"] == 50
+        assert row["pct_chain_clones"] == 0.1
+        assert row["pct_observed_at_position"] == 0.2
+        assert row["verdict"] == "novel_allele_candidate"
+
+    def test_pct_observed_never_exceeds_one_when_columns_disagree(self):
+        # The variant count comes from the stored divergence string while
+        # the position denominator comes from observed_constant_aa_start.
+        # If a clone records a divergence at a position where its observed
+        # AA is missing, the naive ratio could exceed 1.0; the denominator
+        # is clamped to >= n_clones so pct stays in [0, 1].
+        rows = []
+        for i in range(10):
+            has_observation = i < 3
+            rows.append({
+                "alpha_c_gene": "TRAC",
+                "alpha_c_gene_canonical": "TRAC",
+                "alpha_allele_called": "TRAC*01",
+                "alpha_allele_called_reason": ALLELE_REASON_AUTO_DETECTED,
+                "alpha_allele_divergence_positions": "3:N->K",
+                "alpha_observed_constant_aa_start": (
+                    HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+                    if has_observation else None
+                ),
+                "alpha_v_gene": f"TRAV{1 + (i % 5)}",
+                "samples": f"S{1 + (i % 2)}",
+            })
+        df = pd.DataFrame(rows)
+
+        result = detect_novel_alleles(
+            df,
+            min_pct=0.05,
+            min_v_spread=3,
+            min_samples=2,
+            min_cohort_size=0,
+        )
+
+        nk_rows = result[
+            (result["expected_aa"] == "N") & (result["observed_aa"] == "K")
+        ]
+        assert len(nk_rows) == 1
+        row = nk_rows.iloc[0]
+        assert row["n_clones"] == 10
+        # Only 3 clones cover position 3, but the denominator is clamped
+        # up to the variant count so the fraction never exceeds 1.0.
+        assert row["n_observed_at_position"] == 10
+        assert row["pct_observed_at_position"] == 1.0
+        assert 0.0 <= row["pct_observed_at_position"] <= 1.0
+
+    def test_unused_categorical_gene_categories_do_not_crash(self):
+        # AnnData/H5AD round-trips can leave unused categorical levels.
+        # pandas groupby(observed=False) iterates those as empty groups,
+        # which used to crash the observed-position denominator helper.
+        rows = []
+        for i in range(30):
+            rows.append({
+                "alpha_c_gene": "TRAC",
+                "alpha_c_gene_canonical": "TRAC",
+                "alpha_allele_called": "TRAC*01",
+                "alpha_allele_called_reason": ALLELE_REASON_AUTO_DETECTED,
+                "alpha_allele_divergence_positions": "3:N->K",
+                "alpha_observed_constant_aa_start": (
+                    HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+                ),
+                "alpha_v_gene": f"TRAV{1 + (i % 5)}",
+                "samples": f"S{1 + (i % 3)}",
+            })
+        df = pd.DataFrame(rows)
+        df["alpha_c_gene_canonical"] = pd.Categorical(
+            df["alpha_c_gene_canonical"],
+            categories=["TRAC", "TRAC_NOVEL", "UNUSED"],
+        )
+
+        result = detect_novel_alleles(
+            df,
+            min_pct=0.05,
+            min_v_spread=3,
+            min_samples=2,
+            min_cohort_size=0,
+        )
+
+        nk_rows = result[
+            (result["gene"] == "TRAC")
+            & (result["expected_aa"] == "N")
+            & (result["observed_aa"] == "K")
+        ]
+        assert len(nk_rows) == 1
+        row = nk_rows.iloc[0]
+        assert row["reference_allele"] == "TRAC*01"
+        assert row["candidate_allele_label"] == "TRAC*01:p3N>K"
+        assert row["n_observed_at_position"] == 30
+
+    def test_novel_gene_label_uses_closest_reference_allele(self):
+        # A gene label outside the packaged constants can still carry
+        # enough observed AA prefix to anchor the diff to the nearest
+        # known constant allele.
+        rows = []
+        observed = HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+        for i in range(30):
+            rows.append({
+                "alpha_c_gene": "TRAC_NOVEL",
+                "alpha_c_gene_canonical": "TRAC_NOVEL",
+                "alpha_allele_called": None,
+                "alpha_allele_called_reason": ALLELE_REASON_DIVERGENT_CONTIG,
+                "alpha_allele_divergence_positions": None,
+                "alpha_observed_constant_aa_start": observed,
+                "alpha_v_gene": f"TRAV{1 + (i % 5)}",
+                "samples": f"S{1 + (i % 3)}",
+            })
+        df = pd.DataFrame(rows)
+        df["alpha_c_gene_canonical"] = pd.Categorical(
+            df["alpha_c_gene_canonical"],
+            categories=["TRAC", "TRAC_NOVEL", "UNUSED"],
+        )
+
+        result = detect_novel_alleles(
+            df,
+            min_pct=0.05,
+            min_v_spread=3,
+            min_samples=2,
+            min_cohort_size=0,
+        )
+
+        nk_rows = result[
+            (result["gene"] == "TRAC_NOVEL")
+            & (result["expected_aa"] == "N")
+            & (result["observed_aa"] == "K")
+        ]
+        assert len(nk_rows) == 1
+        row = nk_rows.iloc[0]
+        assert row["reference_allele"] == "TRAC*01"
+        assert row["variant_description"] == "p3N>K"
+        assert row["candidate_allele_label"] == "TRAC_NOVEL~TRAC*01:p3N>K"
+        assert row["n_observed_at_position"] == 30
+        assert row["verdict"] == "novel_allele_candidate"
 
     def test_low_freq_classified_as_artifact(self):
         df = self._make_cohort(

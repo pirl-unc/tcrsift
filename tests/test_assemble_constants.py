@@ -548,7 +548,6 @@ class TestGetConstantRegionSequences:
         existing test_assemble tests pass without pyensembl in the
         env is itself evidence — but we also confirm no module-level
         attribute exposes it."""
-        from tcrsift import assemble
 
         # `get_constant_region_sequences` should not pull pyensembl.
         # We don't assert the absence at import time (pyensembl could

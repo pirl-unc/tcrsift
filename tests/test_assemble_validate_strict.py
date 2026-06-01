@@ -34,8 +34,6 @@ import pandas as pd
 import pytest
 
 from tcrsift.assemble import (
-    CONSTANT_REGION_ENDINGS,
-    HUMAN_CONSTANT_REGIONS_AA,
     HUMAN_TRAC_AA,
     HUMAN_TRBC1_AA,
     validate_sequences,

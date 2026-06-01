@@ -376,7 +376,7 @@ class TestRealisticVdjPivot:
         assert result.loc["AAAA", "CDR3ab"] != result.loc["CCCC", "CDR3ab"]
 
 
-class TestCombineGexAndVdj:
+class TestCombineGexAndVdjBarcodeMatching:
     """Tests for combine_gex_and_vdj barcode matching."""
 
     def test_vdj_suffix_mapping_with_gex_no_suffix(self):

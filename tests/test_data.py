@@ -187,11 +187,10 @@ class TestAnnotateCombinedDf:
 
         assert "filtered_confident_and_complete" in result.columns
 
-    @pytest.mark.xfail(
-        reason="annotate_combined_df doesn't handle empty DataFrames due to pandas type issues"
-    )
     def test_empty_dataframe(self):
-        """Test with empty DataFrame."""
+        """An empty input frame annotates to an empty output frame
+        without dtype errors (regression: empty list-comprehension
+        columns used to infer float64 and break string concatenation)."""
         # Use explicit dtypes to avoid pandas type conversion issues
         empty_df = pd.DataFrame(
             {

@@ -292,10 +292,10 @@ class TestAugmentWithGex:
 
     def test_augment_with_gex_missing_genes_raises(self, tmp_path, monkeypatch):
         """Requesting only missing genes should raise a validation error."""
-        from tcrsift.validation import TCRsiftValidationError
-
         import anndata as ad
         import scanpy as sc
+
+        from tcrsift.validation import TCRsiftValidationError
 
         gex_file = tmp_path / "matrix.h5"
         gex_file.write_bytes(b"fake h5")
