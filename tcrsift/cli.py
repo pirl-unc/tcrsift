@@ -890,10 +890,17 @@ def cmd_run(args):
         long_df = build_clone_sample_long(adata)
 
     if should_emit_long and long_df is not None:
-        long_df.to_csv(data_dir / "clone_sample_long.csv", index=False)
+        # Enrich the emitted table with a per-sample abundance tier (the
+        # per-(clone, sample) analogue of the global clonotype tier) via
+        # the shared selection helper, so downstream report/selection
+        # consumers don't have to re-derive it. Backward-compatible: adds
+        # one column to the long table.
+        from .selection import attach_per_sample_tiers
+        emitted_long = attach_per_sample_tiers(long_df)
+        emitted_long.to_csv(data_dir / "clone_sample_long.csv", index=False)
         print(
-            f"  Wrote clone_sample_long.csv: {len(long_df)} rows "
-            f"({long_df['CDR3ab'].nunique()} clones x {n_samples_in_run} samples)"
+            f"  Wrote clone_sample_long.csv: {len(emitted_long)} rows "
+            f"({emitted_long['CDR3ab'].nunique()} clones x {n_samples_in_run} samples)"
         )
 
     # Step 4: Filter
