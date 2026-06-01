@@ -72,7 +72,13 @@ def annotate_combined_df(
     df = df.rename(columns=rename_map)
 
     if "Peptide_Number" not in df.columns:
-        df["Peptide_Number"] = [s.split("_")[-1] for s in df["Sample"]]
+        # Vectorized split keeps string dtype even when the frame is
+        # empty — a list comprehension over an empty Series yields ``[]``,
+        # which pandas infers as float64 and then can't concatenate with
+        # string columns (e.g. ``Cell_ID`` below).
+        df["Peptide_Number"] = df["Sample"].astype(str).str.rsplit(
+            "_", n=1,
+        ).str[-1]
     df["filter:has_alpha"] = ~df["CDR3_alpha"].isnull()
     df["filter:has_beta"] = ~df["CDR3_beta"].isnull()
 
