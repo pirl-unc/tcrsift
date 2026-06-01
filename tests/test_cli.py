@@ -847,6 +847,107 @@ samples:
         cmd_run(args)
 
 
+class TestRunEmitsPerSampleTier:
+    """`tcrsift run` enriches the emitted clone_sample_long.csv with a
+    per-sample abundance tier via tcrsift.selection (#125 increment)."""
+
+    def test_clone_sample_long_has_per_sample_tier_column(self, tmp_path, monkeypatch):
+        import anndata as ad
+        import numpy as np
+
+        sample_sheet_path = tmp_path / "samples.yaml"
+        sample_sheet_path.write_text(
+            """
+samples:
+  - sample: "S1"
+    vdj_dir: "/data/s1/vdj"
+    source: "culture"
+  - sample: "S2"
+    vdj_dir: "/data/s2/vdj"
+    source: "culture"
+"""
+        )
+
+        # Two samples, two clones with real CDR3 columns so the live
+        # build_clone_sample_long produces per-(clone, sample) rows.
+        rows = (
+            [("S1", "CAVA", "CASS_A")] * 12
+            + [("S1", "CAVB", "CASS_B")] * 3
+            + [("S2", "CAVA", "CASS_A")] * 4
+        )
+        n = len(rows)
+        obs = pd.DataFrame(
+            {
+                "sample": [r[0] for r in rows],
+                "source": ["culture"] * n,
+                "CDR3_alpha": [r[1] for r in rows],
+                "CDR3_beta": [r[2] for r in rows],
+            },
+            index=[f"cell{i}" for i in range(n)],
+        )
+        adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32), obs=obs)
+
+        monkeypatch.setattr("tcrsift.loader.load_samples", lambda *a, **k: adata)
+        monkeypatch.setattr(
+            "tcrsift.phenotype.phenotype_cells", lambda a, *args, **k: a
+        )
+        monkeypatch.setattr(
+            "tcrsift.phenotype.filter_by_tcell_type", lambda a, *args, **k: a
+        )
+        monkeypatch.setattr(
+            "tcrsift.clonotype.aggregate_clonotypes",
+            lambda *a, **k: pd.DataFrame(
+                {
+                    "CDR3ab": ["CAVA_CASS_A", "CAVB_CASS_B"],
+                    "CDR3_alpha": ["CAVA", "CAVB"],
+                    "CDR3_beta": ["CASS_A", "CASS_B"],
+                    "cell_count": [16, 3],
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            "tcrsift.filter.filter_clonotypes", lambda df, *a, **k: df.assign(tier="tier1")
+        )
+        monkeypatch.setattr(
+            "tcrsift.filter.split_by_tier", lambda df, *a, **k: {"tier1": df}
+        )
+        monkeypatch.setattr("tcrsift.til.load_til_samples", lambda *a, **k: {})
+
+        output_dir = tmp_path / "out"
+        args = argparse.Namespace(
+            sample_sheet=str(sample_sheet_path),
+            output_dir=str(output_dir),
+            config=None,
+            generate_plots=False,
+            generate_report=False,
+            no_leaders=True,
+            include_constant=False,
+            single_chain=False,
+            til_samples=None,
+            min_genes=None, max_genes=None, min_counts=None, max_counts=None,
+            min_mito_pct=None, max_mito_pct=None, cd4_cd8_ratio=None,
+            min_cd3_reads=None, group_by=None, handle_doublets=None, min_umi=None,
+            tcell_type=None, method=None, min_cells=None, min_frequency=None,
+            require_complete=None, fdr_tiers=None, vdjdb_path=None, iedb_path=None,
+            cedar_path=None, match_by=None, exclude_viral=None, flag_only=None,
+            til_match_by=None, min_til_cells=None, alpha_leader=None,
+            beta_leader=None, leaders_from_contigs=False, contigs_dir=None,
+            linker=None, constant_source=None, skip_plots=None, verbose=False,
+        )
+
+        cmd_run(args)
+
+        long_csv = output_dir / "data" / "clone_sample_long.csv"
+        assert long_csv.exists(), "run should emit clone_sample_long.csv for >=2 samples"
+        long_df = pd.read_csv(long_csv)
+        assert "per_sample_tier" in long_df.columns
+        # CAVA in S1: 12 cells / 15 in-sample = 0.8 freq -> tier1.
+        a_s1 = long_df[
+            (long_df["CDR3ab"] == "CAVA_CASS_A") & (long_df["sample"] == "S1")
+        ]
+        assert a_s1["per_sample_tier"].iloc[0] == "tier1"
+
+
 class TestSampleSheetSourceTypes:
     """Additional tests for sample sheet source type detection."""
 
