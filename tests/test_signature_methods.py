@@ -23,9 +23,11 @@ from tcrsift import signature_methods as sm
 
 class TestSignatureRegistry:
     def test_signed_signature_all_genes_dedup(self):
+        # Differentiated is now the effector−naïve contrast (#141): effector
+        # core up, naïve/stem down.
         diff = sm.SIGNATURES["Differentiated"]
-        assert diff.genes_up == ()
-        assert "CCR7" in diff.genes_down
+        assert {"IFNG", "GZMB", "PRF1"} <= set(diff.genes_up)
+        assert {"CCR7", "TCF7", "LEF1", "SELL"} <= set(diff.genes_down)
         assert len(diff.all_genes) == len(set(diff.all_genes))
 
     def test_small_and_large_panels_exist(self):
@@ -42,12 +44,20 @@ class TestSignatureRegistry:
         assert not hasattr(sm, "infer_context")
 
     def test_selection_signatures_named_composites(self):
-        # The two headline composites the pilot uses (no context tags).
-        assert set(sm.SELECTION_SIGNATURES) == {"TumorReactive", "AntigenExperienced"}
+        # Headline composites the pilot uses (no context tags). Differentiated
+        # (eff−naïve) is the best in-vitro-expansion axis (#141).
+        assert set(sm.SELECTION_SIGNATURES) == {
+            "Differentiated", "TumorReactive", "AntigenExperienced"
+        }
         tr = sm.SELECTION_SIGNATURES["TumorReactive"]
         assert {"CXCL13", "ENTPD1", "TOX", "ITGAE", "CTLA4"} <= set(tr.genes_up)
+        # AntigenExperienced was recomposed (#142): effector core only, no
+        # longer diluted by TNFRSF9/MKI67 (which moved to AcuteActivation).
         ae = sm.SELECTION_SIGNATURES["AntigenExperienced"]
-        assert {"TNFRSF9", "MKI67", "GZMB", "NKG7"} <= set(ae.genes_up)
+        assert {"IFNG", "GZMB", "NKG7"} <= set(ae.genes_up)
+        assert "TNFRSF9" not in ae.all_genes and "MKI67" not in ae.all_genes
+        acute = sm.SIGNATURES["AcuteActivation"]
+        assert set(acute.genes_up) == {"TNFRSF9", "MKI67"}
 
     def test_single_gene_focal_signature_scores(self):
         # Regression: a 1-gene focal panel (Proliferation) must score, not
@@ -69,8 +79,14 @@ class TestScoreSignature:
         )
 
     def test_signed_score_subtracts_down_genes(self):
-        # Differentiated = -(CCR7,TCF7): naive-high cells score low.
-        s = sm.score_signature(self._expr(), sm.SIGNATURES["Differentiated"])
+        # Differentiated = effector(up) − naïve(down): effector-high /
+        # naïve-low cells score high. The tiny frame has only GZMB/PRF1 (up)
+        # and CCR7/TCF7 (down) of the full panel, so score with on_missing
+        # ="ignore". c3 (effector high, naïve low) > c0 (effector low, naïve
+        # high).
+        s = sm.score_signature(
+            self._expr(), sm.SIGNATURES["Differentiated"], on_missing="ignore",
+        )
         assert s["c3"] > s["c0"]
 
     def test_combine_mean_raw_when_log1p_off(self):
@@ -181,13 +197,16 @@ class TestBuildSignatureMethods:
             sm.build_signature_methods(expr, obs, signatures=["TumorReactive"])
 
     def test_defaults_to_selection_signatures(self):
-        # Default sigs (Tumor/AntigenExp) aren't all in this tiny frame; with
-        # on_missing="ignore" the default-param behavior is still exercised.
+        # Default sigs (Differentiated/Tumor/AntigenExp) aren't all in this
+        # tiny frame; with on_missing="ignore" the default-param behavior is
+        # still exercised.
         expr, obs = self._data()
         out = sm.build_signature_methods(
             expr, obs, on_missing="ignore", positive_method="gap",
         )
-        assert set(out["method"]) <= {"TumorReactive", "AntigenExperienced"}
+        assert set(out["method"]) <= {
+            "Differentiated", "TumorReactive", "AntigenExperienced"
+        }
 
 
 class TestSignatureMethodsLong:
@@ -385,3 +404,50 @@ class TestPerConditionBaseline:
             positive_method="gap",
         )
         assert set(out["method"]) <= {"Cytolytic"}
+
+
+class TestSignatureRecompose141142:
+    """#141/#142: naïve/stem set, effector−naïve contrast, recomposed
+    AntigenExperienced, effector rename."""
+
+    def test_naive_stem_and_effector_gene_sets(self):
+        from tcrsift import signatures as sigmod
+        assert sigmod.NAIVE_STEM_GENES_HGNC == (
+            "TCF7", "LEF1", "CCR7", "SELL", "IL7R", "CD27", "CD28"
+        )
+        # effector is the canonical name; activation is a deprecated alias.
+        assert sigmod.EFFECTOR_GENES_HGNC == ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7")
+        assert sigmod.ACTIVATION_GENES_HGNC == sigmod.EFFECTOR_GENES_HGNC
+        assert sigmod.T_CELL_SIGNATURES["effector"] == sigmod.EFFECTOR_GENES_HGNC
+        assert sigmod.T_CELL_SIGNATURES["naive_stem"] == sigmod.NAIVE_STEM_GENES_HGNC
+
+    def test_differentiated_is_effector_minus_naive_contrast(self):
+        diff = sm.SIGNATURES["Differentiated"]
+        assert set(diff.genes_up) == {"IFNG", "GZMB", "PRF1", "GNLY", "NKG7"}
+        assert set(diff.genes_down) == {"TCF7", "LEF1", "CCR7", "SELL"}
+
+    def test_acute_activation_split_out(self):
+        acute = sm.SIGNATURES["AcuteActivation"]
+        assert set(acute.genes_up) == {"TNFRSF9", "MKI67"}
+        assert acute.genes_down == ()
+
+    def test_antigen_experienced_dropped_diluting_genes(self):
+        ae = sm.SIGNATURES["AntigenExperienced"]
+        assert "TNFRSF9" not in ae.all_genes
+        assert "MKI67" not in ae.all_genes
+        assert set(ae.genes_up) == {"IFNG", "GZMB", "PRF1", "GNLY", "NKG7"}
+
+    def test_eff_minus_naive_beats_effector_alone_on_synthetic(self):
+        # Expanded clone = effector-high + naïve-low; bystander = naïve-high.
+        # The contrast separates them more than effector-up alone.
+        cells = [f"c{i}" for i in range(4)]
+        expr = pd.DataFrame(
+            {"IFNG": [5, 6, 0, 0], "GZMB": [5, 6, 0, 0], "PRF1": [5, 6, 0, 0],
+             "GNLY": [5, 6, 0, 0], "NKG7": [5, 6, 0, 0],
+             "TCF7": [0, 0, 6, 5], "LEF1": [0, 0, 6, 5],
+             "CCR7": [0, 0, 6, 5], "SELL": [0, 0, 6, 5]},
+            index=cells,
+        )
+        contrast = sm.score_signature(expr, sm.SIGNATURES["Differentiated"])
+        # expanded (c0,c1) clearly above bystanders (c2,c3)
+        assert min(contrast["c0"], contrast["c1"]) > max(contrast["c2"], contrast["c3"])

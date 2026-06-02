@@ -42,7 +42,9 @@ class TestModuleShape:
 
     def test_t_cell_signatures_dict_complete(self):
         assert set(signatures.T_CELL_SIGNATURES) == {
-            "activation",
+            "effector",
+            "activation",  # deprecated alias of effector (#142)
+            "naive_stem",
             "antigen_response",
             "cytolytic",
             "exhaustion",
