@@ -154,6 +154,13 @@ class AssembleConfig:
     linker: str = "T2A"
     contigs_dir: str | None = None
     single_chain: bool = True
+    # Contig sample-name policy (#124). "parent" (default) = immediate
+    # dir name; "grandparent" = CellRanger per_sample_outs/{sample}/vdj_t
+    # layout; "sheet" = match against the sample sheet's vdj_dir.
+    sample_name_from: str = "parent"
+    # Shorthand: a raw CellRanger per_sample_outs dir; implies
+    # sample_name_from="grandparent".
+    cellranger_dir: str | None = None
 
 
 @dataclass
@@ -317,6 +324,8 @@ class TCRsiftConfig:
             "constant_source": ("assemble", "constant_source"),
             "linker": ("assemble", "linker"),
             "contigs_dir": ("assemble", "contigs_dir"),
+            "sample_name_from": ("assemble", "sample_name_from"),
+            "cellranger_dir": ("assemble", "cellranger_dir"),
             "single_chain": ("assemble", "single_chain"),
             # Output
             "generate_plots": ("output", "generate_plots"),

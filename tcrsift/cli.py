@@ -556,6 +556,8 @@ def cmd_assemble(args):
     assembled = assemble_full_sequences(
         clonotypes,
         contigs_dir=args.contigs_dir,
+        cellranger_dir=getattr(args, "cellranger_dir", None),
+        sample_name_from=getattr(args, "sample_name_from", None) or "parent",
         alpha_leader=alpha_leader,
         beta_leader=beta_leader,
         include_constant=args.include_constant,
@@ -1233,9 +1235,26 @@ def cmd_run(args):
     )
     if config.assemble.single_chain or has_leaders or config.assemble.include_constant:
         print("\n[7/7] Assembling full-length sequences...")
+        # Contig sample-name policy (#124). For "sheet" mode, hand the
+        # loaded sample sheet to the assembler as a (sample, vdj_dir) frame.
+        _sample_name_from = getattr(config.assemble, "sample_name_from", "parent")
+        _contig_sheet = (
+            pd.DataFrame(
+                [
+                    {"sample": s.sample, "vdj_dir": s.vdj_dir}
+                    for s in sample_sheet.samples
+                    if s.vdj_dir
+                ]
+            )
+            if _sample_name_from == "sheet"
+            else None
+        )
         assembled = assemble_full_sequences(
             til_matched,
             contigs_dir=config.assemble.contigs_dir,
+            cellranger_dir=getattr(config.assemble, "cellranger_dir", None),
+            sample_name_from=_sample_name_from,
+            sample_sheet=_contig_sheet,
             alpha_leader=config.assemble.alpha_leader,
             beta_leader=config.assemble.beta_leader,
             include_constant=config.assemble.include_constant,
@@ -2239,6 +2258,20 @@ CONDITIONALLY REQUIRED:
         "REQUIRED when using --leaders-from-contigs or "
         "--alpha/beta-leader=from_contig",
     )
+    asm_leaders.add_argument(
+        "--cellranger-dir",
+        metavar="DIR",
+        default=None,
+        help="Raw CellRanger per_sample_outs/ dir; shorthand for "
+        "--contigs-dir DIR --sample-name-from grandparent (#124).",
+    )
+    asm_leaders.add_argument(
+        "--sample-name-from",
+        choices=["parent", "grandparent", "sheet"],
+        default=None,
+        help="How to derive each contig's sample name from its FASTA path "
+        "(default: parent). 'grandparent' for per_sample_outs/{sample}/vdj_t/.",
+    )
 
     # Sequence options group
     asm_seq = p_asm.add_argument_group("sequence options")
@@ -2531,6 +2564,20 @@ CONDITIONALLY REQUIRED:
         metavar="DIR",
         help="Directory with CellRanger contig FASTAs. "
         "REQUIRED when using --leaders-from-contigs or leader=from_contig",
+    )
+    asm_group.add_argument(
+        "--cellranger-dir",
+        metavar="DIR",
+        default=None,
+        help="Raw CellRanger per_sample_outs/ dir; shorthand for "
+        "--contigs-dir DIR --sample-name-from grandparent (#124).",
+    )
+    asm_group.add_argument(
+        "--sample-name-from",
+        choices=["parent", "grandparent", "sheet"],
+        default=None,
+        help="How to derive each contig's sample name from its FASTA path "
+        "(default: parent). 'grandparent' for per_sample_outs/{sample}/vdj_t/.",
     )
     asm_group.add_argument(
         "--single-chain",
