@@ -105,7 +105,9 @@ class ChainModel:
 
     @property
     def pgen_model(self):
-        return self.evaluator.pgen_model
+        # evaluator is a sonia EvaluateModel (typed object to avoid importing
+        # the GPL extra at module load); pylint can't see its attrs.
+        return self.evaluator.pgen_model  # pylint: disable=no-member
 
 
 # Loaded models are heavy (TensorFlow graph + IGoR tables); cache per chain.
@@ -125,9 +127,15 @@ def load_chain_model(chain: str) -> ChainModel:
         return _MODEL_CACHE[chain]
 
     _require_olga_sonia()
-    import sonia
-    from sonia.evaluate_model import EvaluateModel
-    from sonia.sonia_leftpos_rightpos import SoniaLeftposRightpos
+    # GPL-3.0 optional extra — not installed in the default/CI env, so tell
+    # pylint not to flag the unresolved import (guarded by _require above).
+    import sonia  # pylint: disable=import-error
+    from sonia.evaluate_model import (  # pylint: disable=import-error
+        EvaluateModel,
+    )
+    from sonia.sonia_leftpos_rightpos import (  # pylint: disable=import-error
+        SoniaLeftposRightpos,
+    )
 
     chain_type, model_dir_name = _CHAIN_DEFS[chain]
     model_dir = os.path.join(
