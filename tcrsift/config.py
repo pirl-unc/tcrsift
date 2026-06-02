@@ -221,6 +221,11 @@ class TCRsiftConfig:
     assemble: AssembleConfig = field(default_factory=AssembleConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
+    # Free-form selection-route language (#122/#125). Nested by design
+    # (routes + global_rank with arbitrary method/pair names), so it's a
+    # raw dict rather than a typed section. Empty = no selection step.
+    selection: dict[str, Any] = field(default_factory=dict)
+
     # Global options
     verbose: bool = False
 
@@ -368,6 +373,9 @@ class TCRsiftConfig:
                     nested[key].update(value)
             elif key == "verbose":
                 global_opts["verbose"] = value
+            elif key == "selection":
+                # Free-form nested selection-route config (#122).
+                global_opts["selection"] = value if isinstance(value, dict) else {}
             # Ignore unknown keys
 
         return cls(
@@ -412,6 +420,7 @@ class TCRsiftConfig:
             "unify": dataclasses.asdict(self.unify),
             "assemble": dataclasses.asdict(self.assemble),
             "output": dataclasses.asdict(self.output),
+            "selection": self.selection,
             "verbose": self.verbose,
         }
 
@@ -438,10 +447,15 @@ class TCRsiftConfig:
         # Start with current config as dict
         config_dict = self.to_dict()
 
-        # Flatten config for easier merging
+        # Flatten config for easier merging. The `selection` block is a
+        # free-form nested dict (routes/global_rank), not a flat namespace
+        # of scalar params, so keep it intact rather than spreading it —
+        # otherwise its nested keys get hoisted and dropped on rebuild.
         flat_config = {}
         for section, params in config_dict.items():
-            if isinstance(params, dict):
+            if section == "selection":
+                flat_config["selection"] = params
+            elif isinstance(params, dict):
                 flat_config.update(params)
             else:
                 flat_config[section] = params
