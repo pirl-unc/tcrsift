@@ -1287,7 +1287,9 @@ def cmd_run(args):
             # exclude_viral: drop public-DB viral bystanders (is_viral from
             # the annotate step) so they don't enrich into the selection.
             exclude_clones = None
-            if config.selection.get("exclude_viral") and "is_viral" in til_matched.columns:
+            # Defaults ON: viral bystanders are dropped from selection
+            # unless the config explicitly sets exclude_viral: false.
+            if config.selection.get("exclude_viral", True) and "is_viral" in til_matched.columns:
                 viral_mask = til_matched["is_viral"].fillna(False).astype(bool)
                 exclude_clones = set(
                     til_matched.loc[viral_mask, "CDR3ab"].astype(str)
