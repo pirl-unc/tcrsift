@@ -370,6 +370,7 @@ class TestSequencePdfAnnotations:
     block (per-method evidence / selection route) — #123/#125."""
 
     def test_renders_with_annotations(self, tmp_path):
+        pytest.importorskip("reportlab")
         from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
         from tcrsift.plots import create_tcr_sequence_pdf
 
@@ -393,14 +394,12 @@ class TestSequencePdfAnnotations:
             ]
         }
         out = tmp_path / "annotated.pdf"
-        try:
-            create_tcr_sequence_pdf(df, out, strict=False, annotations=annotations)
-        except ImportError:
-            pytest.skip("reportlab not installed")
+        create_tcr_sequence_pdf(df, out, strict=False, annotations=annotations)
         assert out.exists() and out.stat().st_size > 0
 
     def test_renders_when_annotation_key_missing(self, tmp_path):
         # A clone with no annotation entry must still render (no crash).
+        pytest.importorskip("reportlab")
         from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
         from tcrsift.plots import create_tcr_sequence_pdf
 
@@ -416,8 +415,5 @@ class TestSequencePdfAnnotations:
             }
         ])
         out = tmp_path / "no_match.pdf"
-        try:
-            create_tcr_sequence_pdf(df, out, strict=False, annotations={"NOPE": ["x"]})
-        except ImportError:
-            pytest.skip("reportlab not installed")
+        create_tcr_sequence_pdf(df, out, strict=False, annotations={"NOPE": ["x"]})
         assert out.exists()
