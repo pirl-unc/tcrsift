@@ -116,6 +116,19 @@ _COMPOSITE_SIGNATURES = [
         "with an AIM sort by construction.",
     ),
     Signature(
+        "AIM", ("TNFRSF9", "TNFRSF4"), panel="focal",
+        description="Transcriptional read-out of the AIM (activation-induced "
+        "marker) assay: 4-1BB (CD137) + OX40 (CD134). The GEX analogue of an "
+        "AIMpos sort — use it to check sort/transcriptome concordance.",
+    ),
+    Signature(
+        "AIMBroad",
+        ("TNFRSF9", "TNFRSF4", "CD69", "IL2RA", "CD40LG"),
+        panel="broad",
+        description="Broad AIM panel: 4-1BB, OX40, CD69, CD25 (IL2RA), "
+        "CD40L. Surface activation markers used across AIM-assay variants.",
+    ),
+    Signature(
         "CirculatingMemory", ("GZMK", "IL7R"), ("CCR7",), panel="focal",
         description="Resting memory differentiation in blood "
         "(effector-memory up, naive down).",
@@ -219,14 +232,27 @@ def score_signature(
     )
 
 
-def _largest_gap_cutoff(values: np.ndarray, *, search_top: float = 0.5) -> float:
-    v = np.sort(values)[::-1]
+def _largest_gap_cutoff(
+    values: np.ndarray, *, search_top: float = 0.5, min_gap_ratio: float = 3.0,
+) -> float:
+    v = np.sort(values)[::-1]  # descending
     n = len(v)
     if n < 2:
         return float(v[0]) if n else float("inf")
     k = max(2, int(np.ceil(n * search_top)))
     top = v[:k]
-    i = int(np.argmax(top[:-1] - top[1:]))
+    gaps = top[:-1] - top[1:]
+    i = int(np.argmax(gaps))
+    largest = float(gaps[i])
+    # "Clusters above the others" only if the top gap stands out vs the
+    # typical spacing; on a smooth distribution there is no distinct high
+    # cluster, so return a cutoff above the max → empty positive set
+    # (rather than slicing off an arbitrary top few).
+    drops = -np.diff(v)  # consecutive drops over the full sorted array (≥0)
+    positive = drops[drops > 0]
+    typical = float(np.median(positive)) if positive.size else 0.0
+    if typical > 0 and largest < min_gap_ratio * typical:
+        return float("inf")
     return float((top[i] + top[i + 1]) / 2.0)
 
 
@@ -256,13 +282,15 @@ def call_positive(
     quantile: float | None = 0.75,
     threshold: float | None = None,
     search_top: float = 0.5,
+    min_gap_ratio: float = 3.0,
 ) -> pd.Series:
     """Boolean positive call over any score Series (cells or clones).
 
     ``method``: ``"quantile"`` (fixed top fraction), ``"gap"`` (adaptive —
     largest gap in the top of the sorted scores → the separated high
-    cluster), or ``"otsu"`` (adaptive bimodal split). Explicit
-    ``threshold`` overrides ``method``.
+    cluster; returns **none** when no gap stands out by ``min_gap_ratio``×
+    the typical spacing, i.e. no distinct cluster), or ``"otsu"`` (adaptive
+    bimodal split). Explicit ``threshold`` overrides ``method``.
     """
     arr = scores.to_numpy(dtype=float)
     if threshold is not None:
@@ -272,7 +300,7 @@ def call_positive(
             raise ValueError("call_positive(method='quantile') needs quantile")
         cut = float(np.quantile(arr, quantile))
     elif method == "gap":
-        cut = _largest_gap_cutoff(arr, search_top=search_top)
+        cut = _largest_gap_cutoff(arr, search_top=search_top, min_gap_ratio=min_gap_ratio)
     elif method == "otsu":
         cut = _otsu_cutoff(arr)
     else:

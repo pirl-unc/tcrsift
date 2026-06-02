@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for context-aware gene-signature selection methods."""
+"""Tests for gene-signature synthetic selection methods."""
 
 from __future__ import annotations
 
@@ -125,6 +125,12 @@ class TestCallPositiveAdaptive:
     def test_gap_isolates_cluster(self):
         assert int(sm.call_positive(self._scores(), method="gap").sum()) == 4
 
+    def test_gap_returns_none_when_no_distinct_cluster(self):
+        # Smooth, evenly-spaced scores → no cluster "above the others" →
+        # gap selects nothing rather than an arbitrary top slice.
+        smooth = pd.Series(np.linspace(0.0, 1.0, 30), index=[f"c{i}" for i in range(30)])
+        assert int(sm.call_positive(smooth, method="gap").sum()) == 0
+
     def test_otsu_isolates_cluster(self):
         assert int(sm.call_positive(self._scores(), method="otsu").sum()) == 4
 
@@ -193,3 +199,29 @@ class TestSignatureMethodsLong:
                                    "apply_to_methods": ["Cytolytic"]}}},
         )
         assert set(rules.columns) >= {"CDR3ab", "selection_rule", "global_rank"}
+
+
+class TestAimPanel:
+    """AIM (activation-induced marker) GEX panel — the transcriptional
+    analogue of an AIMpos sort (#pilot)."""
+
+    def test_aim_focal_is_4_1bb_plus_ox40(self):
+        aim = sm.SIGNATURES["AIM"]
+        assert set(aim.genes_up) == {"TNFRSF9", "TNFRSF4"}  # 4-1BB + OX40
+        assert aim.genes_down == ()
+        assert aim.panel == "focal"
+
+    def test_aim_broad_adds_surface_markers(self):
+        broad = sm.SIGNATURES["AIMBroad"]
+        assert {"TNFRSF9", "TNFRSF4", "CD69", "IL2RA", "CD40LG"} <= set(broad.genes_up)
+        assert len(broad.genes_up) > len(sm.SIGNATURES["AIM"].genes_up)
+
+    def test_aim_scores_activated_cells_higher(self):
+        import pandas as pd
+        cells = [f"c{i}" for i in range(4)]
+        expr = pd.DataFrame(
+            {"TNFRSF9": [0.0, 0.0, 5.0, 6.0], "TNFRSF4": [0.0, 1.0, 4.0, 7.0]},
+            index=cells,
+        )
+        s = sm.score_signature(expr, sm.SIGNATURES["AIM"])
+        assert s["c3"] > s["c0"]
