@@ -58,6 +58,12 @@ reports = [
     "reportlab>=4.0.0,<5.0.0",
     "pdfkit",
 ]
+# Gold-standard Pgen/Ppost (#143). OLGA + SONIA are GPL-3.0 — kept as a
+# runtime-optional extra (NOT vendored) so tcrsift stays Apache-2.0.
+pgen = [
+    "olga>=1.2.4",
+    "sonia>=0.0.51",
+]
 full = [
     "pyensembl>=2.0.0,<3.0.0",
     "openpyxl>=3.0.0,<4.0.0",

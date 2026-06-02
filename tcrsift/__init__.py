@@ -160,6 +160,14 @@ _MODULE_EXPORTS = {
         "pgen_single",
         "publicness_score",
     ),
+    ".olga_ppost": (
+        "compute_pgen_ppost",
+        "flag_private_candidates",
+        "load_chain_model",
+        "normalize_gene_name",
+        "olga_sonia_available",
+        "supported_alleles",
+    ),
     ".signatures": (
         "ACTIVATION_GENES_HGNC",
         "EFFECTOR_GENES_HGNC",
