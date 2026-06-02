@@ -162,6 +162,8 @@ _MODULE_EXPORTS = {
     ),
     ".signatures": (
         "ACTIVATION_GENES_HGNC",
+        "EFFECTOR_GENES_HGNC",
+        "NAIVE_STEM_GENES_HGNC",
         "ANTIGEN_RESPONSE_GENES_HGNC",
         "CYTOLYTIC_GENES_HGNC",
         "EXHAUSTION_GENES_HGNC",

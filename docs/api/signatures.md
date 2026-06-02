@@ -9,12 +9,13 @@ phenotyping, healthy-donor panels.
 
 ## Overview
 
-All gene symbols are HGNC (human). Five signatures grouped by intent:
+All gene symbols are HGNC (human). Gene sets grouped by intent:
 
 | Constant | Genes | Use |
 | --- | --- | --- |
-| `ACTIVATION_GENES_HGNC` | `IFNG, GZMB, PRF1, GNLY, NKG7` | Broad effector activation panel |
-| `ANTIGEN_RESPONSE_GENES_HGNC` | `TNFRSF9, MKI67` | AIM-assay activation marker (4-1BB / CD137) + Ki-67 proliferation |
+| `EFFECTOR_GENES_HGNC` | `IFNG, GZMB, PRF1, GNLY, NKG7` | Cytotoxic-effector panel. (`ACTIVATION_GENES_HGNC` is a deprecated alias — #142: this is effector differentiation, not immediate-early activation.) |
+| `NAIVE_STEM_GENES_HGNC` | `TCF7, LEF1, CCR7, SELL, IL7R, CD27, CD28` | Naïve / stem-memory program — the "down" pole of the effector−naïve differentiation contrast (#141). |
+| `ANTIGEN_RESPONSE_GENES_HGNC` | `TNFRSF9, MKI67` | AIM-assay marker (4-1BB / CD137) + Ki-67. Runs *inverse* to in-vitro clonal expansion at snapshot (#142). |
 | `CYTOLYTIC_GENES_HGNC` | `PRF1, GZMB` | Canonical cytotoxic effector readout (Caushi 2021, Krishna 2021, Hanada 2022) |
 | `EXHAUSTION_GENES_HGNC` | `PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4` | Canonical exhausted-T-cell surface markers |
 | `TUMOR_REACTIVE_GENES_HGNC` | `CXCL13, ENTPD1` | TIL-resident tumor-reactive phenotype (Workel 2019, Duhen 2018) |
@@ -43,7 +44,9 @@ for name, genes in signatures.T_CELL_SIGNATURES.items():
 ::: tcrsift.signatures
     options:
       members:
+        - EFFECTOR_GENES_HGNC
         - ACTIVATION_GENES_HGNC
+        - NAIVE_STEM_GENES_HGNC
         - ANTIGEN_RESPONSE_GENES_HGNC
         - CYTOLYTIC_GENES_HGNC
         - EXHAUSTION_GENES_HGNC

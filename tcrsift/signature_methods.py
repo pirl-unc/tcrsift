@@ -106,12 +106,30 @@ _INVARIANT_SIGNATURES = [
         panel="broad", description="Broad cytotoxic-effector panel.",
     ),
     Signature(
-        "Differentiated", (), ("CCR7", "TCF7"), panel="focal",
-        description="Loss of naive (down CCR7/TCF7) — antigen-experienced.",
+        "Differentiated",
+        ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7"),
+        ("TCF7", "LEF1", "CCR7", "SELL"),
+        panel="broad",
+        description="Effector−naïve differentiation contrast (up effector "
+        "core, down naïve/stem). Best axis for separating antigen-expanded "
+        "clones from naïve-like bystanders in in-vitro culture (#141): "
+        "eff−naïve > effector-alone in every gate, both pilot cohorts.",
     ),
     Signature(
-        "DifferentiatedBroad", (), ("CCR7", "SELL", "TCF7", "LEF1"),
-        panel="broad", description="Loss of the full naive program.",
+        "DifferentiatedBroad",
+        ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7", "GZMH", "GZMA", "KLRG1",
+         "CX3CR1", "TBX21", "PRDM1"),
+        ("TCF7", "LEF1", "CCR7", "SELL", "IL7R", "CD27", "CD28"),
+        panel="broad",
+        description="Broad effector−naïve contrast: extended effector program "
+        "up, full naïve/stem program down.",
+    ),
+    Signature(
+        "AcuteActivation", ("TNFRSF9", "MKI67"), panel="focal",
+        description="Immediate-early / proliferation axis (4-1BB + Ki-67). "
+        "Runs INVERSE to in-vitro clonal expansion at snapshot (#142): "
+        "singletons look more acutely activated than expanded clones. Not a "
+        "selection signature — split out of the old AntigenExperienced.",
     ),
 ]
 
@@ -130,11 +148,13 @@ _COMPOSITE_SIGNATURES = [
     ),
     Signature(
         "AntigenExperienced",
-        ("TNFRSF9", "MKI67", "IFNG", "GZMB", "PRF1", "GNLY", "NKG7"),
+        ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7"),
         panel="broad",
-        description="Recent cognate engagement + effector program "
-        "(4-1BB/Ki-67 + activation). In-culture activation axis; correlated "
-        "with an AIM sort by construction.",
+        description="Effector program of antigen-experienced cells (IFNG + "
+        "cytolytic core). Recomposed in #142: dropped TNFRSF9/MKI67, which "
+        "are non- or anti-informative for in-vitro clonal expansion and only "
+        "diluted the effector signal — they now live in AcuteActivation. For "
+        "the expansion use case prefer the Differentiated (eff−naïve) axis.",
     ),
     Signature(
         "AIM", ("TNFRSF9", "TNFRSF4"), panel="focal",
@@ -160,9 +180,12 @@ SIGNATURES: dict[str, Signature] = {
     s.name: s for s in (_INVARIANT_SIGNATURES + _COMPOSITE_SIGNATURES)
 }
 
-# Convenience grouping of the two headline selection composites (the names
-# the pilot uses).
+# Convenience grouping of the headline selection composites. Differentiated
+# (eff−naïve) is the best axis for in-vitro antigen-expanded clones (#141);
+# AntigenExperienced is its effector-only subset; TumorReactive is for fresh
+# tumor TILs.
 SELECTION_SIGNATURES: dict[str, Signature] = {
+    "Differentiated": SIGNATURES["Differentiated"],
     "TumorReactive": SIGNATURES["TumorReactive"],
     "AntigenExperienced": SIGNATURES["AntigenExperienced"],
 }
