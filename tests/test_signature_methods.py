@@ -324,3 +324,64 @@ class TestSignatureInjectionIntoSelection:
                                    "apply_to_methods": ["AIM"]}}},
         )
         assert set(rules.columns) >= {"CDR3ab", "selection_rule", "global_rank"}
+
+
+class TestReceptorGeneGuard:
+    def test_receptor_regex_distinguishes_segments_from_lookalikes(self):
+        for g in ("TRAV12-2", "TRBV6-1", "TRBJ2-1", "TRAC", "TRBC1", "IGHV3-23",
+                  "IGKC", "IGHM"):
+            assert sm.is_receptor_gene(g), g
+        for g in ("TRADD", "TRAF3", "GZMB", "IGF1", "CCR7", "TOX"):
+            assert not sm.is_receptor_gene(g), g
+
+    def test_strip_receptor_genes(self):
+        assert sm.strip_receptor_genes(["GZMB", "TRAV12-2", "CCR7", "TRBC1"]) == [
+            "GZMB", "CCR7"
+        ]
+
+    def test_signature_with_receptor_gene_raises(self):
+        bad = sm.Signature("Leaky", ("GZMB", "TRAV12-2"))
+        expr = pd.DataFrame({"GZMB": [1.0], "TRAV12-2": [2.0]}, index=["c0"])
+        with pytest.raises(ValueError, match="receptor"):
+            sm.score_signature(expr, bad)
+
+
+class TestPerConditionBaseline:
+    def test_groups_zscore_within_each_group(self):
+        # Two groups with very different baselines; per-condition z-score
+        # centers each group rather than letting the high group dominate.
+        expr = pd.DataFrame(
+            {"GZMB": [0.0, 0.0, 10.0, 10.0], "PRF1": [0.0, 1.0, 9.0, 11.0]},
+            index=[f"c{i}" for i in range(4)],
+        )
+        groups = pd.Series(["A", "A", "B", "B"], index=expr.index)
+        s = sm.score_signature(expr, sm.SIGNATURES["Cytolytic"], groups=groups)
+        # within each group the two cells are symmetric around 0
+        assert abs(s["c0"] + s["c1"]) < 1e-9
+        assert abs(s["c2"] + s["c3"]) < 1e-9
+        # without grouping, group B dominates (all positive)
+        pooled = sm.score_signature(expr, sm.SIGNATURES["Cytolytic"])
+        assert pooled["c2"] > 0 and pooled["c3"] > 0
+
+    def test_groups_and_background_mutually_exclusive(self):
+        expr = pd.DataFrame({"GZMB": [1.0], "PRF1": [1.0]}, index=["c0"])
+        with pytest.raises(ValueError, match="groups OR background"):
+            sm.score_signature(
+                expr, sm.SIGNATURES["Cytolytic"],
+                groups=pd.Series(["A"], index=["c0"]), background=expr,
+            )
+
+    def test_build_background_by_uses_obs_column(self):
+        expr = pd.DataFrame(
+            {"GZMB": [0.0, 0.0, 9.0], "PRF1": [0.0, 1.0, 11.0]},
+            index=[f"c{i}" for i in range(3)],
+        )
+        obs = pd.DataFrame(
+            {"CDR3ab": ["A", "A", "B"], "sample": ["S1", "S1", "S2"]},
+            index=expr.index,
+        )
+        out = sm.build_signature_methods(
+            expr, obs, signatures=["Cytolytic"], background_by="sample",
+            positive_method="gap",
+        )
+        assert set(out["method"]) <= {"Cytolytic"}
