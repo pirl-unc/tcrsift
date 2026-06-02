@@ -2551,6 +2551,7 @@ def create_pipeline_funnel(
     ab_pair_denominator: int | None = None,
     selected_count: int | None = None,
     emit_selected_variant: bool = False,
+    non_viral: int | None = None,
 ):
     """
     Create a funnel plot for the TCRsift pipeline stages.
@@ -2616,6 +2617,11 @@ def create_pipeline_funnel(
 
     if emit_selected_variant and selected_count is not None:
         selected_stage_counts = dict(stage_counts)
+        # When viral bystanders were excluded from selection, show the
+        # post-viral-filter survivor count as its own stage so the drop
+        # is visible in the shortlist funnel (#122 exclude_viral).
+        if non_viral is not None:
+            selected_stage_counts["Non-viral"] = non_viral
         selected_stage_counts["Selected"] = selected_count
         plot_funnel(
             selected_stage_counts,

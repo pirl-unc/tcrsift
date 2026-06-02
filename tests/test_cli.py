@@ -2076,3 +2076,10 @@ selection:
         # clone is kept.
         assert list(sel["CDR3ab"]) == ["CAVA_CASS_A"]
         assert "CAVV_CASS_V" not in set(sel["CDR3ab"])
+
+        # Excluded viral clones are surfaced for audit, not silently dropped.
+        excl_csv = output_dir / "data" / "excluded_viral_clones.csv"
+        assert excl_csv.exists()
+        excl = pd.read_csv(excl_csv)
+        assert list(excl["CDR3ab"]) == ["CAVV_CASS_V"]
+        assert bool(excl["is_viral"].iloc[0]) is True
