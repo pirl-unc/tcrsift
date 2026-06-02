@@ -147,15 +147,21 @@ SELECTION_SIGNATURES: dict[str, Signature] = {
 }
 
 
-def expression_frame_from_adata(adata, genes, *, layer: str | None = None) -> pd.DataFrame:
+def expression_frame_from_adata(
+    adata, genes, *, layer: str | None = None, on_missing: str = "error",
+) -> pd.DataFrame:
     """Extract a cells × genes (symbol-keyed) expression frame from AnnData.
 
     Resolves HGNC symbols against ``adata.var_names`` or, when those are
     Ensembl IDs (the ``load_samples`` default), a gene-symbol column in
     ``adata.var`` (``gene_symbols`` / ``feature_name`` / …). Densifies the
-    requested columns only; duplicate symbols collapse to the
-    highest-mean copy. Genes not found are omitted (so the result may have
-    fewer columns than requested, or be empty if the panel is absent).
+    requested columns only; duplicate symbols collapse to the highest-mean
+    copy.
+
+    ``on_missing`` governs requested genes absent from the matrix:
+    ``"error"`` (default) raises — scoring a signature on a panel that
+    can't measure all its genes silently changes the signature's meaning,
+    so we fail loud; ``"warn"`` logs and omits; ``"ignore"`` omits silently.
     """
     from scipy.sparse import issparse
 
@@ -171,9 +177,11 @@ def expression_frame_from_adata(adata, genes, *, layer: str | None = None) -> pd
 
     X = adata.layers[layer] if layer is not None else adata.X
     cols: dict[str, np.ndarray] = {}
+    missing: list[str] = []
     for g in genes:
         idx = np.where(sym_upper == str(g).upper())[0]
         if idx.size == 0:
+            missing.append(g)
             continue
         if idx.size > 1:
             means = np.asarray(X[:, idx].mean(axis=0)).ravel()
@@ -183,6 +191,15 @@ def expression_frame_from_adata(adata, genes, *, layer: str | None = None) -> pd
             np.asarray(col.todense()).ravel() if issparse(X)
             else np.asarray(col).ravel()
         )
+    if missing:
+        msg = (
+            f"expression_frame_from_adata: {len(missing)} gene(s) not found "
+            f"in the expression matrix: {missing}"
+        )
+        if on_missing == "error":
+            raise KeyError(msg)
+        if on_missing == "warn":
+            logger.warning("%s", msg)
     return pd.DataFrame(cols, index=adata.obs_names.astype(str))
 
 
@@ -226,7 +243,7 @@ def score_signature(
     combine: str = "zscore",
     log1p: bool = True,
     background: pd.DataFrame | None = None,
-    min_genes_present: int = 1,
+    on_missing: str = "error",
 ) -> pd.Series:
     """Per-cell signed signature score from a cells × genes (TPM) frame.
 
@@ -245,8 +262,12 @@ def score_signature(
     ``background`` is the population whose per-gene mean/sd define the
     z-score (``"zscore"`` only); defaults to the input cells — pass the
     full dataset / a control population / a per-sample slice to set the
-    reference explicitly. Missing genes are dropped; fewer than
-    ``min_genes_present`` present → all-zero score.
+    reference explicitly.
+
+    ``on_missing`` governs signature genes absent from ``expr`` (and
+    ``background``): ``"error"`` (default) **raises** — a partial panel is a
+    different signature, so we never silently degrade it; ``"warn"`` scores
+    on the present genes with a warning; ``"ignore"`` scores silently.
     """
     cols = set(expr.columns)
     if background is not None:
@@ -255,15 +276,16 @@ def score_signature(
     down = [g for g in signature.genes_down if g in cols]
     missing = [g for g in signature.all_genes if g not in cols]
     if missing:
-        logger.warning(
-            "score_signature[%s]: %d gene(s) absent from panel: %s",
-            signature.name, len(missing), missing,
+        msg = (
+            f"score_signature[{signature.name}]: required gene(s) have no "
+            f"expression in the input: {missing}"
         )
-    if len(up) + len(down) < min_genes_present:
-        logger.warning(
-            "score_signature[%s]: <%d genes present; returning zeros.",
-            signature.name, min_genes_present,
-        )
+        if on_missing == "error":
+            raise KeyError(msg)
+        if on_missing == "warn":
+            logger.warning("%s", msg)
+        # "ignore": score on what's present
+    if not up and not down:
         return pd.Series(0.0, index=expr.index)
     return (
         _combine_block(expr, up, combine, background, log1p)
@@ -397,6 +419,7 @@ def build_signature_methods(
     background: pd.DataFrame | None = None,
     positive_method: str = "gap",
     quantile: float = 0.75,
+    on_missing: str = "error",
     clone_col: str = "CDR3ab",
     sample_col: str = "sample",
 ) -> pd.DataFrame:
@@ -407,6 +430,8 @@ def build_signature_methods(
     scored (z-score of log1p TPM, mean across genes), thresholded
     (``positive_method``: ``gap``/``otsu``/``quantile``), and emitted as a
     synthetic method ready to concat with the real clone-sample-long table.
+    ``on_missing`` (default ``"error"``) forbids scoring a signature whose
+    genes aren't all in ``expr`` — see :func:`score_signature`.
     """
     if signatures is None:
         signatures = SELECTION_SIGNATURES.values()
@@ -417,6 +442,7 @@ def build_signature_methods(
     for sig in resolved:
         scores = score_signature(
             expr, sig, combine=combine, log1p=log1p, background=background,
+            on_missing=on_missing,
         )
         positive_by_signature[sig.name] = call_positive(
             scores, method=positive_method, quantile=quantile,

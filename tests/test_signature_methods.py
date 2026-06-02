@@ -64,14 +64,13 @@ class TestScoreSignature:
     def _expr(self):
         return pd.DataFrame(
             {"GZMB": [0.0, 0.0, 5.0, 5.0], "PRF1": [0.0, 1.0, 4.0, 6.0],
-             "CCR7": [5.0, 5.0, 0.0, 0.0]},
+             "CCR7": [5.0, 5.0, 0.0, 0.0], "TCF7": [4.0, 6.0, 0.0, 1.0]},
             index=[f"c{i}" for i in range(4)],
         )
 
     def test_signed_score_subtracts_down_genes(self):
-        # Differentiated = -(CCR7): naive-high cells score low, others high.
-        s = sm.score_signature(self._expr(), sm.SIGNATURES["Differentiated"],
-                               min_genes_present=1)
+        # Differentiated = -(CCR7,TCF7): naive-high cells score low.
+        s = sm.score_signature(self._expr(), sm.SIGNATURES["Differentiated"])
         assert s["c3"] > s["c0"]
 
     def test_combine_mean_raw_when_log1p_off(self):
@@ -97,10 +96,16 @@ class TestScoreSignature:
         with pytest.raises(ValueError, match="combine"):
             sm.score_signature(self._expr(), sm.SIGNATURES["Cytolytic"], combine="bogus")
 
-    def test_too_few_present_returns_zeros(self):
+    def test_missing_gene_raises_by_default(self):
+        # Cytolytic needs PRF1+GZMB; PRF1 absent → error, not a partial score.
         expr = pd.DataFrame({"GZMB": [1.0, 2.0]}, index=["a", "b"])
-        s = sm.score_signature(expr, sm.SIGNATURES["Cytolytic"], min_genes_present=2)
-        assert (s == 0).all()  # only GZMB present (<2)
+        with pytest.raises(KeyError, match="PRF1"):
+            sm.score_signature(expr, sm.SIGNATURES["Cytolytic"])
+
+    def test_missing_gene_ignore_scores_present(self):
+        expr = pd.DataFrame({"GZMB": [1.0, 2.0, 3.0]}, index=list("abc"))
+        s = sm.score_signature(expr, sm.SIGNATURES["Cytolytic"], on_missing="ignore")
+        assert s["c"] > s["a"]  # scored on GZMB alone
 
     def test_explicit_background_changes_zscore(self):
         # z-scoring against a low-expression background lifts all scores
@@ -146,25 +151,34 @@ class TestBuildSignatureMethods:
     def _data(self):
         cells = [f"c{i}" for i in range(4)]
         expr = pd.DataFrame(
-            {"ENTPD1": [5.0, 5.0, 0.0, 0.0], "CXCL13": [4.0, 6.0, 0.0, 1.0]},
+            {"PRF1": [5.0, 5.0, 0.0, 0.0], "GZMB": [4.0, 6.0, 0.0, 1.0]},
             index=cells,
         )
         obs = pd.DataFrame({"CDR3ab": ["A", "A", "B", "B"], "sample": ["S1"] * 4},
                           index=cells)
         return expr, obs
 
-    def test_scores_any_signature_on_any_data(self):
-        # No context guard: a signature can be scored on any data.
+    def test_scores_signature_with_complete_panel(self):
+        # No context guard: a signature with all genes present scores fine.
         expr, obs = self._data()
         out = sm.build_signature_methods(
-            expr, obs, signatures=["TumorReactive"], positive_method="gap",
+            expr, obs, signatures=["Cytolytic"], positive_method="gap",
         )
-        assert set(out["method"]) <= {"TumorReactive"}
+        assert set(out["method"]) <= {"Cytolytic"}
+
+    def test_missing_signature_gene_raises(self):
+        # TumorReactive needs CXCL13/ENTPD1/… absent here → hard error.
+        expr, obs = self._data()
+        with pytest.raises(KeyError):
+            sm.build_signature_methods(expr, obs, signatures=["TumorReactive"])
 
     def test_defaults_to_selection_signatures(self):
+        # Default sigs (Tumor/AntigenExp) aren't all in this tiny frame; with
+        # on_missing="ignore" the default-param behavior is still exercised.
         expr, obs = self._data()
-        out = sm.build_signature_methods(expr, obs, positive_method="gap")
-        # default signatures = SELECTION_SIGNATURES (Tumor/AntigenExp)
+        out = sm.build_signature_methods(
+            expr, obs, on_missing="ignore", positive_method="gap",
+        )
         assert set(out["method"]) <= {"TumorReactive", "AntigenExperienced"}
 
 
@@ -246,8 +260,14 @@ class TestExpressionFrameFromAdata:
         assert list(expr.index) == ["c0", "c1", "c2", "c3"]
         assert expr.loc["c0", "TNFRSF9"] == 8.0  # densified from sparse
 
-    def test_absent_genes_omitted(self):
-        expr = sm.expression_frame_from_adata(self._adata(), ["TNFRSF9", "NOTAGENE"])
+    def test_absent_gene_raises_by_default(self):
+        with pytest.raises(KeyError, match="NOTAGENE"):
+            sm.expression_frame_from_adata(self._adata(), ["TNFRSF9", "NOTAGENE"])
+
+    def test_absent_gene_omitted_when_ignore(self):
+        expr = sm.expression_frame_from_adata(
+            self._adata(), ["TNFRSF9", "NOTAGENE"], on_missing="ignore",
+        )
         assert list(expr.columns) == ["TNFRSF9"]
 
     def test_resolves_when_var_names_are_symbols(self):

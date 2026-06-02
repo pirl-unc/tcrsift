@@ -1300,7 +1300,11 @@ def cmd_run(args):
                 genes = sorted({
                     g for n in sig_names for g in SIGNATURES[n].all_genes
                 })
-                expr = expression_frame_from_adata(adata, genes)
+                # Extract leniently so build_signature_methods can raise a
+                # per-signature error naming the missing genes — a signature
+                # is never scored on a partial panel (it'd be a different
+                # signature). A missing gene is a hard error, not a skip.
+                expr = expression_frame_from_adata(adata, genes, on_missing="ignore")
                 obs_sig = adata.obs
                 if "CDR3ab" not in obs_sig.columns and {
                     "CDR3_alpha", "CDR3_beta"
@@ -1309,25 +1313,27 @@ def cmd_run(args):
                         CDR3ab=obs_sig["CDR3_alpha"].fillna("")
                         + "_" + obs_sig["CDR3_beta"].fillna("")
                     )
-                if expr.shape[1] and {"CDR3ab", "sample"} <= set(obs_sig.columns):
-                    sig_long = build_signature_methods(
-                        expr, obs_sig, signatures=sig_names,
-                        positive_method=config.selection.get(
-                            "signature_positive_method", "gap"
-                        ),
+                if not ({"CDR3ab", "sample"} <= set(obs_sig.columns)):
+                    raise ValueError(
+                        f"selection.signatures={sig_names} requested but "
+                        "adata.obs lacks CDR3ab/sample — cannot build "
+                        "signature methods."
                     )
-                    selection_long = pd.concat(
-                        [long_df, sig_long], ignore_index=True
-                    )
-                    print(
-                        f"  Added {len(sig_long)} signature-method rows "
-                        f"({', '.join(sig_names)}) to the selection input"
-                    )
-                else:
-                    print(
-                        f"  Signatures {sig_names} requested but GEX/CDR3ab "
-                        "unavailable; skipping signature methods"
-                    )
+                # Raises (on_missing='error') if any signature gene has no
+                # expression — never silently degrades the panel.
+                sig_long = build_signature_methods(
+                    expr, obs_sig, signatures=sig_names,
+                    positive_method=config.selection.get(
+                        "signature_positive_method", "gap"
+                    ),
+                )
+                selection_long = pd.concat(
+                    [long_df, sig_long], ignore_index=True
+                )
+                print(
+                    f"  Added {len(sig_long)} signature-method rows "
+                    f"({', '.join(sig_names)}) to the selection input"
+                )
             # exclude_viral: drop public-DB viral bystanders (is_viral from
             # the annotate step) so they don't enrich into the selection.
             exclude_clones = None
