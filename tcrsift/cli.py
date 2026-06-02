@@ -2811,6 +2811,35 @@ REQUIRED INPUTS:
     p_mnem.set_defaults(func=cmd_mnemonic)
 
     # -------------------------------------------------------------------------
+    # Cohort command (#125) — multi-donor clone-overlap analysis
+    # -------------------------------------------------------------------------
+    p_cohort = subparsers.add_parser(
+        "cohort", help="Multi-donor clone-overlap analysis across run outputs"
+    )
+    p_cohort.add_argument(
+        "--donor", action="append", metavar="NAME=DIR",
+        help="Donor as NAME=run_output_dir (repeatable; need >=2).",
+    )
+    p_cohort.add_argument(
+        "--output-dir", "-o", required=True,
+        help="Directory for cohort overlap tables / plots.",
+    )
+    p_cohort.add_argument(
+        "--selected-only", action="store_true",
+        help="Overlap selected_clones.csv instead of clonotypes.csv.",
+    )
+    p_cohort.add_argument(
+        "--no-beta-only", action="store_true",
+        help="Skip the beta-only overlap matrices.",
+    )
+    p_cohort.add_argument(
+        "--no-tables", action="store_true", help="Don't write CSV matrices.",
+    )
+    p_cohort.add_argument(
+        "--emit-plots", action="store_true", help="Render heatmap PDFs.",
+    )
+    p_cohort.set_defaults(func=cmd_cohort)
+
     # Generate config command
     # -------------------------------------------------------------------------
     p_config = subparsers.add_parser("generate-config", help="Generate example config file")
@@ -2818,6 +2847,37 @@ REQUIRED INPUTS:
     p_config.set_defaults(func=cmd_generate_config)
 
     return parser
+
+
+def cmd_cohort(args):
+    """Run multi-donor clone-overlap analysis (#125)."""
+    from .cohort import run_cohort_analysis
+
+    donor_dirs: dict[str, str] = {}
+    for spec in args.donor or []:
+        if "=" not in spec:
+            print(f"ERROR: --donor must be NAME=DIR, got {spec!r}")
+            sys.exit(1)
+        name, ddir = spec.split("=", 1)
+        donor_dirs[name.strip()] = ddir.strip()
+    if len(donor_dirs) < 2:
+        print("ERROR: cohort needs >=2 donors (--donor NAME=DIR, repeatable)")
+        sys.exit(1)
+
+    matrices = run_cohort_analysis(
+        donor_dirs,
+        args.output_dir,
+        selected_only=args.selected_only,
+        include_beta_only=not args.no_beta_only,
+        emit_tables=not args.no_tables,
+        emit_plots=args.emit_plots,
+    )
+    print(
+        f"Cohort overlap across {len(donor_dirs)} donors "
+        f"({', '.join(donor_dirs)}) -> {args.output_dir}"
+    )
+    for name, mat in matrices.items():
+        print(f"  cohort_{name}: {mat.shape[0]}x{mat.shape[1]}")
 
 
 def cmd_generate_config(args):
