@@ -654,6 +654,57 @@ def cmd_audit_alleles(args):
         print(f"Wrote novel-allele candidate table to {args.output}")
 
 
+def cmd_ppost(args):
+    """Compute OLGA Pgen + SONIA Ppost per clonotype (#143).
+
+    Reads a clonotype CSV with CDR3 + V/J columns, adds ``log10_pgen_olga``,
+    ``sonia_q`` and ``log10_ppost`` for the chosen chain(s), and writes the
+    augmented table. OLGA/SONIA are a GPL-3.0 optional extra — install with
+    ``pip install tcrsift[pgen]``.
+    """
+    import pandas as pd
+
+    from .olga_ppost import (
+        compute_pgen_ppost,
+        flag_private_candidates,
+        olga_sonia_available,
+    )
+
+    if not olga_sonia_available():
+        from .olga_ppost import _INSTALL_HINT
+        print(_INSTALL_HINT)
+        return 1
+
+    df = pd.read_csv(args.input)
+    print(f"Loaded {len(df)} clones from {args.input}")
+
+    chains = ["alpha", "beta"] if args.chain == "both" else [args.chain]
+    for chain in chains:
+        cdr3_col = args.cdr3_col or f"CDR3_{chain}"
+        v_col = args.v_gene_col or f"{chain}_v_gene"
+        j_col = args.j_gene_col or f"{chain}_j_gene"
+        if cdr3_col not in df.columns:
+            print(f"  [{chain}] skipped: no {cdr3_col!r} column")
+            continue
+        suffix = f"_{chain}"
+        df = compute_pgen_ppost(
+            df, chain=chain, cdr3_col=cdr3_col, v_gene_col=v_col,
+            j_gene_col=j_col,
+            pgen_col=f"log10_pgen_olga{suffix}",
+            ppost_col=f"log10_ppost{suffix}",
+            q_col=f"sonia_q{suffix}",
+        )
+        df[f"private_candidate{suffix}"] = flag_private_candidates(
+            df, score_col=f"log10_ppost{suffix}",
+            freq_col=args.freq_col if args.freq_col in df.columns else None,
+        )
+        n_pc = int(df[f"private_candidate{suffix}"].sum())
+        print(f"  [{chain}] computed Pgen/Ppost; {n_pc} private candidates")
+
+    df.to_csv(args.output, index=False)
+    print(f"Wrote {args.output}")
+
+
 def cmd_data_list(args):
     """List managed reference databases and their cache state."""
     from .datacache import inspect_cache, resolve_cache_dir
@@ -2511,6 +2562,42 @@ CONDITIONALLY REQUIRED:
     p_audit.set_defaults(func=cmd_audit_alleles)
 
     # -------------------------------------------------------------------------
+    # Pgen/Ppost command (OLGA + SONIA, optional extra)
+    # -------------------------------------------------------------------------
+    p_ppost = subparsers.add_parser(
+        "ppost",
+        help="Compute OLGA Pgen + SONIA Ppost per clonotype "
+             "(needs: pip install tcrsift[pgen])",
+    )
+    p_ppost.add_argument("input", help="Path to a clonotype CSV")
+    p_ppost.add_argument(
+        "-o", "--output", required=True, metavar="PATH",
+        help="Write the Pgen/Ppost-annotated CSV here",
+    )
+    p_ppost.add_argument(
+        "--chain", choices=["alpha", "beta", "both"], default="beta",
+        help="Which chain(s) to score (default: beta)",
+    )
+    p_ppost.add_argument(
+        "--cdr3-col", default=None,
+        help="CDR3 AA column (default: CDR3_<chain>)",
+    )
+    p_ppost.add_argument(
+        "--v-gene-col", default=None,
+        help="V-gene column (default: <chain>_v_gene)",
+    )
+    p_ppost.add_argument(
+        "--j-gene-col", default=None,
+        help="J-gene column (default: <chain>_j_gene)",
+    )
+    p_ppost.add_argument(
+        "--freq-col", default="frequency",
+        help="Clone-frequency column for the private-candidate flag "
+             "(default: frequency; skipped if absent)",
+    )
+    p_ppost.set_defaults(func=cmd_ppost)
+
+    # -------------------------------------------------------------------------
     # Run command (unified pipeline)
     # -------------------------------------------------------------------------
     p_run = subparsers.add_parser("run", help="Run complete pipeline")
@@ -3000,12 +3087,14 @@ def main(args=None):
         sys.exit(1)
 
     try:
-        args.func(args)
+        rc = args.func(args)
     except Exception as e:
         logging.error(f"Error: {e}")
         if hasattr(args, "verbose") and args.verbose:
             raise
         sys.exit(1)
+    if rc:
+        sys.exit(rc)
 
 
 if __name__ == "__main__":
