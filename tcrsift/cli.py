@@ -1284,6 +1284,50 @@ def cmd_run(args):
         # first, then full seqs), ordered by global_rank.
         if config.selection.get("rules") and long_df is not None:
             from .selection import select_from_clone_sample_long
+            # Gene-expression signatures as synthetic methods (#sig). When
+            # selection.signatures is set, score those signatures on the GEX
+            # matrix and inject them as extra (clone, sample, method) rows so
+            # the rules can use a signature like a sort. Augments a *copy* of
+            # the long table — the emitted clone_sample_long.csv is untouched.
+            selection_long = long_df
+            sig_names = config.selection.get("signatures")
+            if sig_names:
+                from .signature_methods import (
+                    SIGNATURES,
+                    build_signature_methods,
+                    expression_frame_from_adata,
+                )
+                genes = sorted({
+                    g for n in sig_names for g in SIGNATURES[n].all_genes
+                })
+                expr = expression_frame_from_adata(adata, genes)
+                obs_sig = adata.obs
+                if "CDR3ab" not in obs_sig.columns and {
+                    "CDR3_alpha", "CDR3_beta"
+                } <= set(obs_sig.columns):
+                    obs_sig = obs_sig.assign(
+                        CDR3ab=obs_sig["CDR3_alpha"].fillna("")
+                        + "_" + obs_sig["CDR3_beta"].fillna("")
+                    )
+                if expr.shape[1] and {"CDR3ab", "sample"} <= set(obs_sig.columns):
+                    sig_long = build_signature_methods(
+                        expr, obs_sig, signatures=sig_names,
+                        positive_method=config.selection.get(
+                            "signature_positive_method", "gap"
+                        ),
+                    )
+                    selection_long = pd.concat(
+                        [long_df, sig_long], ignore_index=True
+                    )
+                    print(
+                        f"  Added {len(sig_long)} signature-method rows "
+                        f"({', '.join(sig_names)}) to the selection input"
+                    )
+                else:
+                    print(
+                        f"  Signatures {sig_names} requested but GEX/CDR3ab "
+                        "unavailable; skipping signature methods"
+                    )
             # exclude_viral: drop public-DB viral bystanders (is_viral from
             # the annotate step) so they don't enrich into the selection.
             exclude_clones = None
@@ -1313,7 +1357,7 @@ def cmd_run(args):
                         f"-> data/excluded_viral_clones.csv"
                     )
             rules = select_from_clone_sample_long(
-                long_df, config.selection, exclude_clones=exclude_clones,
+                selection_long, config.selection, exclude_clones=exclude_clones,
             )
             if not rules.empty and "CDR3ab" in assembled.columns:
                 selected = (

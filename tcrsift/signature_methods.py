@@ -147,6 +147,45 @@ SELECTION_SIGNATURES: dict[str, Signature] = {
 }
 
 
+def expression_frame_from_adata(adata, genes, *, layer: str | None = None) -> pd.DataFrame:
+    """Extract a cells × genes (symbol-keyed) expression frame from AnnData.
+
+    Resolves HGNC symbols against ``adata.var_names`` or, when those are
+    Ensembl IDs (the ``load_samples`` default), a gene-symbol column in
+    ``adata.var`` (``gene_symbols`` / ``feature_name`` / …). Densifies the
+    requested columns only; duplicate symbols collapse to the
+    highest-mean copy. Genes not found are omitted (so the result may have
+    fewer columns than requested, or be empty if the panel is absent).
+    """
+    from scipy.sparse import issparse
+
+    var = adata.var
+    symbol_series = None
+    for col in ("gene_symbols", "feature_name", "symbol", "gene_symbol", "gene_name"):
+        if col in getattr(var, "columns", []):
+            symbol_series = var[col].astype(str)
+            break
+    if symbol_series is None:
+        symbol_series = pd.Series(adata.var_names.astype(str))
+    sym_upper = symbol_series.str.upper().to_numpy()
+
+    X = adata.layers[layer] if layer is not None else adata.X
+    cols: dict[str, np.ndarray] = {}
+    for g in genes:
+        idx = np.where(sym_upper == str(g).upper())[0]
+        if idx.size == 0:
+            continue
+        if idx.size > 1:
+            means = np.asarray(X[:, idx].mean(axis=0)).ravel()
+            idx = idx[[int(np.argmax(means))]]
+        col = X[:, idx[0]]
+        cols[g] = (
+            np.asarray(col.todense()).ravel() if issparse(X)
+            else np.asarray(col).ravel()
+        )
+    return pd.DataFrame(cols, index=adata.obs_names.astype(str))
+
+
 def _combine_block(
     expr: pd.DataFrame,
     genes: list[str],
@@ -248,9 +287,12 @@ def _largest_gap_cutoff(
     # typical spacing; on a smooth distribution there is no distinct high
     # cluster, so return a cutoff above the max → empty positive set
     # (rather than slicing off an arbitrary top few).
+    # Typical spacing = median of ALL consecutive drops (the bulk gap). Using
+    # only positive drops would be skewed by ties (e.g. many zero-expression
+    # cells) into a too-strict floor; the bulk median is ~0 then, so a real
+    # cluster above the zeros is still picked.
     drops = -np.diff(v)  # consecutive drops over the full sorted array (≥0)
-    positive = drops[drops > 0]
-    typical = float(np.median(positive)) if positive.size else 0.0
+    typical = float(np.median(drops)) if drops.size else 0.0
     if typical > 0 and largest < min_gap_ratio * typical:
         return float("inf")
     return float((top[i] + top[i + 1]) / 2.0)

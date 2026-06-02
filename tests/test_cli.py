@@ -2084,3 +2084,94 @@ selection:
         excl = pd.read_csv(excl_csv)
         assert list(excl["CDR3ab"]) == ["CAVV_CASS_V"]
         assert bool(excl["is_viral"].iloc[0]) is True
+
+
+class TestRunWiresSignatures:
+    """`tcrsift run` scores selection.signatures on the GEX matrix and
+    injects them as synthetic methods into the selection input (#sig)."""
+
+    def test_signatures_injected_into_selection(self, tmp_path, monkeypatch, capsys):
+        import anndata as ad
+        import numpy as np
+        from scipy.sparse import csr_matrix
+
+        sheet = tmp_path / "samples.yaml"
+        sheet.write_text(
+            'samples:\n  - sample: "S1"\n    vdj_dir: "/d/v"\n    source: "culture"\n'
+        )
+        config_yaml = tmp_path / "config.yaml"
+        config_yaml.write_text(
+            "selection:\n"
+            "  signatures: [AIM]\n"
+            "  rules:\n"
+            "    shared:\n"
+            "      include_tiers: [tier1, tier2, tier3, tier4, tier5]\n"
+            "  global_rank:\n"
+            "    rule_order: [shared]\n"
+        )
+
+        # 8 cells; clone A (c0,c1) is the minority AIM-high cluster.
+        n = 8
+        clones = ["CAVA", "CAVA", "CAVB", "CAVB", "CAVC", "CAVC", "CAVD", "CAVD"]
+        obs = pd.DataFrame(
+            {
+                "sample": ["S1"] * n,
+                "enrichment_method": ["AIMpos"] * n,
+                "source": ["culture"] * n,
+                "CDR3_alpha": clones,
+                "CDR3_beta": ["CB"] * n,
+            },
+            index=[f"c{i}" for i in range(n)],
+        )
+        x = np.zeros((n, 2))
+        x[0] = [8, 9]
+        x[1] = [7, 8]  # AIM-high
+        var = pd.DataFrame({"gene_symbols": ["TNFRSF9", "TNFRSF4"]}, index=["E1", "E2"])
+        adata = ad.AnnData(X=csr_matrix(x), obs=obs, var=var)
+
+        monkeypatch.setattr("tcrsift.loader.load_samples", lambda *a, **k: adata)
+        monkeypatch.setattr("tcrsift.phenotype.phenotype_cells", lambda a, *x, **k: a)
+        monkeypatch.setattr("tcrsift.phenotype.filter_by_tcell_type", lambda a, *x, **k: a)
+        monkeypatch.setattr(
+            "tcrsift.clonotype.aggregate_clonotypes",
+            lambda *a, **k: pd.DataFrame({
+                "CDR3ab": ["CAVA_CB", "CAVB_CB", "CAVC_CB", "CAVD_CB"],
+                "cell_count": [2, 2, 2, 2],
+            }),
+        )
+        monkeypatch.setattr(
+            "tcrsift.filter.filter_clonotypes", lambda df, *a, **k: df.assign(tier="tier1")
+        )
+        monkeypatch.setattr("tcrsift.filter.split_by_tier", lambda df, *a, **k: {"tier1": df})
+        monkeypatch.setattr("tcrsift.til.load_til_samples", lambda *a, **k: {})
+        monkeypatch.setattr(
+            "tcrsift.assemble.assemble_full_sequences",
+            lambda df, *a, **k: pd.DataFrame({
+                "CDR3ab": ["CAVA_CB", "CAVB_CB", "CAVC_CB", "CAVD_CB"],
+                "full_alpha_aa": ["M"] * 4,
+            }),
+        )
+
+        output_dir = tmp_path / "out"
+        args = argparse.Namespace(
+            sample_sheet=str(sheet), output_dir=str(output_dir), config=str(config_yaml),
+            generate_plots=False, generate_report=False,
+            no_leaders=False, single_chain=None, include_constant=None, til_samples=None,
+            min_genes=None, max_genes=None, min_counts=None, max_counts=None,
+            min_mito_pct=None, max_mito_pct=None, cd4_cd8_ratio=None, min_cd3_reads=None,
+            group_by=None, handle_doublets=None, min_umi=None, tcell_type=None, method=None,
+            min_cells=None, min_frequency=None, require_complete=None, fdr_tiers=None,
+            vdjdb_path=None, iedb_path=None, cedar_path=None, match_by=None,
+            exclude_viral=None, flag_only=None, til_match_by=None, min_til_cells=None,
+            alpha_leader=None, beta_leader=None, leaders_from_contigs=False,
+            contigs_dir=None, cellranger_dir=None, sample_name_from=None, linker=None,
+            constant_source=None, skip_plots=None, verbose=False,
+        )
+
+        cmd_run(args)
+
+        out = capsys.readouterr().out
+        # The AIM signature was scored on GEX and injected as a method.
+        assert "signature-method rows" in out
+        assert "AIM" in out
+        assert (output_dir / "data" / "selected_clones.csv").exists()

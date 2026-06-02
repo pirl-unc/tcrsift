@@ -225,3 +225,74 @@ class TestAimPanel:
         )
         s = sm.score_signature(expr, sm.SIGNATURES["AIM"])
         assert s["c3"] > s["c0"]
+
+
+class TestExpressionFrameFromAdata:
+    def _adata(self):
+        import anndata as ad
+        from scipy.sparse import csr_matrix
+        # ENSEMBL var_names + gene_symbols column (the load_samples shape)
+        var = pd.DataFrame(
+            {"gene_symbols": ["TNFRSF9", "TNFRSF4", "GZMB"]},
+            index=["ENSG1", "ENSG2", "ENSG3"],
+        )
+        X = csr_matrix(np.array([[8.0, 9, 0], [7, 8, 0], [0, 0, 5], [0, 0, 4]]))
+        obs = pd.DataFrame(index=[f"c{i}" for i in range(4)])
+        return ad.AnnData(X=X, obs=obs, var=var)
+
+    def test_resolves_symbols_from_var_column(self):
+        expr = sm.expression_frame_from_adata(self._adata(), ["TNFRSF9", "TNFRSF4"])
+        assert list(expr.columns) == ["TNFRSF9", "TNFRSF4"]
+        assert list(expr.index) == ["c0", "c1", "c2", "c3"]
+        assert expr.loc["c0", "TNFRSF9"] == 8.0  # densified from sparse
+
+    def test_absent_genes_omitted(self):
+        expr = sm.expression_frame_from_adata(self._adata(), ["TNFRSF9", "NOTAGENE"])
+        assert list(expr.columns) == ["TNFRSF9"]
+
+    def test_resolves_when_var_names_are_symbols(self):
+        import anndata as ad
+        adata = ad.AnnData(
+            X=np.array([[5.0, 0.0], [0.0, 5.0]]),
+            obs=pd.DataFrame(index=["c0", "c1"]),
+            var=pd.DataFrame(index=["GZMB", "CCR7"]),  # symbols as var_names
+        )
+        expr = sm.expression_frame_from_adata(adata, ["GZMB"])
+        assert list(expr.columns) == ["GZMB"]
+        assert expr.loc["c0", "GZMB"] == 5.0
+
+
+class TestSignatureInjectionIntoSelection:
+    """The run-wiring flow: adata GEX → signature method → selection rule."""
+
+    def test_aim_signature_becomes_a_selectable_method(self):
+        import anndata as ad
+        from scipy.sparse import csr_matrix
+
+        from tcrsift.selection import select_from_clone_sample_long
+
+        # 8 cells; clone A (c0,c1) is the minority AIM-high cluster.
+        var = pd.DataFrame({"gene_symbols": ["TNFRSF9", "TNFRSF4"]}, index=["E1", "E2"])
+        rows = np.zeros((8, 2))
+        rows[0] = [8, 9]
+        rows[1] = [7, 8]
+        obs = pd.DataFrame(
+            {"CDR3ab": ["A", "A", "B", "B", "C", "C", "D", "D"], "sample": ["S1"] * 8},
+            index=[f"c{i}" for i in range(8)],
+        )
+        adata = ad.AnnData(X=csr_matrix(rows), obs=obs, var=var)
+
+        expr = sm.expression_frame_from_adata(adata, ["TNFRSF9", "TNFRSF4"])
+        sig_long = sm.build_signature_methods(
+            expr, adata.obs, signatures=["AIM"], positive_method="gap",
+        )
+        assert set(sig_long["method"]) == {"AIM"}
+        assert "A" in set(sig_long["CDR3ab"])
+
+        # A private_AIM rule can now select clone A via the signature method.
+        rules = select_from_clone_sample_long(
+            sig_long,
+            {"rules": {"private": {"include_tier": "tier5", "top_n": 5,
+                                   "apply_to_methods": ["AIM"]}}},
+        )
+        assert set(rules.columns) >= {"CDR3ab", "selection_rule", "global_rank"}
