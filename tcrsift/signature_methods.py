@@ -35,6 +35,7 @@ exploring). Gene memberships are literature-backed defaults for tuning.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -42,6 +43,26 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# TCR / Ig V-D-J-C *segment* transcripts. Including these in a signature or
+# any feature set compared to clonotype / V-gene labels is circular — the
+# receptor mRNA trivially "predicts" the receptor (#144). Matches V/D/J
+# segments (require a trailing digit so TRADD/TRAF/IGF* don't match) and the
+# C-region genes (TRAC, TRBC1/2, TRGC, TRDC, IGKC/IGLC, IGH[ADEGM]).
+RECEPTOR_GENE_RE = re.compile(
+    r"^(TR[ABGD][VDJ]\d|TR[ABGD]C|IG[HKL][VDJ]\d|IGH[ADEGM]|IG[KL]C)",
+    re.IGNORECASE,
+)
+
+
+def is_receptor_gene(symbol: object) -> bool:
+    """True if ``symbol`` is a TCR/Ig V/D/J/C segment transcript (#144)."""
+    return bool(RECEPTOR_GENE_RE.match(str(symbol)))
+
+
+def strip_receptor_genes(genes) -> list[str]:
+    """Drop TCR/Ig segment transcripts from a gene list (anti-leakage)."""
+    return [g for g in genes if not is_receptor_gene(g)]
 
 
 @dataclass(frozen=True)
@@ -243,6 +264,7 @@ def score_signature(
     combine: str = "zscore",
     log1p: bool = True,
     background: pd.DataFrame | None = None,
+    groups: pd.Series | None = None,
     on_missing: str = "error",
 ) -> pd.Series:
     """Per-cell signed signature score from a cells × genes (TPM) frame.
@@ -264,11 +286,40 @@ def score_signature(
     full dataset / a control population / a per-sample slice to set the
     reference explicitly.
 
+    ``groups`` (per-cell labels aligned to ``expr.index``) z-scores each
+    gene **within each group** — the per-condition baseline (#144): scoring
+    against the whole pooled set is biased when donor × sort composition
+    differs. Mutually exclusive with ``background``.
+
     ``on_missing`` governs signature genes absent from ``expr`` (and
     ``background``): ``"error"`` (default) **raises** — a partial panel is a
     different signature, so we never silently degrade it; ``"warn"`` scores
     on the present genes with a warning; ``"ignore"`` scores silently.
+
+    Raises if a signature gene is a TCR/Ig receptor transcript (#144): such
+    a "signature" is circular against clonotype/V-gene labels.
     """
+    receptor = [g for g in signature.all_genes if is_receptor_gene(g)]
+    if receptor:
+        raise ValueError(
+            f"score_signature[{signature.name}]: signature includes TCR/Ig "
+            f"receptor transcripts {receptor} — scoring these against "
+            "clonotype/V-gene labels is circular. Remove them "
+            "(see strip_receptor_genes)."
+        )
+    # Per-condition baseline: z-score within each group, then stitch back.
+    if groups is not None:
+        if background is not None:
+            raise ValueError("score_signature: pass groups OR background, not both")
+        glabels = groups.reindex(expr.index)
+        parts = [
+            score_signature(
+                expr.loc[idx], signature, combine=combine, log1p=log1p,
+                on_missing=on_missing,
+            )
+            for _, idx in glabels.groupby(glabels, observed=True).groups.items()
+        ]
+        return pd.concat(parts).reindex(expr.index)
     cols = set(expr.columns)
     if background is not None:
         cols &= set(background.columns)
@@ -427,6 +478,7 @@ def build_signature_methods(
     combine: str = "zscore",
     log1p: bool = True,
     background: pd.DataFrame | None = None,
+    background_by: str | None = None,
     positive_method: str = "gap",
     quantile: float = 0.75,
     on_missing: str = "error",
@@ -442,17 +494,22 @@ def build_signature_methods(
     synthetic method ready to concat with the real clone-sample-long table.
     ``on_missing`` (default ``"error"``) forbids scoring a signature whose
     genes aren't all in ``expr`` — see :func:`score_signature`.
+
+    ``background_by`` names an ``obs`` column (e.g. ``"sample"``) to use as
+    the per-condition z-score baseline (#144): each gene is standardized
+    within each group rather than against the pooled cells.
     """
     if signatures is None:
         signatures = SELECTION_SIGNATURES.values()
     resolved = [
         SIGNATURES[s] if isinstance(s, str) else s for s in signatures
     ]
+    groups = obs[background_by] if background_by is not None else None
     positive_by_signature: dict[str, pd.Series] = {}
     for sig in resolved:
         scores = score_signature(
             expr, sig, combine=combine, log1p=log1p, background=background,
-            on_missing=on_missing,
+            groups=groups, on_missing=on_missing,
         )
         positive_by_signature[sig.name] = call_positive(
             scores, method=positive_method, quantile=quantile,
