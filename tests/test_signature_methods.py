@@ -14,64 +14,180 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
+import pytest
 
 from tcrsift import signature_methods as sm
 
 
-class TestSelectionSignatures:
-    def test_two_axes_defined(self):
+class TestSignatureRegistry:
+    def test_signed_signature_all_genes_dedup(self):
+        diff = sm.SIGNATURES["Differentiated"]
+        assert diff.genes_up == ()
+        assert "CCR7" in diff.genes_down
+        assert len(diff.all_genes) == len(set(diff.all_genes))
+
+    def test_small_and_large_panels_exist(self):
+        assert sm.SIGNATURES["Cytolytic"].panel == "focal"
+        assert sm.SIGNATURES["CytolyticBroad"].panel == "broad"
+        assert len(sm.SIGNATURES["CytolyticBroad"].genes_up) > len(
+            sm.SIGNATURES["Cytolytic"].genes_up
+        )
+
+    def test_no_context_tagging_on_signatures(self):
+        # Tagging was removed — signatures are plain gene sets now.
+        sig = sm.SIGNATURES["TumorReactive"]
+        assert not hasattr(sig, "contexts")
+        assert not hasattr(sm, "infer_context")
+
+    def test_selection_signatures_named_composites(self):
+        # The two headline composites the pilot uses (no context tags).
         assert set(sm.SELECTION_SIGNATURES) == {"TumorReactive", "AntigenExperienced"}
+        tr = sm.SELECTION_SIGNATURES["TumorReactive"]
+        assert {"CXCL13", "ENTPD1", "TOX", "ITGAE", "CTLA4"} <= set(tr.genes_up)
+        ae = sm.SELECTION_SIGNATURES["AntigenExperienced"]
+        assert {"TNFRSF9", "MKI67", "GZMB", "NKG7"} <= set(ae.genes_up)
 
-    def test_tumor_reactive_composes_canonical_sets(self):
-        tr = set(sm.TUMOR_REACTIVE_SIGNATURE)
-        assert {"CXCL13", "ENTPD1"} <= tr      # tumor_reactive
-        assert {"PDCD1", "LAG3", "TOX"} <= tr  # exhaustion
-        assert "ITGAE" in tr                   # CD103
-
-    def test_antigen_experienced_composes_canonical_sets(self):
-        ae = set(sm.ANTIGEN_EXPERIENCED_SIGNATURE)
-        assert {"TNFRSF9", "MKI67"} <= ae      # antigen_response
-        assert {"IFNG", "GZMB", "NKG7"} <= ae  # activation
-
-    def test_no_duplicate_genes(self):
-        for genes in sm.SELECTION_SIGNATURES.values():
-            assert len(genes) == len(set(genes))
+    def test_single_gene_focal_signature_scores(self):
+        # Regression: a 1-gene focal panel (Proliferation) must score, not
+        # silently return zeros under the default min_genes_present.
+        expr = pd.DataFrame(
+            {"MKI67": [0.0, 1.0, 5.0, 9.0]}, index=[f"c{i}" for i in range(4)],
+        )
+        s = sm.score_signature(expr, sm.SIGNATURES["Proliferation"])
+        assert not (s == 0).all()
+        assert s["c3"] > s["c0"]
 
 
 class TestScoreSignature:
     def _expr(self):
-        cells = [f"c{i}" for i in range(4)]
         return pd.DataFrame(
-            {"GZMB": [0.0, 0.0, 5.0, 5.0], "NKG7": [0.0, 1.0, 4.0, 6.0]},
-            index=cells,
+            {"GZMB": [0.0, 0.0, 5.0, 5.0], "PRF1": [0.0, 1.0, 4.0, 6.0],
+             "CCR7": [5.0, 5.0, 0.0, 0.0], "TCF7": [4.0, 6.0, 0.0, 1.0]},
+            index=[f"c{i}" for i in range(4)],
         )
 
-    def test_zscored_mean_orders_cells(self):
-        s = sm.score_signature(self._expr(), ["GZMB", "NKG7"])
-        # high-expression cells score above low-expression cells
+    def test_signed_score_subtracts_down_genes(self):
+        # Differentiated = -(CCR7,TCF7): naive-high cells score low.
+        s = sm.score_signature(self._expr(), sm.SIGNATURES["Differentiated"])
         assert s["c3"] > s["c0"]
 
-    def test_missing_genes_dropped_but_scores(self):
-        s = sm.score_signature(self._expr(), ["GZMB", "NKG7", "ABSENT"])
-        assert len(s) == 4  # scored on the 2 present genes
+    def test_combine_mean_raw_when_log1p_off(self):
+        s = sm.score_signature(
+            self._expr(), sm.SIGNATURES["Cytolytic"], combine="mean", log1p=False,
+        )
+        # raw mean of GZMB,PRF1: c3=(5+6)/2=5.5 highest
+        assert s["c3"] == 5.5
 
-    def test_too_few_present_returns_zeros(self):
-        s = sm.score_signature(self._expr(), ["ONLY_ONE_PRESENT", "GZMB"], min_genes_present=2)
-        # only GZMB present (<2) -> zeros
-        assert (s == 0).all()
+    def test_default_applies_log1p(self):
+        import numpy as np
+        # combine="mean" with default log1p -> mean of log1p(TPM)
+        s = sm.score_signature(self._expr(), sm.SIGNATURES["Cytolytic"], combine="mean")
+        expected = (np.log1p(5.0) + np.log1p(6.0)) / 2  # c3
+        assert abs(s["c3"] - expected) < 1e-9
+
+    def test_combine_zscore_default(self):
+        # default: z-score across cells of log1p(TPM), then mean across genes
+        s = sm.score_signature(self._expr(), sm.SIGNATURES["Cytolytic"])
+        assert s["c3"] > s["c0"]
+
+    def test_unknown_combine_raises(self):
+        with pytest.raises(ValueError, match="combine"):
+            sm.score_signature(self._expr(), sm.SIGNATURES["Cytolytic"], combine="bogus")
+
+    def test_missing_gene_raises_by_default(self):
+        # Cytolytic needs PRF1+GZMB; PRF1 absent → error, not a partial score.
+        expr = pd.DataFrame({"GZMB": [1.0, 2.0]}, index=["a", "b"])
+        with pytest.raises(KeyError, match="PRF1"):
+            sm.score_signature(expr, sm.SIGNATURES["Cytolytic"])
+
+    def test_missing_gene_ignore_scores_present(self):
+        expr = pd.DataFrame({"GZMB": [1.0, 2.0, 3.0]}, index=list("abc"))
+        s = sm.score_signature(expr, sm.SIGNATURES["Cytolytic"], on_missing="ignore")
+        assert s["c"] > s["a"]  # scored on GZMB alone
+
+    def test_explicit_background_changes_zscore(self):
+        # z-scoring against a low-expression background lifts all scores
+        # vs z-scoring against the (higher) input itself.
+        expr = self._expr()
+        low_bg = pd.DataFrame(
+            {"GZMB": [0.0, 0.0, 1.0, 1.0], "PRF1": [0.0, 1.0, 0.0, 1.0]},
+            index=expr.index,
+        )
+        self_scored = sm.score_signature(expr, sm.SIGNATURES["Cytolytic"])
+        bg_scored = sm.score_signature(
+            expr, sm.SIGNATURES["Cytolytic"], background=low_bg,
+        )
+        assert bg_scored.mean() > self_scored.mean()
 
 
-class TestCallPositive:
-    def test_quantile_default_top_quartile(self):
-        scores = pd.Series([1.0, 2.0, 3.0, 4.0], index=list("abcd"))
-        pos = sm.call_positive(scores, quantile=0.75)
-        assert pos["d"] and not pos["a"]
+class TestCallPositiveAdaptive:
+    def _scores(self):
+        vals = list(np.linspace(0.0, 1.0, 16)) + [5.0, 5.2, 4.8, 5.1]
+        return pd.Series(vals, index=[f"cl{i}" for i in range(20)])
 
-    def test_explicit_threshold(self):
-        scores = pd.Series([1.0, 2.0, 3.0], index=list("abc"))
-        pos = sm.call_positive(scores, threshold=1.5)
-        assert list(pos) == [False, True, True]
+    def test_gap_isolates_cluster(self):
+        assert int(sm.call_positive(self._scores(), method="gap").sum()) == 4
+
+    def test_gap_returns_none_when_no_distinct_cluster(self):
+        # Smooth, evenly-spaced scores → no cluster "above the others" →
+        # gap selects nothing rather than an arbitrary top slice.
+        smooth = pd.Series(np.linspace(0.0, 1.0, 30), index=[f"c{i}" for i in range(30)])
+        assert int(sm.call_positive(smooth, method="gap").sum()) == 0
+
+    def test_gap_majority_cluster_needs_higher_search_top(self):
+        # A high cluster that is the MAJORITY (~70%) sits below the default
+        # search_top=0.5 window, so gap misses it; raising search_top finds it.
+        vals = list(np.zeros(6)) + list(np.full(14, 5.0))  # 14/20 high
+        s = pd.Series(vals, index=[f"c{i}" for i in range(20)])
+        assert int(sm.call_positive(s, method="gap").sum()) == 0           # default 0.5
+        assert int(sm.call_positive(s, method="gap", search_top=0.9).sum()) == 14
+
+    def test_otsu_isolates_cluster(self):
+        assert int(sm.call_positive(self._scores(), method="otsu").sum()) == 4
+
+    def test_quantile_fixed(self):
+        assert int(sm.call_positive(self._scores(), method="quantile", quantile=0.75).sum()) == 5
+
+    def test_unknown_method_raises(self):
+        with pytest.raises(ValueError, match="unknown method"):
+            sm.call_positive(self._scores(), method="bogus")
+
+
+class TestBuildSignatureMethods:
+    def _data(self):
+        cells = [f"c{i}" for i in range(4)]
+        expr = pd.DataFrame(
+            {"PRF1": [5.0, 5.0, 0.0, 0.0], "GZMB": [4.0, 6.0, 0.0, 1.0]},
+            index=cells,
+        )
+        obs = pd.DataFrame({"CDR3ab": ["A", "A", "B", "B"], "sample": ["S1"] * 4},
+                          index=cells)
+        return expr, obs
+
+    def test_scores_signature_with_complete_panel(self):
+        # No context guard: a signature with all genes present scores fine.
+        expr, obs = self._data()
+        out = sm.build_signature_methods(
+            expr, obs, signatures=["Cytolytic"], positive_method="gap",
+        )
+        assert set(out["method"]) <= {"Cytolytic"}
+
+    def test_missing_signature_gene_raises(self):
+        # TumorReactive needs CXCL13/ENTPD1/… absent here → hard error.
+        expr, obs = self._data()
+        with pytest.raises(KeyError):
+            sm.build_signature_methods(expr, obs, signatures=["TumorReactive"])
+
+    def test_defaults_to_selection_signatures(self):
+        # Default sigs (Tumor/AntigenExp) aren't all in this tiny frame; with
+        # on_missing="ignore" the default-param behavior is still exercised.
+        expr, obs = self._data()
+        out = sm.build_signature_methods(
+            expr, obs, on_missing="ignore", positive_method="gap",
+        )
+        assert set(out["method"]) <= {"TumorReactive", "AntigenExperienced"}
 
 
 class TestSignatureMethodsLong:
@@ -80,86 +196,131 @@ class TestSignatureMethodsLong:
             {"CDR3ab": ["A", "A", "B", "B"], "sample": ["S1"] * 4},
             index=[f"c{i}" for i in range(4)],
         )
-        positive = {"TumorReactive": pd.Series([True, True, True, False], index=obs.index)}
+        positive = {"Cytolytic": pd.Series([True, True, True, False], index=obs.index)}
         out = sm.signature_methods_long(obs, positive)
-        assert set(out["method"]) == {"TumorReactive"}
         a = out[out["CDR3ab"] == "A"].iloc[0]
         assert a["cells"] == 2
-        # 3 positive cells in S1; A has 2 -> 2/3
         assert abs(a["frequency"] - 2 / 3) < 1e-9
 
-    def test_empty_when_no_positive(self):
-        obs = pd.DataFrame({"CDR3ab": ["A"], "sample": ["S1"]}, index=["c0"])
-        out = sm.signature_methods_long(
-            obs, {"X": pd.Series([False], index=["c0"])}
-        )
-        assert out.empty
-        assert list(out.columns) == ["CDR3ab", "sample", "method", "cells", "frequency"]
-
-
-class TestBuildSignatureMethodsIntoSelection:
-    def test_signature_method_feeds_selection_rules(self):
+    def test_feeds_selection_rules(self):
         from tcrsift.selection import select_from_clone_sample_long
 
         cells = [f"c{i}" for i in range(6)]
-        expr = pd.DataFrame(0.0, index=cells, columns=["CXCL13", "ENTPD1", "TOX", "PDCD1", "LAG3"])
-        expr.loc[["c0", "c1", "c2"], :] = 5.0  # clone A tumor-reactive-high
+        expr = pd.DataFrame(
+            {"PRF1": [5, 5, 5, 0, 0, 0], "GZMB": [5, 5, 5, 0, 0, 0]}, index=cells,
+        )
         obs = pd.DataFrame(
-            {"CDR3ab": ["A", "A", "A", "B", "B", "B"], "sample": ["S1"] * 6},
-            index=cells,
+            {"CDR3ab": ["A", "A", "A", "B", "B", "B"], "sample": ["S1"] * 6}, index=cells,
         )
         sig_long = sm.build_signature_methods(
-            expr, obs, signatures={"TumorReactive": sm.TUMOR_REACTIVE_SIGNATURE},
-            quantile=0.4,
+            expr, obs, signatures=["Cytolytic"], positive_method="gap",
         )
-        # The synthetic method is usable by a private rule.
         rules = select_from_clone_sample_long(
             sig_long,
             {"rules": {"private": {"include_tier": "tier3", "top_n": 5,
-                                   "apply_to_methods": ["TumorReactive"]}}},
+                                   "apply_to_methods": ["Cytolytic"]}}},
         )
-        # A is tumor-reactive-positive; with enough cells it can clear a tier
-        # and be selected by the TumorReactive private rule (or none if too
-        # sparse) — the point is the pipeline runs end-to-end with a
-        # signature acting as a method.
         assert set(rules.columns) >= {"CDR3ab", "selection_rule", "global_rank"}
 
 
-class TestAdaptiveCutoffs:
-    """Adaptive cutoffs select the variable, small high cluster (#sig)."""
+class TestAimPanel:
+    """AIM (activation-induced marker) GEX panel — the transcriptional
+    analogue of an AIMpos sort (#pilot)."""
 
-    def _scores(self):
-        # 16 smooth background in [0,1], 4 clearly clustered high.
-        import numpy as np
-        vals = list(np.linspace(0.0, 1.0, 16)) + [5.0, 5.2, 4.8, 5.1]
-        return pd.Series(vals, index=[f"cl{i}" for i in range(20)])
+    def test_aim_focal_is_4_1bb_plus_ox40(self):
+        aim = sm.SIGNATURES["AIM"]
+        assert set(aim.genes_up) == {"TNFRSF9", "TNFRSF4"}  # 4-1BB + OX40
+        assert aim.genes_down == ()
+        assert aim.panel == "focal"
 
-    def test_gap_isolates_the_high_cluster(self):
-        pos = sm.call_positive(self._scores(), method="gap")
-        assert int(pos.sum()) == 4
-        assert set(self._scores().index[pos]) == {"cl16", "cl17", "cl18", "cl19"}
+    def test_aim_broad_adds_surface_markers(self):
+        broad = sm.SIGNATURES["AIMBroad"]
+        assert {"TNFRSF9", "TNFRSF4", "CD69", "IL2RA", "CD40LG"} <= set(broad.genes_up)
+        assert len(broad.genes_up) > len(sm.SIGNATURES["AIM"].genes_up)
 
-    def test_otsu_isolates_the_high_cluster(self):
-        pos = sm.call_positive(self._scores(), method="otsu")
-        assert int(pos.sum()) == 4
+    def test_aim_scores_activated_cells_higher(self):
+        import pandas as pd
+        cells = [f"c{i}" for i in range(4)]
+        expr = pd.DataFrame(
+            {"TNFRSF9": [0.0, 0.0, 5.0, 6.0], "TNFRSF4": [0.0, 1.0, 4.0, 7.0]},
+            index=cells,
+        )
+        s = sm.score_signature(expr, sm.SIGNATURES["AIM"])
+        assert s["c3"] > s["c0"]
 
-    def test_quantile_is_fixed_count(self):
-        # top quartile of 20 = 5, regardless of where the gap is
-        pos = sm.call_positive(self._scores(), method="quantile", quantile=0.75)
-        assert int(pos.sum()) == 5
 
-    def test_gap_count_varies_with_cluster_size(self):
-        # Two high clones instead of four -> gap picks two.
-        import numpy as np
-        vals = list(np.linspace(0.0, 1.0, 16)) + [5.0, 5.1]
-        s = pd.Series(vals, index=[f"c{i}" for i in range(18)])
-        assert int(sm.call_positive(s, method="gap").sum()) == 2
+class TestExpressionFrameFromAdata:
+    def _adata(self):
+        import anndata as ad
+        from scipy.sparse import csr_matrix
+        # ENSEMBL var_names + gene_symbols column (the load_samples shape)
+        var = pd.DataFrame(
+            {"gene_symbols": ["TNFRSF9", "TNFRSF4", "GZMB"]},
+            index=["ENSG1", "ENSG2", "ENSG3"],
+        )
+        X = csr_matrix(np.array([[8.0, 9, 0], [7, 8, 0], [0, 0, 5], [0, 0, 4]]))
+        obs = pd.DataFrame(index=[f"c{i}" for i in range(4)])
+        return ad.AnnData(X=X, obs=obs, var=var)
 
-    def test_explicit_threshold_overrides_method(self):
-        pos = sm.call_positive(self._scores(), method="gap", threshold=2.0)
-        assert int(pos.sum()) == 4  # the four >2.0
+    def test_resolves_symbols_from_var_column(self):
+        expr = sm.expression_frame_from_adata(self._adata(), ["TNFRSF9", "TNFRSF4"])
+        assert list(expr.columns) == ["TNFRSF9", "TNFRSF4"]
+        assert list(expr.index) == ["c0", "c1", "c2", "c3"]
+        assert expr.loc["c0", "TNFRSF9"] == 8.0  # densified from sparse
 
-    def test_unknown_method_raises(self):
-        import pytest
-        with pytest.raises(ValueError, match="unknown method"):
-            sm.call_positive(self._scores(), method="bogus")
+    def test_absent_gene_raises_by_default(self):
+        with pytest.raises(KeyError, match="NOTAGENE"):
+            sm.expression_frame_from_adata(self._adata(), ["TNFRSF9", "NOTAGENE"])
+
+    def test_absent_gene_omitted_when_ignore(self):
+        expr = sm.expression_frame_from_adata(
+            self._adata(), ["TNFRSF9", "NOTAGENE"], on_missing="ignore",
+        )
+        assert list(expr.columns) == ["TNFRSF9"]
+
+    def test_resolves_when_var_names_are_symbols(self):
+        import anndata as ad
+        adata = ad.AnnData(
+            X=np.array([[5.0, 0.0], [0.0, 5.0]]),
+            obs=pd.DataFrame(index=["c0", "c1"]),
+            var=pd.DataFrame(index=["GZMB", "CCR7"]),  # symbols as var_names
+        )
+        expr = sm.expression_frame_from_adata(adata, ["GZMB"])
+        assert list(expr.columns) == ["GZMB"]
+        assert expr.loc["c0", "GZMB"] == 5.0
+
+
+class TestSignatureInjectionIntoSelection:
+    """The run-wiring flow: adata GEX → signature method → selection rule."""
+
+    def test_aim_signature_becomes_a_selectable_method(self):
+        import anndata as ad
+        from scipy.sparse import csr_matrix
+
+        from tcrsift.selection import select_from_clone_sample_long
+
+        # 8 cells; clone A (c0,c1) is the minority AIM-high cluster.
+        var = pd.DataFrame({"gene_symbols": ["TNFRSF9", "TNFRSF4"]}, index=["E1", "E2"])
+        rows = np.zeros((8, 2))
+        rows[0] = [8, 9]
+        rows[1] = [7, 8]
+        obs = pd.DataFrame(
+            {"CDR3ab": ["A", "A", "B", "B", "C", "C", "D", "D"], "sample": ["S1"] * 8},
+            index=[f"c{i}" for i in range(8)],
+        )
+        adata = ad.AnnData(X=csr_matrix(rows), obs=obs, var=var)
+
+        expr = sm.expression_frame_from_adata(adata, ["TNFRSF9", "TNFRSF4"])
+        sig_long = sm.build_signature_methods(
+            expr, adata.obs, signatures=["AIM"], positive_method="gap",
+        )
+        assert set(sig_long["method"]) == {"AIM"}
+        assert "A" in set(sig_long["CDR3ab"])
+
+        # A private_AIM rule can now select clone A via the signature method.
+        rules = select_from_clone_sample_long(
+            sig_long,
+            {"rules": {"private": {"include_tier": "tier5", "top_n": 5,
+                                   "apply_to_methods": ["AIM"]}}},
+        )
+        assert set(rules.columns) >= {"CDR3ab", "selection_rule", "global_rank"}

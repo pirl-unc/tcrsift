@@ -1284,6 +1284,61 @@ def cmd_run(args):
         # first, then full seqs), ordered by global_rank.
         if config.selection.get("rules") and long_df is not None:
             from .selection import select_from_clone_sample_long
+            # Gene-expression signatures as synthetic methods (#sig). When
+            # selection.signatures is set, score those signatures on the GEX
+            # matrix and inject them as extra (clone, sample, method) rows so
+            # the rules can use a signature like a sort. Augments a *copy* of
+            # the long table — the emitted clone_sample_long.csv is untouched.
+            selection_long = long_df
+            sig_names = config.selection.get("signatures")
+            if sig_names:
+                from .signature_methods import (
+                    SIGNATURES,
+                    build_signature_methods,
+                    expression_frame_from_adata,
+                )
+                genes = sorted({
+                    g for n in sig_names for g in SIGNATURES[n].all_genes
+                })
+                # Extract leniently so build_signature_methods can raise a
+                # per-signature error naming the missing genes — a signature
+                # is never scored on a partial panel (it'd be a different
+                # signature). A missing gene is a hard error, not a skip.
+                expr = expression_frame_from_adata(adata, genes, on_missing="ignore")
+                obs_sig = adata.obs
+                if "CDR3ab" not in obs_sig.columns and {
+                    "CDR3_alpha", "CDR3_beta"
+                } <= set(obs_sig.columns):
+                    obs_sig = obs_sig.assign(
+                        CDR3ab=obs_sig["CDR3_alpha"].fillna("")
+                        + "_" + obs_sig["CDR3_beta"].fillna("")
+                    )
+                if not ({"CDR3ab", "sample"} <= set(obs_sig.columns)):
+                    raise ValueError(
+                        f"selection.signatures={sig_names} requested but "
+                        "adata.obs lacks CDR3ab/sample — cannot build "
+                        "signature methods."
+                    )
+                # Raises (on_missing='error') if any signature gene has no
+                # expression — never silently degrades the panel.
+                sig_long = build_signature_methods(
+                    expr, obs_sig, signatures=sig_names,
+                    positive_method=config.selection.get(
+                        "signature_positive_method", "gap"
+                    ),
+                )
+                # If the cohort has no enrichment-method axis, long_df has no
+                # 'method' column; the concat introduces it (real rows get
+                # NaN method, dropped downstream) so the signatures become the
+                # selection methods. With a method axis, signatures are added
+                # alongside the real sorts.
+                selection_long = pd.concat(
+                    [long_df, sig_long], ignore_index=True
+                )
+                print(
+                    f"  Added {len(sig_long)} signature-method rows "
+                    f"({', '.join(sig_names)}) to the selection input"
+                )
             # exclude_viral: drop public-DB viral bystanders (is_viral from
             # the annotate step) so they don't enrich into the selection.
             exclude_clones = None
@@ -1313,7 +1368,7 @@ def cmd_run(args):
                         f"-> data/excluded_viral_clones.csv"
                     )
             rules = select_from_clone_sample_long(
-                long_df, config.selection, exclude_clones=exclude_clones,
+                selection_long, config.selection, exclude_clones=exclude_clones,
             )
             if not rules.empty and "CDR3ab" in assembled.columns:
                 selected = (
