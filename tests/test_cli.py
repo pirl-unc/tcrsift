@@ -1862,15 +1862,15 @@ class TestSelectionConfig:
     def test_selection_survives_merge_with_empty_args(self):
         from tcrsift.config import TCRsiftConfig
 
-        sel = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"]}},
-               "global_rank": {"block_order": ["shared"]}}
+        sel = {"rules": {"shared": {"include_tiers": ["tier1", "tier2"]}},
+               "global_rank": {"rule_order": ["shared"]}}
         merged = TCRsiftConfig(selection=sel).merge_with_args(argparse.Namespace())
         assert merged.selection == sel
 
     def test_selection_yaml_round_trip(self, tmp_path):
         from tcrsift.config import TCRsiftConfig
 
-        sel = {"routes": {"private": {"include_tier": "tier3", "top_n": 3}}}
+        sel = {"rules": {"private": {"include_tier": "tier3", "top_n": 3}}}
         p = tmp_path / "c.yaml"
         TCRsiftConfig(selection=sel).to_yaml(p)
         assert TCRsiftConfig.from_yaml(p).selection == sel
@@ -1905,12 +1905,12 @@ samples:
         config_yaml.write_text(
             """
 selection:
-  routes:
+  rules:
     shared:
       include_tiers: [tier1, tier2]
       rank_by: max_frequency
   global_rank:
-    block_order: [shared]
+    rule_order: [shared]
 """
         )
 
@@ -1982,11 +1982,11 @@ selection:
         sel_csv = output_dir / "data" / "selected_clones.csv"
         assert sel_csv.exists(), "run should emit selected_clones.csv when selection configured"
         sel = pd.read_csv(sel_csv)
-        for col in ("selection_route", "rank_within_route", "global_rank", "full_alpha_aa"):
+        for col in ("selection_rule", "rank_within_rule", "global_rank", "full_alpha_aa"):
             assert col in sel.columns
         # Only the tier1 clone A is selected (shared); noise B excluded.
         assert list(sel["CDR3ab"]) == ["CAVA_CASS_A"]
-        assert sel["selection_route"].iloc[0] == "shared"
+        assert sel["selection_rule"].iloc[0] == "shared"
 
     def test_selection_excludes_viral_clones(self, tmp_path, monkeypatch):
         import anndata as ad
@@ -2000,11 +2000,11 @@ selection:
         config_yaml.write_text(
             "selection:\n"
             "  exclude_viral: true\n"
-            "  routes:\n"
+            "  rules:\n"
             "    shared:\n"
             "      include_tiers: [tier1, tier2]\n"
             "  global_rank:\n"
-            "    block_order: [shared]\n"
+            "    rule_order: [shared]\n"
         )
 
         # Two tier1 clones: a real one and a viral bystander.

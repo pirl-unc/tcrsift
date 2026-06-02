@@ -47,7 +47,7 @@ __all__ = [
     "per_sample_tier",
     "attach_per_sample_tiers",
     "attach_method_tiers",
-    "build_selection_routes",
+    "build_selection_rules",
     "select_from_clone_sample_long",
     "extract_per_method_evidence",
     "build_pdf_annotations",
@@ -164,9 +164,9 @@ def attach_method_tiers(
     return df
 
 
-# Columns emitted by build_selection_routes, in order.
+# Columns emitted by build_selection_rules, in order.
 _SELECTION_COLUMNS: tuple[str, ...] = (
-    "selection_route", "rank_within_route", "ranking_metric",
+    "selection_rule", "rank_within_rule", "ranking_metric",
     "ranking_value", "global_rank",
 )
 
@@ -175,7 +175,7 @@ def _empty_selection(clone_col: str) -> pd.DataFrame:
     return pd.DataFrame(columns=[clone_col, *_SELECTION_COLUMNS])
 
 
-def build_selection_routes(
+def build_selection_rules(
     clone_method_long: pd.DataFrame,
     config: dict,
     *,
@@ -185,39 +185,39 @@ def build_selection_routes(
     freq_col: str = "max_freq_in_method",
     exclude_clones: set | None = None,
 ) -> pd.DataFrame:
-    """Apply a config-driven multi-route selection language (#122/#125).
+    """Apply a config-driven multi-rule selection language (#122/#125).
 
     Consumes a per-``(clone, method)`` table carrying a per-method
     abundance ``tier`` (see :func:`attach_method_tiers`) and per-method
-    frequency, and assigns each selected clone to a route:
+    frequency, and assigns each selected clone to a rule:
 
     * ``shared`` — clones whose strongest per-method tier is in
       ``include_tiers``, ranked by max frequency across methods.
     * ``private_<method>`` — top ``top_n`` clones that meet
       ``include_tier`` in one method and are **not** ``tier3+`` (or the
       configured ``exclude_tier``) in any other method.
-    * ``cty_pair_<name>`` — top ``top_n`` clones that meet
+    * ``method_pair_<name>`` — top ``top_n`` clones that meet
       ``require_tier_in_all_members`` in **every** member of a method
       pair and are not ``tier3+`` outside the pair, ranked by mean
       frequency across the pair.
 
-    Routes are evaluated in ``global_rank.block_order`` (default
-    ``[shared, cty_pair, private]``) and a clone is assigned to the first
-    route that claims it — no clone appears twice. ``global_rank`` is a
+    Routes are evaluated in ``global_rank.rule_order`` (default
+    ``[shared, method_pair, private]``) and a clone is assigned to the first
+    rule that claims it — no clone appears twice. ``global_rank`` is a
     1-based interleave of the blocks in that order.
 
-    Returns a DataFrame with ``clone_col`` plus ``selection_route``,
-    ``rank_within_route``, ``ranking_metric``, ``ranking_value``,
+    Returns a DataFrame with ``clone_col`` plus ``selection_rule``,
+    ``rank_within_rule``, ``ranking_metric``, ``ranking_value``,
     ``global_rank``. Empty input or no matches yields an empty frame with
     those columns.
     """
-    routes_cfg = config.get("routes", {}) or {}
+    rules_cfg = config.get("rules", {}) or {}
     global_cfg = config.get("global_rank", {}) or {}
-    block_order = global_cfg.get(
-        "block_order", ["shared", "cty_pair", "private"]
+    rule_order = global_cfg.get(
+        "rule_order", ["shared", "method_pair", "private"]
     )
 
-    if clone_method_long.empty or not routes_cfg:
+    if clone_method_long.empty or not rules_cfg:
         return _empty_selection(clone_col)
 
     # Per-clone method->tier and method->frequency maps.
@@ -229,14 +229,14 @@ def build_selection_routes(
         tier_by[clone] = dict(zip(g[method_col], g[tier_col]))
         freq_by[clone] = dict(zip(g[method_col], g[freq_col]))
     # Drop excluded clones up front (e.g. public-DB viral bystanders) so
-    # no route can select them (#122 exclude_viral).
+    # no rule can select them (#122 exclude_viral).
     exclude_clones = exclude_clones or set()
     all_clones = [c for c in tier_by if c not in exclude_clones]
 
     selected: set = set()
-    # route_name -> list of dicts (clone, selection_route, ranking_metric,
-    # ranking_value), already ranked within the route.
-    block_rows: dict[str, list[dict]] = {}
+    # rule_name -> list of dicts (clone, selection_rule, ranking_metric,
+    # ranking_value), already ranked within the rule.
+    rule_rows: dict[str, list[dict]] = {}
 
     def _max_other_tier_rank(clone, exclude_methods: set) -> int:
         ranks = [
@@ -246,8 +246,8 @@ def build_selection_routes(
         ]
         return min(ranks) if ranks else _UNRANKED
 
-    for block in block_order:
-        cfg = routes_cfg.get(block)
+    for block in rule_order:
+        cfg = rules_cfg.get(block)
         if not cfg:
             continue
 
@@ -279,8 +279,8 @@ def build_selection_routes(
             rows.sort(key=lambda r: r["value"], reverse=True)
             if top_n is not None:
                 rows = rows[:top_n]
-            block_rows["shared"] = [
-                {"clone": r["clone"], "selection_route": "shared",
+            rule_rows["shared"] = [
+                {"clone": r["clone"], "selection_rule": "shared",
                  "ranking_metric": metric, "ranking_value": r["value"]}
                 for r in rows
             ]
@@ -316,15 +316,15 @@ def build_selection_routes(
                     )
                 cands.sort(key=lambda r: r["value"], reverse=True)
                 chosen = cands[:top_n]
-                block_rows[f"private_{method}"] = [
+                rule_rows[f"private_{method}"] = [
                     {"clone": r["clone"],
-                     "selection_route": f"private_{method}",
+                     "selection_rule": f"private_{method}",
                      "ranking_metric": metric, "ranking_value": r["value"]}
                     for r in chosen
                 ]
                 selected.update(r["clone"] for r in chosen)
 
-        elif block == "cty_pair":
+        elif block == "method_pair":
             pairs = cfg.get("pairs", {})
             require = cfg.get("require_tier_in_all_members", "tier3")
             exclude_tier = (
@@ -355,45 +355,45 @@ def build_selection_routes(
                     cands.append({"clone": c, "value": mean_freq})
                 cands.sort(key=lambda r: r["value"], reverse=True)
                 chosen = cands[:top_n]
-                block_rows[f"cty_pair_{name}"] = [
+                rule_rows[f"method_pair_{name}"] = [
                     {"clone": r["clone"],
-                     "selection_route": f"cty_pair_{name}",
+                     "selection_rule": f"method_pair_{name}",
                      "ranking_metric": metric, "ranking_value": r["value"]}
                     for r in chosen
                 ]
                 selected.update(r["clone"] for r in chosen)
 
-    # Assemble in block order, interleaving sub-routes (private_*, pair_*)
+    # Assemble in block order, interleaving sub-rules (private_*, pair_*)
     # in config order, with a 1-based global rank.
-    ordered_route_names: list[str] = []
-    for block in block_order:
+    ordered_rule_names: list[str] = []
+    for block in rule_order:
         if block == "shared":
-            if "shared" in block_rows:
-                ordered_route_names.append("shared")
+            if "shared" in rule_rows:
+                ordered_rule_names.append("shared")
         elif block == "private":
-            cfg = routes_cfg.get("private") or {}
+            cfg = rules_cfg.get("private") or {}
             methods = cfg.get("apply_to_methods") or sorted(
                 {m for maps in tier_by.values() for m in maps}
             )
-            ordered_route_names += [
-                f"private_{m}" for m in methods if f"private_{m}" in block_rows
+            ordered_rule_names += [
+                f"private_{m}" for m in methods if f"private_{m}" in rule_rows
             ]
-        elif block == "cty_pair":
-            cfg = routes_cfg.get("cty_pair") or {}
-            ordered_route_names += [
-                f"cty_pair_{n}" for n in cfg.get("pairs", {})
-                if f"cty_pair_{n}" in block_rows
+        elif block == "method_pair":
+            cfg = rules_cfg.get("method_pair") or {}
+            ordered_rule_names += [
+                f"method_pair_{n}" for n in cfg.get("pairs", {})
+                if f"method_pair_{n}" in rule_rows
             ]
 
     out_rows: list[dict] = []
     global_rank = 0
-    for route_name in ordered_route_names:
-        for within, row in enumerate(block_rows.get(route_name, []), start=1):
+    for rule_name in ordered_rule_names:
+        for within, row in enumerate(rule_rows.get(rule_name, []), start=1):
             global_rank += 1
             out_rows.append({
                 clone_col: row["clone"],
-                "selection_route": row["selection_route"],
-                "rank_within_route": within,
+                "selection_rule": row["selection_rule"],
+                "rank_within_rule": within,
                 "ranking_metric": row["ranking_metric"],
                 "ranking_value": row["ranking_value"],
                 "global_rank": global_rank,
@@ -418,17 +418,17 @@ def select_from_clone_sample_long(
     run`` and downstream Python) don't re-stitch it:
 
     ``clone_sample_long`` → :func:`build_clone_method_long` →
-    :func:`attach_method_tiers` → :func:`build_selection_routes`.
+    :func:`attach_method_tiers` → :func:`build_selection_rules`.
 
     Returns the selection frame (one row per selected clone with
-    ``selection_route`` / ``rank_within_route`` / ``ranking_metric`` /
+    ``selection_rule`` / ``rank_within_rule`` / ``ranking_metric`` /
     ``ranking_value`` / ``global_rank``). Empty when there's no method
-    axis, no routes configured, or nothing matches.
+    axis, no rules configured, or nothing matches.
     """
-    if clone_sample_long.empty or not (config or {}).get("routes"):
+    if clone_sample_long.empty or not (config or {}).get("rules"):
         return _empty_selection(clone_col)
-    # No method axis → no per-method tiers → nothing the route language
-    # can act on (the routes are all defined over methods/method-pairs).
+    # No method axis → no per-method tiers → nothing the rule language
+    # can act on (the rules are all defined over methods/method-pairs).
     if method_col not in clone_sample_long.columns:
         return _empty_selection(clone_col)
     cml = build_clone_method_long(
@@ -437,7 +437,7 @@ def select_from_clone_sample_long(
     if cml.empty:
         return _empty_selection(clone_col)
     cml = attach_method_tiers(cml)
-    return build_selection_routes(
+    return build_selection_rules(
         cml, config, clone_col=clone_col, exclude_clones=exclude_clones,
     )
 
@@ -483,22 +483,22 @@ def build_pdf_annotations(
 
     Returns ``{clone: [line, ...]}``. Each block lists the clone's
     per-method evidence (cells, within-method frequency, tier) and, when
-    ``selection_df`` (output of :func:`build_selection_routes`) is given,
-    a header with the clone's selection route and global rank.
+    ``selection_df`` (output of :func:`build_selection_rules`) is given,
+    a header with the clone's selection rule and global rank.
     """
-    route_by: dict = {}
+    rule_by: dict = {}
     if selection_df is not None and not selection_df.empty:
         for _, r in selection_df.iterrows():
-            route_by[r[clone_col]] = (r["selection_route"], r["global_rank"])
+            rule_by[r[clone_col]] = (r["selection_rule"], r["global_rank"])
 
     out: dict = {}
     for clone, ev in clone_method_long.groupby(
         clone_col, sort=False, observed=True,
     ):
         lines: list[str] = []
-        if clone in route_by:
-            route, rank = route_by[clone]
-            lines.append(f"selection: {route} (global rank {int(rank)})")
+        if clone in rule_by:
+            rule, rank = rule_by[clone]
+            lines.append(f"selection: {rule} (global rank {int(rank)})")
         ev = extract_per_method_evidence(
             clone_method_long, clone, methods=methods,
             clone_col=clone_col, method_col=method_col,

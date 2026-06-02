@@ -221,8 +221,8 @@ class TCRsiftConfig:
     assemble: AssembleConfig = field(default_factory=AssembleConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
-    # Free-form selection-route language (#122/#125). Nested by design
-    # (routes + global_rank with arbitrary method/pair names), so it's a
+    # Free-form selection-rule language (#122/#125). Nested by design
+    # (rules + global_rank with arbitrary method/pair names), so it's a
     # raw dict rather than a typed section. Empty = no selection step.
     selection: dict[str, Any] = field(default_factory=dict)
 
@@ -374,7 +374,7 @@ class TCRsiftConfig:
             elif key == "verbose":
                 global_opts["verbose"] = value
             elif key == "selection":
-                # Free-form nested selection-route config (#122).
+                # Free-form nested selection-rule config (#122).
                 global_opts["selection"] = value if isinstance(value, dict) else {}
             # Ignore unknown keys
 
@@ -448,7 +448,7 @@ class TCRsiftConfig:
         config_dict = self.to_dict()
 
         # Flatten config for easier merging. The `selection` block is a
-        # free-form nested dict (routes/global_rank), not a flat namespace
+        # free-form nested dict (rules/global_rank), not a flat namespace
         # of scalar params, so keep it intact rather than spreading it —
         # otherwise its nested keys get hoisted and dropped on rebuild.
         flat_config = {}
