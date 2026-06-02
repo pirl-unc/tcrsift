@@ -1997,9 +1997,10 @@ selection:
             'samples:\n  - sample: "S1"\n    vdj_dir: "/d/v"\n    source: "culture"\n'
         )
         config_yaml = tmp_path / "config.yaml"
+        # No exclude_viral key on purpose: it defaults ON, so viral
+        # bystanders are dropped without being asked for.
         config_yaml.write_text(
             "selection:\n"
-            "  exclude_viral: true\n"
             "  rules:\n"
             "    shared:\n"
             "      include_tiers: [tier1, tier2]\n"
