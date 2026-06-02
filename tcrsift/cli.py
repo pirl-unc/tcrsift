@@ -1273,6 +1273,26 @@ def cmd_run(args):
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
+
+        # Config-driven clone selection (#122/#125). When a `selection`
+        # block is present, route/rank the assembled clones and emit
+        # selected_clones.csv (selection columns first, then full seqs),
+        # ordered by global_rank.
+        if config.selection.get("routes") and long_df is not None:
+            from .selection import select_from_clone_sample_long
+            routes = select_from_clone_sample_long(long_df, config.selection)
+            if not routes.empty and "CDR3ab" in assembled.columns:
+                selected = (
+                    routes.merge(assembled, on="CDR3ab", how="left")
+                    .sort_values("global_rank")
+                    .reset_index(drop=True)
+                )
+                selected.to_csv(data_dir / "selected_clones.csv", index=False)
+                print(
+                    f"  Wrote selected_clones.csv: {len(selected)} clones "
+                    f"across {routes['selection_route'].nunique()} routes"
+                )
+
         if config.output.generate_plots:
             plot_assembly(assembled, plots_dir)
 
