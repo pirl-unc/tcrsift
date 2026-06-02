@@ -122,3 +122,16 @@ class TestCreatePipelineFunnel:
         )
         assert (tmp_path / "funnel_plot.png").exists()
         assert not (tmp_path / "funnel_plot_selected.png").exists()
+
+    def test_non_viral_stage_renders_in_selected_funnel(self, tmp_path):
+        # exclude_viral path: a "Non-viral" stage precedes "Selected".
+        create_pipeline_funnel(
+            raw_cells=10000, with_vdj=8000, phenotyped=7500,
+            clonotypes=2000, filtered=1500,
+            tier_counts={"tier1": 50, "tier2": 100},
+            output_dir=tmp_path,
+            selected_count=60,
+            emit_selected_variant=True,
+            non_viral=1490,  # 10 viral bystanders removed
+        )
+        assert (tmp_path / "funnel_plot_selected.png").exists()

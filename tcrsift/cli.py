@@ -1230,6 +1230,10 @@ def cmd_run(args):
 
     # Step 7: Assemble (if requested)
     assembled = None
+    # Selection-shortlist funnel counts (populated when a selection config
+    # runs below; consumed by the funnel plot).
+    n_selected_clones: int | None = None
+    n_non_viral: int | None = None
     has_leaders = (
         config.assemble.alpha_leader is not None or config.assemble.beta_leader is not None
     )
@@ -1284,13 +1288,28 @@ def cmd_run(args):
             # the annotate step) so they don't enrich into the selection.
             exclude_clones = None
             if config.selection.get("exclude_viral") and "is_viral" in til_matched.columns:
+                viral_mask = til_matched["is_viral"].fillna(False).astype(bool)
                 exclude_clones = set(
-                    til_matched.loc[
-                        til_matched["is_viral"].fillna(False).astype(bool), "CDR3ab"
-                    ].astype(str)
+                    til_matched.loc[viral_mask, "CDR3ab"].astype(str)
                 )
                 if exclude_clones:
-                    print(f"  Selection excluding {len(exclude_clones)} viral clones")
+                    # Surface what was dropped, for audit — don't silently
+                    # remove them. Keep the DB-annotation columns when present.
+                    audit_cols = [
+                        c for c in (
+                            "CDR3ab", "is_viral", "antigen", "antigen_species",
+                            "epitope", "database", "annotation_category",
+                        )
+                        if c in til_matched.columns
+                    ]
+                    til_matched.loc[viral_mask, audit_cols].to_csv(
+                        data_dir / "excluded_viral_clones.csv", index=False
+                    )
+                    n_non_viral = int((~viral_mask).sum())
+                    print(
+                        f"  Selection excluding {len(exclude_clones)} viral clones "
+                        f"-> data/excluded_viral_clones.csv"
+                    )
             routes = select_from_clone_sample_long(
                 long_df, config.selection, exclude_clones=exclude_clones,
             )
@@ -1301,6 +1320,7 @@ def cmd_run(args):
                     .reset_index(drop=True)
                 )
                 selected.to_csv(data_dir / "selected_clones.csv", index=False)
+                n_selected_clones = len(selected)
                 print(
                     f"  Wrote selected_clones.csv: {len(selected)} clones "
                     f"across {routes['selection_route'].nunique()} routes"
@@ -1357,6 +1377,11 @@ def cmd_run(args):
             filtered=funnel_counts.get("Filtered", 0),
             tier_counts=tier_counts,
             output_dir=plots_dir,
+            # Selection shortlist as a sibling funnel; viral exclusion (if
+            # any) shows as a "Non-viral" stage before "Selected".
+            selected_count=n_selected_clones,
+            emit_selected_variant=n_selected_clones is not None,
+            non_viral=n_non_viral,
         )
 
     # Generate report
