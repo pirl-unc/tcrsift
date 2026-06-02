@@ -10,145 +10,238 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Gene-expression signatures as synthetic selection methods.
+"""Context-aware gene-expression signatures as synthetic selection methods.
 
 The selection language (:mod:`tcrsift.selection`) is method-agnostic — a
 "method" is just a value in the per-``(clone, sample)`` table carrying a
-tier + frequency. Physical sorts (``AIMpos``, ``tetpos``…) come from
-samples, but a method need not be a physical sort. This module scores
+tier + frequency. A method need not be a physical sort: this module scores
 cells on a gene set, calls signature-positive cells, and emits them as a
-**synthetic method** so the rules can use a signature like a sort —
-include it in ``shared``, spawn ``private_<signature>``, or pair it with a
-sort via ``method_pair`` ("tetpos AND signature-positive").
+**synthetic method** so the rules can use a signature like a sort.
 
-Two selection signatures targeting different axes, composed from the
-canonical gene sets in :mod:`tcrsift.signatures` so they can be tried
-head-to-head:
+**A signature's meaning is context-dependent.** CD39/CD103/TOX reads
+"chronically engaged antigen in situ" *only* in fresh tissue TILs — in a
+PBMC peptide-stim culture, CD103 needs TGF-β/residency it never sees and
+TOX/PD-1 needs chronic stim a short culture doesn't provide. So each
+:class:`Signature` declares the ``contexts`` it is interpretable in, and
+:func:`build_signature_methods` refuses to score it against mismatched
+data (e.g. a ``tissue``-only signature on ``source=culture`` samples).
+Signatures with no declared context are *invariant* (valid anywhere).
 
-- ``TumorReactive`` — chronic-exposure / tumor-reactive / exhaustion axis
-  (CXCL13, CD39, CD103, plus the exhaustion panel). Most *complementary*
-  to an activation sort like AIMpos.
-- ``AntigenExperienced`` — antigen-experienced / activated-in-culture
-  (recent-antigen 4-1BB+Ki-67 plus the effector-activation panel). Shares
-  more with activation sorts; offered so the two can be compared.
+Signatures are **signed** (``genes_up`` − ``genes_down``) so loss-of-naive
+axes work, and scored by either z-scored mean (default; weights genes
+equally) or raw-TPM mean (``combine="mean"``; absolute expression, so
+high-TPM genes dominate). Small "focal" and larger "broad" panels are
+offered per axis so they can be compared.
+
+NOTE: gene memberships and context assignments below are sensible
+literature-backed defaults intended for review/tuning, not gospel.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 
-from .signatures import (
-    ACTIVATION_GENES_HGNC,
-    ANTIGEN_RESPONSE_GENES_HGNC,
-    EXHAUSTION_GENES_HGNC,
-    TUMOR_REACTIVE_GENES_HGNC,
-)
-
 logger = logging.getLogger(__name__)
 
-
-def _dedup(*groups) -> tuple[str, ...]:
-    seen: dict[str, None] = {}
-    for group in groups:
-        for g in group:
-            seen.setdefault(g, None)
-    return tuple(seen)
+# Sample-source contexts a signature can be interpreted in.
+CULTURE = "culture"        # in-vitro peptide/antigen stim of PBMC
+CIRCULATING = "circulating"  # resting blood / tetramer-sorted PBMC
+TISSUE = "tissue"          # fresh tumor / tissue TILs
 
 
-# Chronic-exposure / tumor-reactive axis: CXCL13 + CD39 (tumor_reactive),
-# the exhaustion panel, and CD103 (ITGAE, tissue-resident).
-TUMOR_REACTIVE_SIGNATURE: tuple[str, ...] = _dedup(
-    TUMOR_REACTIVE_GENES_HGNC, EXHAUSTION_GENES_HGNC, ("ITGAE",),
-)
+@dataclass(frozen=True)
+class Signature:
+    """A named, context-tagged, optionally-signed gene signature.
 
-# Antigen-experienced / activated-in-culture axis: recent-antigen
-# (4-1BB + Ki-67) plus the broad effector-activation panel.
-ANTIGEN_EXPERIENCED_SIGNATURE: tuple[str, ...] = _dedup(
-    ANTIGEN_RESPONSE_GENES_HGNC, ACTIVATION_GENES_HGNC,
-)
+    ``contexts`` empty = invariant (interpretable in any sample source).
+    ``genes_down`` subtracts (loss-of-naive etc.). ``panel`` is just a
+    "focal"/"broad" label for the small-vs-large variants.
+    """
 
-SELECTION_SIGNATURES: dict[str, tuple[str, ...]] = {
-    "TumorReactive": TUMOR_REACTIVE_SIGNATURE,
-    "AntigenExperienced": ANTIGEN_EXPERIENCED_SIGNATURE,
+    name: str
+    genes_up: tuple[str, ...]
+    genes_down: tuple[str, ...] = ()
+    contexts: frozenset[str] = field(default_factory=frozenset)
+    panel: str = "focal"
+    description: str = ""
+
+    @property
+    def all_genes(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(self.genes_up + self.genes_down))
+
+    def valid_in(self, context: str | None) -> bool:
+        """True if interpretable in ``context`` (invariant ⇒ always)."""
+        return not self.contexts or context is None or context in self.contexts
+
+
+# --- Context-invariant axes (same meaning in blood, culture, tissue) ------
+
+_INVARIANT_SIGNATURES = [
+    Signature(
+        "Proliferation", ("MKI67",), panel="focal",
+        description="Recently divided (Ki-67).",
+    ),
+    Signature(
+        "ProliferationBroad",
+        ("MKI67", "TOP2A", "PCNA", "TYMS", "CCNB1", "CDK1", "BIRC5"),
+        panel="broad", description="Cell-cycle / proliferation program.",
+    ),
+    Signature(
+        "Cytolytic", ("PRF1", "GZMB"), panel="focal",
+        description="Canonical cytotoxic effector pair (Caushi/Krishna/Hanada).",
+    ),
+    Signature(
+        "CytolyticBroad",
+        ("PRF1", "GZMB", "GNLY", "NKG7", "GZMH", "GZMA", "KLRD1"),
+        panel="broad", description="Broad cytotoxic-effector panel.",
+    ),
+    Signature(
+        "Differentiated", (), ("CCR7", "TCF7"), panel="focal",
+        description="Loss of naive (down CCR7/TCF7) — antigen-experienced.",
+    ),
+    Signature(
+        "DifferentiatedBroad", (), ("CCR7", "SELL", "TCF7", "LEF1"),
+        panel="broad", description="Loss of the full naive program.",
+    ),
+]
+
+# --- Context-specific axes (only interpretable in the right source) -------
+
+_CONTEXTUAL_SIGNATURES = [
+    Signature(
+        "ActivatedInCulture", ("NR4A1", "TNFRSF9"),
+        contexts=frozenset({CULTURE}), panel="focal",
+        description="Recent cognate TCR engagement in vitro (Nur77, 4-1BB). "
+        "Correlated with an AIM sort by construction.",
+    ),
+    Signature(
+        "ActivatedInCultureBroad",
+        ("NR4A1", "NR4A2", "NR4A3", "EGR2", "EGR3", "FOS", "JUN",
+         "CD69", "TNFRSF9", "TNFRSF4", "IL2RA", "CD40LG", "IFNG", "TNF"),
+        contexts=frozenset({CULTURE}), panel="broad",
+        description="Broad acute-activation program (in-vitro stim).",
+    ),
+    Signature(
+        "NeoantigenExperiencedTIL", ("ENTPD1", "CXCL13"),
+        contexts=frozenset({TISSUE}), panel="focal",
+        description="Chronic in-situ antigen engagement (CD39/CXCL13; "
+        "Simoni/Duhen 2018). FRESH TUMOR TILs ONLY.",
+    ),
+    Signature(
+        "NeoantigenExperiencedTILBroad",
+        ("ENTPD1", "ITGAE", "TOX", "PDCD1", "LAG3", "HAVCR2", "CXCL13",
+         "TIGIT", "CTLA4"),
+        contexts=frozenset({TISSUE}), panel="broad",
+        description="Tumor-reactive/exhausted TIL program. FRESH TILs ONLY.",
+    ),
+    Signature(
+        "CirculatingMemory", ("GZMK", "IL7R"), ("CCR7",),
+        contexts=frozenset({CIRCULATING}), panel="focal",
+        description="Resting memory differentiation in blood "
+        "(effector-memory up, naive down).",
+    ),
+]
+
+SIGNATURES: dict[str, Signature] = {
+    s.name: s for s in (_INVARIANT_SIGNATURES + _CONTEXTUAL_SIGNATURES)
 }
+
+# Map a sample-sheet `source` value to a signature context.
+_SOURCE_TO_CONTEXT: dict[str, str] = {
+    "culture": CULTURE,
+    "tetramer": CIRCULATING,
+    "sct": CIRCULATING,
+    "pbmc": CIRCULATING,
+    "til": TISSUE,
+    "tumor": TISSUE,
+    "tissue": TISSUE,
+}
+
+
+def infer_context(source: str | None) -> str | None:
+    """Map a sample-sheet ``source`` to a signature context (or None)."""
+    if source is None:
+        return None
+    return _SOURCE_TO_CONTEXT.get(str(source).strip().lower())
+
+
+def _combine_block(expr: pd.DataFrame, genes: list[str], combine: str) -> pd.Series:
+    if not genes:
+        return pd.Series(0.0, index=expr.index)
+    sub = expr[genes].astype(float)
+    if combine == "zscore":
+        mu = sub.mean(axis=0)
+        sd = sub.std(axis=0, ddof=0).replace(0.0, 1.0)
+        sub = (sub - mu) / sd
+    elif combine == "mean":
+        pass  # raw TPM/normalized mean — absolute expression
+    else:
+        raise ValueError(
+            f"score_signature: unknown combine={combine!r} (expected 'zscore' or 'mean')"
+        )
+    return sub.mean(axis=1)
 
 
 def score_signature(
     expr: pd.DataFrame,
-    genes,
+    signature: Signature,
     *,
-    z_score: bool = True,
+    combine: str = "zscore",
     min_genes_present: int = 2,
 ) -> pd.Series:
-    """Per-cell signature score from a cells × genes expression frame.
+    """Per-cell signed signature score from a cells × genes frame.
 
-    Mean expression across the signature genes present in
-    ``expr.columns``; with ``z_score`` (default) each gene is standardized
-    across cells first so highly-expressed genes don't dominate. Missing
-    genes are dropped (with a warning); fewer than ``min_genes_present``
-    present → all-zero score (can't score this panel).
+    ``score = combine(genes_up) − combine(genes_down)``. ``combine`` is
+    ``"zscore"`` (per-gene standardize, equal weight) or ``"mean"`` (raw
+    TPM mean, so high-expression genes dominate). Missing genes are
+    dropped with a warning; fewer than ``min_genes_present`` present →
+    all-zero score.
     """
-    present = [g for g in genes if g in expr.columns]
-    missing = [g for g in genes if g not in expr.columns]
+    up = [g for g in signature.genes_up if g in expr.columns]
+    down = [g for g in signature.genes_down if g in expr.columns]
+    missing = [g for g in signature.all_genes if g not in expr.columns]
     if missing:
         logger.warning(
-            "score_signature: %d/%d genes absent from panel: %s",
-            len(missing), len(list(genes)), missing,
+            "score_signature[%s]: %d gene(s) absent from panel: %s",
+            signature.name, len(missing), missing,
         )
-    if len(present) < min_genes_present:
+    if len(up) + len(down) < min_genes_present:
         logger.warning(
-            "score_signature: only %d gene(s) present (<%d); returning zeros.",
-            len(present), min_genes_present,
+            "score_signature[%s]: <%d genes present; returning zeros.",
+            signature.name, min_genes_present,
         )
         return pd.Series(0.0, index=expr.index)
-    sub = expr[present].astype(float)
-    if z_score:
-        mu = sub.mean(axis=0)
-        sd = sub.std(axis=0, ddof=0).replace(0.0, 1.0)
-        sub = (sub - mu) / sd
-    return sub.mean(axis=1)
+    return _combine_block(expr, up, combine) - _combine_block(expr, down, combine)
 
 
 def _largest_gap_cutoff(values: np.ndarray, *, search_top: float = 0.5) -> float:
-    """Cutoff at the biggest drop in the top of the sorted distribution.
-
-    Sorts descending and, within the top ``search_top`` fraction, finds
-    the largest consecutive drop — the visual gap separating a high
-    cluster from the bulk — and returns the midpoint. The count above it
-    is whatever clusters there: small when a cluster is clearly
-    separated, near-empty when the scores are smooth.
-    """
-    v = np.sort(values)[::-1]  # descending
+    v = np.sort(values)[::-1]
     n = len(v)
     if n < 2:
         return float(v[0]) if n else float("inf")
-    # Only look for the gap among the top candidates, so we isolate a
-    # small high cluster rather than splitting the whole distribution.
     k = max(2, int(np.ceil(n * search_top)))
     top = v[:k]
-    diffs = top[:-1] - top[1:]
-    i = int(np.argmax(diffs))  # gap between top[i] and top[i+1]
+    i = int(np.argmax(top[:-1] - top[1:]))
     return float((top[i] + top[i + 1]) / 2.0)
 
 
 def _otsu_cutoff(values: np.ndarray) -> float:
-    """1-D Otsu threshold: the split maximizing between-group variance."""
     v = np.sort(values)
     n = len(v)
     if n < 2:
         return float(v[0]) if n else float("inf")
-    best_t, best_var = (v[0] + v[-1]) / 2.0, -1.0
     csum = np.cumsum(v)
     total = csum[-1]
+    best_t, best_var = float((v[0] + v[-1]) / 2.0), -1.0
     for i in range(1, n):
         w0 = i / n
-        w1 = 1.0 - w0
         m0 = csum[i - 1] / i
         m1 = (total - csum[i - 1]) / (n - i)
-        var = w0 * w1 * (m0 - m1) ** 2
+        var = w0 * (1.0 - w0) * (m0 - m1) ** 2
         if var > best_var:
             best_var = var
             best_t = float((v[i - 1] + v[i]) / 2.0)
@@ -163,22 +256,12 @@ def call_positive(
     threshold: float | None = None,
     search_top: float = 0.5,
 ) -> pd.Series:
-    """Boolean positive call over a score Series (cells *or* clones).
+    """Boolean positive call over any score Series (cells or clones).
 
-    Works on any per-item score, so the same call selects positive cells
-    or — given a per-clone signature score — the small set of clones that
-    cluster above the rest.
-
-    Methods:
-
-    - ``"quantile"`` (default) — fixed top fraction (``quantile=0.75`` →
-      top quartile). Predictable count.
-    - ``"gap"`` — **adaptive**: cut at the largest gap in the top
-      ``search_top`` of the sorted scores, taking only the separated high
-      cluster. Variable, usually-small count; the data picks it.
-    - ``"otsu"`` — adaptive bimodal split (between-group variance).
-
-    An explicit ``threshold`` overrides ``method``.
+    ``method``: ``"quantile"`` (fixed top fraction), ``"gap"`` (adaptive —
+    largest gap in the top of the sorted scores → the separated high
+    cluster), or ``"otsu"`` (adaptive bimodal split). Explicit
+    ``threshold`` overrides ``method``.
     """
     arr = scores.to_numpy(dtype=float)
     if threshold is not None:
@@ -208,13 +291,10 @@ def signature_methods_long(
 ) -> pd.DataFrame:
     """Emit signature-positive cells as synthetic clone-sample-long rows.
 
-    Per signature, positive cells are aggregated per ``(clone, sample)``
-    into a row shaped like :func:`tcrsift.clonotype.build_clone_sample_long`
-    output — ``(CDR3ab, sample, method, cells, frequency)`` — where
-    ``method`` is the signature name and ``frequency`` is the clone's
-    within-sample share of that signature's positive cells. Concatenate
-    with the real clone-sample-long table and the rules treat the
-    signature as just another method.
+    Per signature, positive cells aggregate per ``(clone, sample)`` into a
+    row shaped like :func:`tcrsift.clonotype.build_clone_sample_long`
+    output — ``(CDR3ab, sample, method=<signature>, cells, frequency)`` —
+    ready to concat with the real table.
     """
     cols = [clone_col, sample_col, "method", "cells", "frequency"]
     frames: list[pd.DataFrame] = []
@@ -236,27 +316,52 @@ def signature_methods_long(
     return pd.concat(frames, ignore_index=True)
 
 
+class SignatureContextError(ValueError):
+    """Raised when a signature is applied to a context it can't be read in."""
+
+
 def build_signature_methods(
     expr: pd.DataFrame,
     obs: pd.DataFrame,
     *,
-    signatures: dict[str, tuple[str, ...]] | None = None,
+    signatures,
+    context: str | None = None,
+    combine: str = "zscore",
+    positive_method: str = "gap",
     quantile: float = 0.75,
+    on_context_mismatch: str = "raise",
     clone_col: str = "CDR3ab",
     sample_col: str = "sample",
 ) -> pd.DataFrame:
     """Score → call-positive → emit synthetic-method rows for each signature.
 
-    Convenience wrapper: ``expr`` is a cells × genes frame aligned to
-    ``obs`` (which carries ``clone_col`` / ``sample_col``). Returns a
-    clone-sample-long frame ready to concat with the real one before
-    :func:`tcrsift.selection.select_from_clone_sample_long`.
+    ``signatures`` is an iterable of :class:`Signature` (or names in
+    :data:`SIGNATURES`). ``context`` is the sample source's context (see
+    :func:`infer_context`); a signature not valid in ``context`` is, per
+    ``on_context_mismatch``, ``"raise"`` (default), ``"warn"`` (skip with a
+    warning), or ``"ignore"`` (score anyway). This is the guard that stops
+    a ``tissue``-only signature being scored on ``culture`` data.
     """
-    sigs = signatures if signatures is not None else SELECTION_SIGNATURES
-    positive_by_signature = {
-        name: call_positive(score_signature(expr, genes), quantile=quantile)
-        for name, genes in sigs.items()
-    }
+    resolved = [
+        SIGNATURES[s] if isinstance(s, str) else s for s in signatures
+    ]
+    positive_by_signature: dict[str, pd.Series] = {}
+    for sig in resolved:
+        if not sig.valid_in(context):
+            msg = (
+                f"signature {sig.name!r} is only interpretable in "
+                f"{sorted(sig.contexts)}, not context={context!r}"
+            )
+            if on_context_mismatch == "raise":
+                raise SignatureContextError(msg)
+            if on_context_mismatch == "warn":
+                logger.warning("Skipping %s", msg)
+                continue
+            # "ignore": fall through and score anyway
+        scores = score_signature(expr, sig, combine=combine)
+        positive_by_signature[sig.name] = call_positive(
+            scores, method=positive_method, quantile=quantile,
+        )
     return signature_methods_long(
         obs, positive_by_signature, clone_col=clone_col, sample_col=sample_col,
     )
