@@ -183,6 +183,7 @@ def build_selection_routes(
     method_col: str = "method",
     tier_col: str = "tier",
     freq_col: str = "max_freq_in_method",
+    exclude_clones: set | None = None,
 ) -> pd.DataFrame:
     """Apply a config-driven multi-route selection language (#122/#125).
 
@@ -227,7 +228,10 @@ def build_selection_routes(
     ):
         tier_by[clone] = dict(zip(g[method_col], g[tier_col]))
         freq_by[clone] = dict(zip(g[method_col], g[freq_col]))
-    all_clones = list(tier_by)
+    # Drop excluded clones up front (e.g. public-DB viral bystanders) so
+    # no route can select them (#122 exclude_viral).
+    exclude_clones = exclude_clones or set()
+    all_clones = [c for c in tier_by if c not in exclude_clones]
 
     selected: set = set()
     # route_name -> list of dicts (clone, selection_route, ranking_metric,
@@ -250,6 +254,10 @@ def build_selection_routes(
         if block == "shared":
             include = set(cfg.get("include_tiers", []))
             metric = cfg.get("rank_by", "max_frequency")
+            # Optional bounds so the shared block doesn't dominate the
+            # output: a frequency floor and a top-N cap (#122 follow-up).
+            min_freq = cfg.get("min_frequency")
+            top_n = cfg.get("top_n")  # None = uncapped (back-compat)
             rows = []
             for c in all_clones:
                 if c in selected:
@@ -265,8 +273,12 @@ def build_selection_routes(
                 )
                 if best_label in include:
                     val = max(freq_by[c].values(), default=0.0)
+                    if min_freq is not None and val < min_freq:
+                        continue
                     rows.append({"clone": c, "value": float(val)})
             rows.sort(key=lambda r: r["value"], reverse=True)
+            if top_n is not None:
+                rows = rows[:top_n]
             block_rows["shared"] = [
                 {"clone": r["clone"], "selection_route": "shared",
                  "ranking_metric": metric, "ranking_value": r["value"]}
@@ -398,6 +410,7 @@ def select_from_clone_sample_long(
     *,
     clone_col: str = "CDR3ab",
     method_col: str = "method",
+    exclude_clones: set | None = None,
 ) -> pd.DataFrame:
     """End-to-end selection from a clone-sample-long table.
 
@@ -424,7 +437,9 @@ def select_from_clone_sample_long(
     if cml.empty:
         return _empty_selection(clone_col)
     cml = attach_method_tiers(cml)
-    return build_selection_routes(cml, config, clone_col=clone_col)
+    return build_selection_routes(
+        cml, config, clone_col=clone_col, exclude_clones=exclude_clones,
+    )
 
 
 def extract_per_method_evidence(

@@ -1280,7 +1280,20 @@ def cmd_run(args):
         # ordered by global_rank.
         if config.selection.get("routes") and long_df is not None:
             from .selection import select_from_clone_sample_long
-            routes = select_from_clone_sample_long(long_df, config.selection)
+            # exclude_viral: drop public-DB viral bystanders (is_viral from
+            # the annotate step) so they don't enrich into the selection.
+            exclude_clones = None
+            if config.selection.get("exclude_viral") and "is_viral" in til_matched.columns:
+                exclude_clones = set(
+                    til_matched.loc[
+                        til_matched["is_viral"].fillna(False).astype(bool), "CDR3ab"
+                    ].astype(str)
+                )
+                if exclude_clones:
+                    print(f"  Selection excluding {len(exclude_clones)} viral clones")
+            routes = select_from_clone_sample_long(
+                long_df, config.selection, exclude_clones=exclude_clones,
+            )
             if not routes.empty and "CDR3ab" in assembled.columns:
                 selected = (
                     routes.merge(assembled, on="CDR3ab", how="left")
