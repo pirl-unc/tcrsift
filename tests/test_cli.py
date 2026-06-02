@@ -1803,3 +1803,54 @@ class TestValidateMatchTilArgs:
 
         with pytest.raises(TCRsiftValidationError, match="Multiple TIL data sources"):
             args.func(args)
+
+
+class TestCellrangerDirArgs:
+    """#124 — --cellranger-dir / --sample-name-from parse and map to config."""
+
+    def test_assemble_parses_contig_naming_flags(self):
+        parser = create_parser()
+        args = parser.parse_args([
+            "assemble", "-i", "in.csv", "-o", "out.csv",
+            "--cellranger-dir", "/data/per_sample_outs",
+            "--sample-name-from", "grandparent",
+        ])
+        assert args.cellranger_dir == "/data/per_sample_outs"
+        assert args.sample_name_from == "grandparent"
+
+    def test_run_parses_contig_naming_flags(self):
+        parser = create_parser()
+        args = parser.parse_args([
+            "run", "-s", "samples.csv", "-o", "out",
+            "--cellranger-dir", "/data/per_sample_outs",
+        ])
+        assert args.cellranger_dir == "/data/per_sample_outs"
+        # default unset so it doesn't override config
+        assert args.sample_name_from is None
+
+    def test_sample_name_from_choices_enforced(self):
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args([
+                "assemble", "-i", "in.csv", "-o", "out.csv",
+                "--sample-name-from", "bogus",
+            ])
+
+    def test_config_merge_maps_to_assemble_section(self):
+        import argparse
+
+        from tcrsift.config import TCRsiftConfig
+
+        ns = argparse.Namespace(
+            sample_name_from="grandparent", cellranger_dir="/data/cr"
+        )
+        cfg = TCRsiftConfig().merge_with_args(ns)
+        assert cfg.assemble.sample_name_from == "grandparent"
+        assert cfg.assemble.cellranger_dir == "/data/cr"
+
+    def test_config_defaults_when_unset(self):
+        from tcrsift.config import TCRsiftConfig
+
+        cfg = TCRsiftConfig()
+        assert cfg.assemble.sample_name_from == "parent"
+        assert cfg.assemble.cellranger_dir is None
