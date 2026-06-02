@@ -2687,6 +2687,8 @@ def create_tcr_sequence_pdf(
     title_font_size: int = 12,
     chars_per_line: int = 60,
     strict: bool | str = True,
+    annotations: dict | None = None,
+    annotation_key_column: str = "CDR3ab",
 ):
     """
     Create a PDF with color-coded TCR sequences.
@@ -2942,6 +2944,25 @@ def create_tcr_sequence_pdf(
                 c.drawString(x_position, y_position, char)
                 x_position += char_width
                 current_line_width += 1
+
+        # Per-method evidence / selection-route overlay (#123/#125). Drawn
+        # at the bottom of the page when an annotation block is supplied
+        # for this clone (keyed by ``annotation_key_column``).
+        if annotations:
+            key = row.get(annotation_key_column)
+            ann_lines = annotations.get(key)
+            if ann_lines is None and key is not None:
+                ann_lines = annotations.get(str(key))
+            if ann_lines:
+                ann_y = 60 + 13 * min(len(ann_lines), 10)
+                c.setFillColor(colors.black)
+                c.setFont("Helvetica-Bold", label_font_size)
+                c.drawString(30, ann_y, "Per-method evidence:")
+                ann_y -= 13
+                c.setFont("Helvetica", label_font_size - 1)
+                for line in ann_lines[:10]:
+                    c.drawString(36, ann_y, str(line))
+                    ann_y -= 13
 
         c.showPage()
 

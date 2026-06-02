@@ -363,3 +363,57 @@ class TestCreateTcrSequencePdfStrict:
         with pytest.raises(TCRsiftValidationError, match="every clone"):
             create_tcr_sequence_pdf(df, out, strict="skip")
         assert not out.exists()
+
+
+class TestSequencePdfAnnotations:
+    """create_tcr_sequence_pdf renders an optional per-clone annotation
+    block (per-method evidence / selection route) — #123/#125."""
+
+    def test_renders_with_annotations(self, tmp_path):
+        pytest.importorskip("reportlab")
+        from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
+        from tcrsift.plots import create_tcr_sequence_pdf
+
+        leader = "M" + "A" * 19
+        df = pd.DataFrame([
+            {
+                "CDR3ab": "CAVA_CASSB",
+                "CDR3_alpha": "CAVA", "CDR3_beta": "CASSB",
+                "vdj_alpha_aa": "CAVA", "vdj_beta_aa": "CASSB",
+                "alpha_c_gene_canonical": "TRAC", "beta_c_gene_canonical": "TRBC1",
+                "full_alpha_aa": leader + "CAVA" + HUMAN_TRAC_AA,
+                "full_beta_aa": leader + "CASSB" + HUMAN_TRBC1_AA,
+                "alpha_constant_aa": HUMAN_TRAC_AA,
+                "beta_constant_aa": HUMAN_TRBC1_AA,
+            }
+        ])
+        annotations = {
+            "CAVA_CASSB": [
+                "selection: shared (global rank 1)",
+                "  AIMpos: 12 cells, 20.0%  [tier1]",
+            ]
+        }
+        out = tmp_path / "annotated.pdf"
+        create_tcr_sequence_pdf(df, out, strict=False, annotations=annotations)
+        assert out.exists() and out.stat().st_size > 0
+
+    def test_renders_when_annotation_key_missing(self, tmp_path):
+        # A clone with no annotation entry must still render (no crash).
+        pytest.importorskip("reportlab")
+        from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC1_AA
+        from tcrsift.plots import create_tcr_sequence_pdf
+
+        leader = "M" + "A" * 19
+        df = pd.DataFrame([
+            {
+                "CDR3ab": "OTHER", "CDR3_alpha": "CAVA", "CDR3_beta": "CASSB",
+                "vdj_alpha_aa": "CAVA", "vdj_beta_aa": "CASSB",
+                "alpha_c_gene_canonical": "TRAC", "beta_c_gene_canonical": "TRBC1",
+                "full_alpha_aa": leader + "CAVA" + HUMAN_TRAC_AA,
+                "full_beta_aa": leader + "CASSB" + HUMAN_TRBC1_AA,
+                "alpha_constant_aa": HUMAN_TRAC_AA, "beta_constant_aa": HUMAN_TRBC1_AA,
+            }
+        ])
+        out = tmp_path / "no_match.pdf"
+        create_tcr_sequence_pdf(df, out, strict=False, annotations={"NOPE": ["x"]})
+        assert out.exists()

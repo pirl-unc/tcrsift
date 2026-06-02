@@ -49,6 +49,8 @@ __all__ = [
     "attach_method_tiers",
     "build_selection_routes",
     "select_from_clone_sample_long",
+    "extract_per_method_evidence",
+    "build_pdf_annotations",
 ]
 
 # Tier label -> numeric rank (lower = stronger enrichment). Used to
@@ -423,3 +425,78 @@ def select_from_clone_sample_long(
         return _empty_selection(clone_col)
     cml = attach_method_tiers(cml)
     return build_selection_routes(cml, config, clone_col=clone_col)
+
+
+def extract_per_method_evidence(
+    clone_method_long: pd.DataFrame,
+    clone: object,
+    *,
+    methods: list | None = None,
+    clone_col: str = "CDR3ab",
+    method_col: str = "method",
+) -> pd.DataFrame:
+    """Per-method evidence rows for one clone (#123/#125).
+
+    Returns the ``(method, cells_in_method, max_freq_in_method, tier)``
+    rows for ``clone`` from a clone-method-long table (attach per-method
+    tiers first via :func:`attach_method_tiers`). Optionally restricted
+    to ``methods`` and ordered by that list.
+    """
+    sub = clone_method_long[clone_method_long[clone_col] == clone]
+    if methods is not None:
+        sub = sub[sub[method_col].isin(methods)]
+        order = {m: i for i, m in enumerate(methods)}
+        sub = sub.assign(
+            __o=sub[method_col].map(order)
+        ).sort_values("__o").drop(columns="__o")
+    cols = [method_col] + [
+        c for c in ("cells_in_method", "max_freq_in_method", "tier")
+        if c in sub.columns
+    ]
+    return sub[cols].reset_index(drop=True)
+
+
+def build_pdf_annotations(
+    clone_method_long: pd.DataFrame,
+    *,
+    selection_df: pd.DataFrame | None = None,
+    methods: list | None = None,
+    clone_col: str = "CDR3ab",
+    method_col: str = "method",
+) -> dict:
+    """Build per-clone annotation line-blocks for the sequence PDF.
+
+    Returns ``{clone: [line, ...]}``. Each block lists the clone's
+    per-method evidence (cells, within-method frequency, tier) and, when
+    ``selection_df`` (output of :func:`build_selection_routes`) is given,
+    a header with the clone's selection route and global rank.
+    """
+    route_by: dict = {}
+    if selection_df is not None and not selection_df.empty:
+        for _, r in selection_df.iterrows():
+            route_by[r[clone_col]] = (r["selection_route"], r["global_rank"])
+
+    out: dict = {}
+    for clone, ev in clone_method_long.groupby(
+        clone_col, sort=False, observed=True,
+    ):
+        lines: list[str] = []
+        if clone in route_by:
+            route, rank = route_by[clone]
+            lines.append(f"selection: {route} (global rank {int(rank)})")
+        ev = extract_per_method_evidence(
+            clone_method_long, clone, methods=methods,
+            clone_col=clone_col, method_col=method_col,
+        )
+        for _, r in ev.iterrows():
+            cells = r.get("cells_in_method")
+            freq = r.get("max_freq_in_method")
+            tier = r.get("tier")
+            cells_s = "" if cells is None or pd.isna(cells) else f"{int(cells)} cells"
+            freq_s = "" if freq is None or pd.isna(freq) else f"{100 * float(freq):.1f}%"
+            tier_s = "-" if tier is None or (isinstance(tier, float) and pd.isna(tier)) else str(tier)
+            lines.append(
+                f"  {r[method_col]}: {cells_s}, {freq_s}  [{tier_s}]".replace(", ,", ",")
+            )
+        out[clone] = lines
+    return out

@@ -1296,9 +1296,28 @@ def cmd_run(args):
         if config.output.generate_plots:
             plot_assembly(assembled, plots_dir)
 
-        # Generate sequence PDF
+        # Generate sequence PDF. When per-method data is available, overlay
+        # each clone's per-method evidence + selection route (#123/#125).
         if config.output.generate_report:
-            create_tcr_sequence_pdf(assembled, output_dir / "tcr_sequences.pdf")
+            pdf_annotations = None
+            if long_df is not None and "method" in long_df.columns:
+                from .selection import (
+                    attach_method_tiers,
+                    build_clone_method_long,
+                    build_pdf_annotations,
+                    select_from_clone_sample_long,
+                )
+                cml = attach_method_tiers(build_clone_method_long(long_df))
+                sel_df = (
+                    select_from_clone_sample_long(long_df, config.selection)
+                    if config.selection.get("routes") else None
+                )
+                pdf_annotations = build_pdf_annotations(cml, selection_df=sel_df)
+            create_tcr_sequence_pdf(
+                assembled,
+                output_dir / "tcr_sequences.pdf",
+                annotations=pdf_annotations,
+            )
 
         if config.output.output_airr:
             airr_path = data_dir / "full_sequences.airr.tsv"

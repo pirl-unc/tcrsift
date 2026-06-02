@@ -356,3 +356,41 @@ class TestSelectFromCloneSampleLong:
             "cells": [12], "frequency": [0.2],
         })
         assert selection.select_from_clone_sample_long(csl, {}).empty
+
+
+class TestPerMethodEvidence:
+    def _cml(self):
+        return pd.DataFrame({
+            "CDR3ab": ["A", "A", "B"],
+            "method": ["AIMpos", "tetpos", "CTYneg"],
+            "cells_in_method": [12, 8, 3],
+            "max_freq_in_method": [0.2, 0.1, 0.005],
+            "tier": ["tier1", "tier2", "tier3"],
+        })
+
+    def test_extract_per_method_evidence_for_clone(self):
+        ev = selection.extract_per_method_evidence(self._cml(), "A")
+        assert list(ev["method"]) == ["AIMpos", "tetpos"]
+        assert list(ev["tier"]) == ["tier1", "tier2"]
+
+    def test_extract_restricts_and_orders_by_methods(self):
+        ev = selection.extract_per_method_evidence(
+            self._cml(), "A", methods=["tetpos", "AIMpos"]
+        )
+        assert list(ev["method"]) == ["tetpos", "AIMpos"]  # follows methods order
+
+    def test_build_pdf_annotations_includes_route_header_and_evidence(self):
+        sel = pd.DataFrame({
+            "CDR3ab": ["A"], "selection_route": ["shared"], "global_rank": [1],
+        })
+        ann = selection.build_pdf_annotations(self._cml(), selection_df=sel)
+        assert any("selection: shared" in line for line in ann["A"])
+        assert any("AIMpos" in line and "tier1" in line for line in ann["A"])
+        # B has no route header (not in selection_df) but still has evidence.
+        assert all("selection:" not in line for line in ann["B"])
+        assert any("CTYneg" in line for line in ann["B"])
+
+    def test_build_pdf_annotations_without_selection(self):
+        ann = selection.build_pdf_annotations(self._cml())
+        assert set(ann) == {"A", "B"}
+        assert all("selection:" not in line for line in ann["A"])
