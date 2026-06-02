@@ -2949,13 +2949,18 @@ def validate_sequences(
     # past the VDJ→C boundary) would have been caught here on day one.
     _validate_nt_aa_roundtrip(df, _lb)
 
-    # 5. Surface any per-row qc_warnings the assembler stashed (e.g.
-    # contig-vs-canonical start mismatch detected during assembly).
+    # 5. Surface any per-row qc_warnings the assembler stashed. These are
+    # *informational, self-corrected* notes (fell back to canonical, allele
+    # not called, contig diverged at the C-region boundary, …) — the
+    # assembler already handled them and the assembled sequence is valid, so
+    # they must NOT be load-bearing (that aborted `tcrsift run` on real
+    # CellRanger data, #129). Genuine structural failures are caught by the
+    # explicit checks above and remain load-bearing.
     if "qc_warnings" in df.columns:
         for idx, qcs in df["qc_warnings"].items():
             if isinstance(qcs, list):
                 for msg in qcs:
-                    _lb(idx, str(msg))
+                    _info(idx, str(msg))
 
     all_messages = autocorrect_notes + load_bearing + informational
     if strict and load_bearing:

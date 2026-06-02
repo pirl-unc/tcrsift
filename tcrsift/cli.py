@@ -1403,10 +1403,15 @@ def cmd_run(args):
                     if config.selection.get("rules") else None
                 )
                 pdf_annotations = build_pdf_annotations(cml, selection_df=sel_df)
+            # strict="skip": render the valid clones and drop+warn any that
+            # genuinely fail validation, rather than aborting the whole run
+            # at this final (cosmetic) step — full_sequences.csv is already
+            # written above (#129).
             create_tcr_sequence_pdf(
                 assembled,
                 output_dir / "tcr_sequences.pdf",
                 annotations=pdf_annotations,
+                strict="skip",
             )
 
         if config.output.output_airr:

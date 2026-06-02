@@ -179,26 +179,33 @@ class TestCGeneUnverifiable:
 
 
 class TestQCWarningsSurfacing:
-    """When ``_add_constant_regions`` detects a contig-vs-canonical
-    start mismatch during assembly, it stashes a per-row
-    ``qc_warnings`` list. ``validate_sequences`` must surface those
-    so downstream gates see them (#68)."""
+    """The assembler stashes per-row ``qc_warnings`` for *self-corrected*
+    decisions (fell back to canonical, allele not called, contig diverged
+    at the C-region boundary). ``validate_sequences`` surfaces them as
+    **informational** — they must never abort under ``strict`` (#129);
+    promoting them to load-bearing killed ``tcrsift run`` on real data."""
 
-    def test_assembler_qc_warnings_become_validation_warnings(self):
+    def test_assembler_qc_warnings_surface_as_informational(self):
         row = _ok_clone()
         row["qc_warnings"] = [
             "alpha constant start mismatch: observed 'XYZ' differs from canonical TRAC"
         ]
         df = pd.DataFrame([row])
         warnings = validate_sequences(df)
-        assert any("constant start mismatch" in w for w in warnings)
+        matching = [w for w in warnings if "constant start mismatch" in w]
+        assert matching, "qc_warning should still surface"
+        assert all(w.severity == "informational" for w in matching)
 
-    def test_strict_raises_on_assembler_qc_warnings(self):
+    def test_strict_does_not_raise_on_self_corrected_qc_warnings(self):
+        # #129: self-corrected assembler notes must not abort the run.
         row = _ok_clone()
-        row["qc_warnings"] = ["alpha constant start mismatch: BAD"]
+        row["qc_warnings"] = [
+            "alpha constant: contig diverged from canonical at AA position 4; "
+            "switched to codon-optimized canonical from that point."
+        ]
         df = pd.DataFrame([row])
-        with pytest.raises(TCRsiftValidationError):
-            validate_sequences(df, strict=True)
+        notes = validate_sequences(df, strict=True)  # must NOT raise
+        assert any("diverged from canonical" in n for n in notes)
 
 
 class TestLengthChecks:
