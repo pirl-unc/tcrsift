@@ -73,12 +73,22 @@ class TestScoreSignature:
                                min_genes_present=1)
         assert s["c3"] > s["c0"]
 
-    def test_combine_mean_uses_raw_values(self):
-        s = sm.score_signature(self._expr(), sm.SIGNATURES["Cytolytic"], combine="mean")
+    def test_combine_mean_raw_when_log1p_off(self):
+        s = sm.score_signature(
+            self._expr(), sm.SIGNATURES["Cytolytic"], combine="mean", log1p=False,
+        )
         # raw mean of GZMB,PRF1: c3=(5+6)/2=5.5 highest
         assert s["c3"] == 5.5
 
+    def test_default_applies_log1p(self):
+        import numpy as np
+        # combine="mean" with default log1p -> mean of log1p(TPM)
+        s = sm.score_signature(self._expr(), sm.SIGNATURES["Cytolytic"], combine="mean")
+        expected = (np.log1p(5.0) + np.log1p(6.0)) / 2  # c3
+        assert abs(s["c3"] - expected) < 1e-9
+
     def test_combine_zscore_default(self):
+        # default: z-score across cells of log1p(TPM), then mean across genes
         s = sm.score_signature(self._expr(), sm.SIGNATURES["Cytolytic"])
         assert s["c3"] > s["c0"]
 

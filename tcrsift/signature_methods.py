@@ -174,22 +174,27 @@ def _combine_block(
     genes: list[str],
     combine: str,
     background: pd.DataFrame | None = None,
+    log1p: bool = True,
 ) -> pd.Series:
     if not genes:
         return pd.Series(0.0, index=expr.index)
     sub = expr[genes].astype(float)
+    if log1p:
+        sub = np.log1p(sub)  # log(1 + TPM)
     if combine == "zscore":
-        # Standardize each gene against the BACKGROUND population's mean/sd
-        # (default: the input cells themselves), then average the per-gene
-        # z-scores — i.e. this is the "mean of z-scores". Pass a background
-        # frame to z-score against a defined reference (full dataset, a
-        # control population, or per-sample).
+        # Standardize each gene across cells against the BACKGROUND
+        # population's mean/sd (default: the input cells themselves), then
+        # average the per-gene z-scores — the "mean of z-scores". Pass a
+        # background frame to z-score against a defined reference (full
+        # dataset, a control population, or per-sample).
         ref = (background if background is not None else expr)[genes].astype(float)
+        if log1p:
+            ref = np.log1p(ref)
         mu = ref.mean(axis=0)
         sd = ref.std(axis=0, ddof=0).replace(0.0, 1.0)
         sub = (sub - mu) / sd
     elif combine == "mean":
-        pass  # raw TPM/normalized mean — absolute expression
+        pass  # mean of log1p(TPM), or raw TPM when log1p=False
     else:
         raise ValueError(
             f"score_signature: unknown combine={combine!r} (expected 'zscore' or 'mean')"
@@ -202,26 +207,29 @@ def score_signature(
     signature: Signature,
     *,
     combine: str = "zscore",
+    log1p: bool = True,
     background: pd.DataFrame | None = None,
     min_genes_present: int = 2,
 ) -> pd.Series:
-    """Per-cell signed signature score from a cells × genes frame.
+    """Per-cell signed signature score from a cells × genes (TPM) frame.
 
-    ``score = combine(genes_up) − combine(genes_down)``.
+    Canonical scoring (defaults): for each gene, take the **z-score across
+    cells of ``log(1 + TPM)``**, then average those z-scores across the
+    signature's genes — ``score = mean_z(genes_up) − mean_z(genes_down)``.
 
     ``combine``:
-    - ``"zscore"`` (default) — average of per-gene z-scores ("mean of
-      z-scores"). Each gene is standardized against ``background`` then
-      averaged, so genes contribute equally regardless of baseline.
-    - ``"mean"`` — average of raw expression (TPM/normalized). Absolute
-      scale, so high-expression genes (e.g. GZMB) dominate.
+    - ``"zscore"`` (default) — mean of per-gene z-scores; genes contribute
+      equally regardless of baseline.
+    - ``"mean"`` — mean of the per-gene values (``log1p`` still applies
+      unless disabled); absolute scale, high-expression genes dominate.
 
+    ``log1p`` (default True) applies ``log(1+x)`` before scoring — pass
+    TPM/normalized counts. Set False if the input is already log-space.
     ``background`` is the population whose per-gene mean/sd define the
-    z-score (``"zscore"`` only); defaults to the input cells. Pass the
-    full dataset, a control population, or a per-sample slice to make the
-    reference explicit. Expression should be log-normalized, not raw
-    counts. Missing genes are dropped; fewer than ``min_genes_present``
-    present → all-zero score.
+    z-score (``"zscore"`` only); defaults to the input cells — pass the
+    full dataset / a control population / a per-sample slice to set the
+    reference explicitly. Missing genes are dropped; fewer than
+    ``min_genes_present`` present → all-zero score.
     """
     cols = set(expr.columns)
     if background is not None:
@@ -241,8 +249,8 @@ def score_signature(
         )
         return pd.Series(0.0, index=expr.index)
     return (
-        _combine_block(expr, up, combine, background)
-        - _combine_block(expr, down, combine, background)
+        _combine_block(expr, up, combine, background, log1p)
+        - _combine_block(expr, down, combine, background, log1p)
     )
 
 
@@ -355,6 +363,7 @@ def build_signature_methods(
     signatures,
     context: str | None = None,
     combine: str = "zscore",
+    log1p: bool = True,
     background: pd.DataFrame | None = None,
     positive_method: str = "gap",
     quantile: float = 0.75,
@@ -393,7 +402,9 @@ def build_signature_methods(
             if on_context_mismatch == "warn":
                 logger.warning("%s", msg)
             # "warn" and "ignore" both fall through and score
-        scores = score_signature(expr, sig, combine=combine, background=background)
+        scores = score_signature(
+            expr, sig, combine=combine, log1p=log1p, background=background,
+        )
         positive_by_signature[sig.name] = call_positive(
             scores, method=positive_method, quantile=quantile,
         )
