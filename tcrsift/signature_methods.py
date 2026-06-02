@@ -112,21 +112,91 @@ def score_signature(
     return sub.mean(axis=1)
 
 
+def _largest_gap_cutoff(values: np.ndarray, *, search_top: float = 0.5) -> float:
+    """Cutoff at the biggest drop in the top of the sorted distribution.
+
+    Sorts descending and, within the top ``search_top`` fraction, finds
+    the largest consecutive drop — the visual gap separating a high
+    cluster from the bulk — and returns the midpoint. The count above it
+    is whatever clusters there: small when a cluster is clearly
+    separated, near-empty when the scores are smooth.
+    """
+    v = np.sort(values)[::-1]  # descending
+    n = len(v)
+    if n < 2:
+        return float(v[0]) if n else float("inf")
+    # Only look for the gap among the top candidates, so we isolate a
+    # small high cluster rather than splitting the whole distribution.
+    k = max(2, int(np.ceil(n * search_top)))
+    top = v[:k]
+    diffs = top[:-1] - top[1:]
+    i = int(np.argmax(diffs))  # gap between top[i] and top[i+1]
+    return float((top[i] + top[i + 1]) / 2.0)
+
+
+def _otsu_cutoff(values: np.ndarray) -> float:
+    """1-D Otsu threshold: the split maximizing between-group variance."""
+    v = np.sort(values)
+    n = len(v)
+    if n < 2:
+        return float(v[0]) if n else float("inf")
+    best_t, best_var = (v[0] + v[-1]) / 2.0, -1.0
+    csum = np.cumsum(v)
+    total = csum[-1]
+    for i in range(1, n):
+        w0 = i / n
+        w1 = 1.0 - w0
+        m0 = csum[i - 1] / i
+        m1 = (total - csum[i - 1]) / (n - i)
+        var = w0 * w1 * (m0 - m1) ** 2
+        if var > best_var:
+            best_var = var
+            best_t = float((v[i - 1] + v[i]) / 2.0)
+    return best_t
+
+
 def call_positive(
     scores: pd.Series,
     *,
+    method: str = "quantile",
     quantile: float | None = 0.75,
     threshold: float | None = None,
+    search_top: float = 0.5,
 ) -> pd.Series:
-    """Boolean per-cell positive call (top quartile by default).
+    """Boolean positive call over a score Series (cells *or* clones).
 
-    ``threshold`` overrides ``quantile`` when both are given.
+    Works on any per-item score, so the same call selects positive cells
+    or — given a per-clone signature score — the small set of clones that
+    cluster above the rest.
+
+    Methods:
+
+    - ``"quantile"`` (default) — fixed top fraction (``quantile=0.75`` →
+      top quartile). Predictable count.
+    - ``"gap"`` — **adaptive**: cut at the largest gap in the top
+      ``search_top`` of the sorted scores, taking only the separated high
+      cluster. Variable, usually-small count; the data picks it.
+    - ``"otsu"`` — adaptive bimodal split (between-group variance).
+
+    An explicit ``threshold`` overrides ``method``.
     """
-    if threshold is None:
+    arr = scores.to_numpy(dtype=float)
+    if threshold is not None:
+        cut = float(threshold)
+    elif method == "quantile":
         if quantile is None:
-            raise ValueError("call_positive needs either quantile or threshold")
-        threshold = float(np.quantile(scores.to_numpy(dtype=float), quantile))
-    return scores > threshold
+            raise ValueError("call_positive(method='quantile') needs quantile")
+        cut = float(np.quantile(arr, quantile))
+    elif method == "gap":
+        cut = _largest_gap_cutoff(arr, search_top=search_top)
+    elif method == "otsu":
+        cut = _otsu_cutoff(arr)
+    else:
+        raise ValueError(
+            f"call_positive: unknown method {method!r} "
+            "(expected 'quantile', 'gap', or 'otsu')"
+        )
+    return scores > cut
 
 
 def signature_methods_long(

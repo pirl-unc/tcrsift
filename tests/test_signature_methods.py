@@ -123,3 +123,43 @@ class TestBuildSignatureMethodsIntoSelection:
         # sparse) — the point is the pipeline runs end-to-end with a
         # signature acting as a method.
         assert set(rules.columns) >= {"CDR3ab", "selection_rule", "global_rank"}
+
+
+class TestAdaptiveCutoffs:
+    """Adaptive cutoffs select the variable, small high cluster (#sig)."""
+
+    def _scores(self):
+        # 16 smooth background in [0,1], 4 clearly clustered high.
+        import numpy as np
+        vals = list(np.linspace(0.0, 1.0, 16)) + [5.0, 5.2, 4.8, 5.1]
+        return pd.Series(vals, index=[f"cl{i}" for i in range(20)])
+
+    def test_gap_isolates_the_high_cluster(self):
+        pos = sm.call_positive(self._scores(), method="gap")
+        assert int(pos.sum()) == 4
+        assert set(self._scores().index[pos]) == {"cl16", "cl17", "cl18", "cl19"}
+
+    def test_otsu_isolates_the_high_cluster(self):
+        pos = sm.call_positive(self._scores(), method="otsu")
+        assert int(pos.sum()) == 4
+
+    def test_quantile_is_fixed_count(self):
+        # top quartile of 20 = 5, regardless of where the gap is
+        pos = sm.call_positive(self._scores(), method="quantile", quantile=0.75)
+        assert int(pos.sum()) == 5
+
+    def test_gap_count_varies_with_cluster_size(self):
+        # Two high clones instead of four -> gap picks two.
+        import numpy as np
+        vals = list(np.linspace(0.0, 1.0, 16)) + [5.0, 5.1]
+        s = pd.Series(vals, index=[f"c{i}" for i in range(18)])
+        assert int(sm.call_positive(s, method="gap").sum()) == 2
+
+    def test_explicit_threshold_overrides_method(self):
+        pos = sm.call_positive(self._scores(), method="gap", threshold=2.0)
+        assert int(pos.sum()) == 4  # the four >2.0
+
+    def test_unknown_method_raises(self):
+        import pytest
+        with pytest.raises(ValueError, match="unknown method"):
+            sm.call_positive(self._scores(), method="bogus")
