@@ -106,6 +106,18 @@ class TestRunCohortAnalysis:
         assert (out / "cohort_cell_weighted_jaccard.csv").exists()
         assert m["jaccard"].loc["B1-2", "B1-3"] == 0.25
 
+    def test_emit_plots_writes_heatmap_pdfs(self, tmp_path):
+        pytest.importorskip("matplotlib")
+        _write_donor(tmp_path, "B1-2", ["A_X", "B_Y", "C_Z"], [10, 5, 2])
+        _write_donor(tmp_path, "B1-3", ["A_X", "D_W"], [8, 3])
+        out = tmp_path / "cohort"
+        cohort.run_cohort_analysis(
+            {"B1-2": tmp_path / "B1-2", "B1-3": tmp_path / "B1-3"}, out,
+            emit_plots=True,
+        )
+        assert (out / "cohort_jaccard.pdf").exists()
+        assert (out / "cohort_jaccard.pdf").stat().st_size > 0
+
     def test_no_tables_skips_csv(self, tmp_path):
         _write_donor(tmp_path, "B1-2", ["A_X"], [10])
         _write_donor(tmp_path, "B1-3", ["A_X"], [8])
