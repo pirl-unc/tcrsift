@@ -169,13 +169,24 @@ def infer_context(source: str | None) -> str | None:
     return _SOURCE_TO_CONTEXT.get(str(source).strip().lower())
 
 
-def _combine_block(expr: pd.DataFrame, genes: list[str], combine: str) -> pd.Series:
+def _combine_block(
+    expr: pd.DataFrame,
+    genes: list[str],
+    combine: str,
+    background: pd.DataFrame | None = None,
+) -> pd.Series:
     if not genes:
         return pd.Series(0.0, index=expr.index)
     sub = expr[genes].astype(float)
     if combine == "zscore":
-        mu = sub.mean(axis=0)
-        sd = sub.std(axis=0, ddof=0).replace(0.0, 1.0)
+        # Standardize each gene against the BACKGROUND population's mean/sd
+        # (default: the input cells themselves), then average the per-gene
+        # z-scores — i.e. this is the "mean of z-scores". Pass a background
+        # frame to z-score against a defined reference (full dataset, a
+        # control population, or per-sample).
+        ref = (background if background is not None else expr)[genes].astype(float)
+        mu = ref.mean(axis=0)
+        sd = ref.std(axis=0, ddof=0).replace(0.0, 1.0)
         sub = (sub - mu) / sd
     elif combine == "mean":
         pass  # raw TPM/normalized mean — absolute expression
@@ -191,19 +202,33 @@ def score_signature(
     signature: Signature,
     *,
     combine: str = "zscore",
+    background: pd.DataFrame | None = None,
     min_genes_present: int = 2,
 ) -> pd.Series:
     """Per-cell signed signature score from a cells × genes frame.
 
-    ``score = combine(genes_up) − combine(genes_down)``. ``combine`` is
-    ``"zscore"`` (per-gene standardize, equal weight) or ``"mean"`` (raw
-    TPM mean, so high-expression genes dominate). Missing genes are
-    dropped with a warning; fewer than ``min_genes_present`` present →
-    all-zero score.
+    ``score = combine(genes_up) − combine(genes_down)``.
+
+    ``combine``:
+    - ``"zscore"`` (default) — average of per-gene z-scores ("mean of
+      z-scores"). Each gene is standardized against ``background`` then
+      averaged, so genes contribute equally regardless of baseline.
+    - ``"mean"`` — average of raw expression (TPM/normalized). Absolute
+      scale, so high-expression genes (e.g. GZMB) dominate.
+
+    ``background`` is the population whose per-gene mean/sd define the
+    z-score (``"zscore"`` only); defaults to the input cells. Pass the
+    full dataset, a control population, or a per-sample slice to make the
+    reference explicit. Expression should be log-normalized, not raw
+    counts. Missing genes are dropped; fewer than ``min_genes_present``
+    present → all-zero score.
     """
-    up = [g for g in signature.genes_up if g in expr.columns]
-    down = [g for g in signature.genes_down if g in expr.columns]
-    missing = [g for g in signature.all_genes if g not in expr.columns]
+    cols = set(expr.columns)
+    if background is not None:
+        cols &= set(background.columns)
+    up = [g for g in signature.genes_up if g in cols]
+    down = [g for g in signature.genes_down if g in cols]
+    missing = [g for g in signature.all_genes if g not in cols]
     if missing:
         logger.warning(
             "score_signature[%s]: %d gene(s) absent from panel: %s",
@@ -215,7 +240,10 @@ def score_signature(
             signature.name, min_genes_present,
         )
         return pd.Series(0.0, index=expr.index)
-    return _combine_block(expr, up, combine) - _combine_block(expr, down, combine)
+    return (
+        _combine_block(expr, up, combine, background)
+        - _combine_block(expr, down, combine, background)
+    )
 
 
 def _largest_gap_cutoff(values: np.ndarray, *, search_top: float = 0.5) -> float:
@@ -327,9 +355,10 @@ def build_signature_methods(
     signatures,
     context: str | None = None,
     combine: str = "zscore",
+    background: pd.DataFrame | None = None,
     positive_method: str = "gap",
     quantile: float = 0.75,
-    on_context_mismatch: str = "raise",
+    on_context_mismatch: str = "warn",
     clone_col: str = "CDR3ab",
     sample_col: str = "sample",
 ) -> pd.DataFrame:
@@ -337,10 +366,16 @@ def build_signature_methods(
 
     ``signatures`` is an iterable of :class:`Signature` (or names in
     :data:`SIGNATURES`). ``context`` is the sample source's context (see
-    :func:`infer_context`); a signature not valid in ``context`` is, per
-    ``on_context_mismatch``, ``"raise"`` (default), ``"warn"`` (skip with a
-    warning), or ``"ignore"`` (score anyway). This is the guard that stops
-    a ``tissue``-only signature being scored on ``culture`` data.
+    :func:`infer_context`).
+
+    A signature is always *computable* — the score is just an off-context
+    program you may genuinely want to inspect (e.g. "do any culture cells
+    carry an exhaustion-like program?"). So a context mismatch does not
+    block by default; it only flags interpretation. ``on_context_mismatch``:
+
+    - ``"warn"`` (default) — log a warning and score anyway.
+    - ``"ignore"`` — score silently.
+    - ``"raise"`` — block (opt-in strict, e.g. for a locked pipeline).
     """
     resolved = [
         SIGNATURES[s] if isinstance(s, str) else s for s in signatures
@@ -350,15 +385,15 @@ def build_signature_methods(
         if not sig.valid_in(context):
             msg = (
                 f"signature {sig.name!r} is only interpretable in "
-                f"{sorted(sig.contexts)}, not context={context!r}"
+                f"{sorted(sig.contexts)}, not context={context!r} — "
+                "scoring anyway; read the result with that in mind"
             )
             if on_context_mismatch == "raise":
                 raise SignatureContextError(msg)
             if on_context_mismatch == "warn":
-                logger.warning("Skipping %s", msg)
-                continue
-            # "ignore": fall through and score anyway
-        scores = score_signature(expr, sig, combine=combine)
+                logger.warning("%s", msg)
+            # "warn" and "ignore" both fall through and score
+        scores = score_signature(expr, sig, combine=combine, background=background)
         positive_by_signature[sig.name] = call_positive(
             scores, method=positive_method, quantile=quantile,
         )

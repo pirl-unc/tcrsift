@@ -91,6 +91,20 @@ class TestScoreSignature:
         s = sm.score_signature(expr, sm.SIGNATURES["Cytolytic"], min_genes_present=2)
         assert (s == 0).all()  # only GZMB present (<2)
 
+    def test_explicit_background_changes_zscore(self):
+        # z-scoring against a low-expression background lifts all scores
+        # vs z-scoring against the (higher) input itself.
+        expr = self._expr()
+        low_bg = pd.DataFrame(
+            {"GZMB": [0.0, 0.0, 1.0, 1.0], "PRF1": [0.0, 1.0, 0.0, 1.0]},
+            index=expr.index,
+        )
+        self_scored = sm.score_signature(expr, sm.SIGNATURES["Cytolytic"])
+        bg_scored = sm.score_signature(
+            expr, sm.SIGNATURES["Cytolytic"], background=low_bg,
+        )
+        assert bg_scored.mean() > self_scored.mean()
+
 
 class TestCallPositiveAdaptive:
     def _scores(self):
@@ -122,21 +136,22 @@ class TestContextGuard:
                           index=cells)
         return expr, obs
 
-    def test_tissue_signature_on_culture_raises(self):
+    def test_default_warns_but_still_scores(self):
+        # Off-context is interesting, not forbidden: default warns + scores.
+        expr, obs = self._data()
+        out = sm.build_signature_methods(
+            expr, obs, signatures=["NeoantigenExperiencedTIL"],
+            context=sm.CULTURE,  # mismatch; default on_context_mismatch="warn"
+        )
+        assert "NeoantigenExperiencedTIL" in set(out["method"])
+
+    def test_raise_is_opt_in(self):
         expr, obs = self._data()
         with pytest.raises(sm.SignatureContextError, match="tissue"):
             sm.build_signature_methods(
                 expr, obs, signatures=["NeoantigenExperiencedTIL"],
-                context=sm.CULTURE,
+                context=sm.CULTURE, on_context_mismatch="raise",
             )
-
-    def test_mismatch_warn_skips(self):
-        expr, obs = self._data()
-        out = sm.build_signature_methods(
-            expr, obs, signatures=["NeoantigenExperiencedTIL"],
-            context=sm.CULTURE, on_context_mismatch="warn",
-        )
-        assert out.empty  # skipped, nothing emitted
 
     def test_tissue_signature_on_tissue_runs(self):
         expr, obs = self._data()
