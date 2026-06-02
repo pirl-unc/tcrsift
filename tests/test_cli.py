@@ -1987,3 +1987,92 @@ selection:
         # Only the tier1 clone A is selected (shared); noise B excluded.
         assert list(sel["CDR3ab"]) == ["CAVA_CASS_A"]
         assert sel["selection_route"].iloc[0] == "shared"
+
+    def test_selection_excludes_viral_clones(self, tmp_path, monkeypatch):
+        import anndata as ad
+        import numpy as np
+
+        sheet = tmp_path / "samples.yaml"
+        sheet.write_text(
+            'samples:\n  - sample: "S1"\n    vdj_dir: "/d/v"\n    source: "culture"\n'
+        )
+        config_yaml = tmp_path / "config.yaml"
+        config_yaml.write_text(
+            "selection:\n"
+            "  exclude_viral: true\n"
+            "  routes:\n"
+            "    shared:\n"
+            "      include_tiers: [tier1, tier2]\n"
+            "  global_rank:\n"
+            "    block_order: [shared]\n"
+        )
+
+        # Two tier1 clones: a real one and a viral bystander.
+        rows = (
+            [("S1", "AIMpos", "CAVA", "CASS_A")] * 12
+            + [("S1", "AIMpos", "CAVV", "CASS_V")] * 12
+        )
+        n = len(rows)
+        obs = pd.DataFrame(
+            {
+                "sample": [r[0] for r in rows],
+                "enrichment_method": [r[1] for r in rows],
+                "source": ["culture"] * n,
+                "CDR3_alpha": [r[2] for r in rows],
+                "CDR3_beta": [r[3] for r in rows],
+            },
+            index=[f"c{i}" for i in range(n)],
+        )
+        adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32), obs=obs)
+
+        monkeypatch.setattr("tcrsift.loader.load_samples", lambda *a, **k: adata)
+        monkeypatch.setattr("tcrsift.phenotype.phenotype_cells", lambda a, *x, **k: a)
+        monkeypatch.setattr("tcrsift.phenotype.filter_by_tcell_type", lambda a, *x, **k: a)
+        monkeypatch.setattr(
+            "tcrsift.clonotype.aggregate_clonotypes",
+            lambda *a, **k: pd.DataFrame({
+                "CDR3ab": ["CAVA_CASS_A", "CAVV_CASS_V"],
+                "CDR3_alpha": ["CAVA", "CAVV"], "CDR3_beta": ["CASS_A", "CASS_V"],
+                "cell_count": [12, 12],
+                "is_viral": [False, True],   # CAVV is a viral bystander
+            }),
+        )
+        monkeypatch.setattr(
+            "tcrsift.filter.filter_clonotypes", lambda df, *a, **k: df.assign(tier="tier1")
+        )
+        monkeypatch.setattr("tcrsift.filter.split_by_tier", lambda df, *a, **k: {"tier1": df})
+        monkeypatch.setattr("tcrsift.til.load_til_samples", lambda *a, **k: {})
+        monkeypatch.setattr(
+            "tcrsift.assemble.assemble_full_sequences",
+            lambda df, *a, **k: pd.DataFrame({
+                "CDR3ab": ["CAVA_CASS_A", "CAVV_CASS_V"],
+                "full_alpha_aa": ["MAAA", "MVVV"],
+            }),
+        )
+
+        output_dir = tmp_path / "out"
+        args = argparse.Namespace(
+            sample_sheet=str(sheet), output_dir=str(output_dir),
+            config=str(config_yaml),
+            generate_plots=False, generate_report=False,
+            no_leaders=False, single_chain=None, include_constant=None,
+            til_samples=None,
+            min_genes=None, max_genes=None, min_counts=None, max_counts=None,
+            min_mito_pct=None, max_mito_pct=None, cd4_cd8_ratio=None,
+            min_cd3_reads=None, group_by=None, handle_doublets=None, min_umi=None,
+            tcell_type=None, method=None, min_cells=None, min_frequency=None,
+            require_complete=None, fdr_tiers=None, vdjdb_path=None, iedb_path=None,
+            cedar_path=None, match_by=None, exclude_viral=None, flag_only=None,
+            til_match_by=None, min_til_cells=None, alpha_leader=None, beta_leader=None,
+            leaders_from_contigs=False, contigs_dir=None, cellranger_dir=None,
+            sample_name_from=None, linker=None, constant_source=None,
+            skip_plots=None, verbose=False,
+        )
+
+        cmd_run(args)
+
+        sel = pd.read_csv(output_dir / "data" / "selected_clones.csv")
+        # The viral bystander is dropped despite being tier1; the real
+        # clone is kept.
+        assert list(sel["CDR3ab"]) == ["CAVA_CASS_A"]
+        assert "CAVV_CASS_V" not in set(sel["CDR3ab"])
