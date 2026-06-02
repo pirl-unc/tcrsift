@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Context-aware gene-expression signatures as synthetic selection methods.
+"""Gene-expression signatures as synthetic selection methods.
 
 The selection language (:mod:`tcrsift.selection`) is method-agnostic — a
 "method" is just a value in the per-``(clone, sample)`` table carrying a
@@ -18,60 +18,45 @@ tier + frequency. A method need not be a physical sort: this module scores
 cells on a gene set, calls signature-positive cells, and emits them as a
 **synthetic method** so the rules can use a signature like a sort.
 
-**A signature's meaning is context-dependent.** CD39/CD103/TOX reads
-"chronically engaged antigen in situ" *only* in fresh tissue TILs — in a
-PBMC peptide-stim culture, CD103 needs TGF-β/residency it never sees and
-TOX/PD-1 needs chronic stim a short culture doesn't provide. So each
-:class:`Signature` declares the ``contexts`` it is interpretable in, and
-:func:`build_signature_methods` refuses to score it against mismatched
-data (e.g. a ``tissue``-only signature on ``source=culture`` samples).
-Signatures with no declared context are *invariant* (valid anywhere).
-
 Signatures are **signed** (``genes_up`` − ``genes_down``, so loss-of-naive
 axes work). Canonical scoring (defaults): per gene, the z-score across
 cells of ``log(1 + TPM)``, then the mean of those z-scores across the
 signature (``combine="mean"`` instead averages the values directly).
 Small "focal" and larger "broad" panels are offered per axis.
 
-The two headline composites in :data:`SELECTION_SIGNATURES` keep the
-2.17.0 names but are now context-tagged: ``TumorReactive`` ``[tissue]``
-(chronic in-situ exposure — guarded against PBMC-culture misuse) and
-``AntigenExperienced`` ``[culture]`` (in-culture activation).
-
-NOTE: gene memberships and context assignments below are sensible
-literature-backed defaults intended for review/tuning, not gospel.
+NOTE: a signature's *meaning* still depends on the sample source — e.g.
+``TumorReactive`` (CD39/CD103/TOX) only reads "chronic in-situ antigen
+exposure" in fresh tissue TILs, not in PBMC culture. That caveat lives in
+each signature's ``description``; it is documentation, not an enforced
+guard, so you can still score any signature on any data (and should, when
+exploring). Gene memberships are literature-backed defaults for tuning.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Sample-source contexts a signature can be interpreted in.
-CULTURE = "culture"        # in-vitro peptide/antigen stim of PBMC
-CIRCULATING = "circulating"  # resting blood / tetramer-sorted PBMC
-TISSUE = "tissue"          # fresh tumor / tissue TILs
-
 
 @dataclass(frozen=True)
 class Signature:
-    """A named, context-tagged, optionally-signed gene signature.
+    """A named, optionally-signed gene signature.
 
-    ``contexts`` empty = invariant (interpretable in any sample source).
-    ``genes_down`` subtracts (loss-of-naive etc.). ``panel`` is just a
-    "focal"/"broad" label for the small-vs-large variants.
+    ``genes_down`` subtracts (loss-of-naive etc.). ``panel`` is a
+    "focal"/"broad" label for the small-vs-large variants. ``description``
+    carries the biological caveat (e.g. which sample source it's meaningful
+    in) as prose.
     """
 
     name: str
     genes_up: tuple[str, ...]
     genes_down: tuple[str, ...] = ()
-    contexts: frozenset[str] = field(default_factory=frozenset)
     panel: str = "focal"
     description: str = ""
 
@@ -79,12 +64,6 @@ class Signature:
     def all_genes(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(self.genes_up + self.genes_down))
 
-    def valid_in(self, context: str | None) -> bool:
-        """True if interpretable in ``context`` (invariant ⇒ always)."""
-        return not self.contexts or context is None or context in self.contexts
-
-
-# --- Context-invariant axes (same meaning in blood, culture, tissue) ------
 
 _INVARIANT_SIGNATURES = [
     Signature(
@@ -115,67 +94,44 @@ _INVARIANT_SIGNATURES = [
     ),
 ]
 
-# --- Context-specific axes (only interpretable in the right source) -------
-#
-# TumorReactive / AntigenExperienced keep the names shipped in 2.17.0 (the
-# pilot uses them) but are now context-tagged, so the guard — not a rename
-# — prevents the MART-1 mistake: scoring TumorReactive on culture data
-# warns rather than being silently believed.
+# The two headline composites the pilot uses. Their descriptions note the
+# sample source they're meaningful in — read with that in mind.
 
-_CONTEXTUAL_SIGNATURES = [
+_COMPOSITE_SIGNATURES = [
     Signature(
         "TumorReactive",
         ("CXCL13", "ENTPD1", "PDCD1", "LAG3", "HAVCR2", "TIGIT", "TOX",
          "CTLA4", "ITGAE"),
-        contexts=frozenset({TISSUE}), panel="broad",
+        panel="broad",
         description="Chronic in-situ antigen engagement / tumor-reactive "
         "exhaustion (CD39/CXCL13 + exhaustion panel + CD103; Simoni/Duhen "
-        "2018). FRESH TUMOR TILs ONLY — meaningless in PBMC culture.",
+        "2018). Meaningful in fresh tumor TILs; reads as noise in PBMC culture.",
     ),
     Signature(
         "AntigenExperienced",
         ("TNFRSF9", "MKI67", "IFNG", "GZMB", "PRF1", "GNLY", "NKG7"),
-        contexts=frozenset({CULTURE}), panel="broad",
+        panel="broad",
         description="Recent cognate engagement + effector program "
         "(4-1BB/Ki-67 + activation). In-culture activation axis; correlated "
         "with an AIM sort by construction.",
     ),
     Signature(
-        "CirculatingMemory", ("GZMK", "IL7R"), ("CCR7",),
-        contexts=frozenset({CIRCULATING}), panel="focal",
+        "CirculatingMemory", ("GZMK", "IL7R"), ("CCR7",), panel="focal",
         description="Resting memory differentiation in blood "
         "(effector-memory up, naive down).",
     ),
 ]
 
 SIGNATURES: dict[str, Signature] = {
-    s.name: s for s in (_INVARIANT_SIGNATURES + _CONTEXTUAL_SIGNATURES)
+    s.name: s for s in (_INVARIANT_SIGNATURES + _COMPOSITE_SIGNATURES)
 }
 
 # Convenience grouping of the two headline selection composites (the names
-# the pilot uses); equivalent to SIGNATURES["TumorReactive"/"AntigenExperienced"].
+# the pilot uses).
 SELECTION_SIGNATURES: dict[str, Signature] = {
     "TumorReactive": SIGNATURES["TumorReactive"],
     "AntigenExperienced": SIGNATURES["AntigenExperienced"],
 }
-
-# Map a sample-sheet `source` value to a signature context.
-_SOURCE_TO_CONTEXT: dict[str, str] = {
-    "culture": CULTURE,
-    "tetramer": CIRCULATING,
-    "sct": CIRCULATING,
-    "pbmc": CIRCULATING,
-    "til": TISSUE,
-    "tumor": TISSUE,
-    "tissue": TISSUE,
-}
-
-
-def infer_context(source: str | None) -> str | None:
-    """Map a sample-sheet ``source`` to a signature context (or None)."""
-    if source is None:
-        return None
-    return _SOURCE_TO_CONTEXT.get(str(source).strip().lower())
 
 
 def _combine_block(
@@ -361,39 +317,26 @@ def signature_methods_long(
     return pd.concat(frames, ignore_index=True)
 
 
-class SignatureContextError(ValueError):
-    """Raised when a signature is applied to a context it can't be read in."""
-
-
 def build_signature_methods(
     expr: pd.DataFrame,
     obs: pd.DataFrame,
     *,
     signatures: Iterable[Signature | str] | None = None,
-    context: str | None = None,
     combine: str = "zscore",
     log1p: bool = True,
     background: pd.DataFrame | None = None,
     positive_method: str = "gap",
     quantile: float = 0.75,
-    on_context_mismatch: str = "warn",
     clone_col: str = "CDR3ab",
     sample_col: str = "sample",
 ) -> pd.DataFrame:
     """Score → call-positive → emit synthetic-method rows for each signature.
 
     ``signatures`` is an iterable of :class:`Signature` (or names in
-    :data:`SIGNATURES`). ``context`` is the sample source's context (see
-    :func:`infer_context`).
-
-    A signature is always *computable* — the score is just an off-context
-    program you may genuinely want to inspect (e.g. "do any culture cells
-    carry an exhaustion-like program?"). So a context mismatch does not
-    block by default; it only flags interpretation. ``on_context_mismatch``:
-
-    - ``"warn"`` (default) — log a warning and score anyway.
-    - ``"ignore"`` — score silently.
-    - ``"raise"`` — block (opt-in strict, e.g. for a locked pipeline).
+    :data:`SIGNATURES`), defaulting to :data:`SELECTION_SIGNATURES`. Each is
+    scored (z-score of log1p TPM, mean across genes), thresholded
+    (``positive_method``: ``gap``/``otsu``/``quantile``), and emitted as a
+    synthetic method ready to concat with the real clone-sample-long table.
     """
     if signatures is None:
         signatures = SELECTION_SIGNATURES.values()
@@ -402,17 +345,6 @@ def build_signature_methods(
     ]
     positive_by_signature: dict[str, pd.Series] = {}
     for sig in resolved:
-        if not sig.valid_in(context):
-            msg = (
-                f"signature {sig.name!r} is only interpretable in "
-                f"{sorted(sig.contexts)}, not context={context!r} — "
-                "scoring anyway; read the result with that in mind"
-            )
-            if on_context_mismatch == "raise":
-                raise SignatureContextError(msg)
-            if on_context_mismatch == "warn":
-                logger.warning("%s", msg)
-            # "warn" and "ignore" both fall through and score
         scores = score_signature(
             expr, sig, combine=combine, log1p=log1p, background=background,
         )

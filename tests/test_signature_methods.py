@@ -22,18 +22,6 @@ from tcrsift import signature_methods as sm
 
 
 class TestSignatureRegistry:
-    def test_invariant_signatures_valid_everywhere(self):
-        prolif = sm.SIGNATURES["Proliferation"]
-        assert prolif.contexts == frozenset()
-        for ctx in (sm.CULTURE, sm.CIRCULATING, sm.TISSUE, None):
-            assert prolif.valid_in(ctx)
-
-    def test_tissue_signature_invalid_in_culture(self):
-        tr = sm.SIGNATURES["TumorReactive"]
-        assert tr.contexts == frozenset({sm.TISSUE})
-        assert tr.valid_in(sm.TISSUE)
-        assert not tr.valid_in(sm.CULTURE)
-
     def test_signed_signature_all_genes_dedup(self):
         diff = sm.SIGNATURES["Differentiated"]
         assert diff.genes_up == ()
@@ -47,14 +35,18 @@ class TestSignatureRegistry:
             sm.SIGNATURES["Cytolytic"].genes_up
         )
 
+    def test_no_context_tagging_on_signatures(self):
+        # Tagging was removed — signatures are plain gene sets now.
+        sig = sm.SIGNATURES["TumorReactive"]
+        assert not hasattr(sig, "contexts")
+        assert not hasattr(sm, "infer_context")
+
     def test_selection_signatures_named_composites(self):
-        # The two headline composites the pilot uses, context-tagged.
+        # The two headline composites the pilot uses (no context tags).
         assert set(sm.SELECTION_SIGNATURES) == {"TumorReactive", "AntigenExperienced"}
         tr = sm.SELECTION_SIGNATURES["TumorReactive"]
-        assert tr.contexts == frozenset({sm.TISSUE})
         assert {"CXCL13", "ENTPD1", "TOX", "ITGAE", "CTLA4"} <= set(tr.genes_up)
         ae = sm.SELECTION_SIGNATURES["AntigenExperienced"]
-        assert ae.contexts == frozenset({sm.CULTURE})
         assert {"TNFRSF9", "MKI67", "GZMB", "NKG7"} <= set(ae.genes_up)
 
     def test_single_gene_focal_signature_scores(self):
@@ -66,17 +58,6 @@ class TestSignatureRegistry:
         s = sm.score_signature(expr, sm.SIGNATURES["Proliferation"])
         assert not (s == 0).all()
         assert s["c3"] > s["c0"]
-
-
-class TestInferContext:
-    def test_known_sources(self):
-        assert sm.infer_context("culture") == sm.CULTURE
-        assert sm.infer_context("TIL") == sm.TISSUE
-        assert sm.infer_context("tetramer") == sm.CIRCULATING
-
-    def test_unknown_source_is_none(self):
-        assert sm.infer_context("mystery") is None
-        assert sm.infer_context(None) is None
 
 
 class TestScoreSignature:
@@ -155,7 +136,7 @@ class TestCallPositiveAdaptive:
             sm.call_positive(self._scores(), method="bogus")
 
 
-class TestContextGuard:
+class TestBuildSignatureMethods:
     def _data(self):
         cells = [f"c{i}" for i in range(4)]
         expr = pd.DataFrame(
@@ -166,30 +147,19 @@ class TestContextGuard:
                           index=cells)
         return expr, obs
 
-    def test_default_warns_but_still_scores(self):
-        # Off-context is interesting, not forbidden: default warns + scores.
+    def test_scores_any_signature_on_any_data(self):
+        # No context guard: a signature can be scored on any data.
         expr, obs = self._data()
         out = sm.build_signature_methods(
-            expr, obs, signatures=["TumorReactive"],
-            context=sm.CULTURE,  # mismatch; default on_context_mismatch="warn"
-        )
-        assert "TumorReactive" in set(out["method"])
-
-    def test_raise_is_opt_in(self):
-        expr, obs = self._data()
-        with pytest.raises(sm.SignatureContextError, match="tissue"):
-            sm.build_signature_methods(
-                expr, obs, signatures=["TumorReactive"],
-                context=sm.CULTURE, on_context_mismatch="raise",
-            )
-
-    def test_tissue_signature_on_tissue_runs(self):
-        expr, obs = self._data()
-        out = sm.build_signature_methods(
-            expr, obs, signatures=["TumorReactive"],
-            context=sm.TISSUE, positive_method="gap",
+            expr, obs, signatures=["TumorReactive"], positive_method="gap",
         )
         assert set(out["method"]) <= {"TumorReactive"}
+
+    def test_defaults_to_selection_signatures(self):
+        expr, obs = self._data()
+        out = sm.build_signature_methods(expr, obs, positive_method="gap")
+        # default signatures = SELECTION_SIGNATURES (Tumor/AntigenExp)
+        assert set(out["method"]) <= {"TumorReactive", "AntigenExperienced"}
 
 
 class TestSignatureMethodsLong:
