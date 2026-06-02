@@ -394,3 +394,49 @@ class TestPerMethodEvidence:
         ann = selection.build_pdf_annotations(self._cml())
         assert set(ann) == {"A", "B"}
         assert all("selection:" not in line for line in ann["A"])
+
+
+class TestSharedBoundsAndExclusion:
+    def _cml(self):
+        return _cml([
+            ("A", "M1", "tier1", 0.40),
+            ("B", "M1", "tier1", 0.30),
+            ("C", "M1", "tier2", 0.20),
+            ("D", "M1", "tier2", 0.05),
+        ])
+
+    def test_shared_uncapped_by_default(self):
+        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"]}}}
+        out = selection.build_selection_routes(self._cml(), cfg)
+        assert list(out["CDR3ab"]) == ["A", "B", "C", "D"]
+
+    def test_shared_top_n_caps_block(self):
+        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"], "top_n": 2}}}
+        out = selection.build_selection_routes(self._cml(), cfg)
+        assert list(out["CDR3ab"]) == ["A", "B"]  # top 2 by frequency
+
+    def test_shared_min_frequency_floor(self):
+        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"],
+                                     "min_frequency": 0.1}}}
+        out = selection.build_selection_routes(self._cml(), cfg)
+        assert list(out["CDR3ab"]) == ["A", "B", "C"]  # D (0.05) dropped
+
+    def test_exclude_clones_removed_from_all_routes(self):
+        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"]}}}
+        out = selection.build_selection_routes(
+            self._cml(), cfg, exclude_clones={"A", "B"}
+        )
+        assert list(out["CDR3ab"]) == ["C", "D"]
+        # excluded clones never appear, even though they were tier1
+        assert "A" not in set(out["CDR3ab"])
+
+    def test_select_from_long_passes_exclude_clones(self):
+        csl = pd.DataFrame({
+            "CDR3ab": ["A", "B"], "sample": ["S1", "S1"], "method": ["M1", "M1"],
+            "cells": [12, 11], "frequency": [0.2, 0.18],
+        })
+        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"]}}}
+        out = selection.select_from_clone_sample_long(
+            csl, cfg, exclude_clones={"A"}
+        )
+        assert list(out["CDR3ab"]) == ["B"]
