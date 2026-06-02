@@ -27,11 +27,16 @@ TOX/PD-1 needs chronic stim a short culture doesn't provide. So each
 data (e.g. a ``tissue``-only signature on ``source=culture`` samples).
 Signatures with no declared context are *invariant* (valid anywhere).
 
-Signatures are **signed** (``genes_up`` − ``genes_down``) so loss-of-naive
-axes work, and scored by either z-scored mean (default; weights genes
-equally) or raw-TPM mean (``combine="mean"``; absolute expression, so
-high-TPM genes dominate). Small "focal" and larger "broad" panels are
-offered per axis so they can be compared.
+Signatures are **signed** (``genes_up`` − ``genes_down``, so loss-of-naive
+axes work). Canonical scoring (defaults): per gene, the z-score across
+cells of ``log(1 + TPM)``, then the mean of those z-scores across the
+signature (``combine="mean"`` instead averages the values directly).
+Small "focal" and larger "broad" panels are offered per axis.
+
+The two headline composites in :data:`SELECTION_SIGNATURES` keep the
+2.17.0 names but are now context-tagged: ``TumorReactive`` ``[tissue]``
+(chronic in-situ exposure — guarded against PBMC-culture misuse) and
+``AntigenExperienced`` ``[culture]`` (in-culture activation).
 
 NOTE: gene memberships and context assignments below are sensible
 literature-backed defaults intended for review/tuning, not gospel.
@@ -40,6 +45,7 @@ literature-backed defaults intended for review/tuning, not gospel.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -110,33 +116,29 @@ _INVARIANT_SIGNATURES = [
 ]
 
 # --- Context-specific axes (only interpretable in the right source) -------
+#
+# TumorReactive / AntigenExperienced keep the names shipped in 2.17.0 (the
+# pilot uses them) but are now context-tagged, so the guard — not a rename
+# — prevents the MART-1 mistake: scoring TumorReactive on culture data
+# warns rather than being silently believed.
 
 _CONTEXTUAL_SIGNATURES = [
     Signature(
-        "ActivatedInCulture", ("NR4A1", "TNFRSF9"),
-        contexts=frozenset({CULTURE}), panel="focal",
-        description="Recent cognate TCR engagement in vitro (Nur77, 4-1BB). "
-        "Correlated with an AIM sort by construction.",
-    ),
-    Signature(
-        "ActivatedInCultureBroad",
-        ("NR4A1", "NR4A2", "NR4A3", "EGR2", "EGR3", "FOS", "JUN",
-         "CD69", "TNFRSF9", "TNFRSF4", "IL2RA", "CD40LG", "IFNG", "TNF"),
-        contexts=frozenset({CULTURE}), panel="broad",
-        description="Broad acute-activation program (in-vitro stim).",
-    ),
-    Signature(
-        "NeoantigenExperiencedTIL", ("ENTPD1", "CXCL13"),
-        contexts=frozenset({TISSUE}), panel="focal",
-        description="Chronic in-situ antigen engagement (CD39/CXCL13; "
-        "Simoni/Duhen 2018). FRESH TUMOR TILs ONLY.",
-    ),
-    Signature(
-        "NeoantigenExperiencedTILBroad",
-        ("ENTPD1", "ITGAE", "TOX", "PDCD1", "LAG3", "HAVCR2", "CXCL13",
-         "TIGIT", "CTLA4"),
+        "TumorReactive",
+        ("CXCL13", "ENTPD1", "PDCD1", "LAG3", "HAVCR2", "TIGIT", "TOX",
+         "CTLA4", "ITGAE"),
         contexts=frozenset({TISSUE}), panel="broad",
-        description="Tumor-reactive/exhausted TIL program. FRESH TILs ONLY.",
+        description="Chronic in-situ antigen engagement / tumor-reactive "
+        "exhaustion (CD39/CXCL13 + exhaustion panel + CD103; Simoni/Duhen "
+        "2018). FRESH TUMOR TILs ONLY — meaningless in PBMC culture.",
+    ),
+    Signature(
+        "AntigenExperienced",
+        ("TNFRSF9", "MKI67", "IFNG", "GZMB", "PRF1", "GNLY", "NKG7"),
+        contexts=frozenset({CULTURE}), panel="broad",
+        description="Recent cognate engagement + effector program "
+        "(4-1BB/Ki-67 + activation). In-culture activation axis; correlated "
+        "with an AIM sort by construction.",
     ),
     Signature(
         "CirculatingMemory", ("GZMK", "IL7R"), ("CCR7",),
@@ -148,6 +150,13 @@ _CONTEXTUAL_SIGNATURES = [
 
 SIGNATURES: dict[str, Signature] = {
     s.name: s for s in (_INVARIANT_SIGNATURES + _CONTEXTUAL_SIGNATURES)
+}
+
+# Convenience grouping of the two headline selection composites (the names
+# the pilot uses); equivalent to SIGNATURES["TumorReactive"/"AntigenExperienced"].
+SELECTION_SIGNATURES: dict[str, Signature] = {
+    "TumorReactive": SIGNATURES["TumorReactive"],
+    "AntigenExperienced": SIGNATURES["AntigenExperienced"],
 }
 
 # Map a sample-sheet `source` value to a signature context.
@@ -209,7 +218,7 @@ def score_signature(
     combine: str = "zscore",
     log1p: bool = True,
     background: pd.DataFrame | None = None,
-    min_genes_present: int = 2,
+    min_genes_present: int = 1,
 ) -> pd.Series:
     """Per-cell signed signature score from a cells × genes (TPM) frame.
 
@@ -360,7 +369,7 @@ def build_signature_methods(
     expr: pd.DataFrame,
     obs: pd.DataFrame,
     *,
-    signatures,
+    signatures: Iterable[Signature | str] | None = None,
     context: str | None = None,
     combine: str = "zscore",
     log1p: bool = True,
@@ -386,6 +395,8 @@ def build_signature_methods(
     - ``"ignore"`` — score silently.
     - ``"raise"`` — block (opt-in strict, e.g. for a locked pipeline).
     """
+    if signatures is None:
+        signatures = SELECTION_SIGNATURES.values()
     resolved = [
         SIGNATURES[s] if isinstance(s, str) else s for s in signatures
     ]

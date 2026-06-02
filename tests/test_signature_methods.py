@@ -29,10 +29,10 @@ class TestSignatureRegistry:
             assert prolif.valid_in(ctx)
 
     def test_tissue_signature_invalid_in_culture(self):
-        til = sm.SIGNATURES["NeoantigenExperiencedTIL"]
-        assert til.contexts == frozenset({sm.TISSUE})
-        assert til.valid_in(sm.TISSUE)
-        assert not til.valid_in(sm.CULTURE)
+        tr = sm.SIGNATURES["TumorReactive"]
+        assert tr.contexts == frozenset({sm.TISSUE})
+        assert tr.valid_in(sm.TISSUE)
+        assert not tr.valid_in(sm.CULTURE)
 
     def test_signed_signature_all_genes_dedup(self):
         diff = sm.SIGNATURES["Differentiated"]
@@ -46,6 +46,26 @@ class TestSignatureRegistry:
         assert len(sm.SIGNATURES["CytolyticBroad"].genes_up) > len(
             sm.SIGNATURES["Cytolytic"].genes_up
         )
+
+    def test_selection_signatures_named_composites(self):
+        # The two headline composites the pilot uses, context-tagged.
+        assert set(sm.SELECTION_SIGNATURES) == {"TumorReactive", "AntigenExperienced"}
+        tr = sm.SELECTION_SIGNATURES["TumorReactive"]
+        assert tr.contexts == frozenset({sm.TISSUE})
+        assert {"CXCL13", "ENTPD1", "TOX", "ITGAE", "CTLA4"} <= set(tr.genes_up)
+        ae = sm.SELECTION_SIGNATURES["AntigenExperienced"]
+        assert ae.contexts == frozenset({sm.CULTURE})
+        assert {"TNFRSF9", "MKI67", "GZMB", "NKG7"} <= set(ae.genes_up)
+
+    def test_single_gene_focal_signature_scores(self):
+        # Regression: a 1-gene focal panel (Proliferation) must score, not
+        # silently return zeros under the default min_genes_present.
+        expr = pd.DataFrame(
+            {"MKI67": [0.0, 1.0, 5.0, 9.0]}, index=[f"c{i}" for i in range(4)],
+        )
+        s = sm.score_signature(expr, sm.SIGNATURES["Proliferation"])
+        assert not (s == 0).all()
+        assert s["c3"] > s["c0"]
 
 
 class TestInferContext:
@@ -150,26 +170,26 @@ class TestContextGuard:
         # Off-context is interesting, not forbidden: default warns + scores.
         expr, obs = self._data()
         out = sm.build_signature_methods(
-            expr, obs, signatures=["NeoantigenExperiencedTIL"],
+            expr, obs, signatures=["TumorReactive"],
             context=sm.CULTURE,  # mismatch; default on_context_mismatch="warn"
         )
-        assert "NeoantigenExperiencedTIL" in set(out["method"])
+        assert "TumorReactive" in set(out["method"])
 
     def test_raise_is_opt_in(self):
         expr, obs = self._data()
         with pytest.raises(sm.SignatureContextError, match="tissue"):
             sm.build_signature_methods(
-                expr, obs, signatures=["NeoantigenExperiencedTIL"],
+                expr, obs, signatures=["TumorReactive"],
                 context=sm.CULTURE, on_context_mismatch="raise",
             )
 
     def test_tissue_signature_on_tissue_runs(self):
         expr, obs = self._data()
         out = sm.build_signature_methods(
-            expr, obs, signatures=["NeoantigenExperiencedTIL"],
+            expr, obs, signatures=["TumorReactive"],
             context=sm.TISSUE, positive_method="gap",
         )
-        assert set(out["method"]) <= {"NeoantigenExperiencedTIL"}
+        assert set(out["method"]) <= {"TumorReactive"}
 
 
 class TestSignatureMethodsLong:
