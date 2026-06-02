@@ -1279,10 +1279,10 @@ def cmd_run(args):
         print(f"  Assembled {len(assembled)} sequences")
 
         # Config-driven clone selection (#122/#125). When a `selection`
-        # block is present, route/rank the assembled clones and emit
-        # selected_clones.csv (selection columns first, then full seqs),
-        # ordered by global_rank.
-        if config.selection.get("routes") and long_df is not None:
+        # block is present, match/rank the assembled clones against the
+        # selection rules and emit selected_clones.csv (selection columns
+        # first, then full seqs), ordered by global_rank.
+        if config.selection.get("rules") and long_df is not None:
             from .selection import select_from_clone_sample_long
             # exclude_viral: drop public-DB viral bystanders (is_viral from
             # the annotate step) so they don't enrich into the selection.
@@ -1310,12 +1310,12 @@ def cmd_run(args):
                         f"  Selection excluding {len(exclude_clones)} viral clones "
                         f"-> data/excluded_viral_clones.csv"
                     )
-            routes = select_from_clone_sample_long(
+            rules = select_from_clone_sample_long(
                 long_df, config.selection, exclude_clones=exclude_clones,
             )
-            if not routes.empty and "CDR3ab" in assembled.columns:
+            if not rules.empty and "CDR3ab" in assembled.columns:
                 selected = (
-                    routes.merge(assembled, on="CDR3ab", how="left")
+                    rules.merge(assembled, on="CDR3ab", how="left")
                     .sort_values("global_rank")
                     .reset_index(drop=True)
                 )
@@ -1323,14 +1323,14 @@ def cmd_run(args):
                 n_selected_clones = len(selected)
                 print(
                     f"  Wrote selected_clones.csv: {len(selected)} clones "
-                    f"across {routes['selection_route'].nunique()} routes"
+                    f"across {rules['selection_rule'].nunique()} rules"
                 )
 
         if config.output.generate_plots:
             plot_assembly(assembled, plots_dir)
 
         # Generate sequence PDF. When per-method data is available, overlay
-        # each clone's per-method evidence + selection route (#123/#125).
+        # each clone's per-method evidence + selection rule (#123/#125).
         if config.output.generate_report:
             pdf_annotations = None
             if long_df is not None and "method" in long_df.columns:
@@ -1343,7 +1343,7 @@ def cmd_run(args):
                 cml = attach_method_tiers(build_clone_method_long(long_df))
                 sel_df = (
                     select_from_clone_sample_long(long_df, config.selection)
-                    if config.selection.get("routes") else None
+                    if config.selection.get("rules") else None
                 )
                 pdf_annotations = build_pdf_annotations(cml, selection_df=sel_df)
             create_tcr_sequence_pdf(

@@ -149,12 +149,12 @@ class TestBuildSelectionRoutesShared:
             ("B", "M1", "tier2", 0.05),
             ("C", "M1", "tier3", 0.005),
         ])
-        config = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"],
+        config = {"rules": {"shared": {"include_tiers": ["tier1", "tier2"],
                                         "rank_by": "max_frequency"}}}
-        out = selection.build_selection_routes(cml, config)
+        out = selection.build_selection_rules(cml, config)
         assert list(out["CDR3ab"]) == ["A", "B"]          # tier3 C excluded
-        assert list(out["selection_route"]) == ["shared", "shared"]
-        assert list(out["rank_within_route"]) == [1, 2]   # 0.2 before 0.05
+        assert list(out["selection_rule"]) == ["shared", "shared"]
+        assert list(out["rank_within_rule"]) == [1, 2]   # 0.2 before 0.05
         assert list(out["global_rank"]) == [1, 2]
 
 
@@ -165,14 +165,14 @@ class TestBuildSelectionRoutesPrivate:
             ("Y", "AIMpos", "tier3", 0.005),  # tier3 in BOTH -> disqualified
             ("Y", "IFNpos", "tier3", 0.005),
         ])
-        config = {"routes": {"private": {
+        config = {"rules": {"private": {
             "include_tier": "tier3",
             "exclude_tier3plus_in_other_methods": True,
             "top_n": 3, "rank_by": "frequency_in_method",
             "apply_to_methods": ["AIMpos", "IFNpos"],
         }}}
-        out = selection.build_selection_routes(cml, config)
-        private_aim = out[out["selection_route"] == "private_AIMpos"]
+        out = selection.build_selection_rules(cml, config)
+        private_aim = out[out["selection_rule"] == "private_AIMpos"]
         assert list(private_aim["CDR3ab"]) == ["X"]
         # Y is tier3 in both methods, so it is private to neither.
         assert "Y" not in set(out["CDR3ab"])
@@ -183,11 +183,11 @@ class TestBuildSelectionRoutesPrivate:
             ("Y", "AIMpos", "tier3", 0.02),
             ("Z", "AIMpos", "tier3", 0.01),
         ])
-        config = {"routes": {"private": {
+        config = {"rules": {"private": {
             "include_tier": "tier3", "top_n": 2,
             "apply_to_methods": ["AIMpos"],
         }}}
-        out = selection.build_selection_routes(cml, config)
+        out = selection.build_selection_rules(cml, config)
         assert list(out["CDR3ab"]) == ["X", "Y"]   # top 2 by frequency
 
 
@@ -198,20 +198,20 @@ class TestBuildSelectionRoutesPair:
             ("P", "AIMpos_CTYneg", "tier3", 0.02),
             ("Q", "AIMpos", "tier3", 0.01),  # missing from AIMpos_CTYneg
         ])
-        config = {"routes": {"cty_pair": {
+        config = {"rules": {"method_pair": {
             "pairs": {"AIM": ["AIMpos", "AIMpos_CTYneg"]},
             "require_tier_in_all_members": "tier3",
             "exclude_tier3plus_outside_pair": True,
             "top_n": 3, "rank_by": "mean_freq_across_pair",
         }}}
-        out = selection.build_selection_routes(cml, config)
-        cty = out[out["selection_route"] == "cty_pair_AIM"]
+        out = selection.build_selection_rules(cml, config)
+        cty = out[out["selection_rule"] == "method_pair_AIM"]
         assert list(cty["CDR3ab"]) == ["P"]
         assert "Q" not in set(out["CDR3ab"])
 
 
 class TestBuildSelectionRoutesGlobalRank:
-    def test_block_order_interleave_and_dedup(self):
+    def test_rule_order_interleave_and_dedup(self):
         cml = _cml([
             ("S1", "M_shared", "tier1", 0.3),
             ("S2", "M_shared", "tier2", 0.2),
@@ -222,22 +222,22 @@ class TestBuildSelectionRoutesGlobalRank:
             ("D", "CTYneg", "tier1", 0.4),
         ])
         config = {
-            "routes": {
+            "rules": {
                 "shared": {"include_tiers": ["tier1", "tier2"],
                            "rank_by": "max_frequency"},
-                "cty_pair": {"pairs": {"AIM": ["AIMpos", "AIMpos_CTYneg"]},
+                "method_pair": {"pairs": {"AIM": ["AIMpos", "AIMpos_CTYneg"]},
                              "require_tier_in_all_members": "tier3",
                              "exclude_tier3plus_outside_pair": True, "top_n": 3},
                 "private": {"include_tier": "tier3", "top_n": 3,
                             "exclude_tier3plus_in_other_methods": True,
                             "apply_to_methods": ["CTYneg"]},
             },
-            "global_rank": {"block_order": ["shared", "cty_pair", "private"]},
+            "global_rank": {"rule_order": ["shared", "method_pair", "private"]},
         }
-        out = selection.build_selection_routes(cml, config)
+        out = selection.build_selection_rules(cml, config)
         # D (0.4) and S1 (0.3) and S2 (0.2) shared; P pair; R private.
-        assert list(out["selection_route"]) == [
-            "shared", "shared", "shared", "cty_pair_AIM", "private_CTYneg",
+        assert list(out["selection_rule"]) == [
+            "shared", "shared", "shared", "method_pair_AIM", "private_CTYneg",
         ]
         assert list(out["CDR3ab"]) == ["D", "S1", "S2", "P", "R"]
         assert list(out["global_rank"]) == [1, 2, 3, 4, 5]
@@ -245,20 +245,20 @@ class TestBuildSelectionRoutesGlobalRank:
         assert out["CDR3ab"].is_unique
 
     def test_empty_input_yields_empty_frame_with_columns(self):
-        out = selection.build_selection_routes(
-            _cml([]), {"routes": {"shared": {"include_tiers": ["tier1"]}}}
+        out = selection.build_selection_rules(
+            _cml([]), {"rules": {"shared": {"include_tiers": ["tier1"]}}}
         )
         assert len(out) == 0
-        for col in ("selection_route", "rank_within_route", "global_rank"):
+        for col in ("selection_rule", "rank_within_rule", "global_rank"):
             assert col in out.columns
 
 
 # Pilot-shaped config mirroring the B1-2 enrichment design (#122): 7
 # methods, three A/B method pairs, shared/private/pair routes.
 _PILOT_CONFIG = {
-    "routes": {
+    "rules": {
         "shared": {"include_tiers": ["tier1", "tier2"], "rank_by": "max_frequency"},
-        "cty_pair": {
+        "method_pair": {
             "pairs": {
                 "AIM": ["AIMpos", "AIMpos_CTYneg"],
                 "IFN": ["IFNpos", "IFNpos_CTYneg"],
@@ -274,7 +274,7 @@ _PILOT_CONFIG = {
                                  "CTYneg_tetpos", "IFNpos", "IFNpos_CTYneg", "tetpos"],
         },
     },
-    "global_rank": {"block_order": ["shared", "cty_pair", "private"]},
+    "global_rank": {"rule_order": ["shared", "method_pair", "private"]},
 }
 
 
@@ -298,31 +298,31 @@ class TestSelectionRoutesPilotShape:
         return _cml(rows)
 
     def test_routes_match_pilot_expectations(self):
-        out = selection.build_selection_routes(self._pilot_cml(), _PILOT_CONFIG)
-        route = dict(zip(out["CDR3ab"], out["selection_route"]))
+        out = selection.build_selection_rules(self._pilot_cml(), _PILOT_CONFIG)
+        route = dict(zip(out["CDR3ab"], out["selection_rule"]))
         assert route["MART1_a"] == "shared"
         assert route["MART1_b"] == "shared"
-        assert route["pair_AIM"] == "cty_pair_AIM"
-        assert route["pair_tet"] == "cty_pair_tet"
+        assert route["pair_AIM"] == "method_pair_AIM"
+        assert route["pair_tet"] == "method_pair_tet"
         assert route["priv_CTY"] == "private_CTYneg"
         assert route["priv_IFN"] == "private_IFNpos"
         # tier4-only noise selected by nothing
         assert "noise" not in route
 
-    def test_global_rank_is_contiguous_block_order(self):
-        out = selection.build_selection_routes(self._pilot_cml(), _PILOT_CONFIG)
+    def test_global_rank_is_contiguous_rule_order(self):
+        out = selection.build_selection_rules(self._pilot_cml(), _PILOT_CONFIG)
         assert list(out["global_rank"]) == list(range(1, len(out) + 1))
         # shared block precedes pair block precedes private block
-        routes = list(out["selection_route"])
+        routes = list(out["selection_rule"])
         assert routes[0] == "shared" and routes[1] == "shared"
-        assert routes[2].startswith("cty_pair_") and routes[3].startswith("cty_pair_")
+        assert routes[2].startswith("method_pair_") and routes[3].startswith("method_pair_")
         assert routes[4].startswith("private_") and routes[5].startswith("private_")
 
     def test_pair_clone_not_double_claimed_by_private(self):
         # pair_AIM is tier3 in AIMpos; private_AIMpos must NOT re-select it.
-        out = selection.build_selection_routes(self._pilot_cml(), _PILOT_CONFIG)
+        out = selection.build_selection_rules(self._pilot_cml(), _PILOT_CONFIG)
         assert out["CDR3ab"].is_unique
-        assert (out["selection_route"] == "private_AIMpos").sum() == 0
+        assert (out["selection_rule"] == "private_AIMpos").sum() == 0
 
 
 class TestSelectFromCloneSampleLong:
@@ -335,18 +335,18 @@ class TestSelectFromCloneSampleLong:
             "cells": [12, 11, 1],
             "frequency": [0.2, 0.18, 0.0006],
         })
-        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"],
+        cfg = {"rules": {"shared": {"include_tiers": ["tier1", "tier2"],
                                      "rank_by": "max_frequency"}}}
         out = selection.select_from_clone_sample_long(csl, cfg)
         assert list(out["CDR3ab"]) == ["A"]   # B is tier-less noise
-        assert out["selection_route"].iloc[0] == "shared"
+        assert out["selection_rule"].iloc[0] == "shared"
 
     def test_no_method_axis_yields_empty(self):
         csl = pd.DataFrame({
             "CDR3ab": ["A"], "sample": ["S1"], "cells": [12], "frequency": [0.2],
         })
         out = selection.select_from_clone_sample_long(
-            csl, {"routes": {"shared": {"include_tiers": ["tier1"]}}}
+            csl, {"rules": {"shared": {"include_tiers": ["tier1"]}}}
         )
         assert out.empty
 
@@ -381,7 +381,7 @@ class TestPerMethodEvidence:
 
     def test_build_pdf_annotations_includes_route_header_and_evidence(self):
         sel = pd.DataFrame({
-            "CDR3ab": ["A"], "selection_route": ["shared"], "global_rank": [1],
+            "CDR3ab": ["A"], "selection_rule": ["shared"], "global_rank": [1],
         })
         ann = selection.build_pdf_annotations(self._cml(), selection_df=sel)
         assert any("selection: shared" in line for line in ann["A"])
@@ -406,24 +406,24 @@ class TestSharedBoundsAndExclusion:
         ])
 
     def test_shared_uncapped_by_default(self):
-        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"]}}}
-        out = selection.build_selection_routes(self._cml(), cfg)
+        cfg = {"rules": {"shared": {"include_tiers": ["tier1", "tier2"]}}}
+        out = selection.build_selection_rules(self._cml(), cfg)
         assert list(out["CDR3ab"]) == ["A", "B", "C", "D"]
 
     def test_shared_top_n_caps_block(self):
-        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"], "top_n": 2}}}
-        out = selection.build_selection_routes(self._cml(), cfg)
+        cfg = {"rules": {"shared": {"include_tiers": ["tier1", "tier2"], "top_n": 2}}}
+        out = selection.build_selection_rules(self._cml(), cfg)
         assert list(out["CDR3ab"]) == ["A", "B"]  # top 2 by frequency
 
     def test_shared_min_frequency_floor(self):
-        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"],
+        cfg = {"rules": {"shared": {"include_tiers": ["tier1", "tier2"],
                                      "min_frequency": 0.1}}}
-        out = selection.build_selection_routes(self._cml(), cfg)
+        out = selection.build_selection_rules(self._cml(), cfg)
         assert list(out["CDR3ab"]) == ["A", "B", "C"]  # D (0.05) dropped
 
     def test_exclude_clones_removed_from_all_routes(self):
-        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"]}}}
-        out = selection.build_selection_routes(
+        cfg = {"rules": {"shared": {"include_tiers": ["tier1", "tier2"]}}}
+        out = selection.build_selection_rules(
             self._cml(), cfg, exclude_clones={"A", "B"}
         )
         assert list(out["CDR3ab"]) == ["C", "D"]
@@ -435,8 +435,44 @@ class TestSharedBoundsAndExclusion:
             "CDR3ab": ["A", "B"], "sample": ["S1", "S1"], "method": ["M1", "M1"],
             "cells": [12, 11], "frequency": [0.2, 0.18],
         })
-        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"]}}}
+        cfg = {"rules": {"shared": {"include_tiers": ["tier1", "tier2"]}}}
         out = selection.select_from_clone_sample_long(
             csl, cfg, exclude_clones={"A"}
         )
         assert list(out["CDR3ab"]) == ["B"]
+
+
+class TestSelectionWithoutMethodPairs:
+    """Not every study has paired methods — a config with only shared /
+    private routes must work with no method_pair block (#122)."""
+
+    def test_shared_and_private_only_no_pair_route(self):
+        cml = _cml([
+            ("S", "AIMpos", "tier1", 0.30),   # shared
+            ("P", "CTYneg", "tier3", 0.01),   # private to CTYneg
+            ("N", "AIMpos", "tier4", 0.0006),  # noise
+        ])
+        config = {
+            "rules": {
+                "shared": {"include_tiers": ["tier1", "tier2"]},
+                "private": {"include_tier": "tier3", "top_n": 3,
+                            "apply_to_methods": ["AIMpos", "CTYneg"]},
+            },
+            "global_rank": {"rule_order": ["shared", "private"]},
+        }
+        out = selection.build_selection_rules(cml, config)
+        routes = dict(zip(out["CDR3ab"], out["selection_rule"]))
+        assert routes["S"] == "shared"
+        assert routes["P"] == "private_CTYneg"
+        assert "N" not in routes
+        # No method_pair route exists anywhere.
+        assert not any(r.startswith("method_pair") for r in out["selection_rule"])
+
+    def test_default_rule_order_skips_absent_method_pair(self):
+        # Default rule_order includes method_pair, but with none configured
+        # it's simply skipped — no error, no rows.
+        cml = _cml([("S", "AIMpos", "tier1", 0.3)])
+        out = selection.build_selection_rules(
+            cml, {"rules": {"shared": {"include_tiers": ["tier1"]}}}
+        )
+        assert list(out["selection_rule"]) == ["shared"]

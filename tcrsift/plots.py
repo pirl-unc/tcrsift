@@ -2951,7 +2951,7 @@ def create_tcr_sequence_pdf(
                 x_position += char_width
                 current_line_width += 1
 
-        # Per-method evidence / selection-route overlay (#123/#125). Drawn
+        # Per-method evidence / selection-rule overlay (#123/#125). Drawn
         # at the bottom of the page when an annotation block is supplied
         # for this clone (keyed by ``annotation_key_column``).
         if annotations:
