@@ -296,6 +296,11 @@ def score_signature(
 def _largest_gap_cutoff(
     values: np.ndarray, *, search_top: float = 0.5, min_gap_ratio: float = 3.0,
 ) -> float:
+    # The gap is sought only within the top ``search_top`` fraction so the
+    # cut lands high (a minority "above the rest"), not at a low outlier.
+    # Consequence: a cluster larger than ``search_top`` of cells has its
+    # separating gap below the window and won't be found — raise
+    # ``search_top`` for a signature expected to be broadly positive.
     v = np.sort(values)[::-1]  # descending
     n = len(v)
     if n < 2:
@@ -355,6 +360,11 @@ def call_positive(
     cluster; returns **none** when no gap stands out by ``min_gap_ratio``×
     the typical spacing, i.e. no distinct cluster), or ``"otsu"`` (adaptive
     bimodal split). Explicit ``threshold`` overrides ``method``.
+
+    ``search_top`` (``"gap"`` only) bounds where the gap is sought to the
+    top fraction of cells, so the positive set is a minority "above the
+    rest". A positive cluster larger than ``search_top`` won't be found —
+    raise it (e.g. 0.8) for a signature expected to be broadly positive.
     """
     arr = scores.to_numpy(dtype=float)
     if threshold is not None:

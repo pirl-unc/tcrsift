@@ -1327,6 +1327,11 @@ def cmd_run(args):
                         "signature_positive_method", "gap"
                     ),
                 )
+                # If the cohort has no enrichment-method axis, long_df has no
+                # 'method' column; the concat introduces it (real rows get
+                # NaN method, dropped downstream) so the signatures become the
+                # selection methods. With a method axis, signatures are added
+                # alongside the real sorts.
                 selection_long = pd.concat(
                     [long_df, sig_long], ignore_index=True
                 )

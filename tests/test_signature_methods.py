@@ -136,6 +136,14 @@ class TestCallPositiveAdaptive:
         smooth = pd.Series(np.linspace(0.0, 1.0, 30), index=[f"c{i}" for i in range(30)])
         assert int(sm.call_positive(smooth, method="gap").sum()) == 0
 
+    def test_gap_majority_cluster_needs_higher_search_top(self):
+        # A high cluster that is the MAJORITY (~70%) sits below the default
+        # search_top=0.5 window, so gap misses it; raising search_top finds it.
+        vals = list(np.zeros(6)) + list(np.full(14, 5.0))  # 14/20 high
+        s = pd.Series(vals, index=[f"c{i}" for i in range(20)])
+        assert int(sm.call_positive(s, method="gap").sum()) == 0           # default 0.5
+        assert int(sm.call_positive(s, method="gap", search_top=0.9).sum()) == 14
+
     def test_otsu_isolates_cluster(self):
         assert int(sm.call_positive(self._scores(), method="otsu").sum()) == 4
 
