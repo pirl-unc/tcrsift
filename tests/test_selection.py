@@ -251,3 +251,108 @@ class TestBuildSelectionRoutesGlobalRank:
         assert len(out) == 0
         for col in ("selection_route", "rank_within_route", "global_rank"):
             assert col in out.columns
+
+
+# Pilot-shaped config mirroring the B1-2 enrichment design (#122): 7
+# methods, three A/B method pairs, shared/private/pair routes.
+_PILOT_CONFIG = {
+    "routes": {
+        "shared": {"include_tiers": ["tier1", "tier2"], "rank_by": "max_frequency"},
+        "cty_pair": {
+            "pairs": {
+                "AIM": ["AIMpos", "AIMpos_CTYneg"],
+                "IFN": ["IFNpos", "IFNpos_CTYneg"],
+                "tet": ["tetpos", "CTYneg_tetpos"],
+            },
+            "require_tier_in_all_members": "tier3",
+            "exclude_tier3plus_outside_pair": True, "top_n": 3,
+        },
+        "private": {
+            "include_tier": "tier3", "exclude_tier3plus_in_other_methods": True,
+            "top_n": 3,
+            "apply_to_methods": ["AIMpos", "AIMpos_CTYneg", "CTYneg",
+                                 "CTYneg_tetpos", "IFNpos", "IFNpos_CTYneg", "tetpos"],
+        },
+    },
+    "global_rank": {"block_order": ["shared", "cty_pair", "private"]},
+}
+
+
+class TestSelectionRoutesPilotShape:
+    """Schema checkpoint on B1-2-shaped data before selected_clones.csv
+    bakes the route definitions in (#122/#125 increment 5)."""
+
+    def _pilot_cml(self):
+        rows = [
+            ("MART1_a", "AIMpos", "tier1", 0.20), ("MART1_a", "tetpos", "tier1", 0.18),
+            ("MART1_a", "IFNpos", "tier2", 0.05),
+            ("MART1_b", "AIMpos", "tier2", 0.04), ("MART1_b", "CTYneg", "tier2", 0.03),
+            ("pair_AIM", "AIMpos", "tier3", 0.012),
+            ("pair_AIM", "AIMpos_CTYneg", "tier3", 0.011),
+            ("pair_tet", "tetpos", "tier3", 0.010),
+            ("pair_tet", "CTYneg_tetpos", "tier3", 0.009),
+            ("priv_CTY", "CTYneg", "tier3", 0.008),
+            ("priv_IFN", "IFNpos", "tier3", 0.007),
+            ("noise", "AIMpos", "tier4", 0.0006),
+        ]
+        return _cml(rows)
+
+    def test_routes_match_pilot_expectations(self):
+        out = selection.build_selection_routes(self._pilot_cml(), _PILOT_CONFIG)
+        route = dict(zip(out["CDR3ab"], out["selection_route"]))
+        assert route["MART1_a"] == "shared"
+        assert route["MART1_b"] == "shared"
+        assert route["pair_AIM"] == "cty_pair_AIM"
+        assert route["pair_tet"] == "cty_pair_tet"
+        assert route["priv_CTY"] == "private_CTYneg"
+        assert route["priv_IFN"] == "private_IFNpos"
+        # tier4-only noise selected by nothing
+        assert "noise" not in route
+
+    def test_global_rank_is_contiguous_block_order(self):
+        out = selection.build_selection_routes(self._pilot_cml(), _PILOT_CONFIG)
+        assert list(out["global_rank"]) == list(range(1, len(out) + 1))
+        # shared block precedes pair block precedes private block
+        routes = list(out["selection_route"])
+        assert routes[0] == "shared" and routes[1] == "shared"
+        assert routes[2].startswith("cty_pair_") and routes[3].startswith("cty_pair_")
+        assert routes[4].startswith("private_") and routes[5].startswith("private_")
+
+    def test_pair_clone_not_double_claimed_by_private(self):
+        # pair_AIM is tier3 in AIMpos; private_AIMpos must NOT re-select it.
+        out = selection.build_selection_routes(self._pilot_cml(), _PILOT_CONFIG)
+        assert out["CDR3ab"].is_unique
+        assert (out["selection_route"] == "private_AIMpos").sum() == 0
+
+
+class TestSelectFromCloneSampleLong:
+    def test_end_to_end_from_long_table(self):
+        # clone_sample_long shape: per (clone, sample) cells + frequency + method.
+        csl = pd.DataFrame({
+            "CDR3ab": ["A", "A", "B"],
+            "sample": ["S1", "S2", "S1"],
+            "method": ["AIMpos", "tetpos", "CTYneg"],
+            "cells": [12, 11, 1],
+            "frequency": [0.2, 0.18, 0.0006],
+        })
+        cfg = {"routes": {"shared": {"include_tiers": ["tier1", "tier2"],
+                                     "rank_by": "max_frequency"}}}
+        out = selection.select_from_clone_sample_long(csl, cfg)
+        assert list(out["CDR3ab"]) == ["A"]   # B is tier-less noise
+        assert out["selection_route"].iloc[0] == "shared"
+
+    def test_no_method_axis_yields_empty(self):
+        csl = pd.DataFrame({
+            "CDR3ab": ["A"], "sample": ["S1"], "cells": [12], "frequency": [0.2],
+        })
+        out = selection.select_from_clone_sample_long(
+            csl, {"routes": {"shared": {"include_tiers": ["tier1"]}}}
+        )
+        assert out.empty
+
+    def test_no_routes_yields_empty(self):
+        csl = pd.DataFrame({
+            "CDR3ab": ["A"], "sample": ["S1"], "method": ["AIMpos"],
+            "cells": [12], "frequency": [0.2],
+        })
+        assert selection.select_from_clone_sample_long(csl, {}).empty

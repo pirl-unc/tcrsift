@@ -48,6 +48,7 @@ __all__ = [
     "attach_per_sample_tiers",
     "attach_method_tiers",
     "build_selection_routes",
+    "select_from_clone_sample_long",
 ]
 
 # Tier label -> numeric rank (lower = stronger enrichment). Used to
@@ -387,3 +388,38 @@ def build_selection_routes(
     if not out_rows:
         return _empty_selection(clone_col)
     return pd.DataFrame(out_rows, columns=[clone_col, *_SELECTION_COLUMNS])
+
+
+def select_from_clone_sample_long(
+    clone_sample_long: pd.DataFrame,
+    config: dict,
+    *,
+    clone_col: str = "CDR3ab",
+    method_col: str = "method",
+) -> pd.DataFrame:
+    """End-to-end selection from a clone-sample-long table.
+
+    Convenience wrapper that runs the full chain so callers (``tcrsift
+    run`` and downstream Python) don't re-stitch it:
+
+    ``clone_sample_long`` → :func:`build_clone_method_long` →
+    :func:`attach_method_tiers` → :func:`build_selection_routes`.
+
+    Returns the selection frame (one row per selected clone with
+    ``selection_route`` / ``rank_within_route`` / ``ranking_metric`` /
+    ``ranking_value`` / ``global_rank``). Empty when there's no method
+    axis, no routes configured, or nothing matches.
+    """
+    if clone_sample_long.empty or not (config or {}).get("routes"):
+        return _empty_selection(clone_col)
+    # No method axis → no per-method tiers → nothing the route language
+    # can act on (the routes are all defined over methods/method-pairs).
+    if method_col not in clone_sample_long.columns:
+        return _empty_selection(clone_col)
+    cml = build_clone_method_long(
+        clone_sample_long, clone_col=clone_col, method_col=method_col
+    )
+    if cml.empty:
+        return _empty_selection(clone_col)
+    cml = attach_method_tiers(cml)
+    return build_selection_routes(cml, config, clone_col=clone_col)
