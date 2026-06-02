@@ -1094,36 +1094,120 @@ def parse_fasta(path: str | Path) -> dict[str, str]:
     return results
 
 
-def load_contigs(contig_dir: str | Path) -> dict[str, dict[str, str]]:
+SAMPLE_NAME_FROM_CHOICES = ("parent", "grandparent", "sheet")
+
+
+def load_contigs(
+    contig_dir: str | Path | None = None,
+    *,
+    sample_name_from: str = "parent",
+    cellranger_dir: str | Path | None = None,
+    sample_sheet: pd.DataFrame | None = None,
+) -> dict[str, dict[str, str]]:
     """
-    Load contig sequences from CellRanger output directories.
+    Load contig sequences from a CellRanger-style output tree (#124).
 
     Parameters
     ----------
-    contig_dir : str or Path
-        Directory containing sample subdirectories with FASTA files
+    contig_dir : str or Path, optional
+        Root directory to scan for ``*contig*.fasta``. Mutually exclusive
+        with ``cellranger_dir``.
+    sample_name_from : {'parent', 'grandparent', 'sheet'}, default 'parent'
+        How to derive the sample name from each discovered FASTA's path:
+
+        - ``'parent'`` (default, backward-compat) — sample = FASTA's
+          immediate parent directory name. Matches the symlinked layout
+          ``contig_dir/{sample}/filtered_contig.fasta``.
+        - ``'grandparent'`` — sample = FASTA's grandparent directory name.
+          Matches CellRanger ``multi`` output:
+          ``per_sample_outs/{sample}/vdj_t/filtered_contig.fasta``.
+        - ``'sheet'`` — match each FASTA against ``sample_sheet['vdj_dir']``
+          and take the corresponding ``sample`` column. Most explicit;
+          useful for non-standard layouts.
+    cellranger_dir : str or Path, optional
+        Shorthand for ``contig_dir=cellranger_dir, sample_name_from='grandparent'``.
+        Pass a raw CellRanger ``per_sample_outs/`` directory and the sample
+        names will resolve correctly without a symlink tree. Mutually
+        exclusive with ``contig_dir``.
+    sample_sheet : pandas.DataFrame, optional
+        Required when ``sample_name_from='sheet'``. Must have columns
+        ``sample`` and ``vdj_dir``; each FASTA's path must be inside one of
+        the listed ``vdj_dir`` paths.
 
     Returns
     -------
     dict
-        Nested dict: sample -> contig_id -> sequence
+        Nested dict: ``sample -> contig_id -> sequence``.
     """
+    if cellranger_dir is not None:
+        if contig_dir is not None:
+            raise ValueError(
+                "load_contigs: pass exactly one of contig_dir or cellranger_dir, not both."
+            )
+        contig_dir = cellranger_dir
+        sample_name_from = "grandparent"
+    if contig_dir is None:
+        raise ValueError(
+            "load_contigs: must pass either contig_dir or cellranger_dir."
+        )
+    if sample_name_from not in SAMPLE_NAME_FROM_CHOICES:
+        raise ValueError(
+            f"load_contigs: sample_name_from={sample_name_from!r} not in "
+            f"{SAMPLE_NAME_FROM_CHOICES}"
+        )
+    if sample_name_from == "sheet" and sample_sheet is None:
+        raise ValueError(
+            "load_contigs: sample_name_from='sheet' requires sample_sheet=..."
+        )
+
     contig_dir = Path(contig_dir)
-    sample_contigs = {}
+    sample_contigs: dict[str, dict[str, str]] = {}
 
-    # Look for FASTA files in subdirectories
+    sheet_dir_to_sample: dict[Path, str] = {}
+    if sample_name_from == "sheet":
+        missing = {"sample", "vdj_dir"} - set(sample_sheet.columns)
+        if missing:
+            raise ValueError(
+                f"load_contigs: sample_sheet is missing required columns {sorted(missing)}"
+            )
+        sheet_dir_to_sample = {
+            Path(row.vdj_dir).resolve(): row.sample
+            for row in sample_sheet.itertuples(index=False)
+        }
+
+    def _sample_for(fasta_path: Path) -> str | None:
+        if sample_name_from == "parent":
+            return fasta_path.parent.name
+        if sample_name_from == "grandparent":
+            return fasta_path.parent.parent.name
+        # sheet
+        resolved = fasta_path.resolve()
+        for sheet_path, sample in sheet_dir_to_sample.items():
+            try:
+                resolved.relative_to(sheet_path)
+            except ValueError:
+                continue
+            return sample
+        return None
+
     for fasta_path in contig_dir.rglob("*contig*.fasta"):
-        sample_name = fasta_path.parent.name
-        if sample_name not in sample_contigs:
-            sample_contigs[sample_name] = {}
-        sample_contigs[sample_name].update(parse_fasta(fasta_path))
+        sample_name = _sample_for(fasta_path)
+        if sample_name is None:
+            logger.warning(
+                "load_contigs: %s did not match any sample_sheet vdj_dir; skipping",
+                fasta_path,
+            )
+            continue
+        sample_contigs.setdefault(sample_name, {}).update(parse_fasta(fasta_path))
 
-    # Also check direct files
-    for fasta_path in contig_dir.glob("*.fasta"):
-        sample_name = fasta_path.stem.split("_")[0]
-        if sample_name not in sample_contigs:
-            sample_contigs[sample_name] = {}
-        sample_contigs[sample_name].update(parse_fasta(fasta_path))
+    # Flat-layout fallback: bare ``*.fasta`` files directly in contig_dir.
+    # Only meaningful for the 'parent' default — the grandparent/sheet
+    # modes assume the CellRanger-style nested layout where this wouldn't
+    # match anything.
+    if sample_name_from == "parent":
+        for fasta_path in contig_dir.glob("*.fasta"):
+            sample_name = fasta_path.stem.split("_")[0]
+            sample_contigs.setdefault(sample_name, {}).update(parse_fasta(fasta_path))
 
     logger.info(f"Loaded contigs from {len(sample_contigs)} samples")
     return sample_contigs
@@ -1182,6 +1266,9 @@ def assemble_full_sequences(
     stop_codons: tuple[str, ...] = ("TAA", "TGA"),
     verbose: bool = True,
     show_progress: bool = True,
+    sample_name_from: str = "parent",
+    cellranger_dir: str | Path | None = None,
+    sample_sheet: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Assemble full-length TCR sequences.
@@ -1411,11 +1498,27 @@ def assemble_full_sequences(
     # relative to assembly and avoids a silent "contigs given but
     # blend silently noop'd" failure mode.
     sample_contigs: dict = {}
+    # cellranger_dir is shorthand for contigs_dir + sample_name_from='grandparent'
+    # (#124). Resolved here so the rest of the function only sees contigs_dir.
+    if cellranger_dir is not None:
+        if contigs_dir is not None:
+            raise ValueError(
+                "assemble_full_sequences: pass exactly one of contigs_dir or "
+                "cellranger_dir, not both."
+            )
+        contigs_dir = cellranger_dir
+        sample_name_from = "grandparent"
     if contigs_dir:
         contigs_dir = validate_directory_exists(Path(contigs_dir), "contigs directory")
         if verbose:
-            logger.info(f"  Loading contigs from {contigs_dir}...")
-        sample_contigs = load_contigs(contigs_dir)
+            logger.info(
+                f"  Loading contigs from {contigs_dir} (sample_name_from={sample_name_from!r})..."
+            )
+        sample_contigs = load_contigs(
+            contigs_dir,
+            sample_name_from=sample_name_from,
+            sample_sheet=sample_sheet,
+        )
         if verbose:
             total_contigs = sum(len(c) for c in sample_contigs.values())
             logger.info(f"    Loaded {total_contigs:,} contigs from {len(sample_contigs)} samples")
