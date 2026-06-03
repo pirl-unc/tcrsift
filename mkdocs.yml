@@ -78,6 +78,7 @@ nav:
     - Annotation: api/annotate.md
     - Pgen / Publicness: api/pgen.md
     - Pgen + Ppost (OLGA/SONIA): api/olga_ppost.md
+    - In-silico filter: api/insilico_filter.md
     - Signatures: api/signatures.md
     - Candidate Selection: api/candidate.md
     - TIL Matching: api/til.md

@@ -226,6 +226,11 @@ class TCRsiftConfig:
     # raw dict rather than a typed section. Empty = no selection step.
     selection: dict[str, Any] = field(default_factory=dict)
 
+    # Free-form in-silico filter layer (#149): an ordered list of per-clone
+    # percentile predicates (on Ppost / GEX scores) that refine each assay
+    # group into a named composite twin. Raw dict by design. Empty = off.
+    insilico_filter: dict[str, Any] = field(default_factory=dict)
+
     # Global options
     verbose: bool = False
 
@@ -376,6 +381,11 @@ class TCRsiftConfig:
             elif key == "selection":
                 # Free-form nested selection-rule config (#122).
                 global_opts["selection"] = value if isinstance(value, dict) else {}
+            elif key == "insilico_filter":
+                # Free-form in-silico filter layer (#149).
+                global_opts["insilico_filter"] = (
+                    value if isinstance(value, dict) else {}
+                )
             # Ignore unknown keys
 
         return cls(
