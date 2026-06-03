@@ -69,6 +69,7 @@ nav:
     - Pipeline Overview: user-guide/pipeline.md
     - CLI Reference: user-guide/cli.md
     - Filtering Strategies: user-guide/filtering.md
+    - Signature Reproducibility Map: reproducibility_map.md
   - API Reference:
     - Sample Sheet: api/sample_sheet.md
     - Loading: api/loader.md
