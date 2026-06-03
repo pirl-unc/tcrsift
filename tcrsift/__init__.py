@@ -218,6 +218,8 @@ _MODULE_EXPORTS = {
     ".qc": (
         "QCReport",
         "QCResult",
+        "cdr3_anchor_integrity",
+        "clonal_expansion_metrics",
         "find_repeated_kmers",
         "validate_sequence",
         "validate_clonotypes",

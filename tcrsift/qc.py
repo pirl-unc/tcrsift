@@ -27,6 +27,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -555,3 +556,115 @@ def get_qc_summary(clonotypes: pd.DataFrame) -> dict:
         summary["max_cells_per_clonotype"] = clonotypes["n_cells"].max()
 
     return summary
+
+
+# =============================================================================
+# Clonal-expansion QC (#161)
+# =============================================================================
+#
+# A per-sample expansion fingerprint that flags an *unexpanded* repertoire at
+# a glance — the one-line check that turns a half-day forensic dig (is this
+# donor a bug, a swap, or genuinely near-polyclonal?) into a warning. All
+# metrics derive from per-(clone, sample) cell counts tcrsift already has.
+
+# Unexpanded heuristic: the top clone is tiny AND almost every clone is
+# distinct (near-uniform), i.e. no clone took over — a failed/aborted
+# expansion or a pre-expansion/baseline sort.
+UNEXPANDED_TOP1_MAX = 0.01            # top clone < 1% of cells
+UNEXPANDED_EFFECTIVE_RATIO_MIN = 0.8  # effective/observed clones > 0.8
+
+
+def clonal_expansion_metrics(
+    long_df: pd.DataFrame,
+    *,
+    group_col: str = "sample",
+    clone_col: str = "CDR3ab",
+    cells_col: str = "cells",
+    ge_n: int = 10,
+) -> pd.DataFrame:
+    """Per-group clonal-expansion QC metrics + an unexpanded-repertoire flag.
+
+    ``long_df`` is a per-(clone, group) table with a cell count (e.g. the
+    output of :func:`tcrsift.clonotype.build_clone_sample_long`). For each
+    group (sample or donor) returns one row with:
+
+    - ``n_cells``, ``observed_clones``
+    - ``top1_clone_fraction`` / ``top10_clone_fraction`` — cells in the
+      largest 1 / 10 clones, over total cells.
+    - ``effective_clones`` = ``exp(Shannon)`` (Hill number q=1).
+    - ``clonality`` = ``1 − Shannon / ln(observed_clones)`` (0 = polyclonal,
+      1 = monoclonal); ``gini_simpson`` = ``1 − Σ pᵢ²``.
+    - ``fraction_cells_in_clones_ge_N`` — cells in clones with ≥ ``ge_n`` cells.
+    - ``unexpanded`` (bool) + ``warning`` (str) when ``top1 < 1%`` **and**
+      ``effective_clones / observed_clones > 0.8`` — near-polyclonal; likely a
+      failed/aborted expansion or a pre-expansion/baseline sort.
+    """
+    if group_col not in long_df.columns:
+        raise ValueError(f"clonal_expansion_metrics: missing {group_col!r}")
+    rows = []
+    for group, sub in long_df.groupby(group_col, observed=True):
+        sizes = (
+            sub.groupby(clone_col, observed=True)[cells_col].sum()
+            .astype(float)
+        )
+        sizes = sizes[sizes > 0].sort_values(ascending=False)
+        total = float(sizes.sum())
+        n_clones = int(len(sizes))
+        if total <= 0 or n_clones == 0:
+            continue
+        p = sizes / total
+        shannon = float(-(p * np.log(p)).sum())
+        effective = float(np.exp(shannon))
+        norm_shannon = shannon / np.log(n_clones) if n_clones > 1 else 0.0
+        ge = float(sizes[sizes >= ge_n].sum())
+        top1 = float(sizes.iloc[0] / total)
+        unexpanded = (
+            top1 < UNEXPANDED_TOP1_MAX
+            and (effective / n_clones) > UNEXPANDED_EFFECTIVE_RATIO_MIN
+        )
+        rows.append({
+            group_col: group,
+            "n_cells": int(total),
+            "observed_clones": n_clones,
+            "top1_clone_fraction": top1,
+            "top10_clone_fraction": float(sizes.iloc[:10].sum() / total),
+            "effective_clones": effective,
+            "clonality": float(1.0 - norm_shannon),
+            "gini_simpson": float(1.0 - (p**2).sum()),
+            f"fraction_cells_in_clones_ge_{ge_n}": ge / total,
+            "unexpanded": bool(unexpanded),
+            "warning": (
+                "near-polyclonal repertoire (top clone "
+                f"{top1*100:.1f}% < 1%, {effective/n_clones*100:.0f}% of clones "
+                "are effectively distinct) — possible failed/aborted expansion "
+                "or a pre-expansion/baseline sort"
+                if unexpanded else ""
+            ),
+        })
+    return pd.DataFrame(rows)
+
+
+def cdr3_anchor_integrity(
+    df: pd.DataFrame,
+    *,
+    cdr3_cols: tuple[str, ...] = ("CDR3_beta", "CDR3_alpha"),
+    conserved: str = "FW",
+) -> dict[str, float]:
+    """Fraction of CDR3s ending in a conserved anchor residue (F/W).
+
+    A low value flags assembly/anchor problems (the OLGA-``Pgen=0`` cause and
+    a sign of mis-trimmed junctions). Returns ``{col: fraction}`` per present
+    CDR3 column; NaN when a column has no non-empty CDR3s.
+    """
+    out: dict[str, float] = {}
+    conserved_set = set(conserved.upper())
+    for col in cdr3_cols:
+        if col not in df.columns:
+            continue
+        seqs = df[col].dropna().astype(str)
+        seqs = seqs[seqs.str.len() > 0]
+        out[col] = (
+            float(seqs.str[-1].str.upper().isin(conserved_set).mean())
+            if len(seqs) else float("nan")
+        )
+    return out
