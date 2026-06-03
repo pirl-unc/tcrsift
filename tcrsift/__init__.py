@@ -160,6 +160,16 @@ _MODULE_EXPORTS = {
         "pgen_single",
         "publicness_score",
     ),
+    ".insilico_filter": (
+        "FilterPredicate",
+        "apply_insilico_filter",
+        "average_percentile_rank",
+        "expand_insilico_twins",
+        "insilico_mask",
+        "insilico_overlap_long",
+        "percentile_rank",
+        "predicates_from_config",
+    ),
     ".olga_ppost": (
         "annotate_nearest_supported_allele",
         "compute_pgen_ppost",
