@@ -38,6 +38,11 @@ dependencies = [
     # lookups); openpyxl backs Excel export. Both permissively licensed.
     "pyensembl>=2.0.0,<3.0.0",
     "openpyxl>=3.0.0,<4.0.0",
+    # TCRpeg is the default Pgen/Ppost backend (tcrsift.seqprob), auto-trained
+    # on first use — so it + torch are core, not an extra. (OLGA/SONIA stay
+    # optional: GPL-3.0, and only the legacy olga_ppost path needs them.)
+    "tcrpeg>=1.0.0",
+    "torch>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -62,12 +67,6 @@ reports = [
 pgen = [
     "olga>=1.2.4",
     "sonia>=0.0.51",
-]
-# TCRpeg sequence-probability backend (tcrsift.seqprob). PyTorch-based,
-# optional — the numpy-only k-mer backend is the default and needs nothing.
-tcrpeg = [
-    "tcrpeg>=1.0.0",
-    "torch>=2.0.0",
 ]
 full = [
     "reportlab>=4.0.0,<5.0.0",

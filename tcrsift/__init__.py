@@ -189,6 +189,11 @@ _MODULE_EXPORTS = {
         "score_log_prob",
         "score_log_q",
     ),
+    ".pgen_models": (
+        "ensure_model",
+        "fetch_repertoire",
+        "train_model",
+    ),
     ".annotate_tcrs": (
         "add_gex_signature_scores",
         "add_pgen_ppost",

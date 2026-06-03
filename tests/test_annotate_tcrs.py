@@ -133,18 +133,26 @@ def _models_built() -> bool:
 
 
 class TestAddPgenPpost:
-    def test_adds_pgen_ppost_q_columns(self):
+    def test_adds_pgen_ppost_columns_honestly(self):
         if not _models_built():
             pytest.skip("shipped k-mer models not built yet")
         df = pd.DataFrame({
             "CDR3_alpha": ["CAVRDSNYQLIW", "CAGHTGNQFYF"],
             "CDR3_beta": ["CASSLGTGELFF", "CASSPGQGAYEQYF"],
         })
-        out = add_pgen_ppost(df)
-        for col in ("pgen_alpha", "pgen_beta", "ppost_alpha", "ppost_beta",
-                    "log_q_alpha", "log_q_beta"):
+        out = add_pgen_ppost(df, backend="kmer")
+        # Pgen (both chains) + Ppost-β are shipped → finite for valid junctions.
+        for col in ("pgen_alpha", "pgen_beta", "ppost_beta", "log_q_beta"):
             assert col in out.columns
-            assert np.isfinite(out[col]).all()  # never 0/NaN for valid junctions
+            assert np.isfinite(out[col]).all()
+        # Ppost-α has no shipped neutral reference → honest NaN, NOT a Pgen
+        # masquerade (would privilege Pgen / fake selection-correction).
+        assert "ppost_alpha" in out.columns
+        assert out["ppost_alpha"].isna().all()
+        assert not np.allclose(out["ppost_alpha"].fillna(-999),
+                               out["pgen_alpha"], equal_nan=True)
+        # Q only within one estimator; α has no Ppost so log_q_alpha is NaN.
+        assert out["log_q_alpha"].isna().all()
 
     def test_skips_absent_chain(self):
         if not _models_built():

@@ -84,6 +84,7 @@ def add_pgen_ppost(
     with_pgen: bool = True,
     with_ppost: bool = True,
     with_q: bool = True,
+    auto_train: bool = True,
 ) -> pd.DataFrame:
     """Add ``pgen_<chain>`` / ``ppost_<chain>`` / ``log_q_<chain>`` columns.
 
@@ -93,26 +94,69 @@ def add_pgen_ppost(
     ``CDR3_<chain>``). Chains whose CDR3 column is absent are skipped.
     Returns a copy.
     """
+    import numpy as np
+
+    from .pgen_models import ensure_model
+
     out = df.copy()
     cdr3_cols = cdr3_cols or {}
+
+    def _resolve(chain: str, role: str):
+        """(model, estimator) honestly, or (None, None) if unavailable.
+
+        Pgen may fall back across *estimators* (tcrpeg→k-mer) — still genuine
+        Pgen. Ppost is role-pure: never substituted by Pgen, so an absent
+        Ppost stays unavailable (→ NaN) rather than masquerading as Pgen.
+        """
+        try:
+            return ensure_model(chain, backend=backend, role=role,
+                                auto_train=auto_train), backend
+        except ImportError as exc:  # pgen training needs OLGA
+            if role == "pgen":
+                logger.warning("%s; using shipped k-mer Pgen for %s", exc, chain)
+                from .seqprob import load_background_model
+                return load_background_model(chain, "kmer", "pgen"), "kmer"
+            return None, None
+        except FileNotFoundError as exc:
+            if role == "pgen" and backend != "kmer":
+                from .seqprob import load_background_model
+                try:
+                    return load_background_model(chain, "kmer", "pgen"), "kmer"
+                except FileNotFoundError:
+                    pass
+            logger.warning("add_pgen_ppost: %s %s unavailable for %s (%s) → NaN",
+                           backend, role, chain, exc)
+            return None, None
+
     for chain in chains:
         cdr3_col = cdr3_cols.get(chain, f"CDR3_{chain}")
         if cdr3_col not in out.columns:
             logger.info("add_pgen_ppost: no %r column; skipping %s",
                         cdr3_col, chain)
             continue
+        pgen_est = ppost_est = None
         if with_pgen:
-            out[f"pgen_{chain}"] = seqprob.score_log_prob(
-                out, chain=chain, cdr3_col=cdr3_col, backend=backend,
-                role="pgen", out_col=f"pgen_{chain}",
+            model, pgen_est = _resolve(chain, "pgen")
+            out[f"pgen_{chain}"] = (
+                seqprob.score_log_prob(out, chain=chain, cdr3_col=cdr3_col,
+                                       model=model, out_col=f"pgen_{chain}")
+                if model is not None else np.nan
             )
         if with_ppost:
-            out[f"ppost_{chain}"] = seqprob.score_log_prob(
-                out, chain=chain, cdr3_col=cdr3_col, backend=backend,
-                role="ppost", out_col=f"ppost_{chain}",
+            model, ppost_est = _resolve(chain, "ppost")
+            out[f"ppost_{chain}"] = (
+                seqprob.score_log_prob(out, chain=chain, cdr3_col=cdr3_col,
+                                       model=model, out_col=f"ppost_{chain}")
+                if model is not None else np.nan
             )
+        # Q = log Ppost − log Pgen is only meaningful within one estimator;
+        # don't emit a cross-estimator ratio. (Rank on Ppost, not Q — Q alone
+        # is the weaker signal; publicness lives in the observed frequency.)
         if with_q and with_pgen and with_ppost:
-            out[f"log_q_{chain}"] = out[f"ppost_{chain}"] - out[f"pgen_{chain}"]
+            if pgen_est is not None and pgen_est == ppost_est:
+                out[f"log_q_{chain}"] = out[f"ppost_{chain}"] - out[f"pgen_{chain}"]
+            else:
+                out[f"log_q_{chain}"] = np.nan
     return out
 
 

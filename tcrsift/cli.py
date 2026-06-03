@@ -741,6 +741,79 @@ def cmd_log_pgen(args):
     print(f"Wrote {args.output}")
 
 
+def cmd_pgen_fetch(args):
+    """Fetch + cache a neutral observed repertoire for Ppost training."""
+    from .pgen_models import REPERTOIRE_SOURCES, fetch_repertoire
+
+    chains = ["alpha", "beta"] if args.chain == "both" else [args.chain]
+    if args.source and args.source in REPERTOIRE_SOURCES and not args.url:
+        print(f"Source {args.source!r}: {REPERTOIRE_SOURCES[args.source]}")
+        print("Download a healthy/neutral (not antigen-sorted) repertoire CSV "
+              "from there and pass it via --url, or use the bundled β default.")
+    for chain in chains:
+        try:
+            path = fetch_repertoire(
+                chain, url=args.url, source=args.source,
+                seq_col=args.seq_col, v_col=args.v_col,
+                chain_prefix=("TRA" if chain == "alpha" else "TRB")
+                if args.v_col else None,
+            )
+            print(f"  [{chain}] cached → {path}")
+        except ValueError as exc:
+            print(f"  [{chain}] {exc}")
+
+
+def cmd_pgen_train(args):
+    """Train + cache Pgen/Ppost background models (kmer or tcrpeg)."""
+    from .pgen_models import train_model
+
+    chains = ["alpha", "beta"] if args.chain == "both" else [args.chain]
+    roles = ["pgen", "ppost"] if args.role == "both" else [args.role]
+    for chain in chains:
+        for role in roles:
+            try:
+                path = train_model(
+                    chain, backend=args.backend, role=role, url=args.url,
+                    n_olga=args.n_olga, epochs=args.epochs, device=args.device,
+                )
+                print(f"  trained {args.backend} {role} {chain} → {path}")
+            except (ImportError, ValueError) as exc:
+                print(f"  [{role} {chain}] skipped: {exc}")
+
+
+def cmd_pgen_annotate(args):
+    """Annotate a TCR CSV with pgen/ppost (α/β); auto-trains on first use."""
+    import pandas as pd
+
+    from .annotate_tcrs import add_pgen_ppost
+
+    df = pd.read_csv(args.input)
+    print(f"Loaded {len(df)} clones from {args.input}")
+    chains = ("alpha", "beta") if args.chain == "both" else (args.chain,)
+    df = add_pgen_ppost(df, chains=chains, backend=args.backend,
+                        auto_train=not args.no_auto_train)
+    df.to_csv(args.output, index=False)
+    print(f"Wrote {args.output} (backend={args.backend})")
+
+
+def cmd_pgen_status(args):
+    """Show cached Pgen/Ppost training data + trained models."""
+    from .pgen_models import cache_dir, cached_model_file, cached_repertoire_file
+
+    print(f"seqprob cache: {cache_dir()}")
+    print("Training repertoires:")
+    for chain in ("alpha", "beta"):
+        p = cached_repertoire_file(chain)
+        print(f"  {chain}: {'present' if p.is_file() else 'absent'}  ({p})")
+    print("Models:")
+    for backend in ("kmer", "tcrpeg"):
+        for role in ("pgen", "ppost"):
+            for chain in ("alpha", "beta"):
+                p = cached_model_file(backend, role, chain)
+                if p.is_file():
+                    print(f"  {backend} {role} {chain}: {p}")
+
+
 def cmd_data_list(args):
     """List managed reference databases and their cache state."""
     from .datacache import inspect_cache, resolve_cache_dir
@@ -2659,6 +2732,54 @@ CONDITIONALLY REQUIRED:
         help="CDR3 AA column (default: CDR3_<chain>)",
     )
     p_lpg.set_defaults(func=cmd_log_pgen)
+
+    # -------------------------------------------------------------------------
+    # pgen group: manage Pgen/Ppost background models (fetch / train / annotate)
+    # -------------------------------------------------------------------------
+    p_pgen = subparsers.add_parser(
+        "pgen",
+        help="Manage Pgen/Ppost background models (fetch data, train, "
+             "annotate); TCRpeg default, auto-trains on first use",
+    )
+    p_pgen_sub = p_pgen.add_subparsers(dest="pgen_command")
+
+    pf = p_pgen_sub.add_parser("fetch", help="Fetch a neutral observed "
+                               "repertoire for Ppost training")
+    pf.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
+    pf.add_argument("--url", default=None,
+                    help="CSV/TSV (optionally .gz) with a CDR3 column")
+    pf.add_argument("--source", default=None, choices=["ots", "ireceptor"],
+                    help="informational preset pointing at a data source")
+    pf.add_argument("--seq-col", default="seq", help="CDR3 column (default seq)")
+    pf.add_argument("--v-col", default=None,
+                    help="V-gene column to filter chain (TRA*/TRB*)")
+    pf.set_defaults(func=cmd_pgen_fetch)
+
+    pt = p_pgen_sub.add_parser("train", help="Train + cache background models")
+    pt.add_argument("--backend", choices=["kmer", "tcrpeg"], default="tcrpeg")
+    pt.add_argument("--role", choices=["pgen", "ppost", "both"], default="both")
+    pt.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
+    pt.add_argument("--url", default=None, help="observed repertoire for ppost")
+    pt.add_argument("--n-olga", type=int, default=200_000,
+                    help="synthetic seqs for pgen training (default 200k)")
+    pt.add_argument("--epochs", type=int, default=30, help="TCRpeg epochs")
+    pt.add_argument("--device", default=None, help="torch device (auto: mps/cuda/cpu)")
+    pt.set_defaults(func=cmd_pgen_train)
+
+    pa = p_pgen_sub.add_parser("annotate", help="Annotate a TCR CSV with "
+                               "pgen/ppost (α/β); auto-trains on first use")
+    pa.add_argument("input", help="Path to a clonotype CSV")
+    pa.add_argument("-o", "--output", required=True, metavar="PATH")
+    pa.add_argument("--backend", choices=["kmer", "tcrpeg"], default="tcrpeg")
+    pa.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
+    pa.add_argument("--no-auto-train", action="store_true",
+                    help="error instead of training a missing TCRpeg model")
+    pa.set_defaults(func=cmd_pgen_annotate)
+
+    ps = p_pgen_sub.add_parser("status", help="Show cached training data + models")
+    ps.set_defaults(func=cmd_pgen_status)
+
+    p_pgen.set_defaults(func=lambda _a: p_pgen.print_help())
 
     # -------------------------------------------------------------------------
     # Run command (unified pipeline)

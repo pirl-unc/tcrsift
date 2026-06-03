@@ -368,25 +368,16 @@ def load_background_model(
     ``role`` is ``"ppost"`` (default — fit on an *observed* repertoire, the
     post-selection publicness measure) or ``"pgen"`` (fit on an
     OLGA-generated reference, pre-selection generation probability). Only the
-    ``"kmer"`` backend ships defaults. Falls back to the ``pgen`` model with
-    a warning when a ``ppost`` model isn't shipped for that chain (e.g. no
-    observed α reference) so callers still get a finite, non-circular score.
-    Raises :class:`FileNotFoundError` if neither is present.
+    ``"kmer"`` backend ships defaults. **Role-pure**: raises
+    :class:`FileNotFoundError` when the requested role isn't shipped for that
+    chain (e.g. no observed-α ppost) — it never silently returns the Pgen
+    model in place of Ppost. Callers decide how to degrade.
     """
     chain = chain.lower()
     key = (chain, backend, role)
     if key in _MODEL_CACHE:
         return _MODEL_CACHE[key]
     path = _default_model_path(chain, backend, role)
-    if not path.is_file() and role == "ppost":
-        pgen_path = _default_model_path(chain, backend, "pgen")
-        if pgen_path.is_file():
-            logger.warning(
-                "no observed-repertoire ppost model shipped for %s %s; "
-                "falling back to the pgen (OLGA-generated) model — finite and "
-                "not circular, but not selection-corrected", backend, chain,
-            )
-            path = pgen_path
     if not path.is_file():
         raise FileNotFoundError(
             f"no shipped {backend} {role} model for chain {chain!r} at {path}"
