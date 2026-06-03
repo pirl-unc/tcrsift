@@ -84,7 +84,7 @@ def cached_repertoire_file(chain: str) -> Path:
 
 def _bundled_observed_beta() -> list[str]:
     """Healthy β CDR3s bundled with TCRpeg (external, non-circular)."""
-    import tcrpeg
+    import tcrpeg  # pylint: disable=import-error
 
     path = Path(tcrpeg.__file__).parent / "data" / "TCRs_train.csv"
     try:
@@ -178,9 +178,9 @@ def _olga_synth_seqs(chain: str, n: int) -> list[str]:
         )
     import os
 
-    import olga
-    import olga.load_model as load_model
-    import olga.sequence_generation as seq_gen
+    import olga  # pylint: disable=import-error
+    import olga.load_model as load_model  # pylint: disable=import-error
+    import olga.sequence_generation as seq_gen  # pylint: disable=import-error
 
     name = "human_T_alpha" if chain == "alpha" else "human_T_beta"
     d = os.path.join(os.path.dirname(olga.__file__), "default_models", name)
@@ -254,7 +254,7 @@ def _default_device() -> str:
     # and MPS rejects float64 (and MPS-device checkpoints don't reload), so
     # MPS is unsupported here — CPU is the portable, save/load-clean default.
     try:
-        import torch
+        import torch  # pylint: disable=import-error
 
         if torch.cuda.is_available():
             return "cuda:0"

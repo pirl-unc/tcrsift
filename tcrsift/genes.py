@@ -227,7 +227,7 @@ _ENSEMBL_DATA_CACHE: dict[int, object] = {}
 def _ensembl_data(release: int = 110):
     """Cached :class:`pyensembl.EnsemblRelease`. pyensembl is a core dep."""
     if release not in _ENSEMBL_DATA_CACHE:
-        import pyensembl
+        import pyensembl  # pylint: disable=import-error
 
         _ENSEMBL_DATA_CACHE[release] = pyensembl.EnsemblRelease(release)
     return _ENSEMBL_DATA_CACHE[release]
