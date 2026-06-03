@@ -191,6 +191,93 @@ SELECTION_SIGNATURES: dict[str, Signature] = {
 }
 
 
+@dataclass(frozen=True)
+class SignatureGuidance:
+    """Honest per-signature usage map (#145).
+
+    ``tier`` is one of ``"recommended"`` (reproducible across donors),
+    ``"situational"`` (useful but document, don't default), or
+    ``"wrong_biology"`` (reads as noise in the wrong sample source).
+    ``use_for`` is what the signature actually discriminates; ``note`` is the
+    honest reproducibility caveat from the B1-2/B1-3 pilot.
+    """
+
+    tier: str
+    use_for: str
+    note: str
+
+
+# What each signature is genuinely good for — so users don't reach for RNA
+# where the *sequence* (Pgen/Ppost, #143) is the right tool. Derived from the
+# B1-2/B1-3 MART-1 in-vitro-expansion pilot (#145).
+SIGNATURE_GUIDANCE: dict[str, SignatureGuidance] = {
+    "Differentiated": SignatureGuidance(
+        "recommended",
+        "clonal expansion — which clones expanded in culture",
+        "Best RNA axis for expansion: effector−naïve contrast separates "
+        "expanded vs rare clones at AUROC up to 0.85, reproducible across "
+        "donors (#141).",
+    ),
+    "AcuteActivation": SignatureGuidance(
+        "recommended",
+        "the one reproducible RNA correlate of publicness",
+        "Modest but stable: TNFRSF9/MKI67 are consistently *lower* in public "
+        "(TRAV12-2) clones across all normalizations and both donors. "
+        "Private/specific clones carry more recent cognate activation + "
+        "proliferation; the public pool is more bystander-like. NB: this "
+        "axis runs inverse to in-vitro clonal expansion (#142).",
+    ),
+    "AntigenExperienced": SignatureGuidance(
+        "situational",
+        "effector program of antigen-experienced cells",
+        "Effector core (IFNG + cytolytic); correlated with an AIM sort by "
+        "construction. Prefer Differentiated for the expansion question (#142).",
+    ),
+    "Cytolytic": SignatureGuidance(
+        "situational",
+        "cytotoxic effector program",
+        "Effector readout; overlaps the effector pole of Differentiated.",
+    ),
+    "AIM": SignatureGuidance(
+        "situational",
+        "transcriptional analogue of an AIMpos sort",
+        "Use to check sort/transcriptome concordance; correlated with an AIM "
+        "sort by construction, not an independent axis.",
+    ),
+    "TumorReactive": SignatureGuidance(
+        "wrong_biology",
+        "fresh tumor TILs only",
+        "Chronic in-situ exhaustion biology (CD39/CXCL13/TOX/CD103) — reads "
+        "as noise in short PBMC culture. Meaningful only in fresh tissue TILs.",
+    ),
+}
+
+# The headline limitation to state wherever signatures are offered for
+# *selection* (#145). RNA does not reproducibly recover the
+# precursor-frequency / cross-reactivity axis.
+RNA_REPRODUCIBILITY_NOTE = (
+    "RNA does not reproducibly recover the precursor-frequency / "
+    "cross-reactivity axis: most signatures flip direction between donors, "
+    "and a cross-donor-validated transcriptome classifier (TCR genes removed) "
+    "reaches only AUROC ~0.62–0.69 for publicness, on a diffuse "
+    "non-interpretable gene set. For high-specificity / low-cross-reactivity "
+    "selection, use Pgen/Ppost + sequence features (tcrsift.olga_ppost, #143), "
+    "not RNA. RNA is for differentiation / expansion state, not specificity. "
+    "Methodology: do NOT fit/trim signatures on the selection target — with "
+    "n=2 donors per-gene direction consistency is ~chance, so trimming to the "
+    "genes that separate a label here is overfitting; refine from curated "
+    "external references and validate cross-donor."
+)
+
+
+def recommended_signatures() -> list[str]:
+    """Names of the reproducible-across-donors signatures (#145)."""
+    return [
+        name for name, g in SIGNATURE_GUIDANCE.items()
+        if g.tier == "recommended"
+    ]
+
+
 def expression_frame_from_adata(
     adata, genes, *, layer: str | None = None, on_missing: str = "error",
 ) -> pd.DataFrame:

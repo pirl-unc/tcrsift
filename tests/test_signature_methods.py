@@ -451,3 +451,30 @@ class TestSignatureRecompose141142:
         contrast = sm.score_signature(expr, sm.SIGNATURES["Differentiated"])
         # expanded (c0,c1) clearly above bystanders (c2,c3)
         assert min(contrast["c0"], contrast["c1"]) > max(contrast["c2"], contrast["c3"])
+
+
+class TestSignatureGuidance145:
+    """#145 — honest per-signature usage map + RNA-limitation note."""
+
+    def test_guidance_tiers_are_valid(self):
+        valid = {"recommended", "situational", "wrong_biology"}
+        assert all(g.tier in valid for g in sm.SIGNATURE_GUIDANCE.values())
+
+    def test_recommended_are_the_reproducible_axes(self):
+        rec = set(sm.recommended_signatures())
+        # The two donor-reproducible axes from the pilot.
+        assert rec == {"Differentiated", "AcuteActivation"}
+
+    def test_tumor_reactive_flagged_wrong_biology(self):
+        assert sm.SIGNATURE_GUIDANCE["TumorReactive"].tier == "wrong_biology"
+        assert "TIL" in sm.SIGNATURE_GUIDANCE["TumorReactive"].use_for
+
+    def test_guidance_keys_are_real_signatures(self):
+        assert set(sm.SIGNATURE_GUIDANCE) <= set(sm.SIGNATURES)
+
+    def test_rna_note_points_at_sequence_axis(self):
+        note = sm.RNA_REPRODUCIBILITY_NOTE
+        assert "Pgen/Ppost" in note
+        assert "not RNA" in note
+        # methodology caveat: don't overfit on the selection target
+        assert "overfitting" in note
