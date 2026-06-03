@@ -181,6 +181,7 @@ _MODULE_EXPORTS = {
         "supported_alleles",
     ),
     ".seqprob": (
+        "GeneAwareKmerModel",
         "KmerProbabilityModel",
         "SequenceProbabilityModel",
         "TCRpegProbabilityModel",
@@ -196,6 +197,7 @@ _MODULE_EXPORTS = {
     ),
     ".annotate_tcrs": (
         "add_gex_signature_scores",
+        "add_paired_ppost",
         "add_pgen_ppost",
         "annotate_tcrs",
         "naive_signature",

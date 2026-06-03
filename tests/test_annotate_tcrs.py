@@ -178,3 +178,19 @@ class TestSeqprobRolesAndQ:
     def test_role_validation(self):
         with pytest.raises(ValueError, match="role"):
             seqprob._default_model_path("beta", "kmer", "bogus")
+
+
+class TestPairedPpost:
+    def test_sum_of_logs_and_either(self):
+        from tcrsift.annotate_tcrs import add_paired_ppost
+        df = pd.DataFrame({
+            "ppost_alpha": [-10.0, -3.0, np.nan],
+            "ppost_beta": [-12.0, -5.0, -4.0],
+        })
+        out = add_paired_ppost(df)
+        # paired = sum of logs (joint, independent recombination)
+        assert out.loc[0, "ppost_paired"] == -22.0
+        assert np.isnan(out.loc[2, "ppost_paired"])  # missing chain → NaN
+        # either = max (public if EITHER chain common) — don't hide public α
+        assert out.loc[0, "ppost_either"] == -10.0
+        assert out.loc[1, "ppost_either"] == -3.0

@@ -227,3 +227,36 @@ class TestTcellMarkers:
         """Test that all markers have ENSEMBL IDs."""
         for gene in TCELL_MARKERS:
             assert gene.ensembl_id.startswith("ENSG")
+
+
+class TestCanonicalizeGene:
+    """One shared IMGT canonicalizer for all V/J matching (the 'real gap')."""
+
+    def test_allele_stripped_by_default(self):
+        from tcrsift.genes import canonicalize_gene
+        assert canonicalize_gene("TRBV20-1*01") == "TRBV20-1"
+
+    def test_keep_allele_normalizes_to_two_digits(self):
+        from tcrsift.genes import canonicalize_gene
+        assert canonicalize_gene("TCRBV20-1*1", keep_allele=True) == "TRBV20-1*01"
+
+    def test_adaptive_prefix_and_leading_zeros(self):
+        from tcrsift.genes import canonicalize_gene
+        assert canonicalize_gene("TCRBV20-01*01") == "TRBV20-1"
+        assert canonicalize_gene("TRBV09") == "TRBV9"
+        assert canonicalize_gene("TRAJ08") == "TRAJ8"
+
+    def test_dv_slash_collapses(self):
+        from tcrsift.genes import canonicalize_gene
+        # the TRAV14/DV4 ↔ TRAV14DV4 mismatch the spec flagged
+        assert canonicalize_gene("TRAV14/DV4") == canonicalize_gene("TRAV14DV4")
+        assert canonicalize_gene("TRAV38-2/DV8") == "TRAV38-2DV8"
+
+    def test_case_and_whitespace(self):
+        from tcrsift.genes import canonicalize_gene
+        assert canonicalize_gene(" trbv20-1 ") == "TRBV20-1"
+
+    def test_empty_and_none(self):
+        from tcrsift.genes import canonicalize_gene
+        assert canonicalize_gene("") is None
+        assert canonicalize_gene(None) is None

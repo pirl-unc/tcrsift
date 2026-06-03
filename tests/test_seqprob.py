@@ -117,9 +117,11 @@ class TestShippedDefaults:
 
 
 class TestBackendRegistry:
-    def test_registry_has_both_backends(self):
-        assert set(seqprob.BACKENDS) == {"kmer", "tcrpeg"}
-        assert seqprob.BACKENDS["kmer"] is seqprob.KmerProbabilityModel
+    def test_registry_backends(self):
+        assert set(seqprob.BACKENDS) == {"kmer", "kmer_cdr3", "tcrpeg"}
+        # "kmer" is the gene-aware model (default); pure CDR3 is "kmer_cdr3".
+        assert seqprob.BACKENDS["kmer"] is seqprob.GeneAwareKmerModel
+        assert seqprob.BACKENDS["kmer_cdr3"] is seqprob.KmerProbabilityModel
 
     def test_unknown_chain_for_default(self):
         with pytest.raises(ValueError, match="alpha.*beta"):
@@ -144,3 +146,71 @@ class TestTCRpegBackend:
         lp = m.log_prob([seqs[0], "", "CASSX1F"])
         assert np.isfinite(lp[0])
         assert np.isnan(lp[1]) and np.isnan(lp[2])
+
+
+class TestGeneAwareKmerModel:
+    def _data(self, n=600, seed=1):
+        rng = np.random.default_rng(seed)
+        seqs = _toy_repertoire(n, seed)
+        # two V genes with different frequencies; format variants on purpose
+        v = ["TRBV20-1*01" if rng.random() < 0.7 else "TRBV28" for _ in seqs]
+        j = ["TRBJ2-1" for _ in seqs]
+        return seqs, v, j
+
+    def test_gene_aware_adds_vj_terms(self):
+        seqs, v, j = self._data()
+        m = seqprob.GeneAwareKmerModel(order=2, chain="beta").fit(
+            seqs, v_genes=v, j_genes=j)
+        assert m.gene_aware
+        cdr3_only = m.log_prob(seqs[:5])
+        gene_aware = m.log_prob(seqs[:5], v_genes=v[:5], j_genes=j[:5])
+        # adding logP(V)+logP(J) (both < 0) lowers the score
+        assert (gene_aware < cdr3_only).all()
+
+    def test_common_v_scores_higher_than_rare(self):
+        seqs, v, j = self._data()
+        m = seqprob.GeneAwareKmerModel(order=2).fit(seqs, v_genes=v, j_genes=j)
+        common = m.log_prob(["CASSLF"], v_genes=["TRBV20-1"], j_genes=["TRBJ2-1"])[0]
+        rare = m.log_prob(["CASSLF"], v_genes=["TRBV28"], j_genes=["TRBJ2-1"])[0]
+        assert common > rare  # TRBV20-1 is 70% of the reference
+
+    def test_unseen_gene_finite_tail_never_zero(self):
+        seqs, v, j = self._data()
+        m = seqprob.GeneAwareKmerModel(order=2).fit(seqs, v_genes=v, j_genes=j)
+        lp = m.log_prob(["CASSLF"], v_genes=["TRBV99-9"], j_genes=["TRBJ2-1"])[0]
+        assert np.isfinite(lp)  # Laplace tail → P(V)>0 for unseen gene
+
+    def test_canonicalization_matches_format_variants(self):
+        seqs, v, j = self._data()
+        m = seqprob.GeneAwareKmerModel(order=2).fit(seqs, v_genes=v, j_genes=j)
+        # TRBV20-1 vs Adaptive TCRBV20-01*01 → same score
+        a = m.log_prob(["CASSLF"], v_genes=["TRBV20-1"], j_genes=["TRBJ2-1"])[0]
+        b = m.log_prob(["CASSLF"], v_genes=["TCRBV20-01*01"], j_genes=["TRBJ02-01"])[0]
+        assert abs(a - b) < 1e-9
+
+    def test_degrades_to_cdr3_only_without_genes(self):
+        seqs, v, j = self._data()
+        m = seqprob.GeneAwareKmerModel(order=2).fit(seqs, v_genes=v, j_genes=j)
+        assert np.isfinite(m.log_prob(seqs[:3])).all()  # no V/J supplied → CDR3 only
+
+    def test_save_load_roundtrip(self, tmp_path):
+        seqs, v, j = self._data()
+        m = seqprob.GeneAwareKmerModel(order=2, chain="beta").fit(
+            seqs, v_genes=v, j_genes=j)
+        p = tmp_path / "ga.npz"
+        m.save(p)
+        m2 = seqprob.GeneAwareKmerModel.load(p)
+        assert m2.gene_aware
+        a = m.log_prob(seqs[:10], v_genes=v[:10], j_genes=j[:10])
+        b = m2.log_prob(seqs[:10], v_genes=v[:10], j_genes=j[:10])
+        assert np.allclose(a, b, equal_nan=True)
+
+    def test_kmer_backend_loads_cdr3_only_file(self, tmp_path):
+        # Back-compat: a plain CDR3 KmerProbabilityModel file loads via the
+        # gene-aware "kmer" backend and scores CDR3-only.
+        plain = seqprob.KmerProbabilityModel(order=2).fit(_toy_repertoire(300))
+        p = tmp_path / "plain.npz"
+        plain.save(p)
+        loaded = seqprob.GeneAwareKmerModel.load(p)
+        assert not loaded.gene_aware
+        assert np.isfinite(loaded.log_prob(_toy_repertoire(3))).all()

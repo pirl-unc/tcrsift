@@ -191,6 +191,131 @@ class KmerProbabilityModel(SequenceProbabilityModel):
         return model
 
 
+def _fit_gene_marginal(genes, alpha: float = 1.0):
+    """Laplace-smoothed log gene marginal → (dict, unseen-tail logprob).
+
+    Genes are canonicalized first (shared :func:`tcrsift.genes.canonicalize_gene`),
+    so format variants collapse. The tail reserves mass for unseen genes so
+    ``P(gene) > 0`` always — never a "gene not found" zero.
+    """
+    from collections import Counter
+
+    from .genes import canonicalize_gene
+
+    counts: Counter = Counter()
+    for g in genes:
+        cg = canonicalize_gene(g)
+        if cg:
+            counts[cg] += 1
+    total = sum(counts.values())
+    # +1 distinct slot for the unseen-gene tail.
+    denom = total + alpha * (len(counts) + 1)
+    if denom == 0:
+        return {}, 0.0
+    logp = {g: float(np.log((c + alpha) / denom)) for g, c in counts.items()}
+    tail = float(np.log(alpha / denom))
+    return logp, tail
+
+
+class GeneAwareKmerModel(SequenceProbabilityModel):
+    """Gene-aware Ppost: ``logP(V) + logP(J) + logP_kmer(CDR3)``.
+
+    All three terms come from one reference repertoire: V and J from
+    Laplace-smoothed gene marginals (so an unseen gene gets a finite tail
+    probability, never zero), and the CDR3 from an order-``k`` Markov model
+    (default **order 2** — most data-efficient below ~10⁵ reference seqs).
+    Gene names are canonicalized via :func:`tcrsift.genes.canonicalize_gene`
+    so format variants (alleles, Adaptive, ``TRAV14/DV4`` vs ``TRAV14DV4``)
+    all resolve.
+
+    ``log_prob`` scores gene-aware when V/J are supplied and degrades to the
+    CDR3-only k-mer score when they aren't. NB (the caveat we agreed): don't
+    benchmark a gene-aware score with TRAV12-2 AUROC — the label *is* the
+    V gene; validate against a V-gene-independent publicness label.
+    """
+
+    def __init__(self, *, order: int = 2, alpha: float = 1.0, chain: str = ""):
+        self.order = int(order)
+        self.alpha = float(alpha)
+        self.chain = chain
+        self.n_train = 0
+        self._cdr3 = KmerProbabilityModel(order=order, alpha=alpha, chain=chain)
+        self._v_logp: dict[str, float] = {}
+        self._j_logp: dict[str, float] = {}
+        self._v_tail = 0.0
+        self._j_tail = 0.0
+
+    def fit(self, sequences, v_genes=None, j_genes=None) -> GeneAwareKmerModel:
+        seqs = list(sequences)
+        self._cdr3.fit(seqs)
+        if v_genes is not None:
+            self._v_logp, self._v_tail = _fit_gene_marginal(v_genes, self.alpha)
+        if j_genes is not None:
+            self._j_logp, self._j_tail = _fit_gene_marginal(j_genes, self.alpha)
+        self.n_train = self._cdr3.n_train
+        return self
+
+    def _gene_term(self, genes, logp: dict[str, float], tail: float) -> np.ndarray:
+        from .genes import canonicalize_gene
+
+        return np.array(
+            [logp.get(canonicalize_gene(g), tail) if canonicalize_gene(g)
+             else np.nan for g in genes],
+            dtype=float,
+        )
+
+    def log_prob(self, sequences, v_genes=None, j_genes=None) -> np.ndarray:
+        lp = self._cdr3.log_prob(sequences)
+        if v_genes is not None and self._v_logp:
+            lp = lp + self._gene_term(v_genes, self._v_logp, self._v_tail)
+        if j_genes is not None and self._j_logp:
+            lp = lp + self._gene_term(j_genes, self._j_logp, self._j_tail)
+        return lp
+
+    @property
+    def gene_aware(self) -> bool:
+        return bool(self._v_logp or self._j_logp)
+
+    def save(self, path) -> None:
+        if self._cdr3._logp is None:
+            raise RuntimeError("GeneAwareKmerModel is not fitted")
+        np.savez_compressed(
+            path,
+            kind=np.array("gene_aware_kmer"),
+            logp=self._cdr3._logp,
+            order=np.int64(self.order),
+            alpha=np.float64(self.alpha),
+            n_train=np.int64(self.n_train),
+            chain=np.array(self.chain),
+            v_names=np.array(list(self._v_logp.keys())),
+            v_logp=np.array(list(self._v_logp.values()), dtype=float),
+            v_tail=np.float64(self._v_tail),
+            j_names=np.array(list(self._j_logp.keys())),
+            j_logp=np.array(list(self._j_logp.values()), dtype=float),
+            j_tail=np.float64(self._j_tail),
+        )
+
+    @classmethod
+    def load(cls, path) -> GeneAwareKmerModel:
+        with np.load(path, allow_pickle=False) as data:
+            model = cls(order=int(data["order"]), alpha=float(data["alpha"]),
+                        chain=str(data["chain"]))
+            model._cdr3._logp = data["logp"].astype(np.float32)
+            model._cdr3.n_train = int(data["n_train"])
+            model.n_train = int(data["n_train"])
+            # Tolerate older CDR3-only k-mer files (no gene marginals): they
+            # load and score CDR3-only until refit with V/J.
+            if "v_names" in data:
+                model._v_logp = dict(zip(data["v_names"].tolist(),
+                                         data["v_logp"].tolist()))
+                model._v_tail = float(data["v_tail"])
+            if "j_names" in data:
+                model._j_logp = dict(zip(data["j_names"].tolist(),
+                                         data["j_logp"].tolist()))
+                model._j_tail = float(data["j_tail"])
+        return model
+
+
 class TCRpegProbabilityModel(SequenceProbabilityModel):
     """TCRpeg-backed CDR3 probability (optional ``[tcrpeg]`` extra).
 
@@ -337,8 +462,12 @@ class TCRpegProbabilityModel(SequenceProbabilityModel):
         return obj
 
 
+# "kmer" is the gene-aware k-mer model by default (it loads CDR3-only files
+# too and degrades to CDR3-only scoring when no V/J are supplied). The pure
+# CDR3 KmerProbabilityModel remains available under "kmer_cdr3".
 BACKENDS: dict[str, type[SequenceProbabilityModel]] = {
-    "kmer": KmerProbabilityModel,
+    "kmer": GeneAwareKmerModel,
+    "kmer_cdr3": KmerProbabilityModel,
     "tcrpeg": TCRpegProbabilityModel,
 }
 
@@ -392,6 +521,8 @@ def score_log_prob(
     *,
     chain: str = "beta",
     cdr3_col: str | None = None,
+    v_gene_col: str | None = None,
+    j_gene_col: str | None = None,
     backend: str = "kmer",
     role: str = "ppost",
     model: SequenceProbabilityModel | None = None,
@@ -402,15 +533,27 @@ def score_log_prob(
     ``role="ppost"`` (default) scores against the observed-repertoire model
     (post-selection publicness); ``role="pgen"`` against the generated model.
     Uses ``model`` if given, else the shipped default for ``(chain, backend,
-    role)``. ``cdr3_col`` defaults to ``CDR3_<chain>``. Returns a Series
-    aligned to ``df`` (NaN for empty / non-AA CDR3s).
+    role)``. ``cdr3_col`` defaults to ``CDR3_<chain>``.
+
+    When the model is **gene-aware** (a :class:`GeneAwareKmerModel` with V/J
+    marginals) and the V/J columns are present (default ``<chain>_v_gene`` /
+    ``<chain>_j_gene``), the score includes ``logP(V) + logP(J)`` — gene names
+    are canonicalized inside the model. Returns a Series aligned to ``df``.
     """
     cdr3_col = cdr3_col or f"CDR3_{chain}"
     if cdr3_col not in df.columns:
         raise ValueError(f"score_log_prob: missing {cdr3_col!r} column")
     if model is None:
         model = load_background_model(chain, backend, role)
-    scores = model.log_prob(df[cdr3_col].tolist())
+    cdr3 = df[cdr3_col].tolist()
+    if getattr(model, "gene_aware", False):
+        v_col = v_gene_col or f"{chain}_v_gene"
+        j_col = j_gene_col or f"{chain}_j_gene"
+        v = df[v_col].tolist() if v_col in df.columns else None
+        j = df[j_col].tolist() if j_col in df.columns else None
+        scores = model.log_prob(cdr3, v_genes=v, j_genes=j)
+    else:
+        scores = model.log_prob(cdr3)
     return pd.Series(scores, index=df.index, name=out_col or f"log_{role}")
 
 

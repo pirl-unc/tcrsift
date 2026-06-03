@@ -22,6 +22,7 @@ genome builds. The utilities here handle both versioned and unversioned IDs.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -68,6 +69,39 @@ CD8_GENES = [CD8A, CD8B]
 # =============================================================================
 # Lookup utilities
 # =============================================================================
+
+
+def canonicalize_gene(name: str | None, *, keep_allele: bool = False) -> str | None:
+    """Canonicalize a TCR V/J gene name to a single IMGT-style token.
+
+    The shared canonicalizer for *all* V/J gene matching (Pgen/Ppost
+    marginals, allele mapping, repertoire joins) so the same string never
+    silently fails to match itself across formats. Handles:
+
+    - **Allele suffix** — dropped by default (gene-level), e.g.
+      ``TRBV20-1*01`` → ``TRBV20-1`` (``keep_allele=True`` keeps ``*01``).
+    - **Adaptive prefix** — ``TCRBV20-01`` → ``TRBV20-1`` (``TCR[ABDG]`` → ``TR[ABDG]``).
+    - **Leading zeros** — ``TRBV09-01`` → ``TRBV9-1``, ``TRAJ08`` → ``TRAJ8``.
+    - **DV/OR slash fusion** — ``TRAV14/DV4`` → ``TRAV14DV4`` (slash removed so
+      the two interchangeable spellings collapse to one token).
+
+    Returns ``None`` for empty / non-string input.
+    """
+    if not isinstance(name, str):
+        return None
+    g = name.strip().upper()
+    if not g:
+        return None
+    allele = ""
+    if "*" in g:
+        g, _, allele = g.partition("*")
+    g = re.sub(r"^TCR([ABDG])", r"TR\1", g)        # Adaptive TCRBV → TRBV
+    g = g.replace("/", "")                          # TRAV14/DV4 → TRAV14DV4
+    g = re.sub(r"(?<=[A-Z-])0+(\d)", r"\1", g)      # strip leading zeros
+    if keep_allele and allele:
+        # normalize allele to two digits (Adaptive '1' → '01')
+        return f"{g}*{int(allele):02d}" if allele.isdigit() else f"{g}*{allele}"
+    return g
 
 
 def strip_ensembl_version(ensembl_id: str) -> str:

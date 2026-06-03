@@ -237,6 +237,46 @@ def add_gex_signature_scores(
     return out
 
 
+def add_paired_ppost(
+    df: pd.DataFrame,
+    *,
+    alpha_col: str = "ppost_alpha",
+    beta_col: str = "ppost_beta",
+    paired_col: str = "ppost_paired",
+    either_col: str = "ppost_either",
+    pmi: callable | None = None,
+    pmi_weight: float = 0.0,
+) -> pd.DataFrame:
+    """Add integrated αβ publicness columns — two distinct, both exposed.
+
+    - ``paired_col`` = ``log Pα + log Pβ`` (+ optional ``pmi_weight·PMI(Vα,Vβ)``):
+      the **joint** generation log-prob, since α/β recombine independently
+      (sum-of-logs). NaN if either chain is missing.
+    - ``either_col`` = ``max(log Pα, log Pβ)``: the value to drive a
+      **depletion decision** — a clone is public if *either* chain is common,
+      so don't hide a public α behind a private β. Uses whichever chain is
+      present when one is missing.
+
+    ``pmi`` is an optional ``(v_alpha, v_beta) → float`` empirical pairing
+    term (log PMI); with ``pmi_weight=0`` (default) pairing is ignored and
+    rare/unseen pairs contribute nothing. Returns a copy.
+    """
+    out = df.copy()
+    a = out[alpha_col] if alpha_col in out.columns else np.nan
+    b = out[beta_col] if beta_col in out.columns else np.nan
+    out[paired_col] = a + b
+    if pmi is not None and pmi_weight:
+        va = out.get("alpha_v_gene")
+        vb = out.get("beta_v_gene")
+        if va is not None and vb is not None:
+            out[paired_col] = out[paired_col] + pmi_weight * pd.Series(
+                [pmi(x, y) for x, y in zip(va, vb)], index=out.index)
+    out[either_col] = pd.concat([a, b], axis=1).max(axis=1) \
+        if (alpha_col in out.columns and beta_col in out.columns) \
+        else (a if beta_col not in out.columns else b)
+    return out
+
+
 def prism_score(
     df: pd.DataFrame,
     *,
