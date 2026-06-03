@@ -69,6 +69,11 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out-dir", default=None,
                     help="default: tcrsift/refseqs next to the package")
+    ap.add_argument("--observed-beta", default=None,
+                    help="observed beta repertoire CSV (col 'seq') for ppost; "
+                         "default: TCRpeg's bundled TCRs_train.csv")
+    ap.add_argument("--observed-alpha", default=None,
+                    help="observed alpha repertoire CSV (col 'seq') for ppost")
     args = ap.parse_args()
 
     import tcrsift
@@ -79,15 +84,51 @@ def main():
     )
     np.random.seed(args.seed)
 
-    for chain in ("beta", "alpha"):
-        print(f"Generating {args.n} {chain} CDR3s via OLGA...")
-        seqs = generate_cdr3(chain, args.n)
-        print(f"Fitting order-{args.order} k-mer model on {len(seqs)} {chain} seqs...")
+    def _fit_save(seqs, chain, role):
+        print(f"Fitting order-{args.order} k-mer {role} on {len(seqs)} "
+              f"{chain} seqs...")
         model = KmerProbabilityModel(order=args.order, chain=chain).fit(seqs)
-        path = os.path.join(out_dir, f"kmer_background_{chain}.npz")
+        path = os.path.join(out_dir, f"kmer_{role}_{chain}.npz")
         model.save(path)
-        size_kb = os.path.getsize(path) / 1024
-        print(f"  wrote {path} ({size_kb:.0f} KB, n_train={model.n_train})")
+        print(f"  wrote {path} ({os.path.getsize(path)/1024:.0f} KB, "
+              f"n_train={model.n_train})")
+
+    # --- Pgen: OLGA-generated synthetic background, both chains ---
+    for chain in ("beta", "alpha"):
+        print(f"Generating {args.n} {chain} CDR3s via OLGA (pgen)...")
+        _fit_save(generate_cdr3(chain, args.n), chain, "pgen")
+
+    # --- Ppost: observed-repertoire background ---
+    import pandas as pd
+
+    def _read_seqs(path):
+        try:
+            return pd.read_csv(path, compression="gzip")["seq"].dropna().tolist()
+        except Exception:
+            return pd.read_csv(path)["seq"].dropna().tolist()
+
+    obs_beta = args.observed_beta
+    if obs_beta is None:
+        try:
+            import tcrpeg
+            obs_beta = os.path.join(os.path.dirname(tcrpeg.__file__),
+                                    "data", "TCRs_train.csv")
+        except Exception:
+            obs_beta = None
+    if obs_beta and os.path.isfile(obs_beta):
+        seqs = _read_seqs(obs_beta)
+        print(f"Observed beta repertoire: {len(seqs)} seqs from {obs_beta}")
+        _fit_save(seqs, "beta", "ppost")
+    else:
+        print("No observed beta repertoire; skipping beta ppost.")
+
+    if args.observed_alpha and os.path.isfile(args.observed_alpha):
+        seqs = _read_seqs(args.observed_alpha)
+        print(f"Observed alpha repertoire: {len(seqs)} seqs")
+        _fit_save(seqs, "alpha", "ppost")
+    else:
+        print("No observed alpha repertoire; alpha ppost will fall back "
+              "to alpha pgen at load time.")
 
 
 if __name__ == "__main__":

@@ -343,45 +343,87 @@ BACKENDS: dict[str, type[SequenceProbabilityModel]] = {
 }
 
 
-def _default_model_path(chain: str, backend: str):
+def _default_model_path(chain: str, backend: str, role: str = "ppost"):
     """Path to a shipped default model under :mod:`tcrsift.refseqs`."""
     from importlib.resources import files
 
     chain = chain.lower()
     if chain not in ("alpha", "beta"):
         raise ValueError(f"chain must be 'alpha' or 'beta', got {chain!r}")
-    fname = f"kmer_background_{chain}.npz" if backend == "kmer" else None
-    if fname is None:
+    if role not in ("pgen", "ppost"):
+        raise ValueError(f"role must be 'pgen' or 'ppost', got {role!r}")
+    if backend != "kmer":
         raise ValueError(f"no shipped default model for backend {backend!r}")
-    return files("tcrsift.refseqs").joinpath(fname)
+    return files("tcrsift.refseqs").joinpath(f"kmer_{role}_{chain}.npz")
 
 
-_MODEL_CACHE: dict[tuple[str, str], SequenceProbabilityModel] = {}
+_MODEL_CACHE: dict[tuple[str, str, str], SequenceProbabilityModel] = {}
 
 
 def load_background_model(
-    chain: str = "beta", backend: str = "kmer",
+    chain: str = "beta", backend: str = "kmer", role: str = "ppost",
 ) -> SequenceProbabilityModel:
-    """Load (and cache) the shipped default background model for a chain.
+    """Load (and cache) a shipped default background model.
 
-    Currently only the ``"kmer"`` backend ships a default (fit offline on an
-    OLGA-generated reference). Raises :class:`FileNotFoundError` if the
-    default file is missing.
+    ``role`` is ``"ppost"`` (default — fit on an *observed* repertoire, the
+    post-selection publicness measure) or ``"pgen"`` (fit on an
+    OLGA-generated reference, pre-selection generation probability). Only the
+    ``"kmer"`` backend ships defaults. Falls back to the ``pgen`` model with
+    a warning when a ``ppost`` model isn't shipped for that chain (e.g. no
+    observed α reference) so callers still get a finite, non-circular score.
+    Raises :class:`FileNotFoundError` if neither is present.
     """
-    key = (chain.lower(), backend)
+    chain = chain.lower()
+    key = (chain, backend, role)
     if key in _MODEL_CACHE:
         return _MODEL_CACHE[key]
-    path = _default_model_path(chain, backend)
+    path = _default_model_path(chain, backend, role)
+    if not path.is_file() and role == "ppost":
+        pgen_path = _default_model_path(chain, backend, "pgen")
+        if pgen_path.is_file():
+            logger.warning(
+                "no observed-repertoire ppost model shipped for %s %s; "
+                "falling back to the pgen (OLGA-generated) model — finite and "
+                "not circular, but not selection-corrected", backend, chain,
+            )
+            path = pgen_path
     if not path.is_file():
         raise FileNotFoundError(
-            f"no shipped {backend} background model for chain {chain!r} "
-            f"at {path}"
+            f"no shipped {backend} {role} model for chain {chain!r} at {path}"
         )
     model = BACKENDS[backend].load(str(path))
     _MODEL_CACHE[key] = model
     return model
 
 
+def score_log_prob(
+    df: pd.DataFrame,
+    *,
+    chain: str = "beta",
+    cdr3_col: str | None = None,
+    backend: str = "kmer",
+    role: str = "ppost",
+    model: SequenceProbabilityModel | None = None,
+    out_col: str | None = None,
+) -> pd.Series:
+    """Per-clone natural-log probability under a background model.
+
+    ``role="ppost"`` (default) scores against the observed-repertoire model
+    (post-selection publicness); ``role="pgen"`` against the generated model.
+    Uses ``model`` if given, else the shipped default for ``(chain, backend,
+    role)``. ``cdr3_col`` defaults to ``CDR3_<chain>``. Returns a Series
+    aligned to ``df`` (NaN for empty / non-AA CDR3s).
+    """
+    cdr3_col = cdr3_col or f"CDR3_{chain}"
+    if cdr3_col not in df.columns:
+        raise ValueError(f"score_log_prob: missing {cdr3_col!r} column")
+    if model is None:
+        model = load_background_model(chain, backend, role)
+    scores = model.log_prob(df[cdr3_col].tolist())
+    return pd.Series(scores, index=df.index, name=out_col or f"log_{role}")
+
+
+# Back-compat alias: log_pgen scoring is score_log_prob(role="pgen").
 def score_log_pgen(
     df: pd.DataFrame,
     *,
@@ -391,16 +433,33 @@ def score_log_pgen(
     model: SequenceProbabilityModel | None = None,
     out_col: str = "log_pgen",
 ) -> pd.Series:
-    """Per-clone natural-log generation probability under the background.
+    """Per-clone log Pgen (generated-repertoire background). See
+    :func:`score_log_prob`."""
+    return score_log_prob(
+        df, chain=chain, cdr3_col=cdr3_col, backend=backend, role="pgen",
+        model=model, out_col=out_col,
+    )
 
-    Uses ``model`` if given, else the shipped default for ``(chain,
-    backend)``. ``cdr3_col`` defaults to ``CDR3_<chain>``. Returns a Series
-    aligned to ``df`` (NaN for empty / non-AA CDR3s), named ``out_col``.
+
+def score_log_q(
+    df: pd.DataFrame,
+    *,
+    chain: str = "beta",
+    cdr3_col: str | None = None,
+    backend: str = "kmer",
+    out_col: str | None = None,
+) -> pd.Series:
+    """Per-clone log selection factor ``log Q = log Ppost − log Pgen``.
+
+    The data-driven selection factor (route 1): the log-ratio of the
+    observed-repertoire model to the generated model. Positive ⇒ enriched by
+    selection relative to pure generation. Unnormalized (a per-clone
+    constant offset), which is irrelevant for ranking.
     """
-    cdr3_col = cdr3_col or f"CDR3_{chain}"
-    if cdr3_col not in df.columns:
-        raise ValueError(f"score_log_pgen: missing {cdr3_col!r} column")
-    if model is None:
-        model = load_background_model(chain, backend)
-    scores = model.log_prob(df[cdr3_col].tolist())
-    return pd.Series(scores, index=df.index, name=out_col)
+    lp_post = score_log_prob(df, chain=chain, cdr3_col=cdr3_col,
+                             backend=backend, role="ppost")
+    lp_gen = score_log_prob(df, chain=chain, cdr3_col=cdr3_col,
+                            backend=backend, role="pgen")
+    q = lp_post - lp_gen
+    q.name = out_col or f"log_q_{chain}"
+    return q

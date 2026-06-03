@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tcrsift import seqprob as sp
+from tcrsift import seqprob
 
 
 def _toy_repertoire(n=2000, seed=0):
@@ -36,27 +36,27 @@ def _toy_repertoire(n=2000, seed=0):
 class TestKmerModel:
     def test_fit_and_relative_probability(self):
         seqs = _toy_repertoire()
-        m = sp.KmerProbabilityModel(order=3, chain="beta").fit(seqs)
+        m = seqprob.KmerProbabilityModel(order=3, chain="beta").fit(seqs)
         # an in-distribution sequence beats one full of rare residues
         common = m.log_prob([seqs[0]])[0]
         rare = m.log_prob(["CWWHWHWMPCWF"])[0]
         assert common > rare
 
     def test_unscorable_inputs_are_nan(self):
-        m = sp.KmerProbabilityModel(order=2).fit(_toy_repertoire(500))
+        m = seqprob.KmerProbabilityModel(order=2).fit(_toy_repertoire(500))
         lp = m.log_prob(["", "CASSX1F", None, 42])
         assert np.isnan(lp).all()
 
     def test_table_shape_matches_order(self):
-        m = sp.KmerProbabilityModel(order=3).fit(_toy_repertoire(500))
-        assert m._logp.shape == (sp.N_SYM**3, sp.N_SYM)
+        m = seqprob.KmerProbabilityModel(order=3).fit(_toy_repertoire(500))
+        assert m._logp.shape == (seqprob.N_SYM**3, seqprob.N_SYM)
 
     def test_save_load_roundtrip(self, tmp_path):
         seqs = _toy_repertoire()
-        m = sp.KmerProbabilityModel(order=3, chain="alpha").fit(seqs)
+        m = seqprob.KmerProbabilityModel(order=3, chain="alpha").fit(seqs)
         p = tmp_path / "m.npz"
         m.save(p)
-        m2 = sp.KmerProbabilityModel.load(p)
+        m2 = seqprob.KmerProbabilityModel.load(p)
         assert m2.order == 3 and m2.chain == "alpha" and m2.n_train == len(seqs)
         a = m.log_prob(seqs[:20])
         b = m2.log_prob(seqs[:20])
@@ -64,19 +64,19 @@ class TestKmerModel:
 
     def test_order_validation(self):
         with pytest.raises(ValueError, match="order"):
-            sp.KmerProbabilityModel(order=0)
+            seqprob.KmerProbabilityModel(order=0)
 
     def test_unfitted_raises(self):
         with pytest.raises(RuntimeError, match="not fitted"):
-            sp.KmerProbabilityModel().log_prob(["CASSF"])
+            seqprob.KmerProbabilityModel().log_prob(["CASSF"])
 
     def test_fit_all_unscorable_raises(self):
         with pytest.raises(ValueError, match="no scorable"):
-            sp.KmerProbabilityModel().fit(["", "X1Z", None])
+            seqprob.KmerProbabilityModel().fit(["", "X1Z", None])
 
     def test_probabilities_normalize_per_context(self):
         # Each context row is a proper distribution over the 22 symbols.
-        m = sp.KmerProbabilityModel(order=2).fit(_toy_repertoire(800))
+        m = seqprob.KmerProbabilityModel(order=2).fit(_toy_repertoire(800))
         row_sums = np.exp(m._logp).sum(axis=1)
         assert np.allclose(row_sums, 1.0, atol=1e-5)
 
@@ -87,7 +87,7 @@ class TestShippedDefaults:
     @pytest.mark.parametrize("chain", ["beta", "alpha"])
     def test_load_and_score(self, chain):
         try:
-            model = sp.load_background_model(chain, "kmer")
+            model = seqprob.load_background_model(chain, "kmer")
         except FileNotFoundError:
             pytest.skip(f"shipped {chain} background not built yet")
         # A canonical CDR3 scores finite and beats AA gibberish.
@@ -99,47 +99,47 @@ class TestShippedDefaults:
 
     def test_score_log_pgen_dataframe(self):
         try:
-            sp.load_background_model("beta", "kmer")
+            seqprob.load_background_model("beta", "kmer")
         except FileNotFoundError:
             pytest.skip("shipped beta background not built yet")
         df = pd.DataFrame({
             "CDR3_beta": ["CASSLGTGELFF", "", "CASSPGQGAYEQYF"],
         })
-        s = sp.score_log_pgen(df, chain="beta")
+        s = seqprob.score_log_pgen(df, chain="beta")
         assert s.name == "log_pgen"
         assert np.isfinite(s.iloc[0]) and np.isnan(s.iloc[1])
 
     def test_missing_column_raises(self):
         with pytest.raises(ValueError, match="missing"):
-            sp.score_log_pgen(pd.DataFrame({"x": [1]}), chain="beta",
-                              model=sp.KmerProbabilityModel(order=2).fit(
+            seqprob.score_log_pgen(pd.DataFrame({"x": [1]}), chain="beta",
+                              model=seqprob.KmerProbabilityModel(order=2).fit(
                                   _toy_repertoire(200)))
 
 
 class TestBackendRegistry:
     def test_registry_has_both_backends(self):
-        assert set(sp.BACKENDS) == {"kmer", "tcrpeg"}
-        assert sp.BACKENDS["kmer"] is sp.KmerProbabilityModel
+        assert set(seqprob.BACKENDS) == {"kmer", "tcrpeg"}
+        assert seqprob.BACKENDS["kmer"] is seqprob.KmerProbabilityModel
 
     def test_unknown_chain_for_default(self):
         with pytest.raises(ValueError, match="alpha.*beta"):
-            sp.load_background_model("gamma", "kmer")
+            seqprob.load_background_model("gamma", "kmer")
 
 
-_HAS_TCRPEG = sp.TCRpegProbabilityModel.available()
+_HAS_TCRPEG = seqprob.TCRpegProbabilityModel.available()
 
 
 @pytest.mark.skipif(_HAS_TCRPEG, reason="only when tcrpeg is NOT installed")
 def test_tcrpeg_missing_deps_raises():
     with pytest.raises(ImportError, match=r"pip install tcrsift\[tcrpeg\]"):
-        sp.TCRpegProbabilityModel().fit(["CASSF"])
+        seqprob.TCRpegProbabilityModel().fit(["CASSF"])
 
 
 @pytest.mark.skipif(not _HAS_TCRPEG, reason="needs the [tcrpeg] extra")
 class TestTCRpegBackend:
     def test_fit_and_score_smoke(self):
         seqs = _toy_repertoire(400)
-        m = sp.TCRpegProbabilityModel(epochs=1, batch_size=64, chain="beta")
+        m = seqprob.TCRpegProbabilityModel(epochs=1, batch_size=64, chain="beta")
         m.fit(seqs)
         lp = m.log_prob([seqs[0], "", "CASSX1F"])
         assert np.isfinite(lp[0])

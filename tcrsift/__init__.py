@@ -186,6 +186,17 @@ _MODULE_EXPORTS = {
         "TCRpegProbabilityModel",
         "load_background_model",
         "score_log_pgen",
+        "score_log_prob",
+        "score_log_q",
+    ),
+    ".annotate_tcrs": (
+        "add_gex_signature_scores",
+        "add_pgen_ppost",
+        "annotate_tcrs",
+        "naive_signature",
+        "prism_score",
+        "score_gex_signature_per_clone",
+        "select_prism",
     ),
     ".signatures": (
         "ACTIVATION_GENES_HGNC",
