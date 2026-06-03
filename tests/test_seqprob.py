@@ -118,10 +118,10 @@ class TestShippedDefaults:
 
 class TestBackendRegistry:
     def test_registry_backends(self):
-        assert set(seqprob.BACKENDS) == {"kmer", "kmer_cdr3", "tcrpeg"}
-        # "kmer" is the gene-aware model (default); pure CDR3 is "kmer_cdr3".
-        assert seqprob.BACKENDS["kmer"] is seqprob.GeneAwareKmerModel
-        assert seqprob.BACKENDS["kmer_cdr3"] is seqprob.KmerProbabilityModel
+        assert set(seqprob.BACKENDS) == {"kmer", "kmer_gene", "tcrpeg"}
+        # "kmer" is gene-agnostic (default); gene-aware is opt-in "kmer_gene".
+        assert seqprob.BACKENDS["kmer"] is seqprob.KmerProbabilityModel
+        assert seqprob.BACKENDS["kmer_gene"] is seqprob.GeneAwareKmerModel
 
     def test_unknown_chain_for_default(self):
         with pytest.raises(ValueError, match="alpha.*beta"):

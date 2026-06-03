@@ -102,7 +102,7 @@ class KmerProbabilityModel(SequenceProbabilityModel):
     compact enough to ship: order 3 → ~1 MB float32 per chain.
     """
 
-    def __init__(self, *, order: int = 3, alpha: float = 1.0, chain: str = ""):
+    def __init__(self, *, order: int = 2, alpha: float = 1.0, chain: str = ""):
         if order < 1:
             raise ValueError(f"order must be >= 1, got {order}")
         self.order = int(order)
@@ -462,12 +462,15 @@ class TCRpegProbabilityModel(SequenceProbabilityModel):
         return obj
 
 
-# "kmer" is the gene-aware k-mer model by default (it loads CDR3-only files
-# too and degrades to CDR3-only scoring when no V/J are supplied). The pure
-# CDR3 KmerProbabilityModel remains available under "kmer_cdr3".
+# Default is the **gene-agnostic** order-2 CDR3 k-mer ("kmer"). Leave-one-
+# donor-out CV on a V-gene-independent label (cross-donor recurrence) shows
+# adding V/J marginals doesn't help (α 0.795 vs 0.798, β 0.828 vs 0.838) and
+# V-only is ≤ chance — so gene-aware ("kmer_gene") is available but OFF by
+# default, and the V gene is better used as a separate specificity feature.
+# Both views read the same shipped npz (it carries CDR3 table + V/J marginals).
 BACKENDS: dict[str, type[SequenceProbabilityModel]] = {
-    "kmer": GeneAwareKmerModel,
-    "kmer_cdr3": KmerProbabilityModel,
+    "kmer": KmerProbabilityModel,
+    "kmer_gene": GeneAwareKmerModel,
     "tcrpeg": TCRpegProbabilityModel,
 }
 

@@ -14,22 +14,23 @@
 
 The lifecycle layer over :mod:`tcrsift.seqprob`. Trained models and their
 training repertoires are cached under ``~/.cache/tcrsift/seqprob`` (the
-shared :func:`tcrsift.datacache.resolve_cache_dir`). The TCRpeg backend is
-the default; on first use without a cached model, :func:`ensure_model`
-**auto-fetches the training data and trains the model**, then caches it.
+shared :func:`tcrsift.datacache.resolve_cache_dir`). The default backend is
+the **gene-agnostic order-2 k-mer** (cross-donor CV shows it matches
+gene-aware / TCRpeg, and it's correct at every reference size we can get);
+TCRpeg is opt-in (worth it only at OTS scale). :func:`ensure_model`
+auto-trains and caches on first use when a model isn't shipped/cached.
 
 Training data, by role (kept strictly non-circular — never the experiment's
 own clones):
 
 - **pgen** — OLGA-generated synthetic sequences (pre-selection generation
   probability). Needs ``olga`` (optional, GPL) at train time; if absent,
-  falls back to the shipped numpy k-mer Pgen model.
-- **ppost** — an **external observed** repertoire (post-selection
-  publicness). For β, the bundled healthy repertoire (TCRpeg's
-  ``TCRs_train.csv``, Emerson-derived) is used with no download. For α — and
-  for a larger paired-αβ background — fetch a *neutral* (healthy, not
-  antigen-sorted) repertoire, e.g. **OTS** (Observed TCR Space, OPIG;
-  paired-αβ, CC-BY-4.0) via :func:`fetch_repertoire`.
+  the shipped numpy k-mer Pgen model is used.
+- **ppost** — an **external observed neutral** repertoire (post-selection
+  publicness). The shipped α/β defaults are fit on the **5 pooled public
+  10x healthy-PBMC VDJ-T sets** (:func:`fetch_healthy_pbmc`, ≈16k α / 18k β
+  unique CDR3). Scale up with **OTS** (Observed TCR Space, OPIG; paired-αβ,
+  CC-BY-4.0) via ``fetch_repertoire(url=...)`` — that's what unlocks TCRpeg.
 """
 
 from __future__ import annotations
@@ -44,15 +45,96 @@ from . import seqprob
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BACKEND = "tcrpeg"
+# Default is the gene-agnostic order-2 k-mer — correct at every reference
+# size we can get, and cross-donor CV shows it matches gene-aware/TCRpeg.
+# TCRpeg is opt-in (auto-select to it only makes sense at OTS scale).
+DEFAULT_BACKEND = "kmer"
 
 # Recommended neutral (observed, non-antigen-sorted) repertoire sources for
 # the Ppost background. OTS is paired-αβ; download a per-study/filtered CSV
 # from the search page and pass its path/URL to `fetch_repertoire`.
 REPERTOIRE_SOURCES = {
+    "healthy-pbmc": "5 pooled public 10x healthy-PBMC VDJ-T sets (auto-download)",
     "ots": "https://opig.stats.ox.ac.uk/webapps/ots",          # paired αβ, CC-BY-4.0
     "ireceptor": "https://gateway.ireceptor.org",              # healthy PBMC AIRR-seq
 }
+
+# The 5 public 10x healthy-PBMC paired VDJ-T sets (CC-licensed, direct
+# download) pooled into the neutral α+β Ppost reference — single-cell paired
+# VDJ, so both chains come from one non-antigen-enriched source (#160 §2).
+HEALTHY_PBMC_10X = [
+    ("sc5p_v2_hs_PBMC_10k",
+     "https://cf.10xgenomics.com/samples/cell-vdj/5.0.0/"
+     "sc5p_v2_hs_PBMC_10k_multi_5gex_5fb_b_t/"
+     "sc5p_v2_hs_PBMC_10k_multi_5gex_5fb_b_t_vdj_t_filtered_contig_annotations.csv"),
+    ("sc5p_v2_hs_PBMC_1k",
+     "https://cf.10xgenomics.com/samples/cell-vdj/5.0.0/"
+     "sc5p_v2_hs_PBMC_1k_multi_5gex_5fb_b_t/"
+     "sc5p_v2_hs_PBMC_1k_multi_5gex_5fb_b_t_vdj_t_filtered_contig_annotations.csv"),
+    ("vdj_v1_hs_pbmc3",
+     "https://cf.10xgenomics.com/samples/cell-vdj/3.1.0/"
+     "vdj_v1_hs_pbmc3/vdj_v1_hs_pbmc3_t_filtered_contig_annotations.csv"),
+    ("vdj_nextgem_hs_pbmc3",
+     "https://cf.10xgenomics.com/samples/cell-vdj/3.1.0/"
+     "vdj_nextgem_hs_pbmc3/vdj_nextgem_hs_pbmc3_t_filtered_contig_annotations.csv"),
+    ("vdj_v1_hs_pbmc_t",
+     "https://cf.10xgenomics.com/samples/cell-vdj/2.2.0/"
+     "vdj_v1_hs_pbmc_t/vdj_v1_hs_pbmc_t_filtered_contig_annotations.csv"),
+]
+
+_STD_AA = set("ACDEFGHIKLMNPQRSTVWY")
+
+# 10x's CDN 403s urllib's default User-Agent; send a browser-like one.
+_HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (tcrsift)"}
+
+
+def _download(url: str, dest: Path) -> None:
+    """Download ``url`` → ``dest`` with a browser User-Agent (CDN-friendly)."""
+    import shutil
+    import urllib.request
+
+    req = urllib.request.Request(url, headers=_HTTP_HEADERS)  # noqa: S310
+    with urllib.request.urlopen(req) as resp, open(dest, "wb") as fh:  # noqa: S310
+        shutil.copyfileobj(resp, fh)
+
+
+def fetch_healthy_pbmc(*, force: bool = False) -> dict[str, Path]:
+    """Download + filter + pool the 5 public 10x healthy-PBMC VDJ-T sets.
+
+    The reproducible neutral reference for Ppost (#160 §2): per dataset, keep
+    ``productive & high_confidence``, split by ``chain`` (TRA→α, TRB→β), take
+    the ``cdr3`` amino-acid sequence (length 5–30, standard-20 AA only),
+    capture ``v_gene``/``j_gene``, then pool across the 5 and dedup by CDR3.
+    Caches per-chain ``seq,v,j`` CSVs (≈16k α / 18k β unique CDR3). Returns
+    ``{chain: path}``. Never the experiment's own clones — healthy donors only.
+    """
+    self_dir = _data_dir()
+    self_dir.mkdir(parents=True, exist_ok=True)
+    buckets = {"alpha": [], "beta": []}
+    for name, url in HEALTHY_PBMC_10X:
+        raw = self_dir / f"_10x_{name}.csv"
+        if force or not raw.is_file():
+            logger.info("fetch_healthy_pbmc: downloading %s", name)
+            _download(url, raw)
+        frame = pd.read_csv(raw)
+        prod = frame["productive"].astype(str).str.lower() == "true"
+        hi = frame["high_confidence"].astype(str).str.lower() == "true"
+        frame = frame[prod & hi].dropna(subset=["cdr3"])
+        frame = frame[frame["cdr3"].str.len().between(5, 30)]
+        frame = frame[frame["cdr3"].apply(lambda s: set(s) <= _STD_AA)]
+        for chain, locus in (("alpha", "TRA"), ("beta", "TRB")):
+            sub = frame[frame["chain"] == locus][["cdr3", "v_gene", "j_gene"]]
+            buckets[chain].append(
+                sub.rename(columns={"cdr3": "seq", "v_gene": "v", "j_gene": "j"}))
+    out: dict[str, Path] = {}
+    for chain, parts in buckets.items():
+        pooled = pd.concat(parts).drop_duplicates(subset=["seq"])
+        dest = cached_repertoire_file(chain)
+        pooled.to_csv(dest, index=False)
+        out[chain] = dest
+        logger.info("fetch_healthy_pbmc: %d unique %s CDR3 → %s",
+                    len(pooled), chain, dest)
+    return out
 
 
 def cache_dir() -> Path:
@@ -127,11 +209,10 @@ def fetch_repertoire(
             f"url= a neutral repertoire (e.g. OTS: {REPERTOIRE_SOURCES['ots']})"
         )
 
-    import urllib.request
-
     logger.info("fetch_repertoire: downloading %s (%s)", url, source or "url")
     raw = _data_dir() / f"_download_{chain}{_suffix(url)}"
-    urllib.request.urlretrieve(url, raw)  # noqa: S310 (user-supplied URL)
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    _download(url, raw)
     opener = gzip.open if str(raw).endswith(".gz") else open
     sep = "\t" if ".tsv" in url else ","
     with opener(raw, "rt") as fh:

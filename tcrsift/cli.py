@@ -743,13 +743,24 @@ def cmd_log_pgen(args):
 
 def cmd_pgen_fetch(args):
     """Fetch + cache a neutral observed repertoire for Ppost training."""
-    from .pgen_models import REPERTOIRE_SOURCES, fetch_repertoire
+    from .pgen_models import (
+        REPERTOIRE_SOURCES,
+        fetch_healthy_pbmc,
+        fetch_repertoire,
+    )
+
+    # The pooled 5×10x healthy-PBMC reference downloads both chains at once.
+    if args.source == "healthy-pbmc" and not args.url:
+        print("Fetching the 5 pooled 10x healthy-PBMC VDJ-T sets...")
+        for chain, path in fetch_healthy_pbmc().items():
+            print(f"  [{chain}] pooled healthy-PBMC reference → {path}")
+        return
 
     chains = ["alpha", "beta"] if args.chain == "both" else [args.chain]
     if args.source and args.source in REPERTOIRE_SOURCES and not args.url:
         print(f"Source {args.source!r}: {REPERTOIRE_SOURCES[args.source]}")
         print("Download a healthy/neutral (not antigen-sorted) repertoire CSV "
-              "from there and pass it via --url, or use the bundled β default.")
+              "from there and pass it via --url, or use --source healthy-pbmc.")
     for chain in chains:
         try:
             path = fetch_repertoire(
@@ -2748,15 +2759,17 @@ CONDITIONALLY REQUIRED:
     pf.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
     pf.add_argument("--url", default=None,
                     help="CSV/TSV (optionally .gz) with a CDR3 column")
-    pf.add_argument("--source", default=None, choices=["ots", "ireceptor"],
-                    help="informational preset pointing at a data source")
+    pf.add_argument("--source", default=None,
+                    choices=["healthy-pbmc", "ots", "ireceptor"],
+                    help="'healthy-pbmc' auto-downloads the 5 pooled 10x sets; "
+                         "'ots'/'ireceptor' are informational pointers")
     pf.add_argument("--seq-col", default="seq", help="CDR3 column (default seq)")
     pf.add_argument("--v-col", default=None,
                     help="V-gene column to filter chain (TRA*/TRB*)")
     pf.set_defaults(func=cmd_pgen_fetch)
 
     pt = p_pgen_sub.add_parser("train", help="Train + cache background models")
-    pt.add_argument("--backend", choices=["kmer", "tcrpeg"], default="tcrpeg")
+    pt.add_argument("--backend", choices=["kmer", "kmer_gene", "tcrpeg"], default="kmer")
     pt.add_argument("--role", choices=["pgen", "ppost", "both"], default="both")
     pt.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
     pt.add_argument("--url", default=None, help="observed repertoire for ppost")
@@ -2770,7 +2783,7 @@ CONDITIONALLY REQUIRED:
                                "pgen/ppost (α/β); auto-trains on first use")
     pa.add_argument("input", help="Path to a clonotype CSV")
     pa.add_argument("-o", "--output", required=True, metavar="PATH")
-    pa.add_argument("--backend", choices=["kmer", "tcrpeg"], default="tcrpeg")
+    pa.add_argument("--backend", choices=["kmer", "kmer_gene", "tcrpeg"], default="kmer")
     pa.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
     pa.add_argument("--no-auto-train", action="store_true",
                     help="error instead of training a missing TCRpeg model")
