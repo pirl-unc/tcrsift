@@ -258,7 +258,7 @@ class TCRpegProbabilityModel(SequenceProbabilityModel):
             return self.embedding_path
         import os as _os
 
-        import tcrpeg
+        import tcrpeg  # pylint: disable=import-error
 
         return _os.path.join(
             _os.path.dirname(tcrpeg.__file__),
@@ -266,7 +266,7 @@ class TCRpegProbabilityModel(SequenceProbabilityModel):
         )
 
     def _new_model(self, sequences: list[str] | None = None):
-        from tcrpeg.TCRpeg import TCRpeg
+        from tcrpeg.TCRpeg import TCRpeg  # pylint: disable=import-error
 
         model = TCRpeg(
             max_length=self.max_length,
@@ -322,7 +322,7 @@ class TCRpegProbabilityModel(SequenceProbabilityModel):
     def load(cls, path, **kwargs) -> TCRpegProbabilityModel:
         obj = cls(**kwargs)
         obj._require()
-        from tcrpeg.TCRpeg import TCRpeg
+        from tcrpeg.TCRpeg import TCRpeg  # pylint: disable=import-error
 
         model = TCRpeg(
             max_length=obj.max_length,
