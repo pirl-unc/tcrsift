@@ -64,6 +64,12 @@ pgen = [
     "olga>=1.2.4",
     "sonia>=0.0.51",
 ]
+# TCRpeg sequence-probability backend (tcrsift.seqprob). PyTorch-based,
+# optional — the numpy-only k-mer backend is the default and needs nothing.
+tcrpeg = [
+    "tcrpeg>=1.0.0",
+    "torch>=2.0.0",
+]
 full = [
     "pyensembl>=2.0.0,<3.0.0",
     "openpyxl>=3.0.0,<4.0.0",
@@ -78,7 +84,7 @@ version = {attr = "tcrsift.version.__version__"}
 packages = ["tcrsift", "tcrsift.refseqs"]
 
 [tool.setuptools.package-data]
-"tcrsift.refseqs" = ["*.fasta"]
+"tcrsift.refseqs" = ["*.fasta", "*.npz"]
 
 [project.urls]
 "Homepage" = "https://github.com/pirl-unc/tcrsift"

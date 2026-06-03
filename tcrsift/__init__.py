@@ -180,6 +180,13 @@ _MODULE_EXPORTS = {
         "olga_sonia_available",
         "supported_alleles",
     ),
+    ".seqprob": (
+        "KmerProbabilityModel",
+        "SequenceProbabilityModel",
+        "TCRpegProbabilityModel",
+        "load_background_model",
+        "score_log_pgen",
+    ),
     ".signatures": (
         "ACTIVATION_GENES_HGNC",
         "EFFECTOR_GENES_HGNC",

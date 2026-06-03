@@ -79,6 +79,7 @@ nav:
     - Annotation: api/annotate.md
     - Pgen / Publicness: api/pgen.md
     - Pgen + Ppost (OLGA/SONIA): api/olga_ppost.md
+    - Sequence probability (k-mer/TCRpeg): api/seqprob.md
     - In-silico filter: api/insilico_filter.md
     - Signatures: api/signatures.md
     - Candidate Selection: api/candidate.md

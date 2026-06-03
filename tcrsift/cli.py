@@ -705,6 +705,42 @@ def cmd_ppost(args):
     print(f"Wrote {args.output}")
 
 
+def cmd_log_pgen(args):
+    """Score per-clone log Pgen with a data-driven background (seqprob).
+
+    Reads a clonotype CSV and adds ``log_pgen_<chain>`` using the shipped
+    OLGA-generated k-mer background (default) or a TCRpeg model
+    (``--backend tcrpeg``, needs ``pip install tcrsift[tcrpeg]``). This is
+    the data-driven replacement for the OLGA/SONIA runtime path: no GPL deps
+    for the default k-mer backend.
+    """
+    import pandas as pd
+
+    from .seqprob import score_log_pgen
+
+    df = pd.read_csv(args.input)
+    print(f"Loaded {len(df)} clones from {args.input}")
+
+    chains = ["alpha", "beta"] if args.chain == "both" else [args.chain]
+    for chain in chains:
+        cdr3_col = args.cdr3_col or f"CDR3_{chain}"
+        if cdr3_col not in df.columns:
+            print(f"  [{chain}] skipped: no {cdr3_col!r} column")
+            continue
+        try:
+            df[f"log_pgen_{chain}"] = score_log_pgen(
+                df, chain=chain, cdr3_col=cdr3_col, backend=args.backend,
+            )
+        except (FileNotFoundError, ImportError) as exc:
+            print(f"  [{chain}] {exc}")
+            return 1
+        n_scored = int(df[f"log_pgen_{chain}"].notna().sum())
+        print(f"  [{chain}] scored {n_scored} clones (backend={args.backend})")
+
+    df.to_csv(args.output, index=False)
+    print(f"Wrote {args.output}")
+
+
 def cmd_data_list(args):
     """List managed reference databases and their cache state."""
     from .datacache import inspect_cache, resolve_cache_dir
@@ -2596,6 +2632,33 @@ CONDITIONALLY REQUIRED:
              "(default: frequency; skipped if absent)",
     )
     p_ppost.set_defaults(func=cmd_ppost)
+
+    # -------------------------------------------------------------------------
+    # log-pgen command (data-driven k-mer / TCRpeg background)
+    # -------------------------------------------------------------------------
+    p_lpg = subparsers.add_parser(
+        "log-pgen",
+        help="Score per-clone log Pgen with a data-driven background "
+             "(k-mer default, no extra deps; or --backend tcrpeg)",
+    )
+    p_lpg.add_argument("input", help="Path to a clonotype CSV")
+    p_lpg.add_argument(
+        "-o", "--output", required=True, metavar="PATH",
+        help="Write the log-Pgen-annotated CSV here",
+    )
+    p_lpg.add_argument(
+        "--chain", choices=["alpha", "beta", "both"], default="beta",
+        help="Which chain(s) to score (default: beta)",
+    )
+    p_lpg.add_argument(
+        "--backend", choices=["kmer", "tcrpeg"], default="kmer",
+        help="Probability backend (default: kmer, numpy-only)",
+    )
+    p_lpg.add_argument(
+        "--cdr3-col", default=None,
+        help="CDR3 AA column (default: CDR3_<chain>)",
+    )
+    p_lpg.set_defaults(func=cmd_log_pgen)
 
     # -------------------------------------------------------------------------
     # Run command (unified pipeline)
