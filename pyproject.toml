@@ -33,6 +33,16 @@ dependencies = [
     # core dep (previously optional, which left the PDF silently skipped
     # when not installed — including on CI).
     "reportlab>=4.0.0,<5.0.0",
+    # Core, not extras (one library, shared deps): pyensembl is the shared
+    # Ensembl↔HGNC mapping behind tcrsift.genes (used by all expression
+    # lookups); openpyxl backs Excel export. Both permissively licensed.
+    "pyensembl>=2.0.0,<3.0.0",
+    "openpyxl>=3.0.0,<4.0.0",
+    # TCRpeg is the default Pgen/Ppost backend (tcrsift.seqprob), auto-trained
+    # on first use — so it + torch are core, not an extra. (OLGA/SONIA stay
+    # optional: GPL-3.0, and only the legacy olga_ppost path needs them.)
+    "tcrpeg>=1.0.0",
+    "torch>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -48,12 +58,6 @@ docs = [
     "mkdocstrings[python]>=0.24.0",
     "pymdown-extensions>=10.0.0",
 ]
-assembly = [
-    "pyensembl>=2.0.0,<3.0.0",
-]
-excel = [
-    "openpyxl>=3.0.0,<4.0.0",
-]
 reports = [
     "reportlab>=4.0.0,<5.0.0",
     "pdfkit",
@@ -65,8 +69,6 @@ pgen = [
     "sonia>=0.0.51",
 ]
 full = [
-    "pyensembl>=2.0.0,<3.0.0",
-    "openpyxl>=3.0.0,<4.0.0",
     "reportlab>=4.0.0,<5.0.0",
     "pdfkit",
 ]
@@ -78,7 +80,7 @@ version = {attr = "tcrsift.version.__version__"}
 packages = ["tcrsift", "tcrsift.refseqs"]
 
 [tool.setuptools.package-data]
-"tcrsift.refseqs" = ["*.fasta"]
+"tcrsift.refseqs" = ["*.fasta", "*.npz"]
 
 [project.urls]
 "Homepage" = "https://github.com/pirl-unc/tcrsift"
