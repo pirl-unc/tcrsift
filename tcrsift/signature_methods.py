@@ -283,9 +283,10 @@ def expression_frame_from_adata(
 ) -> pd.DataFrame:
     """Extract a cells × genes (symbol-keyed) expression frame from AnnData.
 
-    Resolves HGNC symbols against ``adata.var_names`` or, when those are
-    Ensembl IDs (the ``load_samples`` default), a gene-symbol column in
-    ``adata.var`` (``gene_symbols`` / ``feature_name`` / …). Densifies the
+    Symbol resolution goes through the shared
+    :func:`tcrsift.genes.adata_symbol_array` (a var symbol-column, symbol
+    ``var_names``, or Ensembl ``var_names`` → HGNC via pyensembl) — the one
+    path used across the library, not a bespoke copy. Densifies the
     requested columns only; duplicate symbols collapse to the highest-mean
     copy.
 
@@ -296,15 +297,9 @@ def expression_frame_from_adata(
     """
     from scipy.sparse import issparse
 
-    var = adata.var
-    symbol_series = None
-    for col in ("gene_symbols", "feature_name", "symbol", "gene_symbol", "gene_name"):
-        if col in getattr(var, "columns", []):
-            symbol_series = var[col].astype(str)
-            break
-    if symbol_series is None:
-        symbol_series = pd.Series(adata.var_names.astype(str))
-    sym_upper = symbol_series.str.upper().to_numpy()
+    from .genes import adata_symbol_array
+
+    sym_upper = adata_symbol_array(adata)
 
     X = adata.layers[layer] if layer is not None else adata.X
     cols: dict[str, np.ndarray] = {}

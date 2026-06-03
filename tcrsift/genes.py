@@ -207,3 +207,90 @@ def build_versioned_rename_map(
         if gene:
             rename_map[col] = gene.symbol
     return rename_map
+
+
+# =============================================================================
+# AnnData symbol resolution — THE shared path for expression lookups
+# =============================================================================
+#
+# Every part of tcrsift that needs to find genes in an expression matrix
+# (signature scoring, GEX aggregation, marker lookups) must resolve symbols
+# through here, so the logic — including Ensembl↔HGNC mapping — lives in one
+# place rather than scattered, bespoke copies.
+
+_SYMBOL_COLS = ("gene_symbols", "feature_name", "symbol", "gene_symbol",
+                "gene_name")
+
+_ENSEMBL_DATA_CACHE: dict[int, object] = {}
+
+
+def _ensembl_data(release: int = 110):
+    """Cached :class:`pyensembl.EnsemblRelease`. pyensembl is a core dep."""
+    if release not in _ENSEMBL_DATA_CACHE:
+        import pyensembl
+
+        _ENSEMBL_DATA_CACHE[release] = pyensembl.EnsemblRelease(release)
+    return _ENSEMBL_DATA_CACHE[release]
+
+
+def ensembl_ids_to_symbols(
+    ensembl_ids, *, release: int = 110,
+) -> dict[str, str]:
+    """Map Ensembl gene IDs → HGNC symbols via pyensembl (version-robust).
+
+    Returns ``{ensembl_id: symbol}`` for the IDs pyensembl recognizes. IDs it
+    can't resolve are omitted. Requires the Ensembl release data to be
+    installed (``pyensembl install --release 110``); if it isn't, logs once
+    and returns ``{}`` so callers fall back to raw names.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        data = _ensembl_data(release)
+    except Exception as exc:  # pyensembl data not downloaded, etc.
+        logger.warning(
+            "pyensembl release %d unavailable (%s); Ensembl→symbol mapping "
+            "skipped. Run `pyensembl install --release %d` to enable it.",
+            release, exc, release,
+        )
+        return {}
+    out: dict[str, str] = {}
+    for eid in ensembl_ids:
+        base = strip_ensembl_version(str(eid))
+        try:
+            gene = data.gene_by_id(base)
+        except Exception:
+            continue
+        if gene is not None and gene.gene_name:
+            out[str(eid)] = gene.gene_name
+    return out
+
+
+def adata_symbol_array(adata, *, release: int = 110, use_pyensembl: bool = True):
+    """Per-``var`` HGNC symbol (UPPERCASE) for an AnnData — the shared resolver.
+
+    Resolution order (single source of truth for the whole library):
+
+    1. a symbol column in ``adata.var`` (``gene_symbols``/``feature_name``/…);
+    2. ``var_names`` themselves when they look like symbols;
+    3. Ensembl ``var_names`` → HGNC via :func:`ensembl_ids_to_symbols`
+       (pyensembl), falling back to the raw Ensembl id for anything unmapped.
+
+    Returns a numpy array of uppercase symbols aligned to ``adata.var``.
+    """
+    import pandas as pd
+
+    var = adata.var
+    for col in _SYMBOL_COLS:
+        if col in getattr(var, "columns", []):
+            return var[col].astype(str).str.upper().to_numpy()
+
+    names = pd.Series(adata.var_names.astype(str))
+    looks_ensembl = names.str.startswith("ENSG")
+    if use_pyensembl and looks_ensembl.mean() > 0.5:
+        mapping = ensembl_ids_to_symbols(names[looks_ensembl].tolist(),
+                                         release=release)
+        resolved = names.map(lambda n: mapping.get(n, n))
+        return resolved.astype(str).str.upper().to_numpy()
+    return names.str.upper().to_numpy()

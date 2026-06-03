@@ -33,6 +33,11 @@ dependencies = [
     # core dep (previously optional, which left the PDF silently skipped
     # when not installed — including on CI).
     "reportlab>=4.0.0,<5.0.0",
+    # Core, not extras (one library, shared deps): pyensembl is the shared
+    # Ensembl↔HGNC mapping behind tcrsift.genes (used by all expression
+    # lookups); openpyxl backs Excel export. Both permissively licensed.
+    "pyensembl>=2.0.0,<3.0.0",
+    "openpyxl>=3.0.0,<4.0.0",
 ]
 
 [project.optional-dependencies]
@@ -47,12 +52,6 @@ docs = [
     "mkdocs-material>=9.0.0",
     "mkdocstrings[python]>=0.24.0",
     "pymdown-extensions>=10.0.0",
-]
-assembly = [
-    "pyensembl>=2.0.0,<3.0.0",
-]
-excel = [
-    "openpyxl>=3.0.0,<4.0.0",
 ]
 reports = [
     "reportlab>=4.0.0,<5.0.0",
@@ -71,8 +70,6 @@ tcrpeg = [
     "torch>=2.0.0",
 ]
 full = [
-    "pyensembl>=2.0.0,<3.0.0",
-    "openpyxl>=3.0.0,<4.0.0",
     "reportlab>=4.0.0,<5.0.0",
     "pdfkit",
 ]
