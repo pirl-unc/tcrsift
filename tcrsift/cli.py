@@ -1062,6 +1062,19 @@ def cmd_run(args):
         from .clonotype import build_clone_sample_long
         long_df = build_clone_sample_long(adata)
 
+    # Per-sample clonal-expansion QC (#161): a one-line expansion fingerprint
+    # that flags an unexpanded/near-polyclonal sample (failed expansion, swap,
+    # or baseline sort) at a glance instead of via a forensic dig.
+    if long_df is not None and "sample" in long_df.columns:
+        from .qc import clonal_expansion_metrics
+        exp_qc = clonal_expansion_metrics(long_df)
+        if not exp_qc.empty:
+            exp_qc.to_csv(data_dir / "expansion_qc.csv", index=False)
+            print(f"  Wrote expansion_qc.csv: {len(exp_qc)} samples "
+                  f"(top1% / effective-clones / clonality per sample)")
+            for _, r in exp_qc[exp_qc["unexpanded"]].iterrows():
+                print(f"  ⚠️  sample {r['sample']!r}: {r['warning']}")
+
     if should_emit_long and long_df is not None:
         # Enrich the emitted table with a per-sample abundance tier (the
         # per-(clone, sample) analogue of the global clonotype tier) via
