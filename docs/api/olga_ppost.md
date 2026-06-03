@@ -32,10 +32,26 @@ whether the extra is installed; the compute functions raise an
 
 OLGA/SONIA anchors are allele-suffixed (`TRAV12-2*01`); CellRanger gene
 calls often lack the allele. `normalize_gene_name` appends `*01` when
-missing (validated). Alleles not recognized **even after `*01`** — novel
-alleles, or genes outside the model — currently fall back to NaN rather
-than a silently-wrong default; mapping them to the nearest supported
-allele is #150 (it builds on `supported_alleles`).
+missing (validated).
+
+Alleles not recognized **even after `*01`** — novel alleles from the
+audit, or genes outside the model — are mapped to the **nearest supported
+allele** before scoring (#150), instead of OLGA silently falling back to a
+default usage mask. `compute_pgen_ppost(..., map_unsupported=True)` does
+this and logs every substitution (`original → substituted`, reason); pass
+`used_v_col` / `used_j_col` to record the allele actually used.
+
+The mapping tiers (`nearest_supported_allele`):
+
+1. `exact` — supported after appending `*01`; no substitution.
+2. `nearest_allele` — same gene, different allele → lowest supported allele.
+3. `nearest_gene` — gene unsupported → closest supported gene by
+   locus/family/subgroup name distance, as its `*01`.
+4. `unmapped` — no candidate (→ NaN Pgen, never a silent default).
+
+`annotate_nearest_supported_allele(df, chain=, segment=, gene_col=)` adds
+the mapping as columns so a detected novel allele carries its
+downstream-Pgen substitution auditably.
 
 ## Caveats
 
@@ -68,5 +84,7 @@ tcrsift ppost clones.csv -o clones_ppost.csv --chain both
         - load_chain_model
         - supported_alleles
         - normalize_gene_name
+        - nearest_supported_allele
+        - annotate_nearest_supported_allele
         - compute_pgen_ppost
         - flag_private_candidates

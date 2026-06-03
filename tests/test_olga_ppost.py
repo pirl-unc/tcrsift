@@ -74,6 +74,72 @@ class TestPureHelpers:
             op.load_chain_model("gamma")
 
 
+class TestNearestSupportedAllele:
+    """#150 — map unsupported/novel V/J alleles to nearest supported.
+
+    Pure logic: tested against an explicit ``supported`` set, no model load.
+    """
+
+    SUPPORTED = frozenset({
+        "TRBV20-1*01", "TRBV20-1*02", "TRBV28*01", "TRBV19*01",
+        "TRBV6-1*01", "TRBV6-5*01", "TRBJ2-2*01",
+    })
+
+    def test_exact_match_no_substitution(self):
+        m, r = op._nearest_in_supported("TRBV20-1*01", self.SUPPORTED)
+        assert (m, r) == ("TRBV20-1*01", "exact")
+
+    def test_bare_gene_appends_allele_and_is_exact(self):
+        # CellRanger name without allele → *01 → already supported.
+        m, r = op._nearest_in_supported("TRBV28", self.SUPPORTED)
+        assert (m, r) == ("TRBV28*01", "exact")
+
+    def test_novel_allele_maps_to_nearest_allele_same_gene(self):
+        # *99 of a supported gene → lowest supported allele of that gene.
+        m, r = op._nearest_in_supported("TRBV20-1*99", self.SUPPORTED)
+        assert (m, r) == ("TRBV20-1*01", "nearest_allele")
+
+    def test_unsupported_gene_maps_to_nearest_gene_by_family(self):
+        # TRBV6-3 unsupported → nearest TRBV6-* by subgroup distance.
+        m, r = op._nearest_in_supported("TRBV6-3", self.SUPPORTED)
+        assert r == "nearest_gene"
+        assert m in {"TRBV6-1*01", "TRBV6-5*01"}
+        # subgroup 3 is closer to 1 (dist 2) than 5 (dist 4)
+        assert m == "TRBV6-1*01"
+
+    def test_unsupported_family_maps_to_nearest_family(self):
+        # TRBV21 unsupported, no TRBV21-* → nearest family number (20 or 28).
+        m, r = op._nearest_in_supported("TRBV21-1", self.SUPPORTED)
+        assert r == "nearest_gene"
+        assert m == "TRBV20-1*01"  # |21-20|=1 < |21-28|=7
+
+    def test_different_locus_is_unmapped(self):
+        # No TRAV in a TRBV-only supported set → unmapped.
+        m, r = op._nearest_in_supported("TRAV12-2", self.SUPPORTED)
+        assert (m, r) == (None, "unmapped")
+
+    def test_empty_gene_unmapped(self):
+        assert op._nearest_in_supported(None, self.SUPPORTED) == (None, "unmapped")
+        assert op._nearest_in_supported("", self.SUPPORTED) == (None, "unmapped")
+
+    def test_annotate_column(self):
+        df = pd.DataFrame({"v_gene": ["TRBV20-1*99", "TRBV28", "TRAV1-1"]})
+        # Patch supported_alleles so no model load is needed.
+        import tcrsift.olga_ppost as mod
+        orig = mod.supported_alleles
+        mod.supported_alleles = lambda chain, seg: self.SUPPORTED
+        try:
+            out = op.annotate_nearest_supported_allele(
+                df, chain="beta", segment="v", gene_col="v_gene",
+            )
+        finally:
+            mod.supported_alleles = orig
+        assert list(out["nearest_supported_reason"]) == [
+            "nearest_allele", "exact", "unmapped",
+        ]
+        assert out.loc[0, "nearest_supported_allele"] == "TRBV20-1*01"
+
+
 @pytest.mark.skipif(
     _HAS_PGEN, reason="only meaningful when the extra is NOT installed"
 )
@@ -135,4 +201,25 @@ class TestWithModels:
             df, chain="alpha", cdr3_col="CDR3_alpha",
             v_gene_col="alpha_v_gene", j_gene_col="alpha_j_gene",
         )
+        assert np.isfinite(out.loc[0, "log10_pgen_olga"])
+
+    def test_real_supported_alleles_resolve_against_model(self):
+        # A novel allele of a real gene resolves to a supported allele.
+        m, r = op.nearest_supported_allele("TRBV20-1*99", "beta", "v")
+        assert r in {"nearest_allele", "exact"}
+        assert m in op.supported_alleles("beta", "v")
+
+    def test_unsupported_allele_substituted_before_pgen(self):
+        # With map_unsupported, a *99 novel allele is mapped and still scores;
+        # the used allele is recorded and is finite Pgen (no silent NaN).
+        df = pd.DataFrame({
+            "CDR3_beta": ["CASSLGTGELFF"],
+            "beta_v_gene": ["TRBV20-1*99"],
+            "beta_j_gene": ["TRBJ2-2"],
+        })
+        out = op.compute_pgen_ppost(
+            df, chain="beta", map_unsupported=True,
+            used_v_col="beta_v_used",
+        )
+        assert out.loc[0, "beta_v_used"] in op.supported_alleles("beta", "v")
         assert np.isfinite(out.loc[0, "log10_pgen_olga"])

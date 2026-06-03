@@ -51,6 +51,7 @@ import contextlib
 import io
 import logging
 import os
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -213,6 +214,126 @@ def normalize_gene_name(gene: str | None) -> str | None:
     return g
 
 
+def _split_gene_allele(name: str) -> tuple[str, str]:
+    """``TRBV20-1*03`` → ``("TRBV20-1", "03")``; no suffix → allele ``""``."""
+    base, _, allele = name.partition("*")
+    return base, allele
+
+
+# locus prefix + family number + optional subgroup number, e.g.
+# TRBV20-1 → ("TRBV", 20, 1); TRAJ33 → ("TRAJ", 33, None).
+_GENE_NAME_RE = re.compile(r"^([A-Za-z]+)(\d+)(?:-(\d+))?")
+
+
+def _gene_family_key(base: str) -> tuple[str, int, int] | None:
+    """Parse a gene base into (locus, family, subgroup) for nearest-by-name."""
+    m = _GENE_NAME_RE.match(base)
+    if not m:
+        return None
+    locus = m.group(1).upper()
+    family = int(m.group(2))
+    subgroup = int(m.group(3)) if m.group(3) is not None else 0
+    return locus, family, subgroup
+
+
+def _nearest_in_supported(
+    gene: str | None, supported: frozenset[str] | set[str],
+) -> tuple[str | None, str]:
+    """Map a (possibly unsupported/novel) gene to a supported allele.
+
+    Returns ``(mapped_allele, reason)``. The reason is one of:
+
+    - ``"exact"`` — the allele-suffixed name (after appending ``*01`` when
+      missing) is already supported; no substitution.
+    - ``"nearest_allele"`` — same gene, different allele: mapped to the
+      lowest-numbered supported allele of that gene.
+    - ``"nearest_gene"`` — the gene itself is unsupported: mapped (by
+      locus/family/subgroup name distance) to the closest supported gene's
+      ``*01`` allele.
+    - ``"unmapped"`` — no candidate found (``mapped_allele`` is ``None``).
+
+    ``supported`` is the model's allele-suffixed V or J allele set.
+    """
+    norm = normalize_gene_name(gene)
+    if norm is None:
+        return None, "unmapped"
+    if norm in supported:
+        return norm, "exact"
+
+    base, _ = _split_gene_allele(norm)
+
+    # Tier 2: same gene, nearest supported allele (lowest allele number).
+    same_gene = sorted(
+        (s for s in supported if _split_gene_allele(s)[0] == base),
+        key=lambda s: (len(_split_gene_allele(s)[1]), _split_gene_allele(s)[1]),
+    )
+    if same_gene:
+        return same_gene[0], "nearest_allele"
+
+    # Tier 3: gene unsupported → nearest gene by name within the same locus.
+    key = _gene_family_key(base)
+    if key is None:
+        return None, "unmapped"
+    locus, family, subgroup = key
+    best_dist: tuple[int, int, str] | None = None
+    best_name: str | None = None
+    for s in supported:
+        s_key = _gene_family_key(_split_gene_allele(s)[0])
+        if s_key is None or s_key[0] != locus:
+            continue
+        dist = (abs(s_key[1] - family), abs(s_key[2] - subgroup), s)
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best_name = s
+    if best_name is None:
+        return None, "unmapped"
+    # Normalize the chosen gene to its *01 allele if that exists, else the
+    # specific supported allele we matched.
+    chosen_base = _split_gene_allele(best_name)[0]
+    star01 = f"{chosen_base}*01"
+    return (star01 if star01 in supported else best_name), "nearest_gene"
+
+
+def nearest_supported_allele(
+    gene: str | None, chain: str, segment: str,
+) -> tuple[str | None, str]:
+    """Map ``gene`` to the nearest model-supported V/J allele (#150).
+
+    Loads the OLGA/SONIA model for ``chain`` and resolves ``gene`` against
+    its supported ``segment`` (``"v"``/``"j"``) allele list via
+    :func:`_nearest_in_supported`. Returns ``(mapped_allele, reason)``.
+    """
+    supported = supported_alleles(chain, segment)
+    return _nearest_in_supported(gene, supported)
+
+
+def annotate_nearest_supported_allele(
+    df: pd.DataFrame,
+    *,
+    chain: str,
+    segment: str,
+    gene_col: str,
+    out_col: str = "nearest_supported_allele",
+    reason_col: str = "nearest_supported_reason",
+) -> pd.DataFrame:
+    """Add nearest-supported-allele columns for a V/J gene column (#150).
+
+    For each value in ``gene_col`` (a V or J gene call, possibly a novel
+    allele from the audit), resolve the nearest model-supported allele and
+    record it in ``out_col`` with the mapping ``reason`` in ``reason_col``.
+    Lets a detected novel allele carry its downstream-Pgen substitution so
+    the mapping is auditable, not silent. Returns a copy; does not mutate.
+    """
+    if gene_col not in df.columns:
+        raise ValueError(f"annotate_nearest_supported_allele: missing {gene_col!r}")
+    supported = supported_alleles(chain, segment)
+    out = df.copy()
+    pairs = [_nearest_in_supported(g, supported) for g in out[gene_col]]
+    out[out_col] = [m for m, _ in pairs]
+    out[reason_col] = [r for _, r in pairs]
+    return out
+
+
 def _log10_or_nan(p: float) -> float:
     """log10(p) with 0 / negative / non-finite mapped to NaN."""
     if p is None or not np.isfinite(p) or p <= 0.0:
@@ -228,9 +349,12 @@ def compute_pgen_ppost(
     v_gene_col: str = "beta_v_gene",
     j_gene_col: str = "beta_j_gene",
     with_ppost: bool = True,
+    map_unsupported: bool = True,
     pgen_col: str = "log10_pgen_olga",
     ppost_col: str = "log10_ppost",
     q_col: str = "sonia_q",
+    used_v_col: str | None = None,
+    used_j_col: str | None = None,
 ) -> pd.DataFrame:
     """Add OLGA ``log10 Pgen`` and SONIA ``log10 Ppost`` columns to ``df``.
 
@@ -240,8 +364,17 @@ def compute_pgen_ppost(
     ``*01`` when missing). Pgen is normalized by SONIA's productive
     normalization so it matches SONIA's Ppost = Pgen·Q convention.
 
+    When ``map_unsupported`` (default True), any V/J allele not in the
+    model's supported set — an unrecognized CellRanger call or a novel
+    allele from the audit — is mapped to the **nearest supported allele**
+    via :func:`nearest_supported_allele` *before* scoring, instead of
+    letting OLGA silently fall back to a default usage mask (#150). Each
+    substitution is logged (original → substituted, reason). The
+    substituted allele actually used is recorded in ``used_v_col`` /
+    ``used_j_col`` when those are given.
+
     Rows whose CDR3 is empty/non-string, or whose Pgen the model evaluates
-    to 0 (out-of-frame, or a gene not recognized even after ``*01``), get
+    to 0 (out-of-frame, or a gene with no nearest supported allele), get
     NaN — never a silently-wrong default. The count of such rows is logged.
 
     Returns a copy of ``df`` with ``pgen_col`` and (when ``with_ppost``)
@@ -264,18 +397,38 @@ def compute_pgen_ppost(
 
     log10_pgen = np.full(n, np.nan)
     pgen_normed = np.full(n, np.nan)
+    used_v: list[str | None] = [None] * n
+    used_j: list[str | None] = [None] * n
+    n_sub = 0
     # SONIA seqs for the Q pass: [cdr3, V, J]; only valid rows are evaluated.
     valid_idx: list[int] = []
     sonia_seqs: list[list[str]] = []
+
+    def _resolve(gene_norm: str | None, segment: str, supported) -> str | None:
+        nonlocal n_sub
+        if gene_norm is None:
+            return None
+        if not map_unsupported or gene_norm in supported:
+            return gene_norm
+        mapped, reason = _nearest_in_supported(gene_norm, supported)
+        if reason != "exact" and mapped is not None:
+            n_sub += 1
+            logger.info(
+                "compute_pgen_ppost(%s): unsupported %s allele %s → %s (%s)",
+                chain, segment, gene_norm, mapped, reason,
+            )
+        return mapped
 
     with _suppress_stdout():
         for i, (seq, v, j) in enumerate(zip(cdr3, v_series, j_series)):
             if not isinstance(seq, str) or not seq:
                 continue
-            v_norm = normalize_gene_name(v)
-            j_norm = normalize_gene_name(j)
+            v_norm = _resolve(normalize_gene_name(v), "V", model.v_alleles)
+            j_norm = _resolve(normalize_gene_name(j), "J", model.j_alleles)
             if v_norm is None or j_norm is None:
                 continue
+            used_v[i] = v_norm
+            used_j[i] = j_norm
             try:
                 p = pgen_model.compute_aa_CDR3_pgen(seq, v_norm, j_norm)
             except Exception as exc:  # OLGA raises on malformed CDR3 chars
@@ -290,11 +443,20 @@ def compute_pgen_ppost(
                 sonia_seqs.append([seq, v_norm, j_norm])
 
     out[pgen_col] = log10_pgen
+    if used_v_col is not None:
+        out[used_v_col] = used_v
+    if used_j_col is not None:
+        out[used_j_col] = used_j
     n_nan = int(np.isnan(log10_pgen).sum())
     if n_nan:
         logger.info(
             "compute_pgen_ppost(%s): %d/%d rows had no computable Pgen "
             "(empty CDR3, missing V/J, or Pgen=0) → NaN", chain, n_nan, n,
+        )
+    if n_sub:
+        logger.info(
+            "compute_pgen_ppost(%s): mapped %d unsupported V/J allele calls "
+            "to the nearest supported allele (#150)", chain, n_sub,
         )
 
     if with_ppost:

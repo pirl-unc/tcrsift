@@ -161,9 +161,11 @@ _MODULE_EXPORTS = {
         "publicness_score",
     ),
     ".olga_ppost": (
+        "annotate_nearest_supported_allele",
         "compute_pgen_ppost",
         "flag_private_candidates",
         "load_chain_model",
+        "nearest_supported_allele",
         "normalize_gene_name",
         "olga_sonia_available",
         "supported_alleles",
