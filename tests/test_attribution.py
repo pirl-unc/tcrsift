@@ -157,6 +157,45 @@ class TestDualAlpha:
         assert merge == {}
         assert (long[long["cell_barcode"] == "d1"]["kind"] == "dual_alpha_split").all()
 
+    def test_dual_alpha_split_disabled_collapses_to_primary(self):
+        # #181: dual_alpha_split=False collapses a non-merged dual-alpha to its
+        # primary pair (full weight), instead of splitting it as a doublet.
+        df = _cells([
+            {"a1": "A1", "b1": "B"},
+            {"a1": "A1", "b1": "B"},
+            {"a1": "A1", "b1": "B"},
+            {"a1": "A2", "b1": "B"},
+            {"bc": "d1", "a1": "A1", "a2": "A2", "b1": "B"},  # singleton dual-alpha
+        ])
+        long, _ = attribute_cells(
+            df, _on(dual_alpha_min_cells=2, dual_alpha_split=False)
+        )
+        rows = long[long["cell_barcode"] == "d1"]
+        assert len(rows) == 1
+        assert rows["CDR3ab"].iloc[0] == "A1_B"
+        assert rows["weight"].iloc[0] == pytest.approx(1.0)
+        assert rows["kind"].iloc[0] == "primary"
+
+    def test_split_flags_are_orthogonal(self):
+        # #181: dual_alpha_split=False with dual_beta_split=True -> dual-alpha
+        # collapses to primary while dual-beta still splits.
+        df = _cells([
+            {"a1": "A1", "b1": "B"},
+            {"a1": "A2", "b1": "B"},
+            {"a1": "A", "b1": "B1"},
+            {"a1": "A", "b1": "B1"},
+            {"a1": "A", "b1": "B2"},
+            {"bc": "da", "a1": "A1", "a2": "A2", "b1": "B"},   # dual-alpha singleton
+            {"bc": "db", "a1": "A", "b1": "B1", "b2": "B2"},   # dual-beta
+        ])
+        long, _ = attribute_cells(
+            df, _on(dual_alpha_min_cells=2, dual_alpha_split=False, dual_beta_split=True)
+        )
+        da = long[long["cell_barcode"] == "da"]
+        assert len(da) == 1 and da["kind"].iloc[0] == "primary"
+        db = long[long["cell_barcode"] == "db"]
+        assert set(db["CDR3ab"]) == {"A_B1", "A_B2"}
+
 
 class TestDualBeta:
     def test_no_phantom_zero_weight_clone(self):

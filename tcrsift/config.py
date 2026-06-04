@@ -135,6 +135,18 @@ class AttributionConfig:
     share_weighting: str = "proportional"
     # Reserved EM hook; v1 uses a single distribution pass (no iteration).
     em_iterations: int = 1
+    # Orthogonal split controls (#181): split non-merged dual-alpha and dual-beta
+    # independently. None -> inherit the deprecated `doublet_split` alias, so old
+    # configs are unchanged. dual-alpha and dual-beta are biologically different
+    # (TRA allelic inclusion is common/real; dual-beta is rarer, more doublet-like).
+    dual_alpha_split: bool | None = None
+    dual_beta_split: bool | None = None
+
+    def __post_init__(self):
+        if self.dual_alpha_split is None:
+            self.dual_alpha_split = self.doublet_split
+        if self.dual_beta_split is None:
+            self.dual_beta_split = self.doublet_split
 
 
 @dataclass
@@ -339,6 +351,8 @@ class TCRsiftConfig:
             "dual_alpha_min_cells": ("attribution", "dual_alpha_min_cells"),
             "share_weighting": ("attribution", "share_weighting"),
             "em_iterations": ("attribution", "em_iterations"),
+            "dual_alpha_split": ("attribution", "dual_alpha_split"),
+            "dual_beta_split": ("attribution", "dual_beta_split"),
             # Filter
             "method": ("filter", "method"),
             "tcell_type": ("filter", "tcell_type"),
