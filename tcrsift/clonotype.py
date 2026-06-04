@@ -43,6 +43,7 @@ def aggregate_clonotypes(
     group_by: str = "CDR3ab",
     min_umi: int = 2,
     handle_doublets: str = "flag",
+    attribution=None,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -110,6 +111,25 @@ def aggregate_clonotypes(
     logger.info(f"Aggregating clonotypes by {group_by} from {len(adata):,} cells")
 
     df = adata.obs.copy()
+
+    # Partial-information attribution (#176). Opt-in; when enabled it supersedes
+    # handle_doublets (the doublet block below would otherwise drop the very
+    # cells we want to redistribute). The OFF path falls through to the exact
+    # integer code below, byte-identical to pre-#176 behavior.
+    use_attribution = (
+        attribution is not None
+        and getattr(attribution, "enabled", False)
+        and group_by == "CDR3ab"
+    )
+    if use_attribution:
+        if handle_doublets == "remove" and verbose:
+            logger.info(
+                "  Attribution ON supersedes handle_doublets='remove' "
+                "(doublet cells are redistributed, not dropped)."
+            )
+        return _aggregate_with_attribution(
+            df, group_by, min_umi, attribution, verbose, show_progress
+        )
 
     # Handle doublets
     if "multi_chain" in df.columns:
@@ -198,10 +218,90 @@ def aggregate_clonotypes(
     return clonotypes
 
 
-def _aggregate_clone_data(
-    df: pd.DataFrame, group_by: str, show_progress: bool = True
+def _aggregate_with_attribution(
+    df: pd.DataFrame,
+    group_by: str,
+    min_umi: int,
+    attribution,
+    verbose: bool,
+    show_progress: bool,
 ) -> pd.DataFrame:
-    """Aggregate cell-level data to clone-level."""
+    """Attribution-ON aggregation (#176): weighted, fractional clone counts.
+
+    Distributes each cell's weight across complete clones via
+    :func:`attribution.attribute_cells`, expands to one (cell, clone) row per
+    attribution, applies the dual-alpha merge by keying on the canonical clone
+    ID, and aggregates weighted. Outputs stay keyed on complete paired clones.
+    """
+    from .attribution import attribute_cells
+
+    long_table, merge_map = attribute_cells(df, attribution, group_by, min_umi)
+    if len(long_table) == 0:
+        raise TCRsiftValidationError(
+            "No complete clones found after attribution",
+            hint="Check that cells have valid paired CDR3 sequences and that "
+            "min_umi isn't excluding every chain.",
+        )
+    if verbose:
+        n_clones = long_table["CDR3ab"].nunique()
+        n_merged = len(set(merge_map.values()))
+        logger.info(
+            f"  Attribution ON: {len(long_table):,} (cell, clone) weights across "
+            f"{n_clones:,} clones; {n_merged:,} merged dual-alpha clone(s); "
+            f"total weight {long_table['weight'].sum():.1f}"
+        )
+
+    # Expand: attribution targets + per-cell metadata (drop the cell's own
+    # primary-pair identity columns; the target CDR3ab supplies them instead).
+    drop_cols = {"CDR3ab", "CDR3_alpha", "CDR3_beta", "sample", "weight", "kind"}
+    meta = df[[c for c in df.columns if c not in drop_cols]]
+    exp = long_table.merge(
+        meta, left_on="cell_barcode", right_index=True, how="left"
+    )
+    parts = exp["CDR3ab"].str.split("_", n=1, expand=True)
+    exp["CDR3_alpha"] = parts[0]
+    exp["CDR3_beta"] = parts[1] if parts.shape[1] > 1 else ""
+    exp = exp.set_index("cell_barcode")
+
+    sample_weight_totals = exp.groupby("sample", observed=True)["weight"].sum()
+
+    clonotypes = _aggregate_clone_data(
+        exp,
+        group_by,
+        show_progress=show_progress,
+        weighted=True,
+        sample_weight_totals=sample_weight_totals,
+    )
+
+    # Record the constituent alpha partners of each merged dual-alpha clone.
+    if merge_map:
+        partners: dict[str, set] = {}
+        for orig, canon in merge_map.items():
+            partners.setdefault(canon, set()).add(orig.split("_", 1)[0])
+        clonotypes["merged_alpha_partners"] = clonotypes["CDR3ab"].map(
+            lambda k: ";".join(sorted(partners.get(k, set())))
+        )
+
+    if verbose:
+        logger.info(f"  Found {len(clonotypes):,} unique clonotypes (weighted)")
+    return clonotypes
+
+
+def _aggregate_clone_data(
+    df: pd.DataFrame,
+    group_by: str,
+    show_progress: bool = True,
+    weighted: bool = False,
+    sample_weight_totals: pd.Series | None = None,
+) -> pd.DataFrame:
+    """Aggregate cell-level data to clone-level.
+
+    When ``weighted`` (attribution ON, #176), ``df`` carries a fractional
+    ``weight`` column and counts/frequencies become weighted sums; the
+    denominator for per-sample frequency is ``sample_weight_totals`` (total
+    attributed weight per sample). When ``weighted`` is False this is the exact
+    integer path — byte-identical to pre-#176 output.
+    """
 
     clone_data = []
 
@@ -210,7 +310,12 @@ def _aggregate_clone_data(
     # enrichment_method was populated in the sample sheet (#8).
     method_cell_totals: pd.Series | None = None
     if "enrichment_method" in df.columns:
-        method_cell_totals = df["enrichment_method"].value_counts()
+        if weighted:
+            method_cell_totals = df.groupby(
+                "enrichment_method", observed=True
+            )["weight"].sum()
+        else:
+            method_cell_totals = df["enrichment_method"].value_counts()
 
     # Create iterator with optional progress bar
     grouped = df.groupby("CDR3ab", observed=True)
@@ -228,8 +333,10 @@ def _aggregate_clone_data(
 
         record = {
             "CDR3ab": cdr3ab,
-            "cell_count": len(clone_df),
-            "cell_barcodes": ";".join(clone_df.index.tolist()),
+            "cell_count": (
+                float(clone_df["weight"].sum()) if weighted else len(clone_df)
+            ),
+            "cell_barcodes": ";".join(clone_df.index.astype(str).unique().tolist()),
         }
 
         # CDR3 sequences
@@ -303,10 +410,19 @@ def _aggregate_clone_data(
         # max_cells_per_method backs --min-cells-per-method;
         # max_frequency_per_method backs --min-frequency-per-method.
         if has_method:
-            method_cell_counts = clone_df["enrichment_method"].value_counts()
-            record["max_cells_per_method"] = (
-                int(method_cell_counts.max()) if len(method_cell_counts) else 0
-            )
+            if weighted:
+                method_cell_counts = clone_df.groupby(
+                    "enrichment_method", observed=True
+                )["weight"].sum()
+                method_cell_counts = method_cell_counts[method_cell_counts > 0]
+                record["max_cells_per_method"] = (
+                    float(method_cell_counts.max()) if len(method_cell_counts) else 0.0
+                )
+            else:
+                method_cell_counts = clone_df["enrichment_method"].value_counts()
+                record["max_cells_per_method"] = (
+                    int(method_cell_counts.max()) if len(method_cell_counts) else 0
+                )
             if method_cell_totals is not None and len(method_cell_counts):
                 # Align by method, divide. Methods present in this clone are
                 # guaranteed to exist in method_cell_totals (same source df).
@@ -399,19 +515,36 @@ def _aggregate_clone_data(
 
         # T cell type consensus
         if "Tcell_type" in clone_df.columns:
-            type_counts = clone_df["Tcell_type"].value_counts()
+            if weighted:
+                type_counts = (
+                    clone_df.groupby("Tcell_type", observed=True)["weight"]
+                    .sum()
+                    .sort_values(ascending=False)
+                )
+                type_counts = type_counts[type_counts > 0]
+                denom = float(clone_df["weight"].sum())
+            else:
+                type_counts = clone_df["Tcell_type"].value_counts()
+                denom = len(clone_df)
             if len(type_counts) > 0:
                 record["Tcell_type_consensus"] = type_counts.index[0]
                 record["Tcell_type_purity"] = safe_divide(
-                    type_counts.iloc[0], len(clone_df), default=0.0
+                    type_counts.iloc[0], denom, default=0.0
                 )
             else:
                 record["Tcell_type_consensus"] = "Unknown"
                 record["Tcell_type_purity"] = 0.0
 
-            # CD4/CD8 counts
-            record["n_CD8"] = clone_df["is_CD8"].sum() if "is_CD8" in clone_df.columns else 0
-            record["n_CD4"] = clone_df["is_CD4"].sum() if "is_CD4" in clone_df.columns else 0
+            # CD4/CD8 counts (weighted when attribution is on).
+            def _count(col):
+                if col not in clone_df.columns:
+                    return 0
+                if weighted:
+                    return float((clone_df[col].astype(float) * clone_df["weight"]).sum())
+                return clone_df[col].sum()
+
+            record["n_CD8"] = _count("is_CD8")
+            record["n_CD4"] = _count("is_CD4")
 
         # Gene calls + VDJ AA/NT (#94). All coupled per-chain columns
         # must come from a SINGLE representative cell, not from
@@ -464,15 +597,25 @@ def _aggregate_clone_data(
         if "is_doublet" in clone_df.columns:
             record["n_doublet_cells"] = clone_df["is_doublet"].sum()
 
-        # Calculate clone frequency within each sample
-        # Note: Uses outer 'df' (not df_complete) to get total count of complete
-        # clones per sample, which is the correct denominator for frequency
+        # Calculate clone frequency within each sample.
+        # OFF: numerator = cells of this clone in the sample, denominator =
+        # total complete-clone cells in the sample (outer 'df'). ON: both are
+        # attributed-weight sums, with the per-sample weight total as the
+        # denominator (restores the per-sample freq-sum=1.0 invariant, #175/#176).
         sample_freqs = []
-        for sample in clone_df["sample"].unique():
-            sample_total = df[df["sample"] == sample]["is_complete_clone"].sum()
-            sample_count = (clone_df["sample"] == sample).sum()
-            freq = safe_divide(sample_count, sample_total, default=0.0)
-            sample_freqs.append(freq)
+        if weighted:
+            clone_sample_w = clone_df.groupby("sample", observed=True)["weight"].sum()
+            for sample, w in clone_sample_w.items():
+                sample_total = (
+                    sample_weight_totals.get(sample, 0.0)
+                    if sample_weight_totals is not None else 0.0
+                )
+                sample_freqs.append(safe_divide(w, sample_total, default=0.0))
+        else:
+            for sample in clone_df["sample"].unique():
+                sample_total = df[df["sample"] == sample]["is_complete_clone"].sum()
+                sample_count = (clone_df["sample"] == sample).sum()
+                sample_freqs.append(safe_divide(sample_count, sample_total, default=0.0))
         record["max_frequency"] = max(sample_freqs) if sample_freqs else 0
         record["mean_frequency"] = np.mean(sample_freqs) if sample_freqs else 0
 
@@ -540,7 +683,7 @@ def calculate_clone_frequencies(
     return clonotypes
 
 
-def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
+def build_clone_sample_long(adata: ad.AnnData, attribution=None) -> pd.DataFrame:
     """Build a long-format (clone, sample) DataFrame from adata.obs.
 
     One row per (CDR3ab, sample) pair where the clone has at least one
@@ -633,32 +776,68 @@ def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
         is_complete = pd.Series(True, index=valid.index)
     valid["is_complete_clone"] = is_complete
     complete = valid[is_complete]
-    sample_totals = complete.groupby("sample", observed=True).size()
 
-    # Cell counts and UMI sums per (clone, sample). The numerator must use the
-    # SAME complete-cell rule as ``sample_totals`` (the denominator). Grouping
-    # over ``valid`` instead admitted single-chain clones and both-chain cells
-    # failing the UMI>=2 gate — cells the denominator drops — so per-sample
-    # frequencies summed to >1 and un-synthesizable single-chain "clones" leaked
-    # into the table (#175). Restricting to ``complete`` restores the invariant
-    # (per-sample freqs sum to 1.0) and drops the single-chain rows.
-    #
-    # Keep the (CDR3ab, sample) MultiIndex while assigning the UMI sums so pandas
-    # aligns them by key rather than by position, then flatten to columns.
-    grouped = complete.groupby(["CDR3ab", "sample"], observed=True)
-    out = grouped.size().rename("cells").to_frame()
+    attribution_on = attribution is not None and getattr(attribution, "enabled", False)
+    if attribution_on:
+        # Weighted numerator AND denominator from partial-information
+        # attribution (#176): fractional cell weights distributed across
+        # complete clones. Per-sample weighted frequencies still sum to 1.0.
+        from .attribution import attribute_cells
 
-    if "TRA_1_umis" in complete.columns:
-        out["n_alpha_umis"] = grouped["TRA_1_umis"].sum().fillna(0).astype(int)
-    if "TRB_1_umis" in complete.columns:
-        out["n_beta_umis"] = grouped["TRB_1_umis"].sum().fillna(0).astype(int)
+        long_table, _ = attribute_cells(obs, attribution, "CDR3ab", min_umi=2)
+        if len(long_table) == 0:
+            out = pd.DataFrame(columns=["CDR3ab", "sample", "cells", "frequency"])
+        else:
+            sample_totals = long_table.groupby("sample", observed=True)["weight"].sum()
+            out = (
+                long_table.groupby(["CDR3ab", "sample"], observed=True)["weight"]
+                .sum()
+                .rename("cells")
+                .to_frame()
+            )
+            umi_cols = [c for c in ("TRA_1_umis", "TRB_1_umis") if c in obs.columns]
+            if umi_cols:
+                umi_src = long_table.merge(
+                    obs[umi_cols], left_on="cell_barcode", right_index=True, how="left"
+                )
+                for src, dst in (("TRA_1_umis", "n_alpha_umis"), ("TRB_1_umis", "n_beta_umis")):
+                    if src in obs.columns:
+                        umi_src[dst] = umi_src[src].fillna(0).astype(float) * umi_src["weight"]
+                        out[dst] = umi_src.groupby(
+                            ["CDR3ab", "sample"], observed=True
+                        )[dst].sum()
+            out = out.reset_index()
+            out["frequency"] = out.apply(
+                lambda r: safe_divide(r["cells"], sample_totals.get(r["sample"], 0), default=0.0),
+                axis=1,
+            )
+    else:
+        sample_totals = complete.groupby("sample", observed=True).size()
 
-    out = out.reset_index()
+        # Cell counts and UMI sums per (clone, sample). The numerator must use
+        # the SAME complete-cell rule as ``sample_totals`` (the denominator).
+        # Grouping over ``valid`` instead admitted single-chain clones and
+        # both-chain cells failing the UMI>=2 gate — cells the denominator
+        # drops — so per-sample frequencies summed to >1 and un-synthesizable
+        # single-chain "clones" leaked into the table (#175). Restricting to
+        # ``complete`` restores the invariant (per-sample freqs sum to 1.0).
+        #
+        # Keep the (CDR3ab, sample) MultiIndex while assigning the UMI sums so
+        # pandas aligns them by key rather than by position, then flatten.
+        grouped = complete.groupby(["CDR3ab", "sample"], observed=True)
+        out = grouped.size().rename("cells").to_frame()
 
-    out["frequency"] = out.apply(
-        lambda r: safe_divide(r["cells"], sample_totals.get(r["sample"], 0), default=0.0),
-        axis=1,
-    )
+        if "TRA_1_umis" in complete.columns:
+            out["n_alpha_umis"] = grouped["TRA_1_umis"].sum().fillna(0).astype(int)
+        if "TRB_1_umis" in complete.columns:
+            out["n_beta_umis"] = grouped["TRB_1_umis"].sum().fillna(0).astype(int)
+
+        out = out.reset_index()
+
+        out["frequency"] = out.apply(
+            lambda r: safe_divide(r["cells"], sample_totals.get(r["sample"], 0), default=0.0),
+            axis=1,
+        )
 
     # Propagate per-sample axis metadata (one value per sample).
     axis_to_short = {
@@ -1050,13 +1229,18 @@ def get_clonotype_summary(clonotypes: pd.DataFrame) -> dict:
     dict
         Summary statistics
     """
+    # cell_count is float under attribution (#176); round for the singleton /
+    # expanded split so the labels stay meaningful (a clone with weight ~1.0 is
+    # a singleton). Integer counts round to themselves, so OFF output is
+    # unchanged.
+    rounded = clonotypes["cell_count"].round()
     return {
         "n_clonotypes": len(clonotypes),
         "n_cells": clonotypes["cell_count"].sum(),
         "median_clone_size": clonotypes["cell_count"].median(),
         "max_clone_size": clonotypes["cell_count"].max(),
-        "n_singletons": (clonotypes["cell_count"] == 1).sum(),
-        "n_expanded": (clonotypes["cell_count"] > 1).sum(),
+        "n_singletons": (rounded == 1).sum(),
+        "n_expanded": (rounded > 1).sum(),
         "n_multi_sample": (clonotypes["n_samples"] > 1).sum()
         if "n_samples" in clonotypes.columns
         else 0,
@@ -1091,6 +1275,11 @@ def export_clonotypes_airr(clonotypes: pd.DataFrame, output_path: str):
     for src_col, dst_col in airr_mapping.items():
         if src_col in clonotypes.columns:
             airr_df[dst_col] = clonotypes[src_col]
+
+    # AIRR clone_count is an integer; round the (possibly fractional under
+    # attribution, #176) weighted cell_count at export only.
+    if "clone_count" in airr_df.columns:
+        airr_df["clone_count"] = airr_df["clone_count"].round().astype(int)
 
     # Add required AIRR fields with defaults
     if "sequence_id" not in airr_df.columns:
