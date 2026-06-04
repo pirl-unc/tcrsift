@@ -1985,6 +1985,60 @@ def cmd_mnemonic(args):
     print(f"Saved with mnemonic names to {args.output}")
 
 
+def cmd_select(args):
+    """Apply the config-driven multi-route selection language to a long table.
+
+    Standalone front-end (#122) to the selection engine that ``run`` uses
+    internally: reads a clone-sample-long CSV (the ``clone_sample_long.csv``
+    that ``run`` emits), runs the configured ``selection.rules``, and writes
+    the selected clones (selection columns + ``global_rank``). Optionally joins
+    per-clone metadata from a clonotypes CSV and emits per-sample tiers.
+    """
+    import pandas as pd
+
+    from .config import TCRsiftConfig
+    from .selection import attach_per_sample_tiers, select_from_clone_sample_long
+
+    setup_logging(args.verbose)
+
+    long_df = pd.read_csv(args.input)
+    print(f"Loaded {len(long_df)} (clone, sample) rows from {args.input}")
+
+    selection = {}
+    if args.config:
+        selection = TCRsiftConfig.from_yaml(args.config).selection or {}
+    if not selection.get("rules"):
+        raise TCRsiftValidationError(
+            "No selection rules configured.",
+            hint="Pass --config pointing to a YAML with a 'selection:' block "
+            "that defines 'rules' (see `tcrsift generate-config`).",
+        )
+
+    rules = select_from_clone_sample_long(long_df, selection)
+    if rules.empty:
+        print("  No clones selected (no method axis, no rules matched, or empty input).")
+    elif args.clonotypes:
+        clo = pd.read_csv(args.clonotypes)
+        if "CDR3ab" in clo.columns:
+            rules = (
+                rules.merge(clo, on="CDR3ab", how="left")
+                .sort_values("global_rank")
+                .reset_index(drop=True)
+            )
+
+    rules.to_csv(args.output, index=False)
+    n_rules = rules["selection_rule"].nunique() if "selection_rule" in rules.columns else 0
+    print(f"Wrote {len(rules)} selected clones across {n_rules} rules → {args.output}")
+
+    # Per-sample tier exposure (#122): label each (clone, sample) row with its
+    # within-sample abundance tier — the per-sample analogue of the global tier.
+    if getattr(args, "emit_per_sample_tiers", False):
+        tiered = attach_per_sample_tiers(long_df)
+        tier_path = Path(args.output).with_name("clone_sample_per_sample_tiers.csv")
+        tiered.to_csv(tier_path, index=False)
+        print(f"Wrote per-sample tiers → {tier_path}")
+
+
 # =============================================================================
 # Main Parser
 # =============================================================================
@@ -2172,6 +2226,34 @@ def create_parser():
     p_filter.add_argument("--output-dir", help="Output directory for plots")
     p_filter.add_argument("--verbose", action="store_true", help="Verbose output")
     p_filter.set_defaults(func=cmd_filter)
+
+    # -------------------------------------------------------------------------
+    # Select command (#122): config-driven multi-route selection language
+    # -------------------------------------------------------------------------
+    p_select = subparsers.add_parser(
+        "select",
+        help="Apply config-driven selection rules to a clone-sample-long table",
+    )
+    p_select.add_argument(
+        "--input", "-i", required=True,
+        help="clone_sample_long.csv (one row per clone×sample with method/freq)",
+    )
+    p_select.add_argument("--output", "-o", required=True, help="Output selected-clones CSV")
+    p_select.add_argument(
+        "--config", "-c", required=True,
+        help="YAML config with a 'selection:' block (rules + global_rank)",
+    )
+    p_select.add_argument(
+        "--clonotypes",
+        help="Optional clonotypes CSV to join per-clone metadata onto the output",
+    )
+    p_select.add_argument(
+        "--emit-per-sample-tiers",
+        action="store_true",
+        help="Also write per-sample abundance tiers for the long table",
+    )
+    p_select.add_argument("--verbose", action="store_true", help="Verbose output")
+    p_select.set_defaults(func=cmd_select)
 
     # -------------------------------------------------------------------------
     # Annotate command
