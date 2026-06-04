@@ -104,6 +104,37 @@ class FilterConfig:
 
 
 @dataclass
+class AttributionConfig:
+    """Configuration for partial-information clonotype attribution (#176).
+
+    Opt-in (``enabled=False`` by default → today's integer behavior is
+    byte-identical). When on, each cell distributes a total weight of 1.0
+    across complete paired alpha-beta clones: alpha-dropout cells are shared
+    across clones with the same beta, droplet doublets are split, and recurrent
+    dual-alpha cells (allelic inclusion) are merged into one clone. Weighted
+    counts then replace integer ``cell_count``/``frequency`` everywhere, which
+    also restores the per-sample frequency-sum invariant (subsumes #175).
+    """
+
+    enabled: bool = False
+    # Share alpha-dropout cells across complete clones with the same beta.
+    beta_sharing: bool = True
+    # Split droplet doublets (dual-alpha/dual-beta singletons) across the
+    # candidate complete clones rather than dropping or keeping primary only.
+    doublet_split: bool = True
+    # Merge recurrent dual-alpha cells (allelic inclusion) into one clone.
+    dual_alpha_merge: bool = True
+    # Minimum cells sharing a sorted (a1,a2,b) triple to treat it as one
+    # biological clone rather than a per-cell droplet doublet.
+    dual_alpha_min_cells: int = 2
+    # How shared/split weight is apportioned: "proportional" (to each target
+    # clone's complete-cell abundance) or "uniform".
+    share_weighting: str = "proportional"
+    # Reserved EM hook; v1 uses a single distribution pass (no iteration).
+    em_iterations: int = 1
+
+
+@dataclass
 class AnnotateConfig:
     """Configuration for the annotate step."""
 
@@ -223,6 +254,7 @@ class TCRsiftConfig:
     load: LoadConfig = field(default_factory=LoadConfig)
     phenotype: PhenotypeConfig = field(default_factory=PhenotypeConfig)
     clonotype: ClonotypeConfig = field(default_factory=ClonotypeConfig)
+    attribution: AttributionConfig = field(default_factory=AttributionConfig)
     filter: FilterConfig = field(default_factory=FilterConfig)
     annotate: AnnotateConfig = field(default_factory=AnnotateConfig)
     til: TILConfig = field(default_factory=TILConfig)
@@ -290,6 +322,16 @@ class TCRsiftConfig:
             "group_by": ("clonotype", "group_by"),
             "handle_doublets": ("clonotype", "handle_doublets"),
             "min_umi": ("clonotype", "min_umi"),
+            # Attribution (#176). Field names are globally unique so they
+            # survive merge_with_args' flatten/rebuild round-trip.
+            "attribution": ("attribution", "enabled"),  # --attribution / flat bool
+            "enabled": ("attribution", "enabled"),  # from flattened section
+            "beta_sharing": ("attribution", "beta_sharing"),
+            "doublet_split": ("attribution", "doublet_split"),
+            "dual_alpha_merge": ("attribution", "dual_alpha_merge"),
+            "dual_alpha_min_cells": ("attribution", "dual_alpha_min_cells"),
+            "share_weighting": ("attribution", "share_weighting"),
+            "em_iterations": ("attribution", "em_iterations"),
             # Filter
             "method": ("filter", "method"),
             "tcell_type": ("filter", "tcell_type"),
@@ -365,6 +407,7 @@ class TCRsiftConfig:
             "load": {},
             "phenotype": {},
             "clonotype": {},
+            "attribution": {},
             "filter": {},
             "annotate": {},
             "til": {},
@@ -377,7 +420,12 @@ class TCRsiftConfig:
         global_opts: dict[str, Any] = {}
 
         for key, value in data.items():
-            if key in flat_to_nested:
+            # A key that names a section AND is given as a dict is a nested
+            # block, even when a same-named flat scalar alias exists (e.g.
+            # 'attribution', which is both a section and a --attribution bool).
+            if key in nested and isinstance(value, dict):
+                nested[key].update(value)
+            elif key in flat_to_nested:
                 section, param = flat_to_nested[key]
                 # Handle inverted aliases
                 if key == "skip_plots":
@@ -403,6 +451,7 @@ class TCRsiftConfig:
             load=LoadConfig(**nested["load"]),
             phenotype=PhenotypeConfig(**nested["phenotype"]),
             clonotype=ClonotypeConfig(**nested["clonotype"]),
+            attribution=AttributionConfig(**nested["attribution"]),
             filter=FilterConfig(**nested["filter"]),
             annotate=AnnotateConfig(**nested["annotate"]),
             til=TILConfig(**nested["til"]),
@@ -433,6 +482,7 @@ class TCRsiftConfig:
             "load": dataclasses.asdict(self.load),
             "phenotype": dataclasses.asdict(self.phenotype),
             "clonotype": dataclasses.asdict(self.clonotype),
+            "attribution": dataclasses.asdict(self.attribution),
             "filter": dataclasses.asdict(self.filter),
             "annotate": dataclasses.asdict(self.annotate),
             "til": dataclasses.asdict(self.til),
