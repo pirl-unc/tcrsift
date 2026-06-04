@@ -229,6 +229,12 @@ _MODULE_EXPORTS = {
         "validate_clonotypes",
         "get_qc_summary",
     ),
+    ".sort_qc": (
+        "DEFAULT_SORT_SIGNATURE_MAP",
+        "parse_sort_label",
+        "sort_signature_consistency",
+        "sort_signature_consistency_from_adata",
+    ),
     ".mnemonic": ("tcr_name",),
     ".validation": (
         "TCRsiftValidationError",
