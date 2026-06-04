@@ -209,7 +209,10 @@ def load_cellranger_gex(
     max_mito_pct : float
         Maximum mitochondrial percentage
     min_mito_pct : float
-        Minimum mitochondrial percentage
+        Minimum mitochondrial percentage (a FLOOR: cells below this are
+        dropped, targeting near-zero-mito empty/ambient droplets). Default 2.0;
+        the drop is logged as a warning so it isn't silent (#168). Set 0 to
+        disable the floor.
     verbose : bool
         Print progress information
 
@@ -316,6 +319,28 @@ def load_cellranger_gex(
     adata.obs["filter:max_counts"] = adata.obs["n_counts"] <= max_counts
     adata.obs["filter:min_mito"] = adata.obs["percent_mt"] >= min_mito_pct
     adata.obs["filter:max_mito"] = adata.obs["percent_mt"] <= max_mito_pct
+
+    # The min_mito_pct FLOOR discards *low*-mito cells (near-zero-mito
+    # empty/ambient droplets). The default 2.0 floor trims a small tail on most
+    # datasets — that's the intended behavior, so report it at info level rather
+    # than warning on every run (#168). Only escalate to a warning when the floor
+    # culls an unusually large fraction (>10%), which signals it's set too high.
+    if min_mito_pct > 0:
+        n_below_floor = int((~adata.obs["filter:min_mito"]).sum())
+        if n_below_floor:
+            frac = n_below_floor / adata.n_obs if adata.n_obs else 0.0
+            msg = (
+                f"  min_mito_pct={min_mito_pct} FLOOR dropped "
+                f"{n_below_floor:,}/{adata.n_obs:,} ({frac * 100:.0f}%) low-mito cells"
+            )
+            if frac > 0.10:
+                logger.warning(
+                    msg + " — a >10% cull from the mito floor is unusual; "
+                    "set min_mito_pct=0 to disable it."
+                )
+            elif verbose:
+                logger.info(msg)
+
     adata.obs["filter:pass_qc"] = (
         adata.obs["filter:min_genes"]
         & adata.obs["filter:max_genes"]

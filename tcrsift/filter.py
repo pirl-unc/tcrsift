@@ -706,6 +706,46 @@ def filter_clonotypes_logistic(
     return df
 
 
+def pick_strictest_populated_tier(clonotypes: pd.DataFrame) -> str:
+    """Return the strictest *populated* tier label, falling back to ``"*"``.
+
+    Walks ``tier1`` → ``tier5`` and returns the first one that has any rows.
+    Unexpanded cohorts (no clone >=1% frequency) have no ``tier1`` clones, so a
+    hardcoded ``tier1`` target yields an empty method-recovery table and the
+    panel is silently dropped (#167). Returns ``"*"`` (all clones) when there is
+    no ``tier`` column or no tier is populated.
+    """
+    if "tier" not in clonotypes.columns:
+        return "*"
+    for tier in ("tier1", "tier2", "tier3", "tier4", "tier5"):
+        if (clonotypes["tier"] == tier).any():
+            return tier
+    return "*"
+
+
+def resolve_fdr_tiers_for_method(
+    method: str,
+    configured_tiers: list | None,
+    default_tiers: list | None,
+) -> tuple[list | None, bool]:
+    """Resolve which ``fdr_tiers`` to pass on, given the active tiering method.
+
+    ``fdr_tiers`` only drives the logistic (FDR) tiering path. Under any other
+    method it is inert (#170). Returns ``(tiers_to_pass, warn_inert)``:
+
+    - logistic: pass the configured tiers through; never warn.
+    - non-logistic: pass ``None`` (so it can't trigger a redundant downstream
+      warning), and set ``warn_inert=True`` only when the user *customized*
+      ``fdr_tiers`` away from the default — that's the footgun worth flagging;
+      a default list left untouched under threshold tiering is the normal path
+      and stays silent.
+    """
+    if method == "logistic":
+        return configured_tiers, False
+    customized = sorted(configured_tiers or []) != sorted(default_tiers or [])
+    return None, customized
+
+
 def filter_clonotypes(
     clonotypes: pd.DataFrame,
     method: str = "threshold",
@@ -775,6 +815,18 @@ def filter_clonotypes(
         raise TCRsiftValidationError(
             f"Invalid tcell_type: '{tcell_type}'",
             hint=f"Valid options are: {valid_tcell_types}",
+        )
+
+    # fdr_tiers only drives the logistic (FDR) tiering path. Under threshold
+    # tiering it is silently inert — the tiers come from fixed abundance cutoffs
+    # (DEFAULT_THRESHOLD_TIERS). Warn rather than ignore so a config that sets
+    # fdr_tiers + method='threshold' isn't a silent footgun (#170).
+    if fdr_tiers is not None and method != "logistic":
+        logger.warning(
+            "fdr_tiers was provided but method=%r — fdr_tiers only applies to "
+            "method='logistic'. It is being ignored; tiers come from fixed "
+            "abundance thresholds. Set method='logistic' for FDR-based tiering.",
+            method,
         )
 
     logger.info(f"Filtering clonotypes using {method} method")

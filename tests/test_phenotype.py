@@ -7,12 +7,47 @@ import pytest
 
 from tcrsift.phenotype import (
     TCELL_TYPE_CATEGORIES,
+    apply_cd3_gate,
     classify_tcell_type,
     filter_by_tcell_type,
     get_phenotype_summary,
     phenotype_cells,
     validate_phenotype_vs_expected,
 )
+
+
+class TestApplyCd3Gate:
+    """apply_cd3_gate is the #172 fix: min_cd3_reads now actually drops the
+    low-CD3 cells that feed clonotype aggregation, instead of only setting a
+    column that nothing consumed."""
+
+    def _adata_with_cd3(self):
+        import anndata as ad
+        import numpy as np
+
+        # 5 cells; CD3 reads 0,2,4,6,8. filter:min_cd3 mirrors phenotype_cells.
+        obs = pd.DataFrame(index=[f"c{i}" for i in range(5)])
+        obs["CD3"] = [0, 2, 4, 6, 8]
+        return ad.AnnData(X=np.zeros((5, 1), dtype=float), obs=obs)
+
+    def test_gate_drops_low_cd3_cells(self):
+        adata = self._adata_with_cd3()
+        adata.obs["filter:min_cd3"] = adata.obs["CD3"] >= 3
+        gated = apply_cd3_gate(adata, min_cd3_reads=3)
+        # Only the cells with CD3 >= 3 (reads 4, 6, 8) survive.
+        assert gated.n_obs == 3
+        assert (gated.obs["CD3"] >= 3).all()
+
+    def test_zero_threshold_is_noop(self):
+        adata = self._adata_with_cd3()
+        adata.obs["filter:min_cd3"] = adata.obs["CD3"] >= 3
+        gated = apply_cd3_gate(adata, min_cd3_reads=0)
+        assert gated.n_obs == adata.n_obs
+
+    def test_missing_column_is_noop(self):
+        adata = self._adata_with_cd3()  # no filter:min_cd3 column
+        gated = apply_cd3_gate(adata, min_cd3_reads=3)
+        assert gated.n_obs == adata.n_obs
 
 
 class TestClassifyTcellType:

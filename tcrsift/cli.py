@@ -920,9 +920,14 @@ def cmd_run(args):
     from .annotate import annotate_clonotypes
     from .assemble import assemble_full_sequences, export_fasta
     from .clonotype import aggregate_clonotypes, export_clonotypes_airr
-    from .filter import filter_clonotypes, split_by_tier
+    from .filter import (
+        filter_clonotypes,
+        pick_strictest_populated_tier,
+        resolve_fdr_tiers_for_method,
+        split_by_tier,
+    )
     from .loader import load_samples
-    from .phenotype import filter_by_tcell_type, phenotype_cells
+    from .phenotype import apply_cd3_gate, filter_by_tcell_type, phenotype_cells
     from .plots import (
         create_pipeline_funnel,
         create_tcr_sequence_pdf,
@@ -1028,6 +1033,16 @@ def cmd_run(args):
     if tcell_type != "both":
         adata = filter_by_tcell_type(adata, tcell_type)
         print(f"  Filtered to {tcell_type.upper()}+: {len(adata)} cells")
+
+    # CD3 read gate on the cells entering clonotype aggregation. Previously
+    # min_cd3_reads only set a column (filter:min_cd3) and never gated selection
+    # (#172). Default 3 (a gentle contamination floor); 0 disables. A raw CD3 UMI
+    # count tracks sequencing depth, so this is a low floor, not a large cull.
+    min_cd3 = config.phenotype.min_cd3_reads
+    n_before_cd3 = len(adata)
+    adata = apply_cd3_gate(adata, min_cd3)
+    if len(adata) != n_before_cd3:
+        print(f"  CD3 gate (>={min_cd3} reads): {len(adata)}/{n_before_cd3} cells pass")
 
     funnel_counts["Phenotyped"] = len(adata)
 
@@ -1172,6 +1187,25 @@ def cmd_run(args):
     )
     print(f"  FDR scope: {resolved_scope}")
 
+    # fdr_tiers only drives logistic (FDR) tiering. Under method='threshold' it
+    # is inert, so a config that sets fdr_tiers (or filter_mode='fdr') alongside
+    # method='threshold' would silently get fixed abundance tiers (#170). Pass it
+    # through only when it's actually used (logistic); when a *customized* list
+    # can't take effect, warn loudly once (here — passing None below keeps
+    # filter_clonotypes from emitting a duplicate warning).
+    from .config import FilterConfig
+
+    fdr_tiers_arg, fdr_inert = resolve_fdr_tiers_for_method(
+        config.filter.method, config.filter.fdr_tiers, FilterConfig().fdr_tiers
+    )
+    if fdr_inert:
+        print(
+            f"  WARNING: fdr_tiers is set but filter.method={config.filter.method!r}; "
+            "fdr_tiers only applies to method='logistic'. Using fixed abundance "
+            "tiers — the fdr_tiers list is ignored. Set method: logistic for "
+            "FDR-based tiering."
+        )
+
     def _filter_one(df_in):
         return filter_clonotypes(
             df_in,
@@ -1180,7 +1214,7 @@ def cmd_run(args):
             min_cells=config.filter.min_cells,
             min_frequency=config.filter.min_frequency,
             require_complete=config.filter.require_complete,
-            fdr_tiers=config.filter.fdr_tiers,
+            fdr_tiers=fdr_tiers_arg,
             **mode_kwargs,
         )
 
@@ -1322,10 +1356,11 @@ def cmd_run(args):
                 f"{len(overlap_matrices)} donor matrices"
             )
 
-        # Method-recovery table + bar plot (#27 chunk 4). Targets the
-        # strictest tier present on `filtered`; falls back to '*' (all
-        # filtered clones) under non-FDR modes.
-        target_tier = "tier1" if "tier" in filtered.columns else "*"
+        # Method-recovery table + bar plot (#27 chunk 4). Targets the strictest
+        # *populated* tier on `filtered` (not a hardcoded tier1, which empties
+        # the table for unexpanded cohorts and silently drops the panel, #167);
+        # falls back to '*' (all filtered clones) when no tier is populated.
+        target_tier = pick_strictest_populated_tier(filtered)
         recovery = build_method_recovery_table(
             filtered, long_df, tier=target_tier
         )
@@ -1956,7 +1991,12 @@ def create_parser():
     p_load.add_argument(
         "--max-counts", type=int, default=100000, help="Max UMI counts (default: 100000)"
     )
-    p_load.add_argument("--min-mito", type=float, default=2.0, help="Min mito %% (default: 2)")
+    p_load.add_argument(
+        "--min-mito",
+        type=float,
+        default=2.0,
+        help="Min mito %% FLOOR — drops cells below it (default: 2; set 0 to disable, #168)",
+    )
     p_load.add_argument("--max-mito", type=float, default=8.0, help="Max mito %% (default: 8)")
     p_load.add_argument("--plot-qc", action="store_true", help="Generate QC plots")
     p_load.add_argument("--output-dir", help="Output directory for plots")
@@ -1973,7 +2013,7 @@ def create_parser():
         "--cd4-cd8-ratio", type=float, default=3.0, help="Ratio for confident calls (default: 3.0)"
     )
     p_pheno.add_argument(
-        "--min-cd3-reads", type=int, default=10, help="Min CD3 reads (default: 10)"
+        "--min-cd3-reads", type=int, default=3, help="Min CD3 reads (default: 3; set 0 to disable, #172)"
     )
     p_pheno.add_argument("--plot-phenotype", action="store_true", help="Generate phenotype plots")
     p_pheno.add_argument("--output-dir", help="Output directory for plots")
@@ -2854,7 +2894,10 @@ CONDITIONALLY REQUIRED:
     load_group.add_argument("--min-counts", type=int, help="Min UMI counts (default: 500)")
     load_group.add_argument("--max-counts", type=int, help="Max UMI counts (default: 100000)")
     load_group.add_argument(
-        "--min-mito", type=float, dest="min_mito_pct", help="Min mito %% (default: 2)"
+        "--min-mito",
+        type=float,
+        dest="min_mito_pct",
+        help="Min mito %% FLOOR — drops cells below it (default: 2; set 0 to disable, #168)",
     )
     load_group.add_argument(
         "--max-mito", type=float, dest="max_mito_pct", help="Max mito %% (default: 8)"
@@ -2865,7 +2908,9 @@ CONDITIONALLY REQUIRED:
     pheno_group.add_argument(
         "--cd4-cd8-ratio", type=float, help="Ratio for confident calls (default: 3.0)"
     )
-    pheno_group.add_argument("--min-cd3-reads", type=int, help="Min CD3 reads (default: 10)")
+    pheno_group.add_argument(
+        "--min-cd3-reads", type=int, help="Min CD3 reads (default: 3; set 0 to disable, #172)"
+    )
 
     # Clonotype step parameters
     clone_group = p_run.add_argument_group("Clonotype options")

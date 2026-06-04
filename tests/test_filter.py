@@ -12,6 +12,8 @@ from tcrsift.filter import (
     filter_clonotypes_logistic,
     filter_clonotypes_threshold,
     get_filter_summary,
+    pick_strictest_populated_tier,
+    resolve_fdr_tiers_for_method,
     split_by_tier,
 )
 from tcrsift.model import LogisticFrequencyModel
@@ -601,6 +603,114 @@ class TestResolveFilterModeKwargs:
 
         with pytest.raises(TCRsiftValidationError):
             resolve_filter_mode_kwargs("nonsense")
+
+
+class TestPickStrictestPopulatedTier:
+    """pick_strictest_populated_tier underpins the #167 method-recovery fix."""
+
+    def test_picks_strictest_present(self):
+        df = pd.DataFrame({"tier": ["tier3", "tier2", "tier4"]})
+        assert pick_strictest_populated_tier(df) == "tier2"
+
+    def test_skips_empty_tier1_for_unexpanded_cohort(self):
+        # Unexpanded cohort: only tier3+ populated, no tier1/tier2 (#167).
+        df = pd.DataFrame({"tier": ["tier3", "tier3", "tier5"]})
+        assert pick_strictest_populated_tier(df) == "tier3"
+
+    def test_no_tier_column_returns_star(self):
+        df = pd.DataFrame({"max_frequency": [0.1, 0.2]})
+        assert pick_strictest_populated_tier(df) == "*"
+
+    def test_all_tiers_unpopulated_returns_star(self):
+        df = pd.DataFrame({"tier": [None, None]})
+        assert pick_strictest_populated_tier(df) == "*"
+
+
+class TestResolveFdrTiersForMethod:
+    """resolve_fdr_tiers_for_method gates the #170 footgun warning."""
+
+    _DEFAULT = [0.15, 0.1, 0.01, 0.001, 0.0001]
+
+    def test_logistic_passes_through_never_warns(self):
+        tiers, warn = resolve_fdr_tiers_for_method(
+            "logistic", [0.2, 0.05], self._DEFAULT
+        )
+        assert tiers == [0.2, 0.05]
+        assert warn is False
+
+    def test_threshold_default_is_silent(self):
+        # Default list left untouched under threshold = normal path, no warning.
+        tiers, warn = resolve_fdr_tiers_for_method(
+            "threshold", list(self._DEFAULT), self._DEFAULT
+        )
+        assert tiers is None
+        assert warn is False
+
+    def test_threshold_default_order_insensitive(self):
+        tiers, warn = resolve_fdr_tiers_for_method(
+            "threshold", [0.0001, 0.001, 0.01, 0.1, 0.15], self._DEFAULT
+        )
+        assert tiers is None
+        assert warn is False
+
+    def test_threshold_customized_warns_and_drops(self):
+        tiers, warn = resolve_fdr_tiers_for_method(
+            "threshold", [0.2, 0.05], self._DEFAULT
+        )
+        # Not passed through (avoids a duplicate downstream warning)...
+        assert tiers is None
+        # ...but flagged as a footgun.
+        assert warn is True
+
+
+class TestFdrTiersThresholdFootgun:
+    """fdr_tiers only applies to the logistic method; under threshold it is
+    inert and must warn rather than silently no-op (#170)."""
+
+    def test_warns_when_fdr_tiers_set_under_threshold(
+        self, sample_clonotypes_df, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.filter"):
+            filter_clonotypes(
+                sample_clonotypes_df,
+                method="threshold",
+                fdr_tiers=[0.1, 0.01, 0.001],
+                verbose=False,
+            )
+
+        msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("fdr_tiers" in m and "logistic" in m for m in msgs)
+
+    def test_no_warning_for_threshold_without_fdr_tiers(
+        self, sample_clonotypes_df, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.filter"):
+            filter_clonotypes(
+                sample_clonotypes_df, method="threshold", verbose=False
+            )
+
+        msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("fdr_tiers" in m for m in msgs)
+
+    def test_no_warning_for_logistic_with_fdr_tiers(
+        self, clonotypes_for_logistic, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.filter"):
+            filter_clonotypes(
+                clonotypes_for_logistic,
+                method="logistic",
+                fdr_tiers=[0.1, 0.01, 0.001],
+                verbose=False,
+            )
+
+        msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("fdr_tiers" in m and "logistic" in m for m in msgs)
 
 
 class TestAssignTiersThreshold:
