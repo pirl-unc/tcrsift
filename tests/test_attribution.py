@@ -159,6 +159,19 @@ class TestDualAlpha:
 
 
 class TestDualBeta:
+    def test_no_phantom_zero_weight_clone(self):
+        # The B2 partner has no complete prior, so a proportional split sends it
+        # 0 weight — it must not surface as a phantom clone.
+        df = _cells([
+            {"a1": "A", "b1": "B1"},
+            {"bc": "d1", "a1": "A", "b1": "B1", "b2": "B2"},  # B2 prior = 0
+        ])
+        long, _ = attribute_cells(df, _on())
+        assert "A_B2" not in set(long["CDR3ab"])
+        assert (long["weight"] > 0).all()
+        # The cell's full weight still lands on the real clone.
+        assert long[long["cell_barcode"] == "d1"]["weight"].sum() == pytest.approx(1.0)
+
     def test_dual_beta_splits(self):
         df = _cells([
             {"a1": "A", "b1": "B1"},

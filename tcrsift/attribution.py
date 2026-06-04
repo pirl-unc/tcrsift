@@ -319,6 +319,11 @@ def attribute_cells(
                 ["cell_barcode", "CDR3ab", "sample", "kind"], as_index=False, observed=True
             )["weight"].sum()
         )
-        long_table = long_table[LONG_COLUMNS]
+        # Drop zero-weight attributions — a proportional split sends 0 to a
+        # zero-prior candidate (e.g. a doublet's partner clone that was never
+        # observed complete), which would otherwise surface as a phantom clone
+        # with cell_count 0.0.
+        long_table = long_table[long_table["weight"] > 0]
+        long_table = long_table[LONG_COLUMNS].reset_index(drop=True)
 
     return long_table, merge_map
