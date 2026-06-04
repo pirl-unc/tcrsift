@@ -66,6 +66,9 @@ class ClonotypeConfig:
     group_by: str = "CDR3ab"
     handle_doublets: str = "flag"
     min_umi: int = 2
+    # Warn (loudly, regardless of verbose) when the multi-chain/doublet rate
+    # meets/exceeds this fraction (#165). 0 disables the warning.
+    doublet_warn_rate: float = 0.1
 
 
 @dataclass
@@ -224,6 +227,9 @@ class OutputConfig:
     # Method × method overlap matrix similarity metric (#27 chunk 3).
     # 'jaccard' / 'dice' / 'count'.
     method_overlap_similarity: str = "jaccard"
+    # Figure output format (#169): 'png' (default), 'pdf', or 'svg'. A vector
+    # choice emits the vector file alongside a PNG (the PDF report embeds raster).
+    plot_format: str = "png"
 
 
 @dataclass
@@ -322,6 +328,7 @@ class TCRsiftConfig:
             "group_by": ("clonotype", "group_by"),
             "handle_doublets": ("clonotype", "handle_doublets"),
             "min_umi": ("clonotype", "min_umi"),
+            "doublet_warn_rate": ("clonotype", "doublet_warn_rate"),
             # Attribution (#176). Field names are globally unique so they
             # survive merge_with_args' flatten/rebuild round-trip.
             "attribution": ("attribution", "enabled"),  # --attribution / flat bool
@@ -395,6 +402,7 @@ class TCRsiftConfig:
             "emit_clone_sample_long": ("output", "emit_clone_sample_long"),
             "per_method_top_n": ("output", "per_method_top_n"),
             "method_overlap_similarity": ("output", "method_overlap_similarity"),
+            "plot_format": ("output", "plot_format"),
             "generate_report": ("output", "generate_report"),
             "report_format": ("output", "report_format"),
             "output_airr": ("output", "output_airr"),

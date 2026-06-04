@@ -474,6 +474,24 @@ BACKENDS: dict[str, type[SequenceProbabilityModel]] = {
     "tcrpeg": TCRpegProbabilityModel,
 }
 
+# Below this many unique reference CDR3s the order-2 k-mer is more data-efficient
+# than the TCRpeg GRU (which undertrains under ~10^5 seqs); only switch to
+# tcrpeg once an OTS-scale reference is cached (#160).
+KMER_REFERENCE_MAX = 30_000
+
+
+def select_backend_for_reference_size(
+    n_unique_cdr3: int, *, kmer_max: int = KMER_REFERENCE_MAX
+) -> str:
+    """Pick the Pgen/Ppost backend by reference size (#160).
+
+    Returns ``"kmer"`` for small references (``< kmer_max`` unique CDR3s) — the
+    data-efficient, always-positive default — and ``"tcrpeg"`` only once the
+    reference is OTS-scale, where the GRU starts to win. Don't default
+    ``pgen train`` to TCRpeg unconditionally.
+    """
+    return "kmer" if int(n_unique_cdr3) < int(kmer_max) else "tcrpeg"
+
 
 def _default_model_path(chain: str, backend: str, role: str = "ppost"):
     """Path to a shipped default model under :mod:`tcrsift.refseqs`."""

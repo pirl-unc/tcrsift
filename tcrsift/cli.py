@@ -152,6 +152,7 @@ def cmd_clonotype(args):
         min_umi=args.min_umi,
         handle_doublets=args.handle_doublets,
         attribution=attribution,
+        doublet_warn_rate=getattr(args, "doublet_warn_rate", 0.1),
     )
 
     # Print summary
@@ -946,6 +947,7 @@ def cmd_run(args):
         plot_phenotype,
         plot_qc,
         plot_til,
+        set_plot_format,
     )
     from .sample_sheet import load_sample_sheet
     from .til import load_til_specs, match_til
@@ -955,6 +957,10 @@ def cmd_run(args):
 
     # Load config with CLI overrides
     config = load_config_with_args(args)
+
+    # Figure output format (#169): png (default) or a vector format (pdf/svg)
+    # emitted alongside a PNG. Applies to every save_figure in this run.
+    set_plot_format(config.output.plot_format)
 
     # Load sample sheet once (used for auto-detect + TIL loading)
     sample_sheet = load_sample_sheet(args.sample_sheet)
@@ -1061,6 +1067,7 @@ def cmd_run(args):
         min_umi=config.clonotype.min_umi,
         handle_doublets=config.clonotype.handle_doublets,
         attribution=config.attribution,
+        doublet_warn_rate=config.clonotype.doublet_warn_rate,
     )
     if config.attribution.enabled:
         print("  Attribution ON: weighted fractional clone counts (#176)")
@@ -2044,6 +2051,13 @@ def create_parser():
     )
     p_clone.add_argument("--min-umi", type=int, default=2, help="Min UMIs per chain (default: 2)")
     p_clone.add_argument(
+        "--doublet-warn-rate",
+        type=float,
+        default=0.1,
+        help="Warn when the multi-chain rate meets/exceeds this fraction "
+        "(default: 0.1; 0 disables, #165)",
+    )
+    p_clone.add_argument(
         "--attribution",
         action="store_true",
         help="Partial-information attribution: weighted fractional clone counts "
@@ -2951,6 +2965,12 @@ CONDITIONALLY REQUIRED:
         help="Doublet handling (default: flag)",
     )
     clone_group.add_argument("--min-umi", type=int, help="Min UMIs per chain (default: 2)")
+    clone_group.add_argument(
+        "--doublet-warn-rate",
+        type=float,
+        help="Warn when the multi-chain rate meets/exceeds this fraction "
+        "(default: 0.1; 0 disables, #165)",
+    )
 
     # Attribution options (#176). Opt-in; flags default to None so they don't
     # clobber config values via merge_with_args when left unset.
@@ -3164,6 +3184,12 @@ CONDITIONALLY REQUIRED:
         action="store_false",
         default=None,
         help="Skip report generation",
+    )
+    out_group.add_argument(
+        "--plot-format",
+        choices=["png", "pdf", "svg"],
+        help="Figure format (default: png); pdf/svg emit a vector file "
+        "alongside a PNG for publication figures (#169)",
     )
     out_group.add_argument(
         "--emit-clone-sample-long",

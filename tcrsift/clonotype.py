@@ -44,6 +44,7 @@ def aggregate_clonotypes(
     min_umi: int = 2,
     handle_doublets: str = "flag",
     attribution=None,
+    doublet_warn_rate: float = 0.1,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -111,6 +112,12 @@ def aggregate_clonotypes(
     logger.info(f"Aggregating clonotypes by {group_by} from {len(adata):,} cells")
 
     df = adata.obs.copy()
+
+    # Surface a high multi-chain ("doublet") rate unconditionally (#165) —
+    # before any path branches, so it fires under both attribution and the
+    # integer path. A high rate is a QC signal (ambient RNA / cell loading)
+    # that affects clone calling and was previously hidden at default verbosity.
+    _warn_high_multichain_rate(df, doublet_warn_rate)
 
     # Partial-information attribution (#176). Opt-in; when enabled it supersedes
     # handle_doublets (the doublet block below would otherwise drop the very
@@ -216,6 +223,38 @@ def aggregate_clonotypes(
             )
 
     return clonotypes
+
+
+def _warn_high_multichain_rate(df: pd.DataFrame, threshold: float) -> None:
+    """Emit a loud (warning-level, verbose-independent) QC alert when the
+    multi-chain / doublet rate is high, overall and per sample (#165).
+
+    No-op when there's no ``multi_chain`` column, no doublets, or ``threshold``
+    is non-positive (disabled).
+    """
+    if threshold <= 0 or "multi_chain" not in df.columns or len(df) == 0:
+        return
+    mc = df["multi_chain"].fillna(False).astype(bool)
+    n_doublets = int(mc.sum())
+    if n_doublets == 0:
+        return
+    rate = n_doublets / len(df)
+    if rate < threshold:
+        return
+    logger.warning(
+        f"High multi-chain rate: {rate * 100:.1f}% of cells "
+        f"({n_doublets:,}/{len(df):,}) have >1 productive chain. "
+        "This can indicate ambient RNA / cell-loading issues; "
+        "handle_doublets='flag' keeps them (attribution redistributes them)."
+    )
+    if "sample" in df.columns:
+        per_sample = (
+            df.assign(_mc=mc).groupby("sample", observed=True)["_mc"].mean()
+        )
+        for sample, r in per_sample[per_sample >= threshold].sort_values(
+            ascending=False
+        ).items():
+            logger.warning(f"    sample {sample}: {r * 100:.1f}% multi-chain")
 
 
 def _aggregate_with_attribution(
