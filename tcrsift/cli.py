@@ -1091,6 +1091,22 @@ def cmd_run(args):
             for _, r in sample_qc[sample_qc["warning"] != ""].iterrows():
                 print(f"  ⚠️  sample {r['sample']!r}: {r['warning']}")
 
+    # Per-condition signature-consistency QC (#161): does each sort behave
+    # like its label (its GEX signature enriched), consistently across donors?
+    if "enrichment_method" in adata.obs.columns:
+        try:
+            from .sort_qc import sort_signature_consistency_from_adata
+            sort_qc = sort_signature_consistency_from_adata(adata)
+        except Exception as exc:  # GEX / signature genes may be absent
+            logging.debug("sort-consistency QC skipped: %s", exc)
+            sort_qc = pd.DataFrame()
+        if not sort_qc.empty:
+            sort_qc.to_csv(data_dir / "sort_consistency_qc.csv", index=False)
+            print(f"  Wrote sort_consistency_qc.csv: {len(sort_qc)} "
+                  "(donor, sort) rows (signature enrichment vs label)")
+            for _, r in sort_qc[sort_qc["warning"] != ""].iterrows():
+                print(f"  ⚠️  {r['donor']}/{r['enrichment_method']}: {r['warning']}")
+
     if should_emit_long and long_df is not None:
         # Enrich the emitted table with a per-sample abundance tier (the
         # per-(clone, sample) analogue of the global clonotype tier) via
