@@ -133,6 +133,7 @@ def cmd_clonotype(args):
     import anndata as ad
 
     from .clonotype import aggregate_clonotypes, export_clonotypes_airr, get_clonotype_summary
+    from .config import AttributionConfig
     from .plots import plot_clonotypes
 
     setup_logging(args.verbose)
@@ -140,11 +141,17 @@ def cmd_clonotype(args):
     adata = ad.read_h5ad(args.input)
     print(f"Loaded {len(adata)} cells from {args.input}")
 
+    attribution = AttributionConfig(
+        enabled=getattr(args, "attribution", False),
+        dual_alpha_min_cells=getattr(args, "dual_alpha_min_cells", 2),
+        share_weighting=getattr(args, "share_weighting", "proportional"),
+    )
     clonotypes = aggregate_clonotypes(
         adata,
         group_by=args.group_by,
         min_umi=args.min_umi,
         handle_doublets=args.handle_doublets,
+        attribution=attribution,
     )
 
     # Print summary
@@ -1053,7 +1060,10 @@ def cmd_run(args):
         group_by=config.clonotype.group_by,
         min_umi=config.clonotype.min_umi,
         handle_doublets=config.clonotype.handle_doublets,
+        attribution=config.attribution,
     )
+    if config.attribution.enabled:
+        print("  Attribution ON: weighted fractional clone counts (#176)")
     clonotypes.to_csv(data_dir / "clonotypes.csv", index=False)
     funnel_counts["Clonotypes"] = len(clonotypes)
     print(f"  Found {len(clonotypes)} clonotypes")
@@ -1075,7 +1085,7 @@ def cmd_run(args):
     long_df = None
     if should_emit_long or have_method_axis:
         from .clonotype import build_clone_sample_long
-        long_df = build_clone_sample_long(adata)
+        long_df = build_clone_sample_long(adata, attribution=config.attribution)
 
     # Per-sample clonal-expansion QC (#161): a one-line expansion fingerprint
     # that flags an unexpanded/near-polyclonal sample (failed expansion, swap,
@@ -1231,7 +1241,7 @@ def cmd_run(args):
         # Per-donor or per-sample scope. Build long_df if not already.
         if long_df is None:
             from .clonotype import build_clone_sample_long
-            long_df = build_clone_sample_long(adata)
+            long_df = build_clone_sample_long(adata, attribution=config.attribution)
         if resolved_scope == "per-donor":
             subsets = split_clonotypes_by_donor(clonotypes, long_df)
             label = "donor"
@@ -2033,6 +2043,24 @@ def create_parser():
         "--handle-doublets", choices=["flag", "remove", "keep-primary"], default="flag"
     )
     p_clone.add_argument("--min-umi", type=int, default=2, help="Min UMIs per chain (default: 2)")
+    p_clone.add_argument(
+        "--attribution",
+        action="store_true",
+        help="Partial-information attribution: weighted fractional clone counts "
+        "(alpha-dropout sharing, doublet split, dual-alpha merge). #176",
+    )
+    p_clone.add_argument(
+        "--dual-alpha-min-cells",
+        type=int,
+        default=2,
+        help="Cells sharing a dual-alpha triple to merge as one clone (default: 2)",
+    )
+    p_clone.add_argument(
+        "--share-weighting",
+        choices=["proportional", "uniform"],
+        default="proportional",
+        help="How shared/split weight is apportioned (default: proportional)",
+    )
     p_clone.add_argument("--airr", help="Also output AIRR format to this path")
     p_clone.add_argument("--plot-clonotypes", action="store_true", help="Generate clonotype plots")
     p_clone.add_argument("--output-dir", help="Output directory for plots")
@@ -2923,6 +2951,27 @@ CONDITIONALLY REQUIRED:
         help="Doublet handling (default: flag)",
     )
     clone_group.add_argument("--min-umi", type=int, help="Min UMIs per chain (default: 2)")
+
+    # Attribution options (#176). Opt-in; flags default to None so they don't
+    # clobber config values via merge_with_args when left unset.
+    attr_group = p_run.add_argument_group("Attribution options")
+    attr_group.add_argument(
+        "--attribution",
+        action="store_true",
+        default=None,
+        help="Partial-information attribution: weighted fractional clone counts "
+        "(off by default, #176)",
+    )
+    attr_group.add_argument(
+        "--dual-alpha-min-cells",
+        type=int,
+        help="Cells sharing a dual-alpha triple to merge as one clone (default: 2)",
+    )
+    attr_group.add_argument(
+        "--share-weighting",
+        choices=["proportional", "uniform"],
+        help="How shared/split weight is apportioned (default: proportional)",
+    )
 
     # Filter step parameters
     filter_group = p_run.add_argument_group("Filter options")

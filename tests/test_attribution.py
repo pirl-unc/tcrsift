@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -28,7 +27,6 @@ def _cells(rows):
     Each row dict may set a1/a2/b1/b2 (CDR3 strings, "" = absent) and sample;
     UMIs default to 5 (passing) for any present chain.
     """
-    recs = {}
     cols = ["CDR3_alpha", "TRA_2_cdr3", "CDR3_beta", "TRB_2_cdr3",
             "TRA_1_umis", "TRA_2_umis", "TRB_1_umis", "TRB_2_umis", "sample"]
     data = {c: [] for c in cols}
@@ -50,7 +48,8 @@ def _cells(rows):
 
 
 def _on(**kw):
-    return AttributionConfig(enabled=True, **kw)
+    kw.setdefault("enabled", True)
+    return AttributionConfig(**kw)
 
 
 class TestCompleteCells:
@@ -200,6 +199,88 @@ class TestWeightConservation:
         ])
         long, _ = attribute_cells(df, _on(), min_umi=2)
         assert "low" not in set(long["cell_barcode"])
+
+
+def _adata(rows):
+    """Wrap _cells rows in a minimal AnnData for aggregate_clonotypes."""
+    import anndata as ad
+    from scipy.sparse import csr_matrix
+
+    obs = _cells(rows)
+    X = csr_matrix((len(obs), 1))
+    return ad.AnnData(X=X, obs=obs)
+
+
+class TestAggregateIntegration:
+    def test_off_path_byte_identical_and_integer(self):
+        from tcrsift.clonotype import aggregate_clonotypes
+
+        rows = [
+            {"a1": "A", "b1": "B"},
+            {"a1": "A", "b1": "B"},
+            {"a1": "C", "b1": "D"},
+        ]
+        base = aggregate_clonotypes(_adata(rows), show_progress=False, verbose=False)
+        off = aggregate_clonotypes(
+            _adata(rows), attribution=_on(enabled=False), show_progress=False, verbose=False
+        )
+        # Disabled attribution == no attribution, byte-identical.
+        pd.testing.assert_frame_equal(base, off)
+        # OFF keeps integer cell counts.
+        assert base["cell_count"].dtype.kind in "iu"
+        assert base.set_index("CDR3ab")["cell_count"].to_dict() == {"A_B": 2, "C_D": 1}
+
+    def test_on_path_weighted_counts_and_beta_share(self):
+        from tcrsift.clonotype import aggregate_clonotypes
+
+        rows = [
+            {"a1": "A1", "b1": "B"},
+            {"a1": "A1", "b1": "B"},
+            {"a1": "A1", "b1": "B"},   # A1_B prior 3
+            {"a1": "A2", "b1": "B"},   # A2_B prior 1
+            {"a1": "", "b1": "B"},     # alpha-dropout -> 0.75/0.25
+        ]
+        clo = aggregate_clonotypes(
+            _adata(rows), attribution=_on(), show_progress=False, verbose=False
+        )
+        counts = clo.set_index("CDR3ab")["cell_count"].to_dict()
+        # A1_B: 3 + 0.75 = 3.75 ; A2_B: 1 + 0.25 = 1.25
+        assert counts["A1_B"] == pytest.approx(3.75)
+        assert counts["A2_B"] == pytest.approx(1.25)
+        # Total weight conserved (5 cells, all attributable).
+        assert clo["cell_count"].sum() == pytest.approx(5.0)
+
+    def test_per_sample_frequency_sum_is_one(self):
+        from tcrsift.clonotype import build_clone_sample_long
+
+        rows = [
+            {"a1": "A1", "b1": "B", "sample": "S1"},
+            {"a1": "A1", "b1": "B", "sample": "S1"},
+            {"a1": "A2", "b1": "B", "sample": "S1"},
+            {"a1": "", "b1": "B", "sample": "S1"},   # alpha-dropout, shared
+            {"a1": "A1", "a2": "A2", "b1": "B", "sample": "S1"},  # dual-alpha
+        ]
+        long = build_clone_sample_long(_adata(rows), attribution=_on())
+        freq_sum = long[long["sample"] == "S1"]["frequency"].sum()
+        assert freq_sum == pytest.approx(1.0)
+
+    def test_handle_doublets_remove_superseded(self):
+        from tcrsift.clonotype import aggregate_clonotypes
+
+        rows = [
+            {"a1": "A1", "b1": "B"},
+            {"a1": "A2", "b1": "B"},
+            # A multi-chain doublet cell that handle_doublets='remove' would drop.
+            {"bc": "dbl", "a1": "A1", "a2": "A2", "b1": "B"},
+        ]
+        adata = _adata(rows)
+        adata.obs["multi_chain"] = [False, False, True]
+        clo = aggregate_clonotypes(
+            adata, handle_doublets="remove", attribution=_on(dual_alpha_merge=False),
+            show_progress=False, verbose=False,
+        )
+        # The doublet cell's weight is redistributed, not dropped: total = 3.0.
+        assert clo["cell_count"].sum() == pytest.approx(3.0)
 
 
 class TestDisabledAndGuards:

@@ -580,9 +580,10 @@ def plot_clonotypes(clonotypes: pd.DataFrame, output_dir: str | Path):
     ax.fill_between(range(1, len(sorted_counts) + 1), sorted_counts, alpha=0.3)
     save_figure(fig, output_dir / "clonotype_rank_plot.png")
 
-    # Clone size histogram
+    # Clone size histogram. cell_count is float under attribution (#176), so
+    # ceil to an int range for integer histogram bins.
     fig, ax = plt.subplots(figsize=(10, 6))
-    max_size = min(50, clonotypes["cell_count"].max())
+    max_size = int(min(50, np.ceil(clonotypes["cell_count"].max())))
     ax.hist(
         clonotypes["cell_count"].clip(upper=max_size),
         bins=range(1, max_size + 2),
