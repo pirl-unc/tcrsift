@@ -110,3 +110,65 @@ class TestCdr3AnchorIntegrity:
         out = cdr3_anchor_integrity(pd.DataFrame({"CDR3_beta": ["", None]}),
                                     cdr3_cols=("CDR3_beta",))
         assert np.isnan(out["CDR3_beta"])
+
+
+def _adata(obs, n_var=3):
+    import anndata as ad
+    return ad.AnnData(np.zeros((len(obs), n_var)), obs=obs)
+
+
+def _barcodes(n, suffix, seed):
+    rng = np.random.default_rng(seed)
+    return [f"{''.join(rng.choice(list('ACGT'), 16))}-{suffix}" for _ in range(n)]
+
+
+class TestSampleIntegrityQC:
+    def _data(self):
+        bc_a = _barcodes(100, 1, 0)
+        bc_b = _barcodes(100, 2, 1)
+        bc_c = [b.rsplit("-", 1)[0] + "-3" for b in bc_a]  # C = copy of A
+        obs = pd.DataFrame({
+            "sample": ["A"] * 100 + ["B"] * 100 + ["C"] * 100,
+            "CDR3_beta": (["CASSLF"] * 80 + [None] * 20)
+            + (["CASSLF"] * 95 + [None] * 5)
+            + (["CASSLF"] * 10 + [None] * 90),
+        }, index=bc_a + bc_b + bc_c)
+        return _adata(obs)
+
+    def test_gex_vdj_overlap_fraction(self):
+        from tcrsift.qc import gex_vdj_overlap
+        out = gex_vdj_overlap(self._data()).set_index("sample")
+        assert out.loc["A", "gex_vdj_overlap_fraction"] == pytest.approx(0.80)
+        assert out.loc["C", "n_with_vdj"] == 10
+
+    def test_duplicate_input_high_jaccard(self):
+        from tcrsift.qc import inter_sample_barcode_jaccard
+        jac = inter_sample_barcode_jaccard(self._data())
+        # A and C share all base barcodes; A and B are independent.
+        assert jac.loc["A", "C"] == pytest.approx(1.0)
+        assert jac.loc["A", "B"] == pytest.approx(0.0)
+        assert (np.diag(jac.values) == 1.0).all()
+
+    def test_integrity_warnings(self):
+        from tcrsift.qc import sample_integrity_qc
+        q = sample_integrity_qc(self._data()).set_index("sample")
+        # C: low GEX↔VDJ overlap AND duplicate-of-A
+        assert "low GEX↔VDJ overlap" in q.loc["C", "warning"]
+        assert "duplicate" in q.loc["A", "warning"]  # A flagged as overlapping C
+        assert q.loc["B", "warning"] == ""           # B is clean
+
+    def test_no_sample_col_jaccard_empty(self):
+        from tcrsift.qc import inter_sample_barcode_jaccard
+        obs = pd.DataFrame({"x": [1, 2]}, index=["AA-1", "BB-1"])
+        assert inter_sample_barcode_jaccard(_adata(obs)).empty
+
+    def test_missing_vdj_cols_zero_overlap(self):
+        from tcrsift.qc import gex_vdj_overlap
+        obs = pd.DataFrame({"sample": ["A", "A"]}, index=["AA-1", "BB-1"])
+        out = gex_vdj_overlap(_adata(obs))
+        assert out.iloc[0]["gex_vdj_overlap_fraction"] == 0.0
+
+    def test_read_cellranger_metrics_missing_returns_empty(self):
+        from tcrsift.qc import read_cellranger_metrics
+        assert read_cellranger_metrics("/nonexistent/path") == {}
+        assert read_cellranger_metrics(None) == {}

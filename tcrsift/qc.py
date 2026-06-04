@@ -668,3 +668,162 @@ def cdr3_anchor_integrity(
             if len(seqs) else float("nan")
         )
     return out
+
+
+# =============================================================================
+# Per-sample integrity QC (#161): GEX↔VDJ overlap, inter-sample barcode
+# Jaccard (duplicate-input / swap detection), cellranger Sample ID/library.
+# =============================================================================
+
+def _base_barcode(bc: str) -> str:
+    """Strip the cellranger gem-group suffix: ``ACGT...-1`` → ``ACGT...``."""
+    return str(bc).rsplit("-", 1)[0]
+
+
+def gex_vdj_overlap(
+    adata,
+    *,
+    sample_col: str = "sample",
+    vdj_cols: tuple[str, ...] = ("CDR3_beta", "CDR3_alpha"),
+) -> pd.DataFrame:
+    """Per-sample fraction of GEX cells that also carry a VDJ (TCR) call.
+
+    A low overlap flags a GEX↔VDJ pairing problem (wrong VDJ library, a
+    barcode-suffix mismatch, or a swap). Returns one row per sample with
+    ``n_cells``, ``n_with_vdj`` and ``gex_vdj_overlap_fraction``.
+    """
+    obs = adata.obs
+    present = [c for c in vdj_cols if c in obs.columns]
+    if present:
+        has_vdj = obs[present].notna().any(axis=1)
+    else:
+        has_vdj = pd.Series(False, index=obs.index)
+    rows = []
+    if sample_col in obs.columns:
+        groups = obs.groupby(sample_col, observed=True).groups.items()
+    else:
+        groups = [("(all)", obs.index)]
+    for sample, idx in groups:
+        n = len(idx)
+        nv = int(has_vdj.loc[idx].sum())
+        rows.append({
+            sample_col: sample, "n_cells": n, "n_with_vdj": nv,
+            "gex_vdj_overlap_fraction": nv / n if n else float("nan"),
+        })
+    return pd.DataFrame(rows)
+
+
+def inter_sample_barcode_jaccard(
+    adata, *, sample_col: str = "sample", strip_suffix: bool = True,
+) -> pd.DataFrame:
+    """Sample × sample Jaccard over (base) cell barcodes.
+
+    Independent samples share ≈0 barcodes by chance, so a high off-diagonal
+    value flags an **accidentally duplicated / copied input** (or a swap).
+    Barcodes are compared on their base (gem-group suffix stripped) by
+    default. Returns a square DataFrame indexed by sample (diagonal 1.0);
+    empty when ``sample_col`` is absent.
+    """
+    obs = adata.obs
+    if sample_col not in obs.columns:
+        return pd.DataFrame()
+    bcs = pd.Series(list(map(str, adata.obs_names)), index=obs.index)
+    if strip_suffix:
+        bcs = bcs.map(_base_barcode)
+    samples = sorted(obs[sample_col].astype(str).unique())
+    sets = {s: set(bcs[obs[sample_col].astype(str) == s]) for s in samples}
+    mat = pd.DataFrame(0.0, index=samples, columns=samples)
+    for a in samples:
+        for b in samples:
+            if a == b:
+                mat.loc[a, b] = 1.0
+                continue
+            union = len(sets[a] | sets[b])
+            mat.loc[a, b] = len(sets[a] & sets[b]) / union if union else 0.0
+    return mat
+
+
+def read_cellranger_metrics(gex_dir) -> dict[str, str]:
+    """Best-effort cellranger ``metrics_summary.csv`` fields (Sample ID etc.).
+
+    Searches ``gex_dir`` and its parents for ``metrics_summary.csv`` and
+    returns the Sample-ID / chemistry / library columns of the first data
+    row (so a genuine mislabel is visible without opening the file). Returns
+    ``{}`` when nothing is found or parseable — never raises.
+    """
+    from pathlib import Path
+
+    if not gex_dir:
+        return {}
+    start = Path(str(gex_dir))
+    candidates = [start, *start.parents]
+    for base in candidates:
+        f = base / "metrics_summary.csv"
+        if not f.is_file():
+            continue
+        try:
+            row = pd.read_csv(f).iloc[0].to_dict()
+        except Exception:
+            continue
+        keep = ("sample id", "chemistry", "library")
+        out = {str(k): str(v) for k, v in row.items()
+               if any(t in str(k).lower() for t in keep)}
+        if out:
+            return out
+    return {}
+
+
+def sample_integrity_qc(
+    adata,
+    *,
+    sample_col: str = "sample",
+    min_gex_vdj_overlap: float = 0.3,
+    max_cross_sample_jaccard: float = 0.2,
+    min_anchor_integrity: float = 0.9,
+) -> pd.DataFrame:
+    """Per-sample integrity QC + warnings (#161).
+
+    Combines :func:`gex_vdj_overlap`, :func:`inter_sample_barcode_jaccard`
+    (max overlap with any *other* sample), :func:`cdr3_anchor_integrity`, and
+    a best-effort cellranger Sample-ID lookup. Adds a ``warning`` string when
+    GEX↔VDJ overlap is low, a sample's barcodes overlap another's (possible
+    duplicate input), or CDR3 anchor integrity is low.
+    """
+    overlap = gex_vdj_overlap(adata, sample_col=sample_col)
+    jac = inter_sample_barcode_jaccard(adata, sample_col=sample_col)
+    obs = adata.obs
+    rows = []
+    for _, base in overlap.iterrows():
+        sample = base[sample_col]
+        s = str(sample)
+        max_j = (
+            float(jac.loc[s].drop(s).max())
+            if not jac.empty and s in jac.index and len(jac) > 1 else 0.0
+        )
+        sub = (obs[obs[sample_col].astype(str) == s] if sample_col in obs.columns
+               else obs)
+        anchor = cdr3_anchor_integrity(sub)
+        meta = {}
+        if "gex_dir" in obs.columns and len(sub):
+            meta = read_cellranger_metrics(sub["gex_dir"].iloc[0])
+        warnings = []
+        ov = base["gex_vdj_overlap_fraction"]
+        if ov == ov and ov < min_gex_vdj_overlap:
+            warnings.append(f"low GEX↔VDJ overlap ({ov*100:.0f}%)")
+        if max_j > max_cross_sample_jaccard:
+            warnings.append(
+                f"barcodes overlap another sample (Jaccard {max_j:.2f}) — "
+                "possible duplicate/copied input or swap")
+        for col, frac in anchor.items():
+            if frac == frac and frac < min_anchor_integrity:
+                warnings.append(
+                    f"low CDR3 anchor integrity {col} ({frac*100:.0f}% end F/W)")
+        rows.append({
+            **base.to_dict(),
+            "max_cross_sample_barcode_jaccard": max_j,
+            **{f"anchor_{c}": v for c, v in anchor.items()},
+            **{f"cellranger_{k.lower().replace(' ', '_')}": v
+               for k, v in meta.items()},
+            "warning": "; ".join(warnings),
+        })
+    return pd.DataFrame(rows)
