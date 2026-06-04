@@ -1075,6 +1075,22 @@ def cmd_run(args):
             for _, r in exp_qc[exp_qc["unexpanded"]].iterrows():
                 print(f"  ⚠️  sample {r['sample']!r}: {r['warning']}")
 
+    # Per-sample integrity QC (#161): GEX↔VDJ overlap, inter-sample barcode
+    # Jaccard (duplicate-input/swap), CDR3 anchor integrity, cellranger
+    # Sample ID — surfaces a mislabel/swap/duplicate without a forensic dig.
+    if "sample" in adata.obs.columns:
+        from .qc import inter_sample_barcode_jaccard, sample_integrity_qc
+        sample_qc = sample_integrity_qc(adata)
+        if not sample_qc.empty:
+            sample_qc.to_csv(data_dir / "sample_qc.csv", index=False)
+            print(f"  Wrote sample_qc.csv: {len(sample_qc)} samples "
+                  "(GEX↔VDJ overlap / barcode Jaccard / anchor integrity)")
+            jac = inter_sample_barcode_jaccard(adata)
+            if not jac.empty:
+                jac.to_csv(data_dir / "sample_barcode_jaccard.csv")
+            for _, r in sample_qc[sample_qc["warning"] != ""].iterrows():
+                print(f"  ⚠️  sample {r['sample']!r}: {r['warning']}")
+
     if should_emit_long and long_df is not None:
         # Enrich the emitted table with a per-sample abundance tier (the
         # per-(clone, sample) analogue of the global clonotype tier) via
