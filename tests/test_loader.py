@@ -1367,8 +1367,8 @@ class TestLoadCellrangerGex:
         ]
         assert floor_warnings, "expected a min_mito floor warning"
 
-    def test_min_mito_default_zero_no_floor_warning(self, mock_gex_dir, caplog):
-        """The default min_mito_pct (0) imposes no floor, so no floor warning."""
+    def test_min_mito_zero_no_floor_warning(self, mock_gex_dir, caplog):
+        """Setting min_mito_pct=0 disables the floor, so no floor warning."""
         import logging
 
         from tcrsift.loader import load_cellranger_gex
@@ -1382,6 +1382,7 @@ class TestLoadCellrangerGex:
                 max_genes=100,
                 min_counts=1,
                 max_counts=10000,
+                min_mito_pct=0,
                 max_mito_pct=100,
             )
 

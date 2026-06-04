@@ -22,15 +22,15 @@ def test_sct_flat_keys_are_mapped():
     assert config.sct.require_compact_match is True
 
 
-def test_min_mito_default_is_no_floor():
-    """min_mito_pct is a FLOOR; the default must be 0 so out-of-the-box QC
-    doesn't silently discard healthy low-mito cells (#168)."""
+def test_min_mito_default_retains_floor():
+    """min_mito_pct keeps its 2.0 floor default (intentional empty/ambient
+    removal); #168's fix is making the drop visible, not removing the floor."""
     config = TCRsiftConfig()
-    assert config.load.min_mito_pct == 0.0
+    assert config.load.min_mito_pct == 2.0
 
 
-def test_min_cd3_reads_default_is_opt_in():
-    """The CD3 gate must default to 0 (no gate) so it's a deliberate opt-in
-    rather than a silent depth-correlated cull (#172)."""
+def test_min_cd3_reads_default_is_gentle_floor():
+    """The now-functional CD3 gate defaults to a gentle floor of 3 (validated on
+    pilot data); 0 disables it. Previously a dead parameter (#172)."""
     config = TCRsiftConfig()
-    assert config.phenotype.min_cd3_reads == 0
+    assert config.phenotype.min_cd3_reads == 3

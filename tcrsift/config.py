@@ -38,11 +38,10 @@ class LoadConfig:
     max_counts: int = 100000
     # Mitochondrial-content window. max_mito_pct removes high-mito dying cells
     # (standard scRNA-seq QC). min_mito_pct is a FLOOR — it discards cells
-    # *below* the threshold, which is the opposite of convention (low mito is
-    # generally good). Default 0.0 = no floor; set a positive value only if you
-    # deliberately want to drop very-low-mito (e.g. empty/ambient) droplets. See
-    # #168.
-    min_mito_pct: float = 0.0
+    # *below* the threshold, which targets near-zero-mito empty/ambient droplets.
+    # The default 2.0 floor is retained; it is no longer silent — load_cellranger_gex
+    # logs how many cells it drops so the cull is visible (#168). Set 0.0 to disable.
+    min_mito_pct: float = 2.0
     max_mito_pct: float = 8.0
 
 
@@ -52,11 +51,12 @@ class PhenotypeConfig:
 
     cd4_cd8_ratio: float = 3.0
     # CD3 read gate, applied to cells entering clonotype aggregation in `run`.
-    # Default 0 = no gate (opt-in): a raw CD3 UMI floor scales with sequencing
-    # depth, so a nonzero value preferentially drops shallow/small clones — set
-    # a low contamination floor (~1-3) deliberately rather than relying on a
-    # large default. See #172.
-    min_cd3_reads: int = 0
+    # Previously a dead parameter (set a column but never gated selection, #172);
+    # now it actually drops low-CD3 (likely non-T / ambient) cells. Default 3 is
+    # a gentle contamination floor validated on pilot data. Note a raw CD3 UMI
+    # count scales with sequencing depth, so this gate is depth-dependent across
+    # datasets — set 0 to disable, or raise it for deeper runs.
+    min_cd3_reads: int = 3
 
 
 @dataclass

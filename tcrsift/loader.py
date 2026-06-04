@@ -186,7 +186,7 @@ def load_cellranger_gex(
     min_counts: int = 500,
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
-    min_mito_pct: float = 0.0,
+    min_mito_pct: float = 2.0,
     verbose: bool = True,
 ) -> ad.AnnData:
     """
@@ -210,7 +210,9 @@ def load_cellranger_gex(
         Maximum mitochondrial percentage
     min_mito_pct : float
         Minimum mitochondrial percentage (a FLOOR: cells below this are
-        dropped). Default 0 = no floor; non-standard, opt-in only (#168).
+        dropped, targeting near-zero-mito empty/ambient droplets). Default 2.0;
+        the drop is logged as a warning so it isn't silent (#168). Set 0 to
+        disable the floor.
     verbose : bool
         Print progress information
 
@@ -576,7 +578,7 @@ def load_sample(
     min_counts: int = 500,
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
-    min_mito_pct: float = 0.0,
+    min_mito_pct: float = 2.0,
 ) -> ad.AnnData | None:
     """
     Load all data for a single sample.
@@ -682,7 +684,7 @@ def load_samples(
     min_counts: int = 500,
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
-    min_mito_pct: float = 0.0,
+    min_mito_pct: float = 2.0,
     verbose: bool = True,
     show_progress: bool = True,
     tmpdir: str | Path | None = None,

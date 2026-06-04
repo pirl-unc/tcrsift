@@ -2004,8 +2004,8 @@ def create_parser():
     p_load.add_argument(
         "--min-mito",
         type=float,
-        default=0.0,
-        help="Min mito %% FLOOR — drops cells below it (default: 0 = no floor, #168)",
+        default=2.0,
+        help="Min mito %% FLOOR — drops cells below it (default: 2; set 0 to disable, #168)",
     )
     p_load.add_argument("--max-mito", type=float, default=8.0, help="Max mito %% (default: 8)")
     p_load.add_argument("--plot-qc", action="store_true", help="Generate QC plots")
@@ -2023,7 +2023,7 @@ def create_parser():
         "--cd4-cd8-ratio", type=float, default=3.0, help="Ratio for confident calls (default: 3.0)"
     )
     p_pheno.add_argument(
-        "--min-cd3-reads", type=int, default=10, help="Min CD3 reads (default: 10)"
+        "--min-cd3-reads", type=int, default=3, help="Min CD3 reads (default: 3; set 0 to disable, #172)"
     )
     p_pheno.add_argument("--plot-phenotype", action="store_true", help="Generate phenotype plots")
     p_pheno.add_argument("--output-dir", help="Output directory for plots")
@@ -2907,7 +2907,7 @@ CONDITIONALLY REQUIRED:
         "--min-mito",
         type=float,
         dest="min_mito_pct",
-        help="Min mito %% FLOOR — drops cells below it (default: 0 = no floor, #168)",
+        help="Min mito %% FLOOR — drops cells below it (default: 2; set 0 to disable, #168)",
     )
     load_group.add_argument(
         "--max-mito", type=float, dest="max_mito_pct", help="Max mito %% (default: 8)"
@@ -2918,7 +2918,9 @@ CONDITIONALLY REQUIRED:
     pheno_group.add_argument(
         "--cd4-cd8-ratio", type=float, help="Ratio for confident calls (default: 3.0)"
     )
-    pheno_group.add_argument("--min-cd3-reads", type=int, help="Min CD3 reads (default: 10)")
+    pheno_group.add_argument(
+        "--min-cd3-reads", type=int, help="Min CD3 reads (default: 3; set 0 to disable, #172)"
+    )
 
     # Clonotype step parameters
     clone_group = p_run.add_argument_group("Clonotype options")
