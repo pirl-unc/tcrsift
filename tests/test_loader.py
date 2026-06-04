@@ -1340,22 +1340,22 @@ class TestLoadCellrangerGex:
         ]
         assert not qc_warnings, f"unexpected warning: {qc_warnings}"
 
-    def test_min_mito_floor_warns(self, mock_gex_dir, caplog):
-        """A positive min_mito_pct is a FLOOR (drops low-mito cells) — the
-        inverse of standard QC. It must warn loudly when it drops cells so it
-        can't silently shrink the cohort (#168)."""
+    def test_min_mito_floor_warns_on_large_cull(self, mock_gex_dir, caplog):
+        """A min_mito_pct FLOOR that culls an unusually large fraction (>10%)
+        must warn loudly so it can't silently shrink the cohort (#168)."""
         import logging
 
         from tcrsift.loader import load_cellranger_gex
 
-        # Set the floor above the fixture's median so it actually drops cells.
+        # Set the floor at the 75th percentile so it drops ~75% of cells —
+        # comfortably past the 10% warning threshold.
         unfiltered = load_cellranger_gex(
             mock_gex_dir, "test_sample", verbose=False, **self._PERMISSIVE_QC
         )
-        median_mito = float(unfiltered.obs["percent_mt"].median())
+        high_floor = float(unfiltered.obs["percent_mt"].quantile(0.75))
 
         kwargs = dict(self._PERMISSIVE_QC)
-        kwargs["min_mito_pct"] = median_mito if median_mito > 0 else 1.0
+        kwargs["min_mito_pct"] = high_floor if high_floor > 0 else 1.0
         with caplog.at_level(logging.WARNING, logger="tcrsift.loader"):
             load_cellranger_gex(
                 mock_gex_dir, "test_sample", verbose=False, **kwargs
@@ -1365,7 +1365,34 @@ class TestLoadCellrangerGex:
             r.message for r in caplog.records
             if r.levelno == logging.WARNING and "FLOOR" in r.message
         ]
-        assert floor_warnings, "expected a min_mito floor warning"
+        assert floor_warnings, "expected a min_mito floor warning on a large cull"
+
+    def test_min_mito_default_floor_no_warning(self, mock_gex_dir, caplog):
+        """A small default floor trims a tail (info-level), not a warning — the
+        warning is reserved for an unusually large (>10%) cull (#168)."""
+        import logging
+
+        from tcrsift.loader import load_cellranger_gex
+
+        # Floor just above the minimum: drops at most the bottom sliver of cells,
+        # which should stay under the 10% warn threshold.
+        unfiltered = load_cellranger_gex(
+            mock_gex_dir, "test_sample", verbose=False, **self._PERMISSIVE_QC
+        )
+        low_floor = float(unfiltered.obs["percent_mt"].quantile(0.05))
+
+        kwargs = dict(self._PERMISSIVE_QC)
+        kwargs["min_mito_pct"] = low_floor
+        with caplog.at_level(logging.WARNING, logger="tcrsift.loader"):
+            load_cellranger_gex(
+                mock_gex_dir, "test_sample", verbose=False, **kwargs
+            )
+
+        floor_warnings = [
+            r.message for r in caplog.records
+            if r.levelno == logging.WARNING and "FLOOR" in r.message
+        ]
+        assert not floor_warnings, f"unexpected floor warning: {floor_warnings}"
 
     def test_min_mito_zero_no_floor_warning(self, mock_gex_dir, caplog):
         """Setting min_mito_pct=0 disables the floor, so no floor warning."""

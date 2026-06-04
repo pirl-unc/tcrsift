@@ -328,6 +328,23 @@ def filter_by_tcell_type(
     return adata[mask].copy()
 
 
+def apply_cd3_gate(adata: ad.AnnData, min_cd3_reads: int) -> ad.AnnData:
+    """Restrict ``adata`` to cells passing the CD3 read gate.
+
+    ``phenotype_cells`` records ``filter:min_cd3`` (``CD3 >= min_cd3_reads``) but
+    nothing downstream consumed it, so ``min_cd3_reads`` was a dead parameter —
+    cells entered clonotype aggregation via the ``is_CD8`` mask only (#172). This
+    applies that gate, dropping low-CD3 (likely non-T / ambient) cells.
+
+    No-op (returns the input unchanged) when ``min_cd3_reads <= 0`` or the
+    ``filter:min_cd3`` column is absent. Note a raw CD3 UMI count scales with
+    sequencing depth, so a fixed floor is depth-dependent across datasets.
+    """
+    if min_cd3_reads <= 0 or "filter:min_cd3" not in adata.obs.columns:
+        return adata
+    return adata[adata.obs["filter:min_cd3"]].copy()
+
+
 def get_phenotype_summary(adata: ad.AnnData) -> pd.DataFrame:
     """
     Get summary of T cell phenotypes by sample.

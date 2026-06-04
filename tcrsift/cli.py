@@ -920,9 +920,14 @@ def cmd_run(args):
     from .annotate import annotate_clonotypes
     from .assemble import assemble_full_sequences, export_fasta
     from .clonotype import aggregate_clonotypes, export_clonotypes_airr
-    from .filter import filter_clonotypes, split_by_tier
+    from .filter import (
+        filter_clonotypes,
+        pick_strictest_populated_tier,
+        resolve_fdr_tiers_for_method,
+        split_by_tier,
+    )
     from .loader import load_samples
-    from .phenotype import filter_by_tcell_type, phenotype_cells
+    from .phenotype import apply_cd3_gate, filter_by_tcell_type, phenotype_cells
     from .plots import (
         create_pipeline_funnel,
         create_tcr_sequence_pdf,
@@ -1031,13 +1036,13 @@ def cmd_run(args):
 
     # CD3 read gate on the cells entering clonotype aggregation. Previously
     # min_cd3_reads only set a column (filter:min_cd3) and never gated selection
-    # (#172). Opt-in: default 0 = no gate. A raw-CD3-UMI floor partly tracks
-    # depth, so this is meant as a low contamination floor, not a large cull.
+    # (#172). Default 3 (a gentle contamination floor); 0 disables. A raw CD3 UMI
+    # count tracks sequencing depth, so this is a low floor, not a large cull.
     min_cd3 = config.phenotype.min_cd3_reads
-    if min_cd3 > 0 and "filter:min_cd3" in adata.obs.columns:
-        n0 = len(adata)
-        adata = adata[adata.obs["filter:min_cd3"]].copy()
-        print(f"  CD3 gate (>={min_cd3} reads): {len(adata)}/{n0} cells pass")
+    n_before_cd3 = len(adata)
+    adata = apply_cd3_gate(adata, min_cd3)
+    if len(adata) != n_before_cd3:
+        print(f"  CD3 gate (>={min_cd3} reads): {len(adata)}/{n_before_cd3} cells pass")
 
     funnel_counts["Phenotyped"] = len(adata)
 
@@ -1184,26 +1189,22 @@ def cmd_run(args):
 
     # fdr_tiers only drives logistic (FDR) tiering. Under method='threshold' it
     # is inert, so a config that sets fdr_tiers (or filter_mode='fdr') alongside
-    # method='threshold' would silently get fixed abundance tiers (#170). Pass
-    # fdr_tiers through only when it's actually used (logistic) or the user
-    # customized it; when a customized list can't take effect, warn loudly.
+    # method='threshold' would silently get fixed abundance tiers (#170). Pass it
+    # through only when it's actually used (logistic); when a *customized* list
+    # can't take effect, warn loudly once (here — passing None below keeps
+    # filter_clonotypes from emitting a duplicate warning).
     from .config import FilterConfig
 
-    _default_fdr_tiers = sorted(FilterConfig().fdr_tiers)
-    _fdr_customized = sorted(config.filter.fdr_tiers or []) != _default_fdr_tiers
-    if config.filter.method == "logistic":
-        fdr_tiers_arg = config.filter.fdr_tiers
-    elif _fdr_customized:
-        # Hand it to filter_clonotypes so its own footgun warning fires.
-        fdr_tiers_arg = config.filter.fdr_tiers
+    fdr_tiers_arg, fdr_inert = resolve_fdr_tiers_for_method(
+        config.filter.method, config.filter.fdr_tiers, FilterConfig().fdr_tiers
+    )
+    if fdr_inert:
         print(
             f"  WARNING: fdr_tiers is set but filter.method={config.filter.method!r}; "
             "fdr_tiers only applies to method='logistic'. Using fixed abundance "
             "tiers — the fdr_tiers list is ignored. Set method: logistic for "
             "FDR-based tiering."
         )
-    else:
-        fdr_tiers_arg = None
 
     def _filter_one(df_in):
         return filter_clonotypes(
@@ -1355,22 +1356,11 @@ def cmd_run(args):
                 f"{len(overlap_matrices)} donor matrices"
             )
 
-        # Method-recovery table + bar plot (#27 chunk 4). Targets the
-        # strictest tier present on `filtered`; falls back to '*' (all
-        # filtered clones) under non-FDR modes.
-        #
-        # Pick the strictest POPULATED tier rather than hardcoding tier1:
-        # unexpanded cohorts (no clone >=1% freq) have no tier1 clones, so a
-        # hardcoded tier1 yields an empty table and the panel is silently
-        # dropped (#167). Fall back through tier1..tier5, then '*'.
-        if "tier" in filtered.columns:
-            _present = [
-                t for t in ("tier1", "tier2", "tier3", "tier4", "tier5")
-                if (filtered["tier"] == t).any()
-            ]
-            target_tier = _present[0] if _present else "*"
-        else:
-            target_tier = "*"
+        # Method-recovery table + bar plot (#27 chunk 4). Targets the strictest
+        # *populated* tier on `filtered` (not a hardcoded tier1, which empties
+        # the table for unexpanded cohorts and silently drops the panel, #167);
+        # falls back to '*' (all filtered clones) when no tier is populated.
+        target_tier = pick_strictest_populated_tier(filtered)
         recovery = build_method_recovery_table(
             filtered, long_df, tier=target_tier
         )
