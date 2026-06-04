@@ -145,6 +145,14 @@ def cmd_clonotype(args):
         enabled=getattr(args, "attribution", False),
         dual_alpha_min_cells=getattr(args, "dual_alpha_min_cells", 2),
         share_weighting=getattr(args, "share_weighting", "proportional"),
+        **{
+            k: v
+            for k, v in (
+                ("dual_alpha_split", getattr(args, "dual_alpha_split", None)),
+                ("dual_beta_split", getattr(args, "dual_beta_split", None)),
+            )
+            if v is not None
+        },
     )
     clonotypes = aggregate_clonotypes(
         adata,
@@ -2075,6 +2083,19 @@ def create_parser():
         default="proportional",
         help="How shared/split weight is apportioned (default: proportional)",
     )
+    p_clone.add_argument(
+        "--dual-alpha-split",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Split non-merged dual-alpha cells as doublets (default: inherit "
+        "doublet_split; --no-dual-alpha-split collapses to primary, #181)",
+    )
+    p_clone.add_argument(
+        "--dual-beta-split",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Split dual-beta cells as doublets (default: inherit doublet_split, #181)",
+    )
     p_clone.add_argument("--airr", help="Also output AIRR format to this path")
     p_clone.add_argument("--plot-clonotypes", action="store_true", help="Generate clonotype plots")
     p_clone.add_argument("--output-dir", help="Output directory for plots")
@@ -2991,6 +3012,19 @@ CONDITIONALLY REQUIRED:
         "--share-weighting",
         choices=["proportional", "uniform"],
         help="How shared/split weight is apportioned (default: proportional)",
+    )
+    attr_group.add_argument(
+        "--dual-alpha-split",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Split non-merged dual-alpha cells as doublets (default: inherit "
+        "doublet_split). --no-dual-alpha-split collapses them to the primary pair (#181)",
+    )
+    attr_group.add_argument(
+        "--dual-beta-split",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Split dual-beta cells as doublets (default: inherit doublet_split, #181)",
     )
 
     # Filter step parameters

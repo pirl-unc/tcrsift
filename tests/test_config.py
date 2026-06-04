@@ -22,6 +22,20 @@ def test_sct_flat_keys_are_mapped():
     assert config.sct.require_compact_match is True
 
 
+def test_attribution_split_flags_inherit_doublet_split():
+    """dual_alpha_split / dual_beta_split default to None and inherit
+    doublet_split via __post_init__, so old configs are unchanged (#181)."""
+    from tcrsift.config import AttributionConfig
+
+    assert AttributionConfig().dual_alpha_split is True
+    assert AttributionConfig().dual_beta_split is True
+    off = AttributionConfig(doublet_split=False)
+    assert off.dual_alpha_split is False and off.dual_beta_split is False
+    # Explicit value overrides the inherited default.
+    mixed = AttributionConfig(doublet_split=False, dual_alpha_split=True)
+    assert mixed.dual_alpha_split is True and mixed.dual_beta_split is False
+
+
 def test_min_mito_default_retains_floor():
     """min_mito_pct keeps its 2.0 floor default (intentional empty/ambient
     removal); #168's fix is making the drop visible, not removing the floor."""
