@@ -1325,7 +1325,19 @@ def cmd_run(args):
         # Method-recovery table + bar plot (#27 chunk 4). Targets the
         # strictest tier present on `filtered`; falls back to '*' (all
         # filtered clones) under non-FDR modes.
-        target_tier = "tier1" if "tier" in filtered.columns else "*"
+        #
+        # Pick the strictest POPULATED tier rather than hardcoding tier1:
+        # unexpanded cohorts (no clone >=1% freq) have no tier1 clones, so a
+        # hardcoded tier1 yields an empty table and the panel is silently
+        # dropped (#167). Fall back through tier1..tier5, then '*'.
+        if "tier" in filtered.columns:
+            _present = [
+                t for t in ("tier1", "tier2", "tier3", "tier4", "tier5")
+                if (filtered["tier"] == t).any()
+            ]
+            target_tier = _present[0] if _present else "*"
+        else:
+            target_tier = "*"
         recovery = build_method_recovery_table(
             filtered, long_df, tier=target_tier
         )
