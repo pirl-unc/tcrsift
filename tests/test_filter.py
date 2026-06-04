@@ -603,6 +603,56 @@ class TestResolveFilterModeKwargs:
             resolve_filter_mode_kwargs("nonsense")
 
 
+class TestFdrTiersThresholdFootgun:
+    """fdr_tiers only applies to the logistic method; under threshold it is
+    inert and must warn rather than silently no-op (#170)."""
+
+    def test_warns_when_fdr_tiers_set_under_threshold(
+        self, sample_clonotypes_df, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.filter"):
+            filter_clonotypes(
+                sample_clonotypes_df,
+                method="threshold",
+                fdr_tiers=[0.1, 0.01, 0.001],
+                verbose=False,
+            )
+
+        msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("fdr_tiers" in m and "logistic" in m for m in msgs)
+
+    def test_no_warning_for_threshold_without_fdr_tiers(
+        self, sample_clonotypes_df, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.filter"):
+            filter_clonotypes(
+                sample_clonotypes_df, method="threshold", verbose=False
+            )
+
+        msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("fdr_tiers" in m for m in msgs)
+
+    def test_no_warning_for_logistic_with_fdr_tiers(
+        self, clonotypes_for_logistic, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.filter"):
+            filter_clonotypes(
+                clonotypes_for_logistic,
+                method="logistic",
+                fdr_tiers=[0.1, 0.01, 0.001],
+                verbose=False,
+            )
+
+        msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("fdr_tiers" in m and "logistic" in m for m in msgs)
+
+
 class TestAssignTiersThreshold:
     """Tests for tier assignment using thresholds."""
 

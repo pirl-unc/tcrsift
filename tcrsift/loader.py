@@ -186,7 +186,7 @@ def load_cellranger_gex(
     min_counts: int = 500,
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
-    min_mito_pct: float = 2.0,
+    min_mito_pct: float = 0.0,
     verbose: bool = True,
 ) -> ad.AnnData:
     """
@@ -209,7 +209,8 @@ def load_cellranger_gex(
     max_mito_pct : float
         Maximum mitochondrial percentage
     min_mito_pct : float
-        Minimum mitochondrial percentage
+        Minimum mitochondrial percentage (a FLOOR: cells below this are
+        dropped). Default 0 = no floor; non-standard, opt-in only (#168).
     verbose : bool
         Print progress information
 
@@ -316,6 +317,22 @@ def load_cellranger_gex(
     adata.obs["filter:max_counts"] = adata.obs["n_counts"] <= max_counts
     adata.obs["filter:min_mito"] = adata.obs["percent_mt"] >= min_mito_pct
     adata.obs["filter:max_mito"] = adata.obs["percent_mt"] <= max_mito_pct
+
+    # The min_mito_pct FLOOR discards *low*-mito cells, the inverse of standard
+    # scRNA-seq QC (where low mito is good). Default is 0 (no floor); when a
+    # positive floor is in effect, report its drop explicitly so it can't
+    # silently shrink the cohort unnoticed (#168). Loud (warning) regardless of
+    # verbose, since a floor is an unusual choice.
+    if min_mito_pct > 0:
+        n_below_floor = int((~adata.obs["filter:min_mito"]).sum())
+        if n_below_floor:
+            logger.warning(
+                f"  min_mito_pct={min_mito_pct} is a FLOOR: dropping "
+                f"{n_below_floor:,}/{adata.n_obs:,} cells with <{min_mito_pct}% "
+                "mitochondrial content (low mito is usually good — set "
+                "min_mito_pct=0 to keep them)."
+            )
+
     adata.obs["filter:pass_qc"] = (
         adata.obs["filter:min_genes"]
         & adata.obs["filter:max_genes"]
@@ -559,7 +576,7 @@ def load_sample(
     min_counts: int = 500,
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
-    min_mito_pct: float = 2.0,
+    min_mito_pct: float = 0.0,
 ) -> ad.AnnData | None:
     """
     Load all data for a single sample.
@@ -665,7 +682,7 @@ def load_samples(
     min_counts: int = 500,
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
-    min_mito_pct: float = 2.0,
+    min_mito_pct: float = 0.0,
     verbose: bool = True,
     show_progress: bool = True,
     tmpdir: str | Path | None = None,

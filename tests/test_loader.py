@@ -1340,6 +1340,57 @@ class TestLoadCellrangerGex:
         ]
         assert not qc_warnings, f"unexpected warning: {qc_warnings}"
 
+    def test_min_mito_floor_warns(self, mock_gex_dir, caplog):
+        """A positive min_mito_pct is a FLOOR (drops low-mito cells) — the
+        inverse of standard QC. It must warn loudly when it drops cells so it
+        can't silently shrink the cohort (#168)."""
+        import logging
+
+        from tcrsift.loader import load_cellranger_gex
+
+        # Set the floor above the fixture's median so it actually drops cells.
+        unfiltered = load_cellranger_gex(
+            mock_gex_dir, "test_sample", verbose=False, **self._PERMISSIVE_QC
+        )
+        median_mito = float(unfiltered.obs["percent_mt"].median())
+
+        kwargs = dict(self._PERMISSIVE_QC)
+        kwargs["min_mito_pct"] = median_mito if median_mito > 0 else 1.0
+        with caplog.at_level(logging.WARNING, logger="tcrsift.loader"):
+            load_cellranger_gex(
+                mock_gex_dir, "test_sample", verbose=False, **kwargs
+            )
+
+        floor_warnings = [
+            r.message for r in caplog.records
+            if r.levelno == logging.WARNING and "FLOOR" in r.message
+        ]
+        assert floor_warnings, "expected a min_mito floor warning"
+
+    def test_min_mito_default_zero_no_floor_warning(self, mock_gex_dir, caplog):
+        """The default min_mito_pct (0) imposes no floor, so no floor warning."""
+        import logging
+
+        from tcrsift.loader import load_cellranger_gex
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.loader"):
+            load_cellranger_gex(
+                mock_gex_dir,
+                "test_sample",
+                verbose=False,
+                min_genes=1,
+                max_genes=100,
+                min_counts=1,
+                max_counts=10000,
+                max_mito_pct=100,
+            )
+
+        floor_warnings = [
+            r.message for r in caplog.records
+            if r.levelno == logging.WARNING and "FLOOR" in r.message
+        ]
+        assert not floor_warnings, f"unexpected floor warning: {floor_warnings}"
+
     def test_load_gex_invalid_dir_raises(self, tmp_path):
         """Test that invalid directory raises error."""
         from tcrsift.loader import load_cellranger_gex

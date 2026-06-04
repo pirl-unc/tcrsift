@@ -1182,6 +1182,29 @@ def cmd_run(args):
     )
     print(f"  FDR scope: {resolved_scope}")
 
+    # fdr_tiers only drives logistic (FDR) tiering. Under method='threshold' it
+    # is inert, so a config that sets fdr_tiers (or filter_mode='fdr') alongside
+    # method='threshold' would silently get fixed abundance tiers (#170). Pass
+    # fdr_tiers through only when it's actually used (logistic) or the user
+    # customized it; when a customized list can't take effect, warn loudly.
+    from .config import FilterConfig
+
+    _default_fdr_tiers = sorted(FilterConfig().fdr_tiers)
+    _fdr_customized = sorted(config.filter.fdr_tiers or []) != _default_fdr_tiers
+    if config.filter.method == "logistic":
+        fdr_tiers_arg = config.filter.fdr_tiers
+    elif _fdr_customized:
+        # Hand it to filter_clonotypes so its own footgun warning fires.
+        fdr_tiers_arg = config.filter.fdr_tiers
+        print(
+            f"  WARNING: fdr_tiers is set but filter.method={config.filter.method!r}; "
+            "fdr_tiers only applies to method='logistic'. Using fixed abundance "
+            "tiers — the fdr_tiers list is ignored. Set method: logistic for "
+            "FDR-based tiering."
+        )
+    else:
+        fdr_tiers_arg = None
+
     def _filter_one(df_in):
         return filter_clonotypes(
             df_in,
@@ -1190,7 +1213,7 @@ def cmd_run(args):
             min_cells=config.filter.min_cells,
             min_frequency=config.filter.min_frequency,
             require_complete=config.filter.require_complete,
-            fdr_tiers=config.filter.fdr_tiers,
+            fdr_tiers=fdr_tiers_arg,
             **mode_kwargs,
         )
 
@@ -1978,7 +2001,12 @@ def create_parser():
     p_load.add_argument(
         "--max-counts", type=int, default=100000, help="Max UMI counts (default: 100000)"
     )
-    p_load.add_argument("--min-mito", type=float, default=2.0, help="Min mito %% (default: 2)")
+    p_load.add_argument(
+        "--min-mito",
+        type=float,
+        default=0.0,
+        help="Min mito %% FLOOR — drops cells below it (default: 0 = no floor, #168)",
+    )
     p_load.add_argument("--max-mito", type=float, default=8.0, help="Max mito %% (default: 8)")
     p_load.add_argument("--plot-qc", action="store_true", help="Generate QC plots")
     p_load.add_argument("--output-dir", help="Output directory for plots")
@@ -2876,7 +2904,10 @@ CONDITIONALLY REQUIRED:
     load_group.add_argument("--min-counts", type=int, help="Min UMI counts (default: 500)")
     load_group.add_argument("--max-counts", type=int, help="Max UMI counts (default: 100000)")
     load_group.add_argument(
-        "--min-mito", type=float, dest="min_mito_pct", help="Min mito %% (default: 2)"
+        "--min-mito",
+        type=float,
+        dest="min_mito_pct",
+        help="Min mito %% FLOOR — drops cells below it (default: 0 = no floor, #168)",
     )
     load_group.add_argument(
         "--max-mito", type=float, dest="max_mito_pct", help="Max mito %% (default: 8)"

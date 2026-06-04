@@ -36,7 +36,13 @@ class LoadConfig:
     max_genes: int = 15000
     min_counts: int = 500
     max_counts: int = 100000
-    min_mito_pct: float = 2.0
+    # Mitochondrial-content window. max_mito_pct removes high-mito dying cells
+    # (standard scRNA-seq QC). min_mito_pct is a FLOOR — it discards cells
+    # *below* the threshold, which is the opposite of convention (low mito is
+    # generally good). Default 0.0 = no floor; set a positive value only if you
+    # deliberately want to drop very-low-mito (e.g. empty/ambient) droplets. See
+    # #168.
+    min_mito_pct: float = 0.0
     max_mito_pct: float = 8.0
 
 

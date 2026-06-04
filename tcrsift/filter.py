@@ -777,6 +777,18 @@ def filter_clonotypes(
             hint=f"Valid options are: {valid_tcell_types}",
         )
 
+    # fdr_tiers only drives the logistic (FDR) tiering path. Under threshold
+    # tiering it is silently inert — the tiers come from fixed abundance cutoffs
+    # (DEFAULT_THRESHOLD_TIERS). Warn rather than ignore so a config that sets
+    # fdr_tiers + method='threshold' isn't a silent footgun (#170).
+    if fdr_tiers is not None and method != "logistic":
+        logger.warning(
+            "fdr_tiers was provided but method=%r — fdr_tiers only applies to "
+            "method='logistic'. It is being ignored; tiers come from fixed "
+            "abundance thresholds. Set method='logistic' for FDR-based tiering.",
+            method,
+        )
+
     logger.info(f"Filtering clonotypes using {method} method")
 
     # Basic filtering first
