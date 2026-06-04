@@ -66,11 +66,52 @@ plt.rcParams["font.sans-serif"] = [
 ]
 
 
+VALID_PLOT_FORMATS = ("png", "pdf", "svg")
+
+# Module-level output format for save_figure (#169). Default "png" keeps the
+# historical behavior byte-for-byte. cmd_run sets it from output.plot_format.
+_PLOT_FORMAT = "png"
+
+
+def set_plot_format(fmt: str | None) -> None:
+    """Set the vector/raster format save_figure emits (#169): png/pdf/svg."""
+    global _PLOT_FORMAT
+    fmt = (fmt or "png").lower()
+    if fmt not in VALID_PLOT_FORMATS:
+        raise ValueError(
+            f"Invalid plot_format: {fmt!r}. Valid: {VALID_PLOT_FORMATS}"
+        )
+    _PLOT_FORMAT = fmt
+
+
+def get_plot_format() -> str:
+    return _PLOT_FORMAT
+
+
 def save_figure(fig: plt.Figure, output_path: str | Path, dpi: int = 300):
-    """Save figure with consistent settings."""
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
+    """Save figure with consistent settings.
+
+    Honors the configured plot format (#169). A PNG is always written — it's
+    the default and what the (raster-embedding) PDF report consumes — and a
+    vector copy (pdf/svg) is written alongside it when one is requested. With
+    the default ``png`` format only the PNG is written, unchanged. Returns the
+    primary output path (the vector file when one was requested, else the PNG).
+    """
+    output_path = Path(output_path)
+    if _PLOT_FORMAT == "png":
+        # Default / back-compat: honor the caller's exact path and suffix
+        # (byte-identical to pre-#169 behavior, including explicit non-png
+        # suffixes a caller passes deliberately).
+        targets = [output_path]
+    else:
+        # Vector requested: emit the vector file plus a PNG (the latter keeps
+        # the raster-embedding PDF report working).
+        targets = [output_path.with_suffix(f".{_PLOT_FORMAT}"), output_path.with_suffix(".png")]
+    for target in targets:
+        fig.savefig(target, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
-    logger.info(f"Saved plot to {output_path}")
+    logger.info(f"Saved plot to {', '.join(str(t) for t in targets)}")
+    return targets[0]
 
 
 def plot_pgen_distribution(

@@ -277,6 +277,51 @@ def add_paired_ppost(
     return out
 
 
+def add_pairing_promiscuity(
+    df: pd.DataFrame,
+    *,
+    alpha_col: str = "CDR3_alpha",
+    beta_col: str = "CDR3_beta",
+    promiscuous_min_partners: int = 3,
+) -> pd.DataFrame:
+    """Add α-CDR3 β-pairing promiscuity as a publicness / cross-reactivity flag (#148).
+
+    For each clonotype, ``alpha_beta_promiscuity`` is the number of *distinct*
+    CDR3β chains its CDR3α pairs with across the table — a directly
+    interpretable publicness signal (germline-like, degenerate public αs like
+    Melan-A/TRAV12-2 pair with many βs) to **down-weight** in selection.
+    ``alpha_promiscuous`` flags clones at/above ``promiscuous_min_partners``
+    (default 3). ``alpha_cdr3_length`` is exposed too — α (not β) CDR3 length is
+    the informative sequence feature here.
+
+    Promiscuity is a tail phenomenon (median 1 partner): it flags the public
+    degenerate set, not all clones. It is a publicness / cross-reactivity
+    *proxy*, not a specificity or avidity measurement (cf. #143/#146). Returns
+    a copy; a no-op (no columns added) when the CDR3 columns are absent.
+    """
+    out = df.copy()
+    if alpha_col not in out.columns or beta_col not in out.columns:
+        return out
+
+    a = out[alpha_col].astype("string")
+    b = out[beta_col].astype("string")
+
+    def _valid(s):
+        return s.notna() & (s.str.len() > 0) & (s.str.lower() != "nan")
+
+    valid_a = _valid(a)
+    pair_ok = valid_a & _valid(b)
+    # Distinct β partners per α, counted over confidently paired clones only
+    # (multi-β ambiguity would otherwise inflate counts, #148).
+    partners = b[pair_ok].groupby(a[pair_ok], observed=True).nunique()
+    out["alpha_beta_promiscuity"] = (
+        a.map(partners).fillna(0).astype(int).where(valid_a, 0)
+    )
+    out["alpha_promiscuous"] = out["alpha_beta_promiscuity"] >= promiscuous_min_partners
+    out["alpha_cdr3_length"] = a.str.len().where(valid_a).astype("Int64")
+    return out
+
+
 def prism_score(
     df: pd.DataFrame,
     *,

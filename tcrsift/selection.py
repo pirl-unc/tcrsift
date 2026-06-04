@@ -51,6 +51,7 @@ __all__ = [
     "select_from_clone_sample_long",
     "extract_per_method_evidence",
     "build_pdf_annotations",
+    "select_specificity_candidates",
 ]
 
 # Tier label -> numeric rank (lower = stronger enrichment). Used to
@@ -514,4 +515,76 @@ def build_pdf_annotations(
                 f"  {r[method_col]}: {cells_s}, {freq_s}  [{tier_s}]".replace(", ,", ",")
             )
         out[clone] = lines
+    return out
+
+
+def select_specificity_candidates(
+    clonotypes: pd.DataFrame,
+    *,
+    freq_col: str = "max_frequency_per_method",
+    min_frequency: float = 0.001,
+    ppost_col: str = "ppost_alpha",
+    percentile: float = 25.0,
+    abs_log10_ppost: float | None = None,
+    alpha_col: str = "CDR3_alpha",
+    beta_col: str = "CDR3_beta",
+) -> pd.DataFrame:
+    """Flag private / rare-precursor clones — candidate high-specificity (#146).
+
+    The validated B1-2/B1-3 recipe (building on #143 Pgen/Ppost): among complete
+    αβ clones above a frequency gate, rank by **low Ppost(α)** (rare precursor =
+    candidate private receptor) and flag the bottom ``percentile`` (default
+    bottom quartile). RNA terms were tested and reproduce in only one donor, so
+    they are deliberately **not** part of this gate — only the sequence axis
+    (Ppost) is used.
+
+    Adds:
+    - ``specificity_gated`` — passes the frequency + complete-αβ gate.
+    - ``specificity_ppost_rank`` — 1 = lowest Ppost(α) among gated clones.
+    - ``specificity_candidate`` — gated AND in the bottom ``percentile`` of
+      Ppost(α) (and, if ``abs_log10_ppost`` is set, also ``log10 Ppost ≤`` it;
+      the spec's absolute guide is ≈ −7).
+
+    Caveat (documented intent): this prioritizes private / rare-precursor
+    candidates as a *proxy* for high specificity / low cross-reactivity. It is
+    **not** validated against true specificity or avidity — confirmation needs a
+    day-0 precursor baseline and a functional-avidity assay. It ranks
+    candidates; it does not measure specificity. Returns a copy.
+    """
+    out = clonotypes.copy()
+    if ppost_col not in out.columns:
+        raise ValueError(
+            f"select_specificity_candidates: missing {ppost_col!r}. "
+            "Run add_pgen_ppost / annotate_tcrs first."
+        )
+
+    def _valid(col):
+        if col not in out.columns:
+            return pd.Series(False, index=out.index)
+        s = out[col].astype("string")
+        return s.notna() & (s.str.len() > 0) & (s.str.lower() != "nan")
+
+    complete = _valid(alpha_col) & _valid(beta_col)
+    freq = (
+        out[freq_col] if freq_col in out.columns
+        else pd.Series(0.0, index=out.index)
+    )
+    gated = complete & (freq.fillna(0) > min_frequency) & out[ppost_col].notna()
+    out["specificity_gated"] = gated
+
+    # Rank gated clones by ascending Ppost(alpha) (lowest = most private).
+    ppost = out[ppost_col]
+    out["specificity_ppost_rank"] = (
+        ppost.where(gated).rank(method="min", ascending=True).astype("Int64")
+    )
+
+    candidate = pd.Series(False, index=out.index)
+    if gated.any():
+        cutoff = ppost[gated].quantile(percentile / 100.0)
+        candidate = gated & (ppost <= cutoff)
+        if abs_log10_ppost is not None:
+            import numpy as np
+
+            candidate = candidate & (np.log10(ppost.clip(lower=1e-300)) <= abs_log10_ppost)
+    out["specificity_candidate"] = candidate
     return out
