@@ -188,16 +188,17 @@ def attribute_cells(
         keys = [_canon(_make_key(A1[i], B1[i])) for i in cs_idx]
         _emit(cs_idx, keys, np.ones(len(cs_idx)), "complete")
 
-    def _split_fixed(mask, target_fns, kind_split, kind_primary):
+    def _split_fixed(mask, target_fns, kind_split, kind_primary, do_split):
         """Split each masked cell across fixed candidate clones by prior.
 
-        ``target_fns`` is a list of callables i -> clone-key. With
-        ``doublet_split`` off, all weight goes to the first (primary) target.
+        ``target_fns`` is a list of callables i -> clone-key. When ``do_split``
+        is False, all weight goes to the first (primary) target. ``do_split`` is
+        the per-mechanism flag (dual_alpha_split / dual_beta_split, #181).
         """
         idx = np.where(mask)[0]
         if not len(idx):
             return
-        if not config.doublet_split:
+        if not do_split:
             keys = [_canon(target_fns[0](i)) for i in idx]
             _emit(idx, keys, np.ones(len(idx)), kind_primary)
             return
@@ -232,6 +233,7 @@ def attribute_cells(
             [lambda i: _make_key(A1[i], B1[i]), lambda i: _make_key(A2[i], B1[i])],
             "dual_alpha_split",
             "primary",
+            config.dual_alpha_split,
         )
 
     # --- Category 3: dual-beta -> split -----------------------------------
@@ -241,21 +243,22 @@ def attribute_cells(
         [lambda i: _make_key(A1[i], B1[i]), lambda i: _make_key(A1[i], B2[i])],
         "dual_beta_split",
         "primary",
+        config.dual_beta_split,
     )
 
     # --- Category 4: quad (two alphas, two betas) -> split ----------------
+    # Orthogonal (#181): include the secondary alpha only if dual_alpha_split and
+    # the secondary beta only if dual_beta_split; both off -> primary pair only.
     quad = va1 & va2 & vb1 & vb2
-    _split_fixed(
-        quad,
-        [
-            lambda i: _make_key(A1[i], B1[i]),
-            lambda i: _make_key(A2[i], B1[i]),
-            lambda i: _make_key(A1[i], B2[i]),
-            lambda i: _make_key(A2[i], B2[i]),
-        ],
-        "quad_split",
-        "primary",
-    )
+    if quad.any():
+        a_list = [A1] + ([A2] if config.dual_alpha_split else [])
+        b_list = [B1] + ([B2] if config.dual_beta_split else [])
+        quad_fns = [
+            (lambda i, aa=aa, bb=bb: _make_key(aa[i], bb[i]))
+            for aa in a_list
+            for bb in b_list
+        ]
+        _split_fixed(quad, quad_fns, "quad_split", "primary", len(quad_fns) > 1)
 
     # --- Category 5: alpha-dropout -> beta-share --------------------------
     n_dropped_beta = 0
