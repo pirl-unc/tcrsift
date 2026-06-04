@@ -1029,6 +1029,16 @@ def cmd_run(args):
         adata = filter_by_tcell_type(adata, tcell_type)
         print(f"  Filtered to {tcell_type.upper()}+: {len(adata)} cells")
 
+    # CD3 read gate on the cells entering clonotype aggregation. Previously
+    # min_cd3_reads only set a column (filter:min_cd3) and never gated selection
+    # (#172). Opt-in: default 0 = no gate. A raw-CD3-UMI floor partly tracks
+    # depth, so this is meant as a low contamination floor, not a large cull.
+    min_cd3 = config.phenotype.min_cd3_reads
+    if min_cd3 > 0 and "filter:min_cd3" in adata.obs.columns:
+        n0 = len(adata)
+        adata = adata[adata.obs["filter:min_cd3"]].copy()
+        print(f"  CD3 gate (>={min_cd3} reads): {len(adata)}/{n0} cells pass")
+
     funnel_counts["Phenotyped"] = len(adata)
 
     # Step 3: Clonotype

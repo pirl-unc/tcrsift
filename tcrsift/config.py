@@ -45,7 +45,12 @@ class PhenotypeConfig:
     """Configuration for the phenotype step."""
 
     cd4_cd8_ratio: float = 3.0
-    min_cd3_reads: int = 10
+    # CD3 read gate, applied to cells entering clonotype aggregation in `run`.
+    # Default 0 = no gate (opt-in): a raw CD3 UMI floor scales with sequencing
+    # depth, so a nonzero value preferentially drops shallow/small clones — set
+    # a low contamination floor (~1-3) deliberately rather than relying on a
+    # large default. See #172.
+    min_cd3_reads: int = 0
 
 
 @dataclass
