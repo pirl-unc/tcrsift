@@ -74,7 +74,12 @@ _PLOT_FORMAT = "png"
 
 
 def set_plot_format(fmt: str | None) -> None:
-    """Set the vector/raster format save_figure emits (#169): png/pdf/svg."""
+    """Set the vector/raster format save_figure emits (#169): png/pdf/svg.
+
+    Process-global (not thread-safe): it stays in effect until set again, so a
+    library caller invoking ``plot_*`` after a pdf ``run`` inherits ``pdf``.
+    ``cmd_run`` sets it from ``output.plot_format`` at the start of every run.
+    """
     global _PLOT_FORMAT
     fmt = (fmt or "png").lower()
     if fmt not in VALID_PLOT_FORMATS:

@@ -29,10 +29,15 @@ Foundation increment of the #125 CLI-first roadmap.
 
 from __future__ import annotations
 
+import logging
+
+import numpy as np
 import pandas as pd
 
 from .clonotype import build_clone_method_long, build_clone_sample_long
 from .filter import DEFAULT_THRESHOLD_TIERS, per_sample_tier
+
+logger = logging.getLogger(__name__)
 
 # Strict→permissive walk order shared by the per-sample tier helpers.
 DEFAULT_TIER_ORDER: tuple[str, ...] = (
@@ -565,10 +570,24 @@ def select_specificity_candidates(
         return s.notna() & (s.str.len() > 0) & (s.str.lower() != "nan")
 
     complete = _valid(alpha_col) & _valid(beta_col)
-    freq = (
-        out[freq_col] if freq_col in out.columns
-        else pd.Series(0.0, index=out.index)
-    )
+    # Frequency gate. Prefer the per-method column; fall back to max_frequency
+    # so the route still works on runs without an enrichment_method axis (a
+    # missing per-method column would otherwise gate out every clone silently).
+    if freq_col in out.columns:
+        freq = out[freq_col]
+    elif "max_frequency" in out.columns:
+        logger.warning(
+            "select_specificity_candidates: %r absent; gating on 'max_frequency'.",
+            freq_col,
+        )
+        freq = out["max_frequency"]
+    else:
+        logger.warning(
+            "select_specificity_candidates: no frequency column (%r / "
+            "'max_frequency'); frequency gate disabled (all complete clones pass).",
+            freq_col,
+        )
+        freq = pd.Series(float("inf"), index=out.index)
     gated = complete & (freq.fillna(0) > min_frequency) & out[ppost_col].notna()
     out["specificity_gated"] = gated
 
@@ -583,8 +602,6 @@ def select_specificity_candidates(
         cutoff = ppost[gated].quantile(percentile / 100.0)
         candidate = gated & (ppost <= cutoff)
         if abs_log10_ppost is not None:
-            import numpy as np
-
             candidate = candidate & (np.log10(ppost.clip(lower=1e-300)) <= abs_log10_ppost)
     out["specificity_candidate"] = candidate
     return out

@@ -66,6 +66,26 @@ class TestDoubletRateWarning:
         warns = [r.message for r in caplog.records if r.levelno == logging.WARNING]
         assert not any("multi-chain" in m for m in warns)
 
+    def test_per_sample_breakdown(self, caplog):
+        from tcrsift.clonotype import aggregate_clonotypes
+
+        # Sample HOT is 50% multi-chain; sample OK is 0%.
+        n = 12
+        obs = pd.DataFrame({
+            "CDR3_alpha": ["CAAA"] * n,
+            "CDR3_beta": ["CBBB"] * n,
+            "TRA_1_umis": [5] * n,
+            "TRB_1_umis": [5] * n,
+            "multi_chain": [True, True, True] + [False] * 3 + [False] * 6,
+            "sample": ["HOT"] * 6 + ["OK"] * 6,
+        }, index=[f"c{i}" for i in range(n)])
+        adata = ad.AnnData(X=csr_matrix((n, 1)), obs=obs)
+        with caplog.at_level(logging.WARNING, logger="tcrsift.clonotype"):
+            aggregate_clonotypes(adata, verbose=False, show_progress=False)
+        warns = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("sample HOT" in m for m in warns)
+        assert not any("sample OK" in m for m in warns)
+
     def test_disabled_with_zero_threshold(self, caplog):
         from tcrsift.clonotype import aggregate_clonotypes
 
@@ -138,9 +158,19 @@ class TestPairingPromiscuity:
         assert prom["B1"] == 3 and prom["B2"] == 3 and prom["B3"] == 3
         assert prom["B9"] == 1
         flag = out.set_index("CDR3_beta")["alpha_promiscuous"].to_dict()
-        assert flag["B1"] is np.True_ or flag["B1"]  # promiscuous
+        assert flag["B1"]  # promiscuous
         assert not flag["B9"]
         assert out["alpha_cdr3_length"].tolist() == [2, 2, 2, 2]
+
+    def test_empty_beta_not_counted(self):
+        from tcrsift.annotate_tcrs import add_pairing_promiscuity
+
+        df = pd.DataFrame({
+            "CDR3_alpha": ["A1", "A1", "A1"],
+            "CDR3_beta": ["B1", "B2", ""],  # the empty β must not count
+        })
+        out = add_pairing_promiscuity(df)
+        assert out["alpha_beta_promiscuity"].tolist() == [2, 2, 2]
 
     def test_noop_without_cdr3_columns(self):
         from tcrsift.annotate_tcrs import add_pairing_promiscuity
@@ -148,6 +178,18 @@ class TestPairingPromiscuity:
         df = pd.DataFrame({"CDR3ab": ["A_B"]})
         out = add_pairing_promiscuity(df)
         assert "alpha_beta_promiscuity" not in out.columns
+
+    def test_wired_into_annotate_tcrs_orchestrator(self):
+        from tcrsift.annotate_tcrs import annotate_tcrs
+
+        df = pd.DataFrame({
+            "CDR3ab": ["A1_B1", "A1_B2"],
+            "CDR3_alpha": ["A1", "A1"],
+            "CDR3_beta": ["B1", "B2"],
+        })
+        out = annotate_tcrs(df, methods=["promiscuity"])
+        assert "alpha_beta_promiscuity" in out.columns
+        assert out["alpha_beta_promiscuity"].tolist() == [2, 2]
 
 
 # --------------------------------------------------------------------------- #
@@ -181,6 +223,21 @@ class TestSpecificityRoute:
 
         with pytest.raises(ValueError):
             select_specificity_candidates(pd.DataFrame({"CDR3_alpha": ["A"]}))
+
+    def test_falls_back_to_max_frequency(self):
+        from tcrsift.selection import select_specificity_candidates
+
+        # No max_frequency_per_method column — must gate on max_frequency
+        # instead of silently excluding every clone.
+        df = pd.DataFrame({
+            "CDR3_alpha": ["A1", "A2"],
+            "CDR3_beta": ["B1", "B2"],
+            "max_frequency": [0.05, 0.05],
+            "ppost_alpha": [1e-9, 1e-4],
+        })
+        out = select_specificity_candidates(df, percentile=50)
+        assert out["specificity_gated"].all()
+        assert out.set_index("CDR3_alpha").loc["A1", "specificity_candidate"]
 
 
 # --------------------------------------------------------------------------- #

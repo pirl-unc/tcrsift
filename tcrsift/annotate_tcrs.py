@@ -413,12 +413,12 @@ def annotate_tcrs(
 ) -> pd.DataFrame:
     """Add the requested annotation columns to a TCR table (#158).
 
-    ``methods`` subset of ``{"pgen", "ppost", "gex_signatures", "prism"}``
-    (default all that are computable). ``per_cell`` (with ``{gex_prefix}.``
-    columns + ``clone_col`` + ``group_col``) is required for
+    ``methods`` subset of ``{"pgen", "ppost", "promiscuity", "gex_signatures",
+    "prism"}`` (default all that are computable). ``per_cell`` (with
+    ``{gex_prefix}.`` columns + ``clone_col`` + ``group_col``) is required for
     ``gex_signatures``/``prism``. Returns a copy with the columns added.
     """
-    methods = methods or ["pgen", "ppost", "gex_signatures", "prism"]
+    methods = methods or ["pgen", "ppost", "promiscuity", "gex_signatures", "prism"]
     out = df.copy()
     if "pgen" in methods or "ppost" in methods:
         out = add_pgen_ppost(
@@ -426,6 +426,10 @@ def annotate_tcrs(
             with_pgen=("pgen" in methods or "prism" in methods),
             with_ppost=("ppost" in methods or "prism" in methods),
         )
+    # α–β pairing promiscuity (#148): a no-op when the CDR3 columns are absent,
+    # so it's safe to include by default alongside the sequence-axis features.
+    if "promiscuity" in methods:
+        out = add_pairing_promiscuity(out)
     if ("gex_signatures" in methods or "prism" in methods) and per_cell is not None:
         out = add_gex_signature_scores(
             out, per_cell, clone_col=clone_col, group_col=group_col,
