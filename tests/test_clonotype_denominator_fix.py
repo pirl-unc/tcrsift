@@ -51,28 +51,68 @@ class TestBuildCloneSampleLongDenominator:
         assert row["cells"] == 2
         assert abs(row["frequency"] - 1.0) < 1e-9
 
-    def test_umi_gated_denominator(self):
-        """Cells with TRA_1_umis < 2 or TRB_1_umis < 2 should be
-        excluded from the denominator — same rule as
-        ``aggregate_clonotypes``."""
+    def test_umi_gated_numerator_and_denominator(self):
+        """Cells with TRA_1_umis < 2 or TRB_1_umis < 2 are excluded from
+        BOTH the numerator and the denominator — same complete-clone rule
+        as ``aggregate_clonotypes``. Pre-#175 the numerator counted the
+        UMI-failing cell (cells=3, freq=1.5), inflating per-sample
+        frequencies above 1.0; now both sides use the gated count."""
         adata = _adata([
             # Two passing cells.
             {"sample": "S1", "CDR3ab": "A_A", "CDR3_alpha": "A", "CDR3_beta": "A",
              "TRA_1_umis": 5, "TRB_1_umis": 5},
             {"sample": "S1", "CDR3ab": "A_A", "CDR3_alpha": "A", "CDR3_beta": "A",
              "TRA_1_umis": 5, "TRB_1_umis": 5},
-            # One cell failing the UMI gate (TRA < 2). Should still be
-            # listed as cells=1 for the clone but excluded from the
-            # complete-clone denominator.
+            # One cell failing the UMI gate (TRA < 2): excluded from both
+            # the numerator and the complete-clone denominator (#175).
             {"sample": "S1", "CDR3ab": "A_A", "CDR3_alpha": "A", "CDR3_beta": "A",
              "TRA_1_umis": 0, "TRB_1_umis": 5},
         ])
         out = build_clone_sample_long(adata)
-        # Cells count includes all rows with non-empty CDR3ab (3);
-        # denominator is the UMI-gated count (2).
         row = out[(out["CDR3ab"] == "A_A") & (out["sample"] == "S1")].iloc[0]
-        assert row["cells"] == 3
-        assert abs(row["frequency"] - 3 / 2) < 1e-9
+        assert row["cells"] == 2
+        assert abs(row["frequency"] - 1.0) < 1e-9
+
+
+class TestBuildCloneSampleLongFrequencyInvariant:
+    """#175: numerator and denominator must use the same complete-cell set
+    so per-sample frequencies sum to 1.0 and single-chain clones never leak
+    into the table."""
+
+    def test_per_sample_frequencies_sum_to_one(self):
+        adata = _adata([
+            # Two complete clones in S1 (3 + 1 cells).
+            {"sample": "S1", "CDR3ab": "A_B", "CDR3_alpha": "A", "CDR3_beta": "B",
+             "TRA_1_umis": 5, "TRB_1_umis": 5},
+            {"sample": "S1", "CDR3ab": "A_B", "CDR3_alpha": "A", "CDR3_beta": "B",
+             "TRA_1_umis": 5, "TRB_1_umis": 5},
+            {"sample": "S1", "CDR3ab": "A_B", "CDR3_alpha": "A", "CDR3_beta": "B",
+             "TRA_1_umis": 5, "TRB_1_umis": 5},
+            {"sample": "S1", "CDR3ab": "C_D", "CDR3_alpha": "C", "CDR3_beta": "D",
+             "TRA_1_umis": 5, "TRB_1_umis": 5},
+            # A single-chain (alpha-dropout) cell sharing beta B, and a
+            # both-chain cell failing the UMI gate. Pre-#175 both inflated
+            # the numerator without entering the denominator.
+            {"sample": "S1", "CDR3ab": "_B", "CDR3_alpha": "", "CDR3_beta": "B",
+             "TRA_1_umis": 0, "TRB_1_umis": 5},
+            {"sample": "S1", "CDR3ab": "E_F", "CDR3_alpha": "E", "CDR3_beta": "F",
+             "TRA_1_umis": 1, "TRB_1_umis": 5},
+        ])
+        out = build_clone_sample_long(adata)
+        freq_sum = out[out["sample"] == "S1"]["frequency"].sum()
+        assert abs(freq_sum - 1.0) < 1e-9
+
+    def test_single_chain_clones_absent(self):
+        adata = _adata([
+            {"sample": "S1", "CDR3ab": "A_B", "CDR3_alpha": "A", "CDR3_beta": "B",
+             "TRA_1_umis": 5, "TRB_1_umis": 5},
+            # Alpha-dropout single-chain "clone" — must not appear in output.
+            {"sample": "S1", "CDR3ab": "_B", "CDR3_alpha": "", "CDR3_beta": "B",
+             "TRA_1_umis": 0, "TRB_1_umis": 5},
+        ])
+        out = build_clone_sample_long(adata)
+        assert (out["CDR3ab"] == "_B").sum() == 0
+        assert "A_B" in set(out["CDR3ab"])
 
     def test_no_umi_columns_falls_back_to_pass_all(self):
         """Datasets without TRA_1_umis / TRB_1_umis columns shouldn't

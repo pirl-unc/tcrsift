@@ -550,9 +550,12 @@ def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
     ``n_beta_umis``) are emitted when the per-chain UMI columns are
     present.
 
-    The frequency denominator is total complete-clone cells in the
-    sample, mirroring the convention used by ``max_frequency`` in
-    ``aggregate_clonotypes`` so the two are directly comparable.
+    Both the per-clone cell count (numerator) and the frequency
+    denominator are restricted to complete-clone cells (both CDR3s
+    present and both chains >=2 UMI), mirroring the convention used by
+    ``max_frequency`` in ``aggregate_clonotypes`` so the two are directly
+    comparable. Consequently per-sample frequencies sum to 1.0 and
+    single-chain clones do not appear in the table (#175).
 
     Implements #20 chunk 1 — surfaces the per-(clone, sample) view that
     users were previously reconstructing by parsing the semicolon-
@@ -629,19 +632,25 @@ def build_clone_sample_long(adata: ad.AnnData) -> pd.DataFrame:
         # No chain columns at all — fall back to the raw row count.
         is_complete = pd.Series(True, index=valid.index)
     valid["is_complete_clone"] = is_complete
-    sample_totals = valid[is_complete].groupby("sample", observed=True).size()
+    complete = valid[is_complete]
+    sample_totals = complete.groupby("sample", observed=True).size()
 
-    # Cell counts and UMI sums per (clone, sample). Keep the
-    # (CDR3ab, sample) MultiIndex while assigning the UMI sums so pandas
-    # aligns them by key rather than by position, then flatten to
-    # columns. (Both Series come from the same groupby, so the order
-    # matches today — index alignment makes that irrelevant.)
-    grouped = valid.groupby(["CDR3ab", "sample"], observed=True)
+    # Cell counts and UMI sums per (clone, sample). The numerator must use the
+    # SAME complete-cell rule as ``sample_totals`` (the denominator). Grouping
+    # over ``valid`` instead admitted single-chain clones and both-chain cells
+    # failing the UMI>=2 gate — cells the denominator drops — so per-sample
+    # frequencies summed to >1 and un-synthesizable single-chain "clones" leaked
+    # into the table (#175). Restricting to ``complete`` restores the invariant
+    # (per-sample freqs sum to 1.0) and drops the single-chain rows.
+    #
+    # Keep the (CDR3ab, sample) MultiIndex while assigning the UMI sums so pandas
+    # aligns them by key rather than by position, then flatten to columns.
+    grouped = complete.groupby(["CDR3ab", "sample"], observed=True)
     out = grouped.size().rename("cells").to_frame()
 
-    if "TRA_1_umis" in valid.columns:
+    if "TRA_1_umis" in complete.columns:
         out["n_alpha_umis"] = grouped["TRA_1_umis"].sum().fillna(0).astype(int)
-    if "TRB_1_umis" in valid.columns:
+    if "TRB_1_umis" in complete.columns:
         out["n_beta_umis"] = grouped["TRB_1_umis"].sum().fillna(0).astype(int)
 
     out = out.reset_index()
