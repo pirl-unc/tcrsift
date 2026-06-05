@@ -93,6 +93,23 @@ def get_plot_format() -> str:
     return _PLOT_FORMAT
 
 
+def set_polished_style(style: str = "clean-white") -> None:
+    """Apply a publication style profile to matplotlib (#123 report polished).
+
+    ``clean-white`` (default): DejaVu Sans (renders the Unicode superscript
+    method labels, #109) on a white background. ``paper`` additionally bumps the
+    base font size. Process-global; pair with ``set_plot_format("pdf")`` for
+    selectable-text vector output.
+    """
+    import matplotlib as mpl
+
+    mpl.rcParams["font.family"] = "DejaVu Sans"
+    for k in ("figure.facecolor", "axes.facecolor", "savefig.facecolor"):
+        mpl.rcParams[k] = "white"
+    if style == "paper":
+        mpl.rcParams["font.size"] = 11
+
+
 def save_figure(fig: plt.Figure, output_path: str | Path, dpi: int = 300):
     """Save figure with consistent settings.
 
