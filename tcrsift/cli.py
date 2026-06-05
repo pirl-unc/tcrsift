@@ -2101,6 +2101,17 @@ def cmd_report_selected(args):
             linker=asm.linker, contigs_dir=asm.contigs_dir,
             sample_name_from=asm.sample_name_from, cellranger_dir=asm.cellranger_dir,
         )
+    # Per-donor contig overrides (#196). The config's contigs path is per-donor
+    # but the config is typically shared, so without these the selected report
+    # re-assembles canonical constants with NO contigs — losing donor-allele
+    # fidelity + the #187 divergence flags that the contig-wired `run` produced.
+    if args.cellranger_dir:
+        assemble_kwargs["cellranger_dir"] = args.cellranger_dir
+    if args.contigs_dir:
+        assemble_kwargs["contigs_dir"] = args.contigs_dir
+    if args.sample_name_from:
+        assemble_kwargs["sample_name_from"] = args.sample_name_from
+
     prov_cols = [c for c in selected.columns if c != "CDR3ab"]
     build_selected_report(
         selected, clonotypes, args.output_dir, obs=obs,
@@ -2461,6 +2472,18 @@ def create_parser():
         help="phenotyped.h5ad — needed to emit both alpha-variants of merged dual-alpha clones",
     )
     ps.add_argument("--config", "-c", help="YAML config (assemble options)")
+    ps.add_argument(
+        "--cellranger-dir",
+        help="Per-donor CellRanger per_sample_outs dir for allele-faithful "
+        "constants (overrides config; mirrors `run`, #196)",
+    )
+    ps.add_argument(
+        "--contigs-dir", help="Per-donor contigs dir (overrides config, #196)",
+    )
+    ps.add_argument(
+        "--sample-name-from", choices=["parent", "grandparent", "sheet"],
+        help="Contig sample-name policy (overrides config, #196)",
+    )
     ps.add_argument("--output-dir", "-o", required=True, help="Output directory")
     ps.add_argument("--verbose", action="store_true", help="Verbose output")
     ps.set_defaults(func=cmd_report_selected)
@@ -3758,7 +3781,14 @@ REQUIRED INPUTS:
     # Generate config command
     # -------------------------------------------------------------------------
     p_config = subparsers.add_parser("generate-config", help="Generate example config file")
-    p_config.add_argument("--output", "-o", default="tcrsift_config.yaml", help="Output YAML file")
+    p_config.add_argument(
+        "--output", "-o", default=None,
+        help="Output YAML file (default: print to stdout; refuses to overwrite "
+        "an existing file without --force, #195)",
+    )
+    p_config.add_argument(
+        "--force", action="store_true", help="Overwrite an existing output file",
+    )
     p_config.set_defaults(func=cmd_generate_config)
 
     return parser
@@ -3796,13 +3826,33 @@ def cmd_cohort(args):
 
 
 def cmd_generate_config(args):
-    """Generate an example configuration file."""
+    """Generate an example configuration file (#195: no silent overwrite)."""
+    import tempfile
+
     from .config import generate_example_config
 
-    generate_example_config(args.output)
-    print(f"Generated example config: {args.output}")
+    # Default to stdout so `tcrsift generate-config | less` is safe and never
+    # clobbers a working config (#195).
+    if args.output is None:
+        with tempfile.NamedTemporaryFile("w+", suffix=".yaml", delete=False) as tf:
+            tmp = Path(tf.name)
+        generate_example_config(tmp)
+        print(tmp.read_text(), end="")
+        tmp.unlink()
+        return
+
+    out_path = Path(args.output)
+    if out_path.exists() and not args.force:
+        print(
+            f"ERROR: {out_path} already exists — refusing to overwrite. "
+            "Use --force to overwrite, -o PATH for a different file, or omit -o "
+            "to print the example to stdout."
+        )
+        sys.exit(1)
+    generate_example_config(out_path)
+    print(f"Generated example config: {out_path}")
     print("\nYou can customize this file and use it with:")
-    print(f"  tcrsift run --config {args.output} --sample-sheet samples.csv -o output/")
+    print(f"  tcrsift run --config {out_path} --sample-sheet samples.csv -o output/")
 
 
 def main(args=None):
