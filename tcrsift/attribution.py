@@ -136,14 +136,45 @@ def attribute_cells(
     dual_alpha = va1 & va2 & vb1 & (~vb2)
     merge_map: dict[str, str] = {}
     if config.dual_alpha_merge and dual_alpha.any():
+        # Per-beta stats for the dominance gate (#198): a real allelic-inclusion
+        # merge needs the dual to be the beta's *dominant* configuration, not a
+        # public beta's chance recurrence. Count, per beta, its paired cells
+        # (>=1 valid alpha) and its distinct alpha partners.
+        beta_paired = vb1 & (va1 | va2)
+        beta_cells: dict[str, int] = {}
+        beta_alphas: dict[str, set] = {}
+        for i in np.where(beta_paired)[0]:
+            b = B1[i]
+            beta_cells[b] = beta_cells.get(b, 0) + 1
+            partners = beta_alphas.setdefault(b, set())
+            if va1[i]:
+                partners.add(A1[i])
+            if va2[i]:
+                partners.add(A2[i])
+
+        min_fraction = getattr(config, "dual_alpha_min_fraction", 0.0)
+        max_partners = getattr(config, "dual_alpha_max_beta_partners", 0)
+
         da_idx = np.where(dual_alpha)[0]
         triples = []
         for i in da_idx:
             a_lo, a_hi = sorted((A1[i], A2[i]))
             triples.append((a_lo, a_hi, B1[i]))
         triple_counts = pd.Series(triples).value_counts()
+        n_rejected = 0
         for (a_lo, a_hi, b), count in triple_counts.items():
             if count < config.dual_alpha_min_cells:
+                continue
+            # Dominance gate (#198): reject public/promiscuous-beta coincidences.
+            # The merged pair must co-occur in >= min_fraction of the beta's
+            # paired cells (true allelic inclusion ~= every cell carries both),
+            # and the beta must not be promiscuous (<= max_partners alphas).
+            denom = beta_cells.get(b, count)
+            if min_fraction > 0 and denom and (count / denom) < min_fraction:
+                n_rejected += 1
+                continue
+            if max_partners and len(beta_alphas.get(b, ())) > max_partners:
+                n_rejected += 1
                 continue
             k_lo, k_hi = _make_key(a_lo, b), _make_key(a_hi, b)
             # Canonical = higher-abundance constituent (lexical tie-break) so
@@ -155,6 +186,12 @@ def attribute_cells(
                 canon = k_hi
             merge_map[k_lo] = canon
             merge_map[k_hi] = canon
+        if n_rejected:
+            logger.info(
+                "  Attribution: rejected %d recurrent dual-alpha triple(s) as "
+                "public/promiscuous-beta coincidences (not allelic inclusion, #198)",
+                n_rejected,
+            )
 
     def _canon(key: str) -> str:
         return merge_map.get(key, key)

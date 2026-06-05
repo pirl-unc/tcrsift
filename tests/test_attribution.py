@@ -111,26 +111,66 @@ class TestBetaShare:
 
 class TestDualAlpha:
     def test_recurrent_dual_alpha_merges(self):
+        # Genuine allelic inclusion: the dual is the beta's DOMINANT config
+        # (3 of 4 paired cells carry both alphas), so it merges (#198 gate passes).
         df = _cells([
-            {"a1": "A1", "b1": "B"},
-            {"a1": "A1", "b1": "B"},
-            {"a1": "A1", "b1": "B"},   # A1_B prior 3 -> canonical
-            {"a1": "A2", "b1": "B"},   # A2_B prior 1
-            # Two dual-alpha cells with the same (A1,A2,B) triple -> merge.
+            {"a1": "A1", "b1": "B"},   # one allele-dropout single (A1_B prior 1 -> canonical)
             {"bc": "d1", "a1": "A1", "a2": "A2", "b1": "B"},
             {"bc": "d2", "a1": "A2", "a2": "A1", "b1": "B"},
+            {"bc": "d3", "a1": "A1", "a2": "A2", "b1": "B"},
         ])
         long, merge = attribute_cells(df, _on(dual_alpha_min_cells=2))
         assert merge.get("A2_B") == "A1_B"
         assert merge.get("A1_B") == "A1_B"
         # Dual cells attributed wholly to the merged clone.
-        for bc in ("d1", "d2"):
+        for bc in ("d1", "d2", "d3"):
             rows = long[long["cell_barcode"] == bc]
             assert list(rows["CDR3ab"]) == ["A1_B"]
             assert rows["weight"].iloc[0] == pytest.approx(1.0)
             assert rows["kind"].iloc[0] == "dual_alpha_merge"
         # A2_B no longer appears as its own clone (merged away).
         assert "A2_B" not in set(long["CDR3ab"])
+
+
+class TestDualAlphaDominanceGate:
+    """#198: only merge when the dual is the beta's dominant configuration, not
+    a public/promiscuous beta's chance recurrence."""
+
+    def _promiscuous(self):
+        # Beta B pairs with 5 distinct alphas; the (A1,A2,B) dual recurs twice
+        # but is a small minority of B's cells -> must NOT merge.
+        rows = [{"a1": f"X{k}", "b1": "B"} for k in range(5)]
+        rows += [{"a1": f"X{k}", "b1": "B"} for k in range(5)]   # more singles
+        rows += [
+            {"bc": "d1", "a1": "X0", "a2": "X1", "b1": "B"},
+            {"bc": "d2", "a1": "X1", "a2": "X0", "b1": "B"},
+        ]
+        return _cells(rows)
+
+    def test_promiscuous_beta_not_merged(self):
+        long, merge = attribute_cells(self._promiscuous(), _on(dual_alpha_min_cells=2))
+        # No merge: the dual is 2 of 12 B-cells (~17% < 0.5 majority).
+        assert merge == {}
+
+    def test_min_fraction_zero_restores_recurrence_only(self):
+        # Opting out of the dominance gate reverts to bare recurrence (pre-#198).
+        long, merge = attribute_cells(
+            self._promiscuous(), _on(dual_alpha_min_cells=2, dual_alpha_min_fraction=0)
+        )
+        assert merge != {}
+
+    def test_max_beta_partners_gate(self):
+        # Even a dominant dual is rejected when the beta is too promiscuous.
+        df = _cells([
+            {"bc": "d1", "a1": "A1", "a2": "A2", "b1": "B"},
+            {"bc": "d2", "a1": "A2", "a2": "A1", "b1": "B"},
+            {"a1": "A3", "b1": "B"},  # a 3rd partner -> 3 distinct alphas on B
+        ])
+        # Dominant (2/3 cells) but 3 partners > max 2 -> no merge.
+        _long, merge = attribute_cells(
+            df, _on(dual_alpha_min_cells=2, dual_alpha_max_beta_partners=2)
+        )
+        assert merge == {}
 
     def test_singleton_dual_alpha_splits(self):
         df = _cells([

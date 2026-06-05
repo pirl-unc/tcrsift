@@ -130,6 +130,16 @@ class AttributionConfig:
     # Minimum cells sharing a sorted (a1,a2,b) triple to treat it as one
     # biological clone rather than a per-cell droplet doublet.
     dual_alpha_min_cells: int = 2
+    # Dominance gate (#198): only merge a dual-alpha triple when it is the beta's
+    # *dominant* configuration — the merged pair must co-occur in at least this
+    # fraction of the beta's paired cells. True allelic inclusion ~= every cell
+    # carries both alphas (fraction ~1.0); a public/promiscuous beta's chance
+    # recurrence is a tiny fraction, so 0.5 (majority) rejects those coincidences.
+    dual_alpha_min_fraction: float = 0.5
+    # Optional: also refuse to merge when the beta pairs with more than this many
+    # distinct alphas (a promiscuous/public beta). 0 = disabled (rely on the
+    # fraction gate). cf. the #148 pairing-promiscuity feature.
+    dual_alpha_max_beta_partners: int = 0
     # How shared/split weight is apportioned: "proportional" (to each target
     # clone's complete-cell abundance) or "uniform".
     share_weighting: str = "proportional"
@@ -349,6 +359,8 @@ class TCRsiftConfig:
             "doublet_split": ("attribution", "doublet_split"),
             "dual_alpha_merge": ("attribution", "dual_alpha_merge"),
             "dual_alpha_min_cells": ("attribution", "dual_alpha_min_cells"),
+            "dual_alpha_min_fraction": ("attribution", "dual_alpha_min_fraction"),
+            "dual_alpha_max_beta_partners": ("attribution", "dual_alpha_max_beta_partners"),
             "share_weighting": ("attribution", "share_weighting"),
             "em_iterations": ("attribution", "em_iterations"),
             "dual_alpha_split": ("attribution", "dual_alpha_split"),
