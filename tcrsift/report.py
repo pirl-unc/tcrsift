@@ -25,6 +25,8 @@ import io
 import logging
 from pathlib import Path
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
 # Category label -> filename-stem prefixes, in report order. Mirrors the
@@ -192,3 +194,147 @@ def bundle_figure_pdf(
         writer.write(fh)
     logger.info("Wrote figure bundle %s (%d pages)", out_path, len(writer.pages))
     return out_path
+
+
+# Clonotype column -> cell per-chain column suffix, for rebuilding an alpha row
+# from a specific cell+slot (#188 dual-alpha variants / #184 repair).
+_ALPHA_COL_TO_CELL = {
+    "CDR3_alpha": "cdr3", "alpha_v_gene": "v_gene", "alpha_j_gene": "j_gene",
+    "alpha_c_gene": "c_gene", "VDJ_alpha_aa": "vdj_aa", "VDJ_alpha_nt": "vdj_nt",
+}
+
+
+def _rep_cell_both_alphas(obs, beta: str, a_lo: str, a_hi: str):
+    """Return ``(alpha_cdr3 -> slot_prefix, cell_row)`` for the highest-UMI cell
+    that genuinely co-expresses both alphas with this beta, else None."""
+    s = obs.astype({c: str for c in ("TRA_1_cdr3", "TRA_2_cdr3", "TRB_1_cdr3") if c in obs.columns})
+    if not {"TRA_1_cdr3", "TRA_2_cdr3", "TRB_1_cdr3"} <= set(obs.columns):
+        return None
+    m = (s["TRB_1_cdr3"] == beta) & (
+        ((s["TRA_1_cdr3"] == a_lo) & (s["TRA_2_cdr3"] == a_hi))
+        | ((s["TRA_1_cdr3"] == a_hi) & (s["TRA_2_cdr3"] == a_lo))
+    )
+    cells = obs[m.values]
+    if not len(cells):
+        return None
+    tot = sum(
+        cells[c].fillna(0) for c in ("TRA_1_umis", "TRA_2_umis", "TRB_1_umis")
+        if c in cells.columns
+    )
+    cell = cells.loc[tot.idxmax()]
+    return {str(cell["TRA_1_cdr3"]): "TRA_1", str(cell["TRA_2_cdr3"]): "TRA_2"}, cell
+
+
+def expand_dual_alpha_variants(
+    selected, obs, *, partners_col: str = "merged_alpha_partners"
+):
+    """Emit BOTH alpha-variants of each merged dual-alpha clone (#188).
+
+    A merged dual-alpha clone carries two alphas (``merged_alpha_partners``) but
+    a single-chain construct holds one. For each such clone, find a cell that
+    co-expresses both alphas + the beta and emit two rows — one per alpha, with
+    that alpha's VDJ/genes pulled from the cell's matching slot so each
+    construct's CDR3α matches its own VDJ. Non-merged clones pass through.
+
+    Returns ``(expanded_df, variant_of)`` where ``variant_of`` maps each variant
+    clone id to its canonical selected clone. A no-op (returns a copy) when
+    ``obs`` is None or there's no ``merged_alpha_partners`` column.
+    """
+    out = selected.copy()
+    if partners_col not in out.columns or obs is None:
+        out["dual_alpha_variant"] = None
+        return out.reset_index(drop=True), {}
+
+    rows = []
+    variant_of: dict[str, str] = {}
+    for _, r in out.iterrows():
+        partners = str(r.get(partners_col) or "")
+        alphas = [a for a in partners.split(";") if a]
+        beta = str(r.get("CDR3_beta", "") or "")
+        rc = _rep_cell_both_alphas(obs, beta, *sorted(alphas)) if len(alphas) == 2 else None
+        if rc:
+            amap, cell = rc
+            for a in alphas:
+                prefix = amap.get(a)
+                if prefix is None:
+                    continue
+                vr = r.copy()
+                for col, suf in _ALPHA_COL_TO_CELL.items():
+                    cellcol = f"{prefix}_{suf}"
+                    if cellcol in cell.index:
+                        vr[col] = cell[cellcol]
+                vr["CDR3ab"] = f"{a}_{beta}"
+                vr["dual_alpha_variant"] = a
+                vr["selected_clone"] = r["CDR3ab"]
+                variant_of[vr["CDR3ab"]] = r["CDR3ab"]
+                rows.append(vr)
+        else:
+            rr = r.copy()
+            rr["dual_alpha_variant"] = None
+            rr["selected_clone"] = r["CDR3ab"]
+            rows.append(rr)
+    return pd.DataFrame(rows).reset_index(drop=True), variant_of
+
+
+def build_selected_report(
+    selected,
+    clonotypes,
+    output_dir,
+    *,
+    obs=None,
+    assemble_kwargs: dict | None = None,
+    provenance_cols: list[str] | None = None,
+    title: str = "Selected clones",
+):
+    """Assemble a selected clone set into a synthesis-ready deliverable (#188).
+
+    Joins the selection (clone ids + provenance) to ``clonotypes`` (the full
+    VDJ/genes, now #184-correct), emits both alpha-variants for merged dual-alpha
+    clones (when ``obs`` is given), assembles β-T2A-α constructs, runs the
+    assembly QC, and writes ``selected_clones.csv`` (sequences + provenance),
+    ``selected_clones_sequences.pdf``, and ``selected_clones_qc.txt`` under
+    ``output_dir``. Returns the assembled DataFrame.
+    """
+    from .assemble import assemble_full_sequences, assemble_qc_report, validate_sequences
+    from .plots import create_tcr_sequence_pdf
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    prov_cols = [c for c in (provenance_cols or []) if c in selected.columns]
+    keep = ["CDR3ab", *prov_cols]
+    sel = selected[[c for c in keep if c in selected.columns]].drop_duplicates("CDR3ab")
+    merged = sel.merge(clonotypes, on="CDR3ab", how="left", suffixes=("", "_clo"))
+
+    expanded, variant_of = expand_dual_alpha_variants(merged, obs)
+    n_variants = len(variant_of)
+
+    assembled = assemble_full_sequences(
+        expanded, verbose=False, show_progress=False, **(assemble_kwargs or {})
+    )
+    validate_sequences(assembled, strict=False)
+    qc_text = assemble_qc_report(assembled)
+    (out_dir / "selected_clones_qc.txt").write_text(qc_text + "\n")
+
+    # Per-clone provenance lines for the sequence PDF.
+    annotations = None
+    if prov_cols:
+        annotations = {}
+        for _, r in expanded.iterrows():
+            key = r["CDR3ab"]
+            lines = [f"{c}: {r[c]}" for c in prov_cols if pd.notna(r.get(c))]
+            if r.get("dual_alpha_variant"):
+                lines.append(f"dual-alpha variant of {r.get('selected_clone')}")
+            if lines:
+                annotations[key] = lines
+
+    create_tcr_sequence_pdf(
+        assembled, out_dir / "selected_clones_sequences.pdf",
+        strict=False, annotations=annotations,
+    )
+    assembled.to_csv(out_dir / "selected_clones.csv", index=False)
+    logger.info(
+        "Selected-clones report: %d constructs (%d dual-alpha variants) → %s",
+        len(assembled), n_variants, out_dir,
+    )
+    return assembled
