@@ -2052,6 +2052,37 @@ def cmd_report_bundle(args):
     print(f"Wrote figure bundle: {out}")
 
 
+def cmd_report_selected(args):
+    """Assemble a selected clone set into a synthesis-ready PDF + CSV (#188)."""
+    import anndata as ad
+    import pandas as pd
+
+    from .config import TCRsiftConfig
+    from .report import build_selected_report
+
+    setup_logging(args.verbose)
+    selected = pd.read_csv(args.selection)
+    clonotypes = pd.read_csv(args.clonotypes)
+    obs = ad.read_h5ad(args.h5ad).obs if args.h5ad else None
+    print(f"Selecting {selected['CDR3ab'].nunique()} clones from {args.clonotypes}")
+
+    assemble_kwargs = {}
+    if args.config:
+        asm = TCRsiftConfig.from_yaml(args.config).assemble
+        assemble_kwargs = dict(
+            alpha_leader=asm.alpha_leader, beta_leader=asm.beta_leader,
+            include_constant=asm.include_constant, constant_source=asm.constant_source,
+            linker=asm.linker, contigs_dir=asm.contigs_dir,
+            sample_name_from=asm.sample_name_from, cellranger_dir=asm.cellranger_dir,
+        )
+    prov_cols = [c for c in selected.columns if c != "CDR3ab"]
+    build_selected_report(
+        selected, clonotypes, args.output_dir, obs=obs,
+        assemble_kwargs=assemble_kwargs, provenance_cols=prov_cols,
+    )
+    print(f"Wrote selected-clones report to {args.output_dir}")
+
+
 # =============================================================================
 # Main Parser
 # =============================================================================
@@ -2290,6 +2321,27 @@ def create_parser():
     pb.add_argument("--subtitle", default="", help="Cover-page subtitle")
     pb.add_argument("--verbose", action="store_true", help="Verbose output")
     pb.set_defaults(func=cmd_report_bundle)
+
+    ps = p_report_sub.add_parser(
+        "selected",
+        help="Assemble a selected clone set into a synthesis-ready PDF + CSV",
+    )
+    ps.add_argument(
+        "--selection", required=True,
+        help="Selected-clones CSV (CDR3ab + provenance columns, e.g. from `tcrsift select`)",
+    )
+    ps.add_argument(
+        "--clonotypes", required=True,
+        help="clonotypes.csv (all clones, for VDJ/genes — incl. rescued/low-tier picks)",
+    )
+    ps.add_argument(
+        "--h5ad",
+        help="phenotyped.h5ad — needed to emit both alpha-variants of merged dual-alpha clones",
+    )
+    ps.add_argument("--config", "-c", help="YAML config (assemble options)")
+    ps.add_argument("--output-dir", "-o", required=True, help="Output directory")
+    ps.add_argument("--verbose", action="store_true", help="Verbose output")
+    ps.set_defaults(func=cmd_report_selected)
 
     # -------------------------------------------------------------------------
     # Annotate command
