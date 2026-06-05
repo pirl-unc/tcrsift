@@ -2039,6 +2039,19 @@ def cmd_select(args):
         print(f"Wrote per-sample tiers → {tier_path}")
 
 
+def cmd_report_bundle(args):
+    """Assemble a categorized, multi-run figure bundle PDF (#123)."""
+    from .report import bundle_figure_pdf
+
+    setup_logging(args.verbose)
+    labels = [s.strip() for s in args.labels.split(",")] if args.labels else None
+    out = bundle_figure_pdf(
+        args.run_dirs, args.output, labels=labels,
+        title=args.title, subtitle=args.subtitle or "",
+    )
+    print(f"Wrote figure bundle: {out}")
+
+
 # =============================================================================
 # Main Parser
 # =============================================================================
@@ -2254,6 +2267,29 @@ def create_parser():
     )
     p_select.add_argument("--verbose", action="store_true", help="Verbose output")
     p_select.set_defaults(func=cmd_select)
+
+    # -------------------------------------------------------------------------
+    # Report command (#123): unified reporting (cohort figure bundle)
+    # -------------------------------------------------------------------------
+    p_report = subparsers.add_parser("report", help="Unified reporting (figure bundles)")
+    p_report_sub = p_report.add_subparsers(dest="report_command")
+    pb = p_report_sub.add_parser(
+        "bundle",
+        help="Concatenate per-run figures into one categorized cohort PDF",
+    )
+    pb.add_argument(
+        "run_dirs", nargs="+",
+        help="Run output dirs (each with a plots/ subdir, or a plots dir directly)",
+    )
+    pb.add_argument("--output", "-o", required=True, help="Output bundle PDF")
+    pb.add_argument(
+        "--labels",
+        help="Comma-separated section labels per dir (default: directory names)",
+    )
+    pb.add_argument("--title", default="TCRsift figure set", help="Cover-page title")
+    pb.add_argument("--subtitle", default="", help="Cover-page subtitle")
+    pb.add_argument("--verbose", action="store_true", help="Verbose output")
+    pb.set_defaults(func=cmd_report_bundle)
 
     # -------------------------------------------------------------------------
     # Annotate command
