@@ -58,6 +58,7 @@ __all__ = [
     "build_pdf_annotations",
     "select_specificity_candidates",
     "pivot_per_sample_tiers",
+    "percentile_rank_score",
 ]
 
 # Tier label -> numeric rank (lower = stronger enrichment). Used to
@@ -182,6 +183,77 @@ def _empty_selection(clone_col: str) -> pd.DataFrame:
     return pd.DataFrame(columns=[clone_col, *_SELECTION_COLUMNS])
 
 
+def percentile_rank_score(
+    clone_scores: pd.DataFrame,
+    terms: list[dict],
+    *,
+    clone_col: str = "CDR3ab",
+    group_col: str | None = None,
+) -> dict:
+    """Weighted mean-percentile composite per clone — the PRISM math (#193).
+
+    ``terms`` is a list of ``{"col", "direction": "low"|"high", "weight"}``.
+    Each term contributes a ``[0, 1]`` percentile rank (0 = best;
+    ``direction="high"`` means high values are best — e.g. an antigen-response
+    GEX score), averaged (optionally weighted). Returns ``{clone: composite}``
+    where a **low** composite = a strong multi-criterion candidate (private +
+    antigen-responding + non-naive, when given those terms). Percentile ranks
+    are computed within ``group_col`` (e.g. per condition) when provided.
+
+    This lets a ``tcrsift select`` route ``rank_by`` reproduce PRISM exactly by
+    combining Ppost with GEX/RNA score terms — a deliberate, config-driven
+    choice vs. the validated freq + low-Ppost route (#146, GEX excluded).
+    """
+    from .insilico_filter import percentile_rank
+
+    if clone_scores is None or len(clone_scores) == 0 or not terms:
+        return {}
+    weighted = []
+    for t in terms:
+        col = t.get("col")
+        if not col or col not in clone_scores.columns:
+            continue
+        lower = str(t.get("direction", "low")).lower() == "low"
+        w = float(t.get("weight", 1.0))
+        if group_col and group_col in clone_scores.columns:
+            pr = clone_scores.groupby(group_col, observed=True)[col].transform(
+                lambda s, _l=lower: percentile_rank(s, lower_is_better=_l)
+            )
+        else:
+            pr = percentile_rank(clone_scores[col], lower_is_better=lower)
+        weighted.append((pr, w))
+    if not weighted:
+        return {}
+    num = sum(pr * w for pr, w in weighted)
+    den = sum(w for _, w in weighted) or 1.0
+    composite = num / den
+    return dict(zip(clone_scores[clone_col].astype(str), composite))
+
+
+def _composite_for(metric, clone_scores, clone_col):
+    """Per-clone composite dict when ``rank_by`` is a percentile spec, else None."""
+    if isinstance(metric, dict) and metric.get("percentile_rank"):
+        return percentile_rank_score(
+            clone_scores, metric["percentile_rank"],
+            clone_col=clone_col, group_col=metric.get("group_col"),
+        )
+    return None
+
+
+def _rank_candidates(cands: list[dict], composite) -> str | None:
+    """Sort candidate dicts in place. With a ``composite`` map → ascending by
+    composite (low = best); else descending by the frequency ``value``. Returns
+    the metric label to record (``"percentile_rank"`` for a composite, else
+    None so the caller keeps its configured metric)."""
+    if composite is not None:
+        for c in cands:
+            c["value"] = float(composite.get(str(c["clone"]), float("inf")))
+        cands.sort(key=lambda r: r["value"])
+        return "percentile_rank"
+    cands.sort(key=lambda r: r["value"], reverse=True)
+    return None
+
+
 def build_selection_rules(
     clone_method_long: pd.DataFrame,
     config: dict,
@@ -191,6 +263,7 @@ def build_selection_rules(
     tier_col: str = "tier",
     freq_col: str = "max_freq_in_method",
     exclude_clones: set | None = None,
+    clone_scores: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Apply a config-driven multi-rule selection language (#122/#125).
 
@@ -283,12 +356,14 @@ def build_selection_rules(
                     if min_freq is not None and val < min_freq:
                         continue
                     rows.append({"clone": c, "value": float(val)})
-            rows.sort(key=lambda r: r["value"], reverse=True)
+            metric_label = _rank_candidates(
+                rows, _composite_for(metric, clone_scores, clone_col)
+            ) or metric
             if top_n is not None:
                 rows = rows[:top_n]
             rule_rows["shared"] = [
                 {"clone": r["clone"], "selection_rule": "shared",
-                 "ranking_metric": metric, "ranking_value": r["value"]}
+                 "ranking_metric": metric_label, "ranking_value": r["value"]}
                 for r in rows
             ]
             selected.update(r["clone"] for r in rows)
@@ -321,12 +396,14 @@ def build_selection_rules(
                     cands.append(
                         {"clone": c, "value": float(freq_by[c].get(method, 0.0))}
                     )
-                cands.sort(key=lambda r: r["value"], reverse=True)
+                metric_label = _rank_candidates(
+                    cands, _composite_for(metric, clone_scores, clone_col)
+                ) or metric
                 chosen = cands[:top_n]
                 rule_rows[f"private_{method}"] = [
                     {"clone": r["clone"],
                      "selection_rule": f"private_{method}",
-                     "ranking_metric": metric, "ranking_value": r["value"]}
+                     "ranking_metric": metric_label, "ranking_value": r["value"]}
                     for r in chosen
                 ]
                 selected.update(r["clone"] for r in chosen)
@@ -360,12 +437,14 @@ def build_selection_rules(
                         float(freq_by[c].get(m, 0.0)) for m in members
                     ) / max(len(members), 1)
                     cands.append({"clone": c, "value": mean_freq})
-                cands.sort(key=lambda r: r["value"], reverse=True)
+                metric_label = _rank_candidates(
+                    cands, _composite_for(metric, clone_scores, clone_col)
+                ) or metric
                 chosen = cands[:top_n]
                 rule_rows[f"method_pair_{name}"] = [
                     {"clone": r["clone"],
                      "selection_rule": f"method_pair_{name}",
-                     "ranking_metric": metric, "ranking_value": r["value"]}
+                     "ranking_metric": metric_label, "ranking_value": r["value"]}
                     for r in chosen
                 ]
                 selected.update(r["clone"] for r in chosen)
@@ -418,6 +497,7 @@ def select_from_clone_sample_long(
     clone_col: str = "CDR3ab",
     method_col: str = "method",
     exclude_clones: set | None = None,
+    clone_scores: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """End-to-end selection from a clone-sample-long table.
 
@@ -446,6 +526,7 @@ def select_from_clone_sample_long(
     cml = attach_method_tiers(cml)
     return build_selection_rules(
         cml, config, clone_col=clone_col, exclude_clones=exclude_clones,
+        clone_scores=clone_scores,
     )
 
 

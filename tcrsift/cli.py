@@ -2032,7 +2032,15 @@ def cmd_select(args):
             "that defines 'rules' (see `tcrsift generate-config`).",
         )
 
-    rules = select_from_clone_sample_long(long_df, selection)
+    # Per-clone scores (ppost_alpha/beta, GEX gene-set scores, …) let a route's
+    # `rank_by: {percentile_rank: [...]}` reproduce PRISM exactly (#193). Auto-use
+    # the clonotypes table when it carries the score columns, else --clone-scores.
+    clone_scores = None
+    scores_path = getattr(args, "clone_scores", None) or getattr(args, "clonotypes", None)
+    if scores_path:
+        clone_scores = pd.read_csv(scores_path)
+
+    rules = select_from_clone_sample_long(long_df, selection, clone_scores=clone_scores)
     if rules.empty:
         print("  No clones selected (no method axis, no rules matched, or empty input).")
     elif args.clonotypes:
@@ -2397,7 +2405,13 @@ def create_parser():
     )
     p_select.add_argument(
         "--clonotypes",
-        help="Optional clonotypes CSV to join per-clone metadata onto the output",
+        help="Optional clonotypes CSV to join per-clone metadata onto the output "
+        "(also used as per-clone scores for a percentile_rank route if it has them)",
+    )
+    p_select.add_argument(
+        "--clone-scores",
+        help="Per-clone scores CSV (ppost_alpha/beta, GEX gene-set scores) for a "
+        "route's rank_by: {percentile_rank: [...]} — reproduces PRISM (#193)",
     )
     p_select.add_argument(
         "--emit-per-sample-tiers",
