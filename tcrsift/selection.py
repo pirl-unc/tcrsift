@@ -57,6 +57,7 @@ __all__ = [
     "extract_per_method_evidence",
     "build_pdf_annotations",
     "select_specificity_candidates",
+    "pivot_per_sample_tiers",
 ]
 
 # Tier label -> numeric rank (lower = stronger enrichment). Used to
@@ -605,3 +606,28 @@ def select_specificity_candidates(
             candidate = candidate & (np.log10(ppost.clip(lower=1e-300)) <= abs_log10_ppost)
     out["specificity_candidate"] = candidate
     return out
+
+
+def pivot_per_sample_tiers(
+    clone_sample_long: pd.DataFrame,
+    *,
+    clone_col: str = "CDR3ab",
+    out_prefix: str = "tier_in_",
+) -> pd.DataFrame:
+    """Wide per-sample tier table for `tcrsift filter --emit-per-sample-tier` (#122).
+
+    Labels each ``(clone, sample)`` row with its within-sample abundance tier
+    (:func:`attach_per_sample_tiers`) and pivots to one ``tier_in_{sample}``
+    column per sample, keyed by ``clone_col``. The selection language consumes
+    these to evaluate per-method ``include_tier`` / ``exclude_tier3plus``
+    predicates without recomputing. Returns a frame with ``clone_col`` + one
+    column per sample (empty frame with just ``clone_col`` on empty input).
+    """
+    if clone_sample_long.empty or "sample" not in clone_sample_long.columns:
+        return pd.DataFrame(columns=[clone_col])
+    tiered = attach_per_sample_tiers(clone_sample_long)
+    wide = tiered.pivot_table(
+        index=clone_col, columns="sample", values="per_sample_tier", aggfunc="first"
+    )
+    wide.columns = [f"{out_prefix}{c}" for c in wide.columns]
+    return wide.reset_index()
