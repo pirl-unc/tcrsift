@@ -59,6 +59,8 @@ __all__ = [
     "select_specificity_candidates",
     "pivot_per_sample_tiers",
     "percentile_rank_score",
+    "select_freq_prism_per_condition",
+    "PRISM_TERMS",
 ]
 
 # Tier label -> numeric rank (lower = stronger enrichment). Used to
@@ -712,3 +714,93 @@ def pivot_per_sample_tiers(
     )
     wide.columns = [f"{out_prefix}{c}" for c in wide.columns]
     return wide.reset_index()
+
+
+# Default PRISM terms (tcrsift column names), matching the validated
+# selection_analysis recipe: low private Ppost + high antigen-response GEX +
+# low naive GEX. Override `score_terms` to change the criteria.
+PRISM_TERMS: list[dict] = [
+    {"col": "ppost_alpha", "direction": "low"},
+    {"col": "ppost_beta", "direction": "low"},
+    {"col": "antigen_response_score", "direction": "high"},
+    {"col": "naive_score", "direction": "low"},
+]
+
+
+def select_freq_prism_per_condition(
+    feat: pd.DataFrame,
+    *,
+    condition_col: str,
+    freq_col: str = "frequency",
+    clone_col: str = "CDR3ab",
+    score_terms: list[dict] | None = None,
+    gate: float = 0.001,
+    top_freq: int = 10,
+    top_prism: int = 5,
+    rescue_target: int = 0,
+    rescue_rank_col: str | None = None,
+) -> pd.DataFrame:
+    """Per-condition ``top-K freq ∪ top-K PRISM`` selection (#193).
+
+    Faithful reproduction of the validated downstream recipe (selection_analysis
+    ``make_plots.py``), so it can be retired without changing the science. For
+    each condition: gate to ``freq > gate``; compute PRISM = mean percentile
+    rank of ``score_terms`` **within that condition's candidate set** (low =
+    best — exactly the downstream's per-condition ranking); then select the
+    ``top_freq`` clones by frequency UNION the ``top_prism`` clones by PRISM.
+
+    ``score_terms`` defaults to :data:`PRISM_TERMS` (low ppost_alpha/beta, high
+    antigen_response_score, low naive_score). Optional coverage rescue: when a
+    condition has fewer than ``rescue_target`` gated clones, the best
+    sub-threshold clones by ``rescue_rank_col`` (descending) are added back.
+
+    Returns one row per (clone, condition) with ``selection_route`` (``freq`` /
+    ``prism`` / ``both``), ``rank_within_route``, ``prism_score``, the
+    condition, and the frequency. A clone selected in multiple conditions
+    appears once per condition.
+    """
+    terms = score_terms or PRISM_TERMS
+    if feat.empty or condition_col not in feat.columns:
+        return pd.DataFrame(
+            columns=[clone_col, condition_col, "selection_route",
+                     "rank_within_route", "prism_score", freq_col]
+        )
+    out_rows: list[dict] = []
+    for cond, grp in feat.groupby(condition_col, observed=True):
+        cand = grp[grp[freq_col].fillna(0) > gate].copy()
+        if rescue_target and len(cand) < rescue_target and rescue_rank_col in (grp.columns):
+            need = rescue_target - len(cand)
+            sub = grp[grp[freq_col].fillna(0) <= gate].copy()
+            sub = sub.sort_values(rescue_rank_col, ascending=False).head(need)
+            cand = pd.concat([cand, sub], ignore_index=True)
+        if cand.empty:
+            continue
+        # PRISM percentile ranks computed WITHIN this condition's candidates.
+        composite = percentile_rank_score(cand, terms, clone_col=clone_col)
+        cand["prism_score"] = cand[clone_col].astype(str).map(composite)
+        top_f = list(
+            cand.sort_values(freq_col, ascending=False)[clone_col].head(top_freq)
+        )
+        top_p = list(
+            cand.sort_values("prism_score", ascending=True)[clone_col].head(top_prism)
+        )
+        freq_set, prism_set = set(top_f), set(top_p)
+        f_rank = {c: i + 1 for i, c in enumerate(top_f)}
+        p_rank = {c: i + 1 for i, c in enumerate(top_p)}
+        for c in freq_set | prism_set:
+            in_f, in_p = c in freq_set, c in prism_set
+            route = "both" if (in_f and in_p) else ("freq" if in_f else "prism")
+            row = cand[cand[clone_col] == c].iloc[0]
+            out_rows.append({
+                clone_col: c,
+                condition_col: cond,
+                "selection_route": route,
+                "rank_within_route": f_rank.get(c) if in_f else p_rank.get(c),
+                "prism_score": float(row["prism_score"]) if pd.notna(row["prism_score"]) else None,
+                freq_col: float(row[freq_col]) if pd.notna(row[freq_col]) else 0.0,
+            })
+    return pd.DataFrame(
+        out_rows,
+        columns=[clone_col, condition_col, "selection_route",
+                 "rank_within_route", "prism_score", freq_col],
+    )

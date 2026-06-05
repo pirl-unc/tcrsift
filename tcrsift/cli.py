@@ -2022,23 +2022,55 @@ def cmd_select(args):
     long_df = pd.read_csv(args.input)
     print(f"Loaded {len(long_df)} (clone, sample) rows from {args.input}")
 
+    # Per-clone scores (ppost_alpha/beta, GEX gene-set scores, …).
+    clone_scores = None
+    scores_path = getattr(args, "clone_scores", None) or getattr(args, "clonotypes", None)
+    if scores_path:
+        clone_scores = pd.read_csv(scores_path)
+
+    # PRISM mode (#193): the validated per-condition `top-K freq ∪ top-K PRISM`
+    # recipe, matching the downstream selection_analysis exactly. Condition =
+    # the per-(clone, sample) method/sample column.
+    if getattr(args, "prism", False):
+        from .selection import select_freq_prism_per_condition
+
+        if clone_scores is None:
+            raise TCRsiftValidationError(
+                "--prism needs --clone-scores (per-clone ppost/GEX scores).",
+                hint="Run `tcrsift annotate` / add_pgen_ppost first to produce "
+                "ppost_alpha/ppost_beta/antigen_response_score/naive_score.",
+            )
+        cond_col = next(
+            (c for c in (args.condition_col, "method", "sample") if c and c in long_df.columns),
+            None,
+        )
+        if cond_col is None:
+            raise TCRsiftValidationError(
+                "No condition column in the long table.",
+                hint="Pass --condition-col (e.g. method or sample).",
+            )
+        score_cols = [c for c in clone_scores.columns if c != "CDR3ab"]
+        feat = long_df.merge(clone_scores[["CDR3ab", *score_cols]], on="CDR3ab", how="left")
+        sel = select_freq_prism_per_condition(
+            feat, condition_col=cond_col, freq_col="frequency",
+            gate=args.gate, top_freq=args.top_freq, top_prism=args.top_prism,
+        )
+        sel.to_csv(args.output, index=False)
+        print(
+            f"Wrote {sel['CDR3ab'].nunique()} distinct clones "
+            f"({len(sel)} clone×condition rows) by per-condition freq∪PRISM → {args.output}"
+        )
+        return
+
     selection = {}
     if args.config:
         selection = TCRsiftConfig.from_yaml(args.config).selection or {}
     if not selection.get("rules"):
         raise TCRsiftValidationError(
             "No selection rules configured.",
-            hint="Pass --config pointing to a YAML with a 'selection:' block "
-            "that defines 'rules' (see `tcrsift generate-config`).",
+            hint="Pass --config with a 'selection:' block ('rules'), or use "
+            "--prism for the per-condition freq∪PRISM recipe.",
         )
-
-    # Per-clone scores (ppost_alpha/beta, GEX gene-set scores, …) let a route's
-    # `rank_by: {percentile_rank: [...]}` reproduce PRISM exactly (#193). Auto-use
-    # the clonotypes table when it carries the score columns, else --clone-scores.
-    clone_scores = None
-    scores_path = getattr(args, "clone_scores", None) or getattr(args, "clonotypes", None)
-    if scores_path:
-        clone_scores = pd.read_csv(scores_path)
 
     rules = select_from_clone_sample_long(long_df, selection, clone_scores=clone_scores)
     if rules.empty:
@@ -2411,8 +2443,27 @@ def create_parser():
     )
     p_select.add_argument("--output", "-o", required=True, help="Output selected-clones CSV")
     p_select.add_argument(
-        "--config", "-c", required=True,
-        help="YAML config with a 'selection:' block (rules + global_rank)",
+        "--config", "-c",
+        help="YAML config with a 'selection:' block (rules + global_rank). "
+        "Not needed with --prism.",
+    )
+    p_select.add_argument(
+        "--prism", action="store_true",
+        help="Per-condition top-K freq ∪ top-K PRISM recipe (needs --clone-scores), "
+        "matching the validated selection_analysis (#193)",
+    )
+    p_select.add_argument(
+        "--condition-col",
+        help="Condition column for --prism (default: method, else sample)",
+    )
+    p_select.add_argument(
+        "--gate", type=float, default=0.001, help="--prism frequency gate (default: 0.001)",
+    )
+    p_select.add_argument(
+        "--top-freq", type=int, default=10, help="--prism top-K by frequency (default: 10)",
+    )
+    p_select.add_argument(
+        "--top-prism", type=int, default=5, help="--prism top-K by PRISM (default: 5)",
     )
     p_select.add_argument(
         "--clonotypes",
