@@ -335,6 +335,89 @@ class TestAggregateIntegration:
         assert clo["cell_count"].sum() == pytest.approx(3.0)
 
 
+class TestRepresentativeVdjConsistency:
+    """#184: the representative VDJ for a chain must come from a cell+slot whose
+    CDR3 equals the clone's canonical CDR3 — primary slot normally, secondary
+    slot for a merged dual-alpha whose canonical alpha is a cell's TRA_2."""
+
+    def test_picks_primary_slot_matching_cdr3(self):
+        from tcrsift.clonotype import _pick_chain_representative
+
+        df = pd.DataFrame({
+            "TRA_1_cdr3": ["CAAA", "CAAA", "CDDD"],
+            "TRA_2_cdr3": ["", "CDDD", ""],
+            "TRA_1_umis": [5, 5, 99],  # the CDDD cell has the most UMIs
+            "TRA_2_umis": [0, 3, 0],
+            "TRA_1_vdj_aa": ["xxCAAAxx", "xxCAAAxx", "xxCDDDxx"],
+            "TRA_2_vdj_aa": ["", "xxCDDDxx", ""],
+        })
+        prefix, rep = _pick_chain_representative(df, "TRA", "CAAA")
+        # Despite the CDDD cell having more UMIs, the rep carries CAAA.
+        assert prefix == "TRA_1"
+        assert "CAAA" in rep["TRA_1_vdj_aa"] and "CDDD" not in rep["TRA_1_vdj_aa"]
+
+    def test_falls_to_secondary_slot_for_merged_alpha(self):
+        from tcrsift.clonotype import _pick_chain_representative
+
+        # Canonical alpha CEEE only appears as the cell's TRA_2 (allelic
+        # inclusion); the rep + VDJ must come from the secondary slot.
+        df = pd.DataFrame({
+            "TRA_1_cdr3": ["CAAA"],
+            "TRA_2_cdr3": ["CEEE"],
+            "TRA_1_umis": [5],
+            "TRA_2_umis": [3],
+            "TRA_1_vdj_aa": ["xxCAAAxx"],
+            "TRA_2_vdj_aa": ["xxCEEExx"],
+        })
+        prefix, rep = _pick_chain_representative(df, "TRA", "CEEE")
+        assert prefix == "TRA_2"
+        assert "CEEE" in rep["TRA_2_vdj_aa"]
+
+    def test_fallback_when_no_cdr3_columns(self):
+        from tcrsift.clonotype import _pick_chain_representative
+
+        df = pd.DataFrame({"TRA_1_umis": [5, 9]})  # no _cdr3 columns
+        prefix, rep = _pick_chain_representative(df, "TRA", "CAAA")
+        assert prefix == "TRA_1" and rep is not None
+
+    def test_merged_clone_vdj_contains_canonical_cdr3(self):
+        import anndata as ad
+        from scipy.sparse import csr_matrix
+
+        from tcrsift.clonotype import aggregate_clonotypes
+
+        # a1=CAAA (prior 3, canonical) and a2=CDDD (prior 1) share beta CBBB;
+        # two recurrent dual-alpha cells merge them. The CDDD cell has the most
+        # alpha UMIs, so pre-#184 the merged clone's VDJ_alpha would be CDDD's.
+        def cell(a1, a2, au1, au2=0):
+            return {
+                "CDR3_alpha": a1, "TRA_2_cdr3": a2, "CDR3_beta": "CBBB", "TRB_2_cdr3": "",
+                "TRA_1_cdr3": a1, "TRA_1_umis": au1, "TRA_2_umis": au2,
+                "TRB_1_cdr3": "CBBB", "TRB_1_umis": 5,
+                "TRA_1_vdj_aa": f"GG{a1}WW" if a1 else "",
+                "TRA_2_vdj_aa": f"GG{a2}WW" if a2 else "",
+                "TRB_1_vdj_aa": "GGCBBBWW",
+                "sample": "S1",
+            }
+        rows = [
+            cell("CAAA", "", 5),
+            cell("CAAA", "", 5),
+            cell("CAAA", "", 5),
+            cell("CDDD", "", 99),               # most UMIs, wrong alpha
+            cell("CAAA", "CDDD", 5, au2=4),     # dual-alpha
+            cell("CAAA", "CDDD", 5, au2=4),     # dual-alpha (recurs -> merge)
+        ]
+        obs = pd.DataFrame(rows, index=[f"c{i}" for i in range(len(rows))])
+        adata = ad.AnnData(X=csr_matrix((len(obs), 1)), obs=obs)
+        clo = aggregate_clonotypes(
+            adata, attribution=_on(dual_alpha_min_cells=2),
+            show_progress=False, verbose=False,
+        )
+        merged = clo[clo["CDR3ab"] == "CAAA_CBBB"].iloc[0]
+        assert "CAAA" in merged["VDJ_alpha_aa"]
+        assert "CDDD" not in merged["VDJ_alpha_aa"]
+
+
 class TestDisabledAndGuards:
     def test_cdr3b_only_returns_empty(self):
         df = _cells([{"a1": "A", "b1": "B"}])

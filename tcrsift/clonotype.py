@@ -257,6 +257,34 @@ def _warn_high_multichain_rate(df: pd.DataFrame, threshold: float) -> None:
             logger.warning(f"    sample {sample}: {r * 100:.1f}% multi-chain")
 
 
+def _pick_chain_representative(df: pd.DataFrame, tr: str, target_cdr3):
+    """Return ``(column_prefix, rep_row)`` for a chain's V/J/C + VDJ source (#184).
+
+    Picks the highest-UMI cell+slot whose ``{tr}_{slot}_cdr3`` equals the clone's
+    canonical CDR3 (``target_cdr3``) — the primary slot ``{tr}_1`` for a normal
+    clone, or the secondary slot ``{tr}_2`` for a merged dual-alpha clone whose
+    canonical alpha is a cell's ``TRA_2``. Falls back to the primary-slot UMI
+    representative over all cells when no slot carries a matching CDR3 (or the
+    ``_cdr3`` columns are absent) — byte-identical to pre-#184 behavior, since
+    for an unmerged clone every cell's primary CDR3 already equals the target.
+    """
+    has_target = target_cdr3 is not None and not (
+        isinstance(target_cdr3, float) and pd.isna(target_cdr3)
+    )
+    if has_target:
+        for slot in ("1", "2"):
+            prefix = f"{tr}_{slot}"
+            cdr3col = f"{prefix}_cdr3"
+            if cdr3col in df.columns:
+                match = df[df[cdr3col] == target_cdr3]
+                if len(match):
+                    return prefix, pick_representative_cell(
+                        match, umi_cols=(f"{prefix}_umis",)
+                    )
+    prefix = f"{tr}_1"
+    return prefix, pick_representative_cell(df, umi_cols=(f"{prefix}_umis",))
+
+
 def _aggregate_with_attribution(
     df: pd.DataFrame,
     group_by: str,
@@ -585,19 +613,20 @@ def _aggregate_clone_data(
             record["n_CD8"] = _count("is_CD8")
             record["n_CD4"] = _count("is_CD4")
 
-        # Gene calls + VDJ AA/NT (#94). All coupled per-chain columns
-        # must come from a SINGLE representative cell, not from
-        # independent per-column modes. Independent modes break ties
-        # alphabetically per column, so AA and NT can end up sourced
-        # from different cells and produce internally inconsistent
-        # (AA, NT) pairs (translate(NT) != AA). Per-chain
-        # representatives are picked by per-chain UMI rank so each
-        # chain's data comes from the cell with the most read support
-        # for THAT chain — even when α and β were captured in
-        # different cells.
-        for chain, prefix in [("alpha", "TRA_1"), ("beta", "TRB_1")]:
-            rep = pick_representative_cell(
-                clone_df, umi_cols=(f"{prefix}_umis",)
+        # Gene calls + VDJ AA/NT (#94). All coupled per-chain columns must come
+        # from a SINGLE representative cell (independent per-column modes break
+        # ties differently per column, so AA and NT can end up from different
+        # cells → translate(NT) != AA).
+        #
+        # The representative must also carry the clone's OWN CDR3 for that chain
+        # (#184): the cell+slot whose ``{chain}_cdr3 == CDR3_{chain}`` — the
+        # primary slot for a normal clone, or the *secondary* slot for a merged
+        # dual-alpha clone whose canonical alpha is a cell's TRA_2. Otherwise the
+        # assembled VDJ can hold the wrong alpha (a2's instead of the canonical
+        # a1) and the construct's CDR3 wouldn't match the reported clone.
+        for chain, tr in [("alpha", "TRA"), ("beta", "TRB")]:
+            prefix, rep = _pick_chain_representative(
+                clone_df, tr, record.get(f"CDR3_{chain}")
             )
             for gene in ["v_gene", "j_gene", "c_gene"]:
                 col = f"{prefix}_{gene}"
