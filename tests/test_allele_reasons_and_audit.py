@@ -1045,3 +1045,57 @@ class TestIssue120TracPolymorphismVisible:
             (candidates["expected_aa"] == "N") & (candidates["observed_aa"] == "K")
         ]
         assert nk.empty
+
+
+class TestConstantAlleleFidelity:
+    """#187: surface a scalar constant-allele divergence count + a loud warning."""
+
+    def test_count_divergence_positions(self):
+        from tcrsift.assemble import _count_divergence_positions
+
+        assert _count_divergence_positions(None) == 0
+        assert _count_divergence_positions("") == 0
+        assert _count_divergence_positions("nan") == 0
+        assert _count_divergence_positions("3:N->K") == 1
+        assert _count_divergence_positions("3:N->K;7:V->I") == 2
+
+    def test_divergence_count_column_and_warning(self, tmp_path, caplog):
+        import logging
+
+        a, b = _vdj_fixture()
+        leader_aa = "M" + "A" * 19
+        observed = HUMAN_TRAC_AA[:2] + "K" + HUMAN_TRAC_AA[3:15]
+        alpha_c_nt = "TAT" + back_translate(observed)
+        alpha_contig = back_translate(leader_aa) + back_translate(a) + alpha_c_nt
+
+        df = pd.DataFrame([_base_clone(a, b, alpha_contig_ids="contig_a1")])
+        contig_dir = tmp_path / "S1"
+        contig_dir.mkdir(parents=True)
+        (contig_dir / "filtered_contig.fasta").write_text(f">contig_a1\n{alpha_contig}\n")
+
+        with caplog.at_level(logging.WARNING, logger="tcrsift.assemble"):
+            out = assemble_full_sequences(
+                df, contigs_dir=str(tmp_path),
+                alpha_leader=None, beta_leader=None,
+                verbose=False, show_progress=False,
+            )
+
+        # Scalar count column matches the per-position string (one N->K divergence).
+        assert out["alpha_constant_allele_divergence"].iloc[0] == 1
+        warns = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("Constant-allele divergence" in m for m in warns)
+
+    def test_no_divergence_no_warning(self, tmp_path, caplog):
+        import logging
+
+        # No contigs -> no observed bases -> count 0, no warning.
+        a, b = _vdj_fixture()
+        df = pd.DataFrame([_base_clone(a, b)])
+        with caplog.at_level(logging.WARNING, logger="tcrsift.assemble"):
+            out = assemble_full_sequences(
+                df, alpha_leader=None, beta_leader=None,
+                verbose=False, show_progress=False,
+            )
+        assert int(out["alpha_constant_allele_divergence"].iloc[0]) == 0
+        warns = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("Constant-allele divergence" in m for m in warns)

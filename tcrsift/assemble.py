@@ -430,6 +430,56 @@ def _format_divergence_positions(positions: list[tuple[int, str, str]]) -> str |
     return ";".join(f"{p}:{e}->{o}" for p, e, o in positions)
 
 
+def _count_divergence_positions(value) -> int:
+    """Count AA divergences in a ``{chain}_allele_divergence_positions`` cell.
+
+    The column is ``"3:N->K;7:V->I"`` (or None/empty when no contig was
+    available or the donor matched the canonical allele). Returns the number of
+    diverging positions (#187).
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return 0
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
+        return 0
+    return len([p for p in text.split(";") if p])
+
+
+def _warn_constant_allele_divergence(df: pd.DataFrame, *, clone_col: str = "CDR3ab") -> None:
+    """Loudly surface constant-allele divergences (#187).
+
+    The donor's *gene* may be correct (e.g. the J-parity TRBC rule) while the
+    *allele* diverges from canonical — a silent fidelity loss in the assembled
+    constant. Emit a verbose-independent warning naming how many clones diverge
+    and an example, so it's visible by default rather than buried in a column.
+    No-op when no divergence columns are present or nothing diverges.
+    """
+    diverged: list[tuple[str, str, int, str]] = []  # (clone, chain, n, positions)
+    for chain in ("alpha", "beta"):
+        cnt_col = f"{chain}_constant_allele_divergence"
+        pos_col = f"{chain}_allele_divergence_positions"
+        if cnt_col not in df.columns:
+            continue
+        mask = df[cnt_col] > 0
+        for idx in df.index[mask]:
+            clone = str(df.at[idx, clone_col]) if clone_col in df.columns else str(idx)
+            diverged.append(
+                (clone, chain, int(df.at[idx, cnt_col]),
+                 str(df.at[idx, pos_col]) if pos_col in df.columns else "")
+            )
+    if not diverged:
+        return
+    ex_clone, ex_chain, ex_n, ex_pos = diverged[0]
+    logger.warning(
+        "Constant-allele divergence: %d clone-chain(s) carry a sequenced "
+        "constant that diverges from the assembled canonical allele "
+        "(donor allele differs). e.g. %s %s: %d aa (%s). The gene call may be "
+        "correct while the allele isn't — see {chain}_allele_divergence_positions / "
+        "{chain}_constant_allele_divergence.",
+        len(diverged), ex_clone, ex_chain, ex_n, ex_pos,
+    )
+
+
 def _score_allele_against_contig(
     contig_aa: str,
     allele_aa: str,
@@ -1621,6 +1671,19 @@ def assemble_full_sequences(
         ):
             for line in allele_audit_report(df).splitlines():
                 logger.info(line)
+
+    # Constant-allele fidelity (#187). Derive a scalar divergence count per
+    # chain from the per-position column the assembler recorded against the
+    # donor's sequenced bases, and warn loudly (regardless of verbose) so an
+    # allele-level fidelity loss isn't silent. Both are no-ops without contigs
+    # (the divergence columns stay None / 0).
+    for chain in ("alpha", "beta"):
+        div_col = f"{chain}_allele_divergence_positions"
+        if div_col in df.columns:
+            df[f"{chain}_constant_allele_divergence"] = df[div_col].apply(
+                _count_divergence_positions
+            )
+    _warn_constant_allele_divergence(df)
 
     return df
 
