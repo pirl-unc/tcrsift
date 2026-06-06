@@ -945,6 +945,25 @@ def cmd_data_download(args):
 # =============================================================================
 
 
+def _common_contig_root(vdj_dirs):
+    """Common-ancestor directory of the sample sheet's vdj_dirs, to scan for
+    contigs in 'sheet' mode (#201). Returns ``None`` when there's no shared
+    ancestor or it resolves to the filesystem root (too broad to rglob safely)."""
+    import os
+
+    paths = [os.path.abspath(str(d)) for d in vdj_dirs if d]
+    if not paths:
+        return None
+    try:
+        root = os.path.commonpath(paths)
+    except ValueError:
+        return None  # mixed drives / no common path
+    p = Path(root)
+    if p == Path(p.anchor):  # filesystem root — refuse
+        return None
+    return root
+
+
 def cmd_run(args):
     """Run the complete TCRsift pipeline."""
     from pathlib import Path
@@ -1536,6 +1555,32 @@ def cmd_run(args):
         # Contig sample-name policy (#124). For "sheet" mode, hand the
         # loaded sample sheet to the assembler as a (sample, vdj_dir) frame.
         _sample_name_from = getattr(config.assemble, "sample_name_from", "parent")
+        _contigs_dir = config.assemble.contigs_dir
+
+        # Allele fidelity on by default (#201): when nothing explicit was
+        # configured but the sample sheet has vdj_dirs, assemble against those
+        # contigs (the run already loaded them) so allele-faithful constants +
+        # the #187 divergence check are active — instead of silently assembling
+        # canonical constants. --contigs-dir/--cellranger-dir remain overrides.
+        _explicit_contigs = config.assemble.contigs_dir or getattr(
+            config.assemble, "cellranger_dir", None
+        )
+        _sheet_vdj_dirs = [s.vdj_dir for s in sample_sheet.samples if s.vdj_dir]
+        if (
+            _sample_name_from == "parent"
+            and not _explicit_contigs
+            and _sheet_vdj_dirs
+            and not getattr(args, "no_sheet_contigs", False)
+        ):
+            _root = _common_contig_root(_sheet_vdj_dirs)
+            if _root:
+                _contigs_dir = _root
+                _sample_name_from = "sheet"
+                print(
+                    f"  Allele fidelity: assembling against sample-sheet contigs "
+                    f"under {_root} (#201; pass --no-sheet-contigs / --contigs-dir to change)"
+                )
+
         _contig_sheet = (
             pd.DataFrame(
                 [
@@ -1549,7 +1594,7 @@ def cmd_run(args):
         )
         assembled = assemble_full_sequences(
             til_matched,
-            contigs_dir=config.assemble.contigs_dir,
+            contigs_dir=_contigs_dir,
             cellranger_dir=getattr(config.assemble, "cellranger_dir", None),
             sample_name_from=_sample_name_from,
             sample_sheet=_contig_sheet,
@@ -3600,6 +3645,12 @@ CONDITIONALLY REQUIRED:
         default=None,
         help="How to derive each contig's sample name from its FASTA path "
         "(default: parent). 'grandparent' for per_sample_outs/{sample}/vdj_t/.",
+    )
+    asm_group.add_argument(
+        "--no-sheet-contigs",
+        action="store_true",
+        help="Don't auto-assemble against the sample sheet's vdj_dir contigs; "
+        "use canonical constants instead (allele fidelity off, #201).",
     )
     asm_group.add_argument(
         "--single-chain",
