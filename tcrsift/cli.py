@@ -2193,8 +2193,22 @@ def cmd_report_selected(args):
     build_selected_report(
         selected, clonotypes, args.output_dir, obs=obs,
         assemble_kwargs=assemble_kwargs, provenance_cols=prov_cols,
+        cover=not getattr(args, "no_cover", False),
     )
     print(f"Wrote selected-clones report to {args.output_dir}")
+
+
+def cmd_report_selected_combine(args):
+    """Combine per-donor selected-clone PDFs into one cohort PDF (#202)."""
+    from .report import combine_selected_pdfs
+
+    setup_logging(args.verbose)
+    labels = [s.strip() for s in args.labels.split(",")] if args.labels else None
+    out = combine_selected_pdfs(
+        args.pdfs, args.output, labels=labels, title=args.title,
+        include_legend=not args.no_legend,
+    )
+    print(f"Wrote combined selected report: {out}")
 
 
 def cmd_report_sequence(args):
@@ -2581,8 +2595,30 @@ def create_parser():
         help="Contig sample-name policy (overrides config, #196)",
     )
     ps.add_argument("--output-dir", "-o", required=True, help="Output directory")
+    ps.add_argument(
+        "--no-cover", action="store_true",
+        help="Skip the construct cover/legend page on the sequence PDF (#202)",
+    )
     ps.add_argument("--verbose", action="store_true", help="Verbose output")
     ps.set_defaults(func=cmd_report_selected)
+
+    pscomb = p_report_sub.add_parser(
+        "selected-combine",
+        help="Combine per-donor selected_clones_sequences.pdf into one cohort PDF",
+    )
+    pscomb.add_argument(
+        "pdfs", nargs="+", help="Per-donor selected_clones_sequences.pdf files",
+    )
+    pscomb.add_argument("--output", "-o", required=True, help="Output combined PDF")
+    pscomb.add_argument("--labels", help="Comma-separated donor labels (default: dir names)")
+    pscomb.add_argument(
+        "--title", default="Selected clones — cohort", help="Cover-page title",
+    )
+    pscomb.add_argument(
+        "--no-legend", action="store_true", help="Skip the construct legend page",
+    )
+    pscomb.add_argument("--verbose", action="store_true", help="Verbose output")
+    pscomb.set_defaults(func=cmd_report_selected_combine)
 
     pseq = p_report_sub.add_parser(
         "sequence", help="Render a sequence PDF with per-method evidence overlay",
