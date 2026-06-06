@@ -55,7 +55,7 @@ def _on(**kw):
 class TestCompleteCells:
     def test_complete_single_weight_one(self):
         df = _cells([{"a1": "A", "b1": "B"}, {"a1": "A", "b1": "B"}])
-        long, merge = attribute_cells(df, _on())
+        long, merge, _ = attribute_cells(df, _on())
         assert merge == {}
         assert set(long["CDR3ab"]) == {"A_B"}
         assert long["weight"].sum() == pytest.approx(2.0)
@@ -73,7 +73,7 @@ class TestBetaShare:
             {"a1": "A2", "b1": "B"},   # A2_B prior = 1
             {"bc": "drop", "a1": "", "b1": "B"},  # alpha-dropout, beta B
         ])
-        long, _ = attribute_cells(df, _on())
+        long, _, _ = attribute_cells(df, _on())
         drop = long[long["cell_barcode"] == "drop"].set_index("CDR3ab")["weight"]
         assert drop["A1_B"] == pytest.approx(0.75)
         assert drop["A2_B"] == pytest.approx(0.25)
@@ -84,7 +84,7 @@ class TestBetaShare:
             {"a1": "A1", "b1": "B"},
             {"bc": "drop", "a1": "", "b1": "OTHER"},  # beta with no complete clone
         ])
-        long, _ = attribute_cells(df, _on())
+        long, _, _ = attribute_cells(df, _on())
         assert "drop" not in set(long["cell_barcode"])
 
     def test_beta_sharing_disabled_drops(self):
@@ -92,7 +92,7 @@ class TestBetaShare:
             {"a1": "A1", "b1": "B"},
             {"bc": "drop", "a1": "", "b1": "B"},
         ])
-        long, _ = attribute_cells(df, _on(beta_sharing=False))
+        long, _, _ = attribute_cells(df, _on(beta_sharing=False))
         assert "drop" not in set(long["cell_barcode"])
 
     def test_uniform_weighting_ignores_priors(self):
@@ -103,7 +103,7 @@ class TestBetaShare:
             {"a1": "A2", "b1": "B"},
             {"bc": "drop", "a1": "", "b1": "B"},
         ])
-        long, _ = attribute_cells(df, _on(share_weighting="uniform"))
+        long, _, _ = attribute_cells(df, _on(share_weighting="uniform"))
         drop = long[long["cell_barcode"] == "drop"].set_index("CDR3ab")["weight"]
         assert drop["A1_B"] == pytest.approx(0.5)
         assert drop["A2_B"] == pytest.approx(0.5)
@@ -119,7 +119,7 @@ class TestDualAlpha:
             {"bc": "d2", "a1": "A2", "a2": "A1", "b1": "B"},
             {"bc": "d3", "a1": "A1", "a2": "A2", "b1": "B"},
         ])
-        long, merge = attribute_cells(df, _on(dual_alpha_min_cells=2))
+        long, merge, _ = attribute_cells(df, _on(dual_alpha_min_cells=2))
         assert merge.get("A2_B") == "A1_B"
         assert merge.get("A1_B") == "A1_B"
         # Dual cells attributed wholly to the merged clone.
@@ -148,13 +148,13 @@ class TestDualAlphaDominanceGate:
         return _cells(rows)
 
     def test_promiscuous_beta_not_merged(self):
-        long, merge = attribute_cells(self._promiscuous(), _on(dual_alpha_min_cells=2))
+        long, merge, _ = attribute_cells(self._promiscuous(), _on(dual_alpha_min_cells=2))
         # No merge: the dual is 2 of 12 B-cells (~17% < 0.5 majority).
         assert merge == {}
 
     def test_min_fraction_zero_restores_recurrence_only(self):
         # Opting out of the dominance gate reverts to bare recurrence (pre-#198).
-        long, merge = attribute_cells(
+        long, merge, _ = attribute_cells(
             self._promiscuous(), _on(dual_alpha_min_cells=2, dual_alpha_min_fraction=0)
         )
         assert merge != {}
@@ -167,10 +167,46 @@ class TestDualAlphaDominanceGate:
             {"a1": "A3", "b1": "B"},  # a 3rd partner -> 3 distinct alphas on B
         ])
         # Dominant (2/3 cells) but 3 partners > max 2 -> no merge.
-        _long, merge = attribute_cells(
+        _long, merge, _ = attribute_cells(
             df, _on(dual_alpha_min_cells=2, dual_alpha_max_beta_partners=2)
         )
         assert merge == {}
+
+    def test_merge_stats_cofraction(self):
+        # The merge audit reports what fraction of the beta's cells carry both
+        # alphas (#198 visibility): 3 dual + 1 single -> 3/4 = 0.75.
+        df = _cells([
+            {"a1": "A1", "b1": "B"},
+            {"bc": "d1", "a1": "A1", "a2": "A2", "b1": "B"},
+            {"bc": "d2", "a1": "A2", "a2": "A1", "b1": "B"},
+            {"bc": "d3", "a1": "A1", "a2": "A2", "b1": "B"},
+        ])
+        _long, _merge, stats = attribute_cells(df, _on(dual_alpha_min_cells=2))
+        assert "A1_B" in stats
+        assert stats["A1_B"]["dual_alpha_cofraction"] == pytest.approx(0.75)
+        assert stats["A1_B"]["dual_alpha_beta_partners"] == 2
+        assert stats["A1_B"]["dual_alpha_n_dual_cells"] == 3
+
+    def test_cofraction_column_on_clonotypes(self):
+        import anndata as ad
+        from scipy.sparse import csr_matrix
+
+        from tcrsift.clonotype import aggregate_clonotypes
+
+        df = _cells([
+            {"a1": "CAAA", "b1": "CBBB"},
+            {"bc": "d1", "a1": "CAAA", "a2": "CDDD", "b1": "CBBB"},
+            {"bc": "d2", "a1": "CDDD", "a2": "CAAA", "b1": "CBBB"},
+            {"bc": "d3", "a1": "CAAA", "a2": "CDDD", "b1": "CBBB"},
+        ])
+        adata = ad.AnnData(X=csr_matrix((len(df), 1)), obs=df)
+        clo = aggregate_clonotypes(
+            adata, attribution=_on(dual_alpha_min_cells=2),
+            show_progress=False, verbose=False,
+        )
+        merged = clo[clo["CDR3ab"] == "CAAA_CBBB"].iloc[0]
+        assert merged["dual_alpha_cofraction"] >= 0.5
+        assert merged["merged_alpha_partners"]  # non-empty
 
     def test_singleton_dual_alpha_splits(self):
         df = _cells([
@@ -180,7 +216,7 @@ class TestDualAlphaDominanceGate:
             {"a1": "A2", "b1": "B"},   # A2_B prior 1
             {"bc": "d1", "a1": "A1", "a2": "A2", "b1": "B"},  # singleton -> split
         ])
-        long, merge = attribute_cells(df, _on(dual_alpha_min_cells=2))
+        long, merge, _ = attribute_cells(df, _on(dual_alpha_min_cells=2))
         assert merge == {}
         rows = long[long["cell_barcode"] == "d1"].set_index("CDR3ab")["weight"]
         assert rows["A1_B"] == pytest.approx(0.75)
@@ -193,7 +229,7 @@ class TestDualAlphaDominanceGate:
             {"bc": "d1", "a1": "A1", "a2": "A2", "b1": "B"},
             {"bc": "d2", "a1": "A1", "a2": "A2", "b1": "B"},
         ])
-        long, merge = attribute_cells(df, _on(dual_alpha_merge=False))
+        long, merge, _ = attribute_cells(df, _on(dual_alpha_merge=False))
         assert merge == {}
         assert (long[long["cell_barcode"] == "d1"]["kind"] == "dual_alpha_split").all()
 
@@ -207,7 +243,7 @@ class TestDualAlphaDominanceGate:
             {"a1": "A2", "b1": "B"},
             {"bc": "d1", "a1": "A1", "a2": "A2", "b1": "B"},  # singleton dual-alpha
         ])
-        long, _ = attribute_cells(
+        long, _, _ = attribute_cells(
             df, _on(dual_alpha_min_cells=2, dual_alpha_split=False)
         )
         rows = long[long["cell_barcode"] == "d1"]
@@ -228,7 +264,7 @@ class TestDualAlphaDominanceGate:
             {"bc": "da", "a1": "A1", "a2": "A2", "b1": "B"},   # dual-alpha singleton
             {"bc": "db", "a1": "A", "b1": "B1", "b2": "B2"},   # dual-beta
         ])
-        long, _ = attribute_cells(
+        long, _, _ = attribute_cells(
             df, _on(dual_alpha_min_cells=2, dual_alpha_split=False, dual_beta_split=True)
         )
         da = long[long["cell_barcode"] == "da"]
@@ -245,7 +281,7 @@ class TestDualBeta:
             {"a1": "A", "b1": "B1"},
             {"bc": "d1", "a1": "A", "b1": "B1", "b2": "B2"},  # B2 prior = 0
         ])
-        long, _ = attribute_cells(df, _on())
+        long, _, _ = attribute_cells(df, _on())
         assert "A_B2" not in set(long["CDR3ab"])
         assert (long["weight"] > 0).all()
         # The cell's full weight still lands on the real clone.
@@ -259,7 +295,7 @@ class TestDualBeta:
             {"a1": "A", "b1": "B2"},   # A_B2 prior 1
             {"bc": "d1", "a1": "A", "b1": "B1", "b2": "B2"},
         ])
-        long, _ = attribute_cells(df, _on())
+        long, _, _ = attribute_cells(df, _on())
         rows = long[long["cell_barcode"] == "d1"].set_index("CDR3ab")["weight"]
         assert rows["A_B1"] == pytest.approx(0.75)
         assert rows["A_B2"] == pytest.approx(0.25)
@@ -276,7 +312,7 @@ class TestWeightConservation:
             {"bc": "nochain", "a1": "", "b1": ""},        # -> 0.0
             {"bc": "alpha_only", "a1": "A1", "b1": ""},   # -> 0.0 (no beta)
         ])
-        long, _ = attribute_cells(df, _on())
+        long, _, _ = attribute_cells(df, _on())
         sums = long.groupby("cell_barcode")["weight"].sum()
         for bc in ("c0", "c1", "drop_ok", "dual"):
             assert sums.get(bc, 0.0) == pytest.approx(1.0), bc
@@ -289,7 +325,7 @@ class TestWeightConservation:
             {"a1": "A", "b1": "B"},
             {"bc": "low", "a1": "A", "b1": "B", "bu1": 1},
         ])
-        long, _ = attribute_cells(df, _on(), min_umi=2)
+        long, _, _ = attribute_cells(df, _on(), min_umi=2)
         assert "low" not in set(long["cell_barcode"])
 
 
@@ -461,10 +497,10 @@ class TestRepresentativeVdjConsistency:
 class TestDisabledAndGuards:
     def test_cdr3b_only_returns_empty(self):
         df = _cells([{"a1": "A", "b1": "B"}])
-        long, merge = attribute_cells(df, _on(), group_by="CDR3b_only")
+        long, merge, _ = attribute_cells(df, _on(), group_by="CDR3b_only")
         assert long.empty and merge == {}
 
     def test_empty_input(self):
         df = _cells([])
-        long, merge = attribute_cells(df, _on())
+        long, merge, _ = attribute_cells(df, _on())
         assert long.empty and merge == {}

@@ -80,14 +80,18 @@ def attribute_cells(
 
     Returns
     -------
-    (long_table, merge_map)
+    (long_table, merge_map, merge_stats)
         ``long_table`` columns: ``cell_barcode, CDR3ab, sample, weight, kind``;
         one row per (cell, attributed clone), weights per cell summing to 1.0
         (attributed) or 0.0 (dropped). ``merge_map`` maps each merged
         constituent clone ID to its canonical (surviving) clone ID.
+        ``merge_stats`` maps each canonical merged clone ID to its dominance
+        audit: ``dual_alpha_cofraction`` (fraction of the beta's paired cells
+        carrying BOTH alphas — the #198 dominance), ``dual_alpha_beta_partners``
+        (distinct alphas the beta pairs with), and ``dual_alpha_n_dual_cells``.
     """
     if group_by != "CDR3ab":
-        return pd.DataFrame(columns=LONG_COLUMNS), {}
+        return pd.DataFrame(columns=LONG_COLUMNS), {}, {}
 
     n = len(df)
     bc = np.asarray(df.index.astype(str))
@@ -135,6 +139,10 @@ def attribute_cells(
     # --- Dual-alpha recurrence-merge detection ----------------------------
     dual_alpha = va1 & va2 & vb1 & (~vb2)
     merge_map: dict[str, str] = {}
+    # Per merged clone: what fraction of the beta's paired cells carry BOTH
+    # alphas (the dominance the #198 gate enforced), + the beta's alpha-partner
+    # count — surfaced so chosen dual-alpha clones can be audited.
+    merge_stats: dict[str, dict] = {}
     if config.dual_alpha_merge and dual_alpha.any():
         # Per-beta stats for the dominance gate (#198): a real allelic-inclusion
         # merge needs the dual to be the beta's *dominant* configuration, not a
@@ -186,6 +194,11 @@ def attribute_cells(
                 canon = k_hi
             merge_map[k_lo] = canon
             merge_map[k_hi] = canon
+            merge_stats[canon] = {
+                "dual_alpha_cofraction": round(count / denom, 4) if denom else None,
+                "dual_alpha_beta_partners": len(beta_alphas.get(b, ())),
+                "dual_alpha_n_dual_cells": int(count),
+            }
         if n_rejected:
             logger.info(
                 "  Attribution: rejected %d recurrent dual-alpha triple(s) as "
@@ -366,4 +379,4 @@ def attribute_cells(
         long_table = long_table[long_table["weight"] > 0]
         long_table = long_table[LONG_COLUMNS].reset_index(drop=True)
 
-    return long_table, merge_map
+    return long_table, merge_map, merge_stats
