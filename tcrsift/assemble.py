@@ -1685,6 +1685,27 @@ def assemble_full_sequences(
             )
     _warn_constant_allele_divergence(df)
 
+    # Synthesis-hazard QC (#206). Scores each assembled construct NT for
+    # gene-synthesis pitfalls (GC window, homopolymers, long repeats, surviving
+    # restriction sites) plus cross-construct hazards (duplicate CDS, α/β swap).
+    # No-op when no construct-NT column exists. Warn (regardless of verbose) on
+    # any flagged construct so a vendor-rejection risk isn't silent.
+    df = add_synthesis_qc(df)
+    if "synth_gc_ok" in df.columns and len(df):
+        n_hazard = int(
+            (~df["synth_gc_ok"]).sum()
+            + (df.get("synth_max_homopolymer", pd.Series(dtype=int)) >= 9).sum()
+            + (df.get("synth_max_repeat", pd.Series(dtype=int)) >= 20).sum()
+            + (df.get("synth_restriction_sites", pd.Series(dtype=str)) != "").sum()
+        )
+        if n_hazard:
+            logger.warning(
+                "  Synthesis-hazard QC flagged %d construct-level issue(s) "
+                "(GC window / homopolymer / repeat / restriction site). See the "
+                "synth_* columns and synthesis_qc_report() for details.",
+                n_hazard,
+            )
+
     return df
 
 
@@ -3360,6 +3381,129 @@ def build_assembly_qc_report(df: pd.DataFrame) -> AssemblyQCReport:
         )
 
     return report
+
+
+# Named Type-II restriction sites scanned by the synthesis-hazard QC (#206).
+# (The codon optimizer already AVOIDS these; this QC flags any that survive —
+# e.g. in the *unoptimized* CDS, or across a leader/constant boundary.)
+SYNTHESIS_RESTRICTION_SITES: dict[str, str] = {
+    "EcoRI": "GAATTC", "BamHI": "GGATCC", "XhoI": "CTCGAG", "NotI": "GCGGCCGC",
+    "NheI": "GCTAGC", "HindIII": "AAGCTT", "SalI": "GTCGAC", "BsaI": "GGTCTC",
+    "BsmBI": "CGTCTC", "NcoI": "CCATGG", "NdeI": "CATATG", "XbaI": "TCTAGA",
+    "KpnI": "GGTACC",
+}
+
+
+def _gc_fraction(nt: str) -> float:
+    s = str(nt).upper()
+    return (s.count("G") + s.count("C")) / len(s) if s else 0.0
+
+
+def _max_homopolymer(nt: str) -> int:
+    s = str(nt).upper()
+    best = cur = 0
+    prev = ""
+    for ch in s:
+        cur = cur + 1 if ch == prev else 1
+        prev = ch
+        best = max(best, cur)
+    return best
+
+
+def _longest_repeat(nt: str, *, min_len: int = 8) -> int:
+    """Longest substring (>= min_len) that occurs at least twice."""
+    s = str(nt).upper()
+    n = len(s)
+    if n < min_len * 2:
+        return 0
+
+    def _has(length: int) -> bool:
+        seen: set[str] = set()
+        for i in range(n - length + 1):
+            sub = s[i:i + length]
+            if sub in seen:
+                return True
+            seen.add(sub)
+        return False
+
+    lo, hi, ans = min_len, n // 2, 0
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if _has(mid):
+            ans = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return ans
+
+
+def _restriction_hits(nt: str) -> str:
+    s = str(nt).upper()
+    return ";".join(nm for nm, site in SYNTHESIS_RESTRICTION_SITES.items() if site in s)
+
+
+def add_synthesis_qc(
+    df: pd.DataFrame,
+    *,
+    nt_col: str | None = None,
+    gc_range: tuple[float, float] = (0.35, 0.70),
+) -> pd.DataFrame:
+    """Flag synthesis hazards on the assembled construct NT (#206).
+
+    Adds, per construct (scored on ``nt_col`` — default the codon-optimized
+    single-chain CDS, else the unoptimized): ``synth_gc_fraction``,
+    ``synth_max_homopolymer`` (longest single-base run), ``synth_max_repeat``
+    (longest repeated substring), ``synth_restriction_sites`` (``;``-joined
+    enzyme names hit), and ``synth_gc_ok`` (in ``gc_range``). Cross-construct:
+    ``synth_duplicate_construct`` (identical ``single_chain_aa`` across picks)
+    and ``synth_alpha_beta_swap`` (``CDR3_alpha == CDR3_beta``). No-op (returns
+    a copy) when no construct-NT column is present. The codon optimizer already
+    avoids these — this surfaces any that survive (esp. in the unoptimized CDS).
+    """
+    out = df.copy()
+    col = nt_col or next(
+        (c for c in ("single_chain_nt_optimized", "single_chain_nt") if c in out.columns),
+        None,
+    )
+    if col is None:
+        return out
+    seqs = out[col].fillna("").astype(str)
+    out["synth_gc_fraction"] = seqs.map(_gc_fraction).round(4)
+    out["synth_max_homopolymer"] = seqs.map(_max_homopolymer)
+    out["synth_max_repeat"] = seqs.map(_longest_repeat)
+    out["synth_restriction_sites"] = seqs.map(_restriction_hits)
+    lo, hi = gc_range
+    nonempty = seqs.str.len() > 0
+    out["synth_gc_ok"] = ((out["synth_gc_fraction"] >= lo) & (out["synth_gc_fraction"] <= hi)) | (~nonempty)
+    if "single_chain_aa" in out.columns:
+        sc = out["single_chain_aa"].fillna("").astype(str)
+        out["synth_duplicate_construct"] = sc.duplicated(keep=False) & (sc != "")
+    if {"CDR3_alpha", "CDR3_beta"} <= set(out.columns):
+        a = out["CDR3_alpha"].astype(str)
+        b = out["CDR3_beta"].astype(str)
+        out["synth_alpha_beta_swap"] = (a == b) & (a != "") & (a.str.lower() != "nan")
+    return out
+
+
+def synthesis_qc_report(df: pd.DataFrame) -> str:
+    """One-line-per-check synthesis-hazard tally (#206); '' if QC not run."""
+    if "synth_gc_fraction" not in df.columns:
+        return ""
+    n = len(df)
+    lines = ["[synthesis QC]"]
+    n_gc = int((~df["synth_gc_ok"]).sum()) if "synth_gc_ok" in df.columns else 0
+    lines.append(f"  GC outside window: {n_gc}/{n}")
+    if "synth_max_homopolymer" in df.columns:
+        lines.append(f"  homopolymer run >=9: {int((df['synth_max_homopolymer'] >= 9).sum())}/{n}")
+    if "synth_max_repeat" in df.columns:
+        lines.append(f"  repeat >=20 nt: {int((df['synth_max_repeat'] >= 20).sum())}/{n}")
+    if "synth_restriction_sites" in df.columns:
+        lines.append(f"  restriction site(s): {int((df['synth_restriction_sites'] != '').sum())}/{n}")
+    if "synth_duplicate_construct" in df.columns:
+        lines.append(f"  duplicate construct: {int(df['synth_duplicate_construct'].sum())}/{n}")
+    if "synth_alpha_beta_swap" in df.columns:
+        lines.append(f"  α/β CDR3 identical: {int(df['synth_alpha_beta_swap'].sum())}/{n}")
+    return "\n".join(lines)
 
 
 def assemble_qc_report(df: pd.DataFrame) -> str:
