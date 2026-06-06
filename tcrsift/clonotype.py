@@ -302,7 +302,7 @@ def _aggregate_with_attribution(
     """
     from .attribution import attribute_cells
 
-    long_table, merge_map = attribute_cells(df, attribution, group_by, min_umi)
+    long_table, merge_map, merge_stats = attribute_cells(df, attribution, group_by, min_umi)
     if len(long_table) == 0:
         raise TCRsiftValidationError(
             "No complete clones found after attribution",
@@ -340,14 +340,24 @@ def _aggregate_with_attribution(
         sample_weight_totals=sample_weight_totals,
     )
 
-    # Record the constituent alpha partners of each merged dual-alpha clone.
+    # Record the constituent alpha partners of each merged dual-alpha clone,
+    # plus the dominance audit (#198 visibility): for each chosen dual-alpha
+    # clone, what fraction of the beta's paired cells carry BOTH alphas
+    # (dual_alpha_cofraction), how many distinct alphas the beta pairs with
+    # (dual_alpha_beta_partners), and the dual-cell count. None for non-merged
+    # clones, so a quick `dual_alpha_cofraction >= 0.5` check audits the picks.
     if merge_map:
         partners: dict[str, set] = {}
         for orig, canon in merge_map.items():
             partners.setdefault(canon, set()).add(orig.split("_", 1)[0])
         clonotypes["merged_alpha_partners"] = clonotypes["CDR3ab"].map(
-            lambda k: ";".join(sorted(partners.get(k, set())))
+            lambda k: ";".join(sorted(partners.get(k, set()))) or None
         )
+        for col in ("dual_alpha_cofraction", "dual_alpha_beta_partners",
+                    "dual_alpha_n_dual_cells"):
+            clonotypes[col] = clonotypes["CDR3ab"].map(
+                lambda k, _c=col: merge_stats.get(k, {}).get(_c)
+            )
 
     if verbose:
         logger.info(f"  Found {len(clonotypes):,} unique clonotypes (weighted)")
@@ -852,7 +862,7 @@ def build_clone_sample_long(adata: ad.AnnData, attribution=None) -> pd.DataFrame
         # complete clones. Per-sample weighted frequencies still sum to 1.0.
         from .attribution import attribute_cells
 
-        long_table, _ = attribute_cells(obs, attribution, "CDR3ab", min_umi=2)
+        long_table, _, _ = attribute_cells(obs, attribution, "CDR3ab", min_umi=2)
         if len(long_table) == 0:
             out = pd.DataFrame(columns=["CDR3ab", "sample", "cells", "frequency"])
         else:
