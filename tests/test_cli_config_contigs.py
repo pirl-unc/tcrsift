@@ -76,7 +76,7 @@ class TestReportSelectedContigArgs:
         captured = {}
 
         def fake_build(selected, clonotypes, output_dir, *, obs=None,
-                       assemble_kwargs=None, provenance_cols=None):
+                       assemble_kwargs=None, provenance_cols=None, **_kw):
             captured.update(assemble_kwargs or {})
             return pd.DataFrame()
 

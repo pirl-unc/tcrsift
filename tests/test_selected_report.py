@@ -144,3 +144,62 @@ class TestBuildSelectedReport:
         # Two constructs (one per alpha variant) of the same selected clone.
         assert len(out) == 2
         assert set(out["CDR3ab"]) == {f"{a1}_{b}", f"{a2}_{b}"}
+
+
+class TestCoverAndCombine:
+    def _assembleable(self, cdr3ab, a, b):
+        return _assembleable_clone(cdr3ab, a, b)
+
+    def test_cover_page_prepended(self, tmp_path):
+        from pypdf import PdfReader
+
+        a = "CASS" + "A" * 40 + "VLF"
+        b = "CASS" + "G" * 40 + "VEF"
+        clonotypes = pd.DataFrame([_assembleable_clone("c1", a, b)])
+        selected = pd.DataFrame([{"CDR3ab": "c1", "selection_rule": "shared"}])
+        out = build_selected_report(
+            selected, clonotypes, tmp_path, provenance_cols=["selection_rule"], cover=True,
+        )
+        assert len(out) == 1
+        pdf = PdfReader(str(tmp_path / "selected_clones_sequences.pdf"))
+        # cover page + 1 construct page.
+        assert len(pdf.pages) == 2
+        assert "T2A" in pdf.pages[0].extract_text()
+
+    def test_no_cover(self, tmp_path):
+        from pypdf import PdfReader
+
+        a = "CASS" + "A" * 40 + "VLF"
+        b = "CASS" + "G" * 40 + "VEF"
+        clonotypes = pd.DataFrame([_assembleable_clone("c1", a, b)])
+        selected = pd.DataFrame([{"CDR3ab": "c1"}])
+        build_selected_report(selected, clonotypes, tmp_path, cover=False)
+        pdf = PdfReader(str(tmp_path / "selected_clones_sequences.pdf"))
+        assert len(pdf.pages) == 1  # just the construct page
+
+    def test_combine_selected_pdfs(self, tmp_path):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from pypdf import PdfReader
+
+        from tcrsift.report import combine_selected_pdfs
+
+        # Two tiny per-donor "selected" PDFs (2 pages each).
+        donor_pdfs = []
+        for name in ("B1-2", "B1-3"):
+            d = tmp_path / name
+            d.mkdir()
+            p = d / "selected_clones_sequences.pdf"
+            from matplotlib.backends.backend_pdf import PdfPages
+            with PdfPages(p) as pp:
+                for _ in range(2):
+                    fig = plt.figure()
+                    pp.savefig(fig)
+                    plt.close(fig)
+            donor_pdfs.append(p)
+        out = tmp_path / "cohort.pdf"
+        combine_selected_pdfs(donor_pdfs, out, labels=["B1-2", "B1-3"])
+        pages = PdfReader(str(out)).pages
+        # cover + legend + (title + 2 pages) x 2 = 2 + 6 = 8.
+        assert len(pages) == 8

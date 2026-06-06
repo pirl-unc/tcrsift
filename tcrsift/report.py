@@ -276,6 +276,94 @@ def expand_dual_alpha_variants(
     return pd.DataFrame(rows).reset_index(drop=True), variant_of
 
 
+_CONSTRUCT_LEGEND = [
+    "Each page is one synthesis-ready single-chain construct, in N->C order:",
+    "",
+    "   [β leader] — VDJ-β — [β constant] — [T2A] — [α leader] — VDJ-α — [α constant]",
+    "",
+    "• Architecture: beta-T2A-alpha. The T2A is a 2A 'ribosomal skip' peptide —",
+    "  the ribosome releases the beta chain and re-initiates the alpha, so one",
+    "  transcript yields two separate chains in ~1:1 ratio.",
+    "• Leaders (signal peptides): default CD8A (beta) / CD28 (alpha) — configurable.",
+    "• Constants: J-family parity sets the TRBC allele (TRBJ1->TRBC1, TRBJ2->TRBC2);",
+    "  alpha uses TRAC. With contigs, the donor's observed allele is verified and any",
+    "  divergence from canonical is flagged (constant_allele_divergence).",
+    "• Two CDS forms per construct in selected_clones.csv: full_*_nt (unoptimized,",
+    "  the observed/native codons) and *_optimized (codon-optimized for expression).",
+    "• Dual-alpha (allelic-inclusion) clones are emitted as TWO labeled construct",
+    "  variants of the same clone (same beta, each alpha) — pick one to synthesize.",
+    "",
+    "Per-clone header shows selection provenance (route, rank, frequency); the",
+    "color legend on each page maps the V / CDR3 / J / constant / leader / linker segments.",
+]
+
+
+def _legend_reader(title: str, lines: list[str]):
+    """A reportlab text page (PdfReader) — used for the construct cover (#202)."""
+    from pypdf import PdfReader
+    from reportlab.pdfgen import canvas
+
+    w, h = _LETTER
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=_LETTER)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(54, h - 70, title)
+    c.setFont("Helvetica", 10.5)
+    y = h - 110
+    for line in lines:
+        c.drawString(54, y, line)
+        y -= 16
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return PdfReader(buf)
+
+
+def combine_selected_pdfs(
+    pdfs: list[str | Path],
+    out_path: str | Path,
+    *,
+    labels: list[str] | None = None,
+    title: str = "Selected clones — cohort",
+    include_legend: bool = True,
+) -> Path:
+    """Combine per-donor ``selected_clones_sequences.pdf`` into one cohort PDF (#202).
+
+    Cover (optional construct legend) + per-donor section title + that donor's
+    pages, concatenated as vector. Mirrors ``report bundle`` but for the
+    selected-clone reports. Returns the output path.
+    """
+    from pypdf import PdfReader, PdfWriter
+
+    pdfs = [Path(p) for p in pdfs]
+    labels = labels or [p.parent.name or p.stem for p in pdfs]
+    if len(labels) != len(pdfs):
+        raise ValueError("labels must match pdfs length")
+
+    writer = PdfWriter()
+
+    def _add(reader):
+        for page in reader.pages:
+            writer.add_page(page)
+
+    _add(_title_reader(title, f"{len(pdfs)} donors"))
+    if include_legend:
+        _add(_legend_reader("Construct legend (β-T2A-α)", _CONSTRUCT_LEGEND))
+    for pdf, label in zip(pdfs, labels):
+        if not pdf.is_file():
+            logger.warning("  selected-combine: missing %s — skipping", pdf)
+            continue
+        _add(_title_reader(label))
+        _add(PdfReader(str(pdf)))
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("wb") as fh:
+        writer.write(fh)
+    logger.info("Wrote combined selected report %s (%d pages)", out_path, len(writer.pages))
+    return out_path
+
+
 def build_selected_report(
     selected,
     clonotypes,
@@ -285,6 +373,7 @@ def build_selected_report(
     assemble_kwargs: dict | None = None,
     provenance_cols: list[str] | None = None,
     title: str = "Selected clones",
+    cover: bool = True,
 ):
     """Assemble a selected clone set into a synthesis-ready deliverable (#188).
 
@@ -328,10 +417,22 @@ def build_selected_report(
             if lines:
                 annotations[key] = lines
 
+    seq_pdf = out_dir / "selected_clones_sequences.pdf"
     create_tcr_sequence_pdf(
-        assembled, out_dir / "selected_clones_sequences.pdf",
-        strict=False, annotations=annotations,
+        assembled, seq_pdf, strict=False, annotations=annotations,
     )
+    # Prepend a self-documenting construct cover/legend page (#202).
+    if cover:
+        from pypdf import PdfReader, PdfWriter
+
+        writer = PdfWriter()
+        for page in _legend_reader(f"{title} — β-T2A-α constructs", _CONSTRUCT_LEGEND).pages:
+            writer.add_page(page)
+        for page in PdfReader(str(seq_pdf)).pages:
+            writer.add_page(page)
+        with seq_pdf.open("wb") as fh:
+            writer.write(fh)
+
     assembled.to_csv(out_dir / "selected_clones.csv", index=False)
     logger.info(
         "Selected-clones report: %d constructs (%d dual-alpha variants) → %s",
