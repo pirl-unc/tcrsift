@@ -1011,6 +1011,14 @@ def cmd_run(args):
     # emitted alongside a PNG. Applies to every save_figure in this run.
     set_plot_format(config.output.plot_format)
 
+    # Baseline/exclusion markers pushed last in combined figure labels (#208).
+    # None leaves the format-module default (("CTY",)); an explicit list (incl.
+    # []) overrides it for every label rendered in this run.
+    if config.output.baseline_markers is not None:
+        from .format import set_baseline_markers
+
+        set_baseline_markers(*config.output.baseline_markers)
+
     # Load sample sheet once (used for auto-detect + TIL loading)
     sample_sheet = load_sample_sheet(args.sample_sheet)
 

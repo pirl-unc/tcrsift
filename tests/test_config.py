@@ -48,3 +48,46 @@ def test_min_cd3_reads_default_is_gentle_floor():
     pilot data); 0 disables it. Previously a dead parameter (#172)."""
     config = TCRsiftConfig()
     assert config.phenotype.min_cd3_reads == 3
+
+
+def test_baseline_markers_default_is_none():
+    """Defaults to None so the format-module default (CTY) is used unchanged."""
+    assert TCRsiftConfig().output.baseline_markers is None
+
+
+def test_baseline_markers_nested_and_flat():
+    """output.baseline_markers settable nested or via the flat alias (#208)."""
+    nested = TCRsiftConfig._from_dict({"output": {"baseline_markers": ["CTY", "DMSO"]}})
+    assert nested.output.baseline_markers == ["CTY", "DMSO"]
+    flat = TCRsiftConfig._from_dict({"baseline_markers": ["DMSO"]})
+    assert flat.output.baseline_markers == ["DMSO"]
+
+
+def test_baseline_markers_round_trips_through_dict():
+    cfg = TCRsiftConfig._from_dict({"output": {"baseline_markers": ["DMSO"]}})
+    assert cfg.to_dict()["output"]["baseline_markers"] == ["DMSO"]
+
+
+def test_cmd_run_applies_baseline_markers(tmp_path):
+    """cmd_run pushes the configured markers into the format module (#208)."""
+    import tcrsift.format as fmt
+    from tcrsift.cli import create_parser
+
+    original = fmt.BASELINE_MARKERS
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("output:\n  baseline_markers: [DMSO, CTY]\n")
+    # An existing (but unusable) sheet passes arg validation, so execution
+    # reaches the baseline block before the run bails on the empty sheet.
+    sheet = tmp_path / "sheet.csv"
+    sheet.write_text("sample,vdj_dir\n")
+    try:
+        args = create_parser().parse_args(
+            ["run", "-s", str(sheet), "-o", str(tmp_path / "out"), "-c", str(cfg)]
+        )
+        try:
+            args.func(args)
+        except Exception:
+            pass
+        assert fmt.BASELINE_MARKERS == ("DMSO", "CTY")
+    finally:
+        fmt.set_baseline_markers(*original)
