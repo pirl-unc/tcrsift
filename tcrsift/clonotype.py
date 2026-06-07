@@ -1260,10 +1260,12 @@ def set_overlap_table(sets: dict[str, set[str]]) -> pd.DataFrame:
     (``+``-joined sorted set names), ``degree`` (number of sets in the pattern),
     and ``n_clones``. Sorted by descending ``n_clones``. Empty when no sets.
     """
+    from .format import order_conditions
+
     cols = ["sets", "degree", "n_clones"]
     if not sets:
         return pd.DataFrame(columns=cols)
-    names = sorted(sets)
+    names = order_conditions(sets)
     # Map each clone -> the tuple of sets it appears in.
     membership: dict[str, list[str]] = {}
     for name in names:
@@ -1271,7 +1273,9 @@ def set_overlap_table(sets: dict[str, set[str]]) -> pd.DataFrame:
             membership.setdefault(clone, []).append(name)
     counts: dict[tuple[str, ...], int] = {}
     for mem in membership.values():
-        key = tuple(sorted(mem))
+        # Consistent within-pattern order (baseline markers last), not raw
+        # alphabetical, so e.g. CTY⁻ always reads last in a combination.
+        key = tuple(order_conditions(mem))
         counts[key] = counts.get(key, 0) + 1
     rows = [
         {"sets": "+".join(key), "degree": len(key), "n_clones": n}

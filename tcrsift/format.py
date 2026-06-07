@@ -22,10 +22,16 @@ Rules:
 
 - Suffix ``pos`` → Unicode superscript ``⁺``.
 - Suffix ``neg`` → Unicode superscript ``⁻``.
-- For two-part names joined by ``_``, reorder so a ``CTY*`` marker
-  appears second (``CTYneg_tetpos`` → ``tet⁺CTY⁻``). ``CTY`` is a
-  baseline/exclusion gate in our cohort, so it reads more naturally
-  after the positive marker.
+- A name combining several markers (joined by ``_``, or an N-way set
+  combination joined by ``+``) is reordered so any *baseline* marker
+  (default ``CTY``, an exclusion gate in our cohort) always reads last
+  (``CTYneg_tetpos`` → ``tet⁺CTY⁻``). This gives a consistent label no
+  matter which order the markers happened to appear in the data.
+
+Baseline markers default to :data:`BASELINE_MARKERS` (``("CTY",)``) but
+can be overridden globally via :func:`set_baseline_markers` or per call
+via the ``last=`` argument. An explicit ``priority=`` list pins the
+leading order of non-baseline markers.
 
 Pass-through behavior: any name that doesn't match the rules is
 returned unchanged. Non-string input is coerced via ``str()``.
@@ -33,7 +39,65 @@ returned unchanged. Non-string input is coerced via ``str()``.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+
+# Markers that should always read *last* in a multi-marker label — baseline /
+# exclusion gates that read more naturally after the positive markers. Override
+# globally with set_baseline_markers(), or per-call with the ``last=`` argument.
+BASELINE_MARKERS: tuple[str, ...] = ("CTY",)
+
+
+def set_baseline_markers(*markers: str) -> None:
+    """Override the global baseline markers pushed last in combined labels.
+
+    e.g. ``set_baseline_markers("CTY", "DMSO")`` makes both gates read last in
+    any combined method/condition label. Call with no arguments to clear.
+    """
+    global BASELINE_MARKERS
+    BASELINE_MARKERS = tuple(markers)
+
+
+def _is_baseline(token: str, last: Sequence[str]) -> bool:
+    return any(m and m in token for m in last)
+
+
+def condition_sort_key(
+    name: str,
+    *,
+    priority: Sequence[str] | None = None,
+    last: Sequence[str] | None = None,
+) -> tuple:
+    """Stable ordering key for a single marker/condition token (#208).
+
+    Sorts so that: explicit ``priority`` markers lead (in the given order),
+    then everything else, then ``last`` (baseline) markers — alphabetical
+    within each band for determinism. Used to give a consistent order to the
+    markers inside a combined label and to N-way overlap set combinations.
+    """
+    last = list(last) if last is not None else list(BASELINE_MARKERS)
+    priority = list(priority or ())
+    base = 1 if _is_baseline(name, last) else 0
+    pidx = next((i for i, p in enumerate(priority) if p and p in name), len(priority))
+    return (base, pidx, name)
+
+
+def order_conditions(
+    names: Iterable[str],
+    *,
+    priority: Sequence[str] | None = None,
+    last: Sequence[str] | None = None,
+) -> list[str]:
+    """Order condition/marker names consistently (baseline markers last).
+
+    Deterministic (alphabetical within each band) so the same set of conditions
+    always renders in the same order regardless of input order — e.g.
+    ``["CTYneg", "AIMpos"]`` and ``["AIMpos", "CTYneg"]`` both order as
+    ``["AIMpos", "CTYneg"]``.
+    """
+    return sorted(
+        (str(n) for n in names),
+        key=lambda n: condition_sort_key(n, priority=priority, last=last),
+    )
 
 
 def _format_part(part: str) -> str:
@@ -45,8 +109,18 @@ def _format_part(part: str) -> str:
     return part
 
 
-def pretty_method(name: str) -> str:
+def pretty_method(
+    name: str,
+    *,
+    priority: Sequence[str] | None = None,
+    last: Sequence[str] | None = None,
+) -> str:
     """Format a tcrsift enrichment-method string for display.
+
+    Markers joined by ``_`` are reordered so baseline markers (default
+    ``CTY``) read last, for any number of parts (not just two). Override the
+    baseline set with ``last=`` (or globally via :func:`set_baseline_markers`)
+    and pin leading order with ``priority=``.
 
     Examples:
         >>> pretty_method("AIMpos")
@@ -57,19 +131,16 @@ def pretty_method(name: str) -> str:
         'AIM⁺CTY⁻'
         >>> pretty_method("CTYneg_tetpos")
         'tet⁺CTY⁻'
+        >>> pretty_method("CTYneg_AIMpos_IFNpos")
+        'AIM⁺IFN⁺CTY⁻'
     """
     if not isinstance(name, str):
         return str(name)
     parts = name.split("_")
-    formatted = [_format_part(p) for p in parts]
-    # CTY is the baseline gate — read it after the positive marker.
-    if (
-        len(formatted) == 2
-        and "CTY" in formatted[0]
-        and "CTY" not in formatted[1]
-    ):
-        formatted = [formatted[1], formatted[0]]
-    return "".join(formatted)
+    # Reorder on the RAW tokens (baseline detection is independent of the
+    # superscript translation), then format each surviving part.
+    ordered = order_conditions(parts, priority=priority, last=last)
+    return "".join(_format_part(p) for p in ordered)
 
 
 def pretty_methods(names: Iterable[str]) -> list[str]:

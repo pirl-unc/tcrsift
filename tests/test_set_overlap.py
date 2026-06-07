@@ -77,6 +77,14 @@ class TestSetOverlapTable:
         assert table.empty
         assert list(table.columns) == ["sets", "degree", "n_clones"]
 
+    def test_baseline_marker_ordered_last(self):
+        # A combined pattern reads with the baseline (CTY) last, regardless of
+        # dict insertion order (#208 consistent ordering).
+        sets = {"CTYneg": {"A", "B"}, "AIMpos": {"A", "C"}}
+        table = set_overlap_table(sets)
+        combo = table[table["degree"] == 2].iloc[0]["sets"]
+        assert combo == "AIMpos+CTYneg"
+
 
 class TestPlotSetOverlap:
     def test_writes_png(self, tmp_path):

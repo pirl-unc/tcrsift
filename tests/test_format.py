@@ -44,9 +44,23 @@ class TestPrettyMethod:
         # CTY belongs after the positive marker.
         assert pretty_method("CTYneg_tetpos") == "tet⁺CTY⁻"
 
-    def test_three_part_name_no_reorder(self):
-        # The CTY-second rule is only applied for 2-part names.
+    def test_three_part_name_keeps_baseline_last(self):
         assert pretty_method("AIMpos_IFNpos_CTYneg") == "AIM⁺IFN⁺CTY⁻"
+
+    def test_three_part_name_reorders_baseline_last(self):
+        # Baseline (CTY) is pushed last regardless of input position — the
+        # generalization of the old 2-part rule to N parts (#208).
+        assert pretty_method("CTYneg_AIMpos_IFNpos") == "AIM⁺IFN⁺CTY⁻"
+        assert pretty_method("IFNpos_CTYneg_AIMpos") == "AIM⁺IFN⁺CTY⁻"
+
+    def test_baseline_override_per_call(self):
+        # Make DMSO the baseline instead of CTY for this call.
+        assert pretty_method("DMSOneg_AIMpos", last=("DMSO",)) == "AIM⁺DMSO⁻"
+
+    def test_priority_pins_leading_order(self):
+        # Without priority, alphabetical: AIM before tet. With priority, tet leads.
+        assert pretty_method("AIMpos_tetpos") == "AIM⁺tet⁺"
+        assert pretty_method("AIMpos_tetpos", priority=("tet",)) == "tet⁺AIM⁺"
 
     def test_unknown_suffix_strips_underscore_separator(self):
         # No ``pos``/``neg`` to translate, but the ``_`` separator
@@ -95,7 +109,49 @@ class TestPrettySamples:
         assert out == ["AIM⁺CTY⁻", "tet⁺", "CTY⁻"]
 
 
+class TestOrderConditions:
+    def test_consistent_regardless_of_input_order(self):
+        from tcrsift.format import order_conditions
+
+        assert order_conditions(["CTYneg", "AIMpos"]) == ["AIMpos", "CTYneg"]
+        assert order_conditions(["AIMpos", "CTYneg"]) == ["AIMpos", "CTYneg"]
+
+    def test_baseline_always_last(self):
+        from tcrsift.format import order_conditions
+
+        out = order_conditions(["CTYneg", "tetpos", "AIMpos"])
+        assert out[-1] == "CTYneg"
+
+    def test_priority_then_baseline(self):
+        from tcrsift.format import order_conditions
+
+        out = order_conditions(["CTYneg", "AIMpos", "tetpos"], priority=("tet",))
+        assert out == ["tetpos", "AIMpos", "CTYneg"]
+
+    def test_override_last_marker(self):
+        from tcrsift.format import order_conditions
+
+        out = order_conditions(["DMSOneg", "AIMpos"], last=("DMSO",))
+        assert out[-1] == "DMSOneg"
+
+
+class TestSetBaselineMarkers:
+    def test_global_override_and_restore(self):
+        from tcrsift import format as fmt
+
+        original = fmt.BASELINE_MARKERS
+        try:
+            fmt.set_baseline_markers("DMSO")
+            assert fmt.pretty_method("DMSOneg_AIMpos") == "AIM⁺DMSO⁻"
+            # CTY no longer special → alphabetical (AIM < CTY).
+            assert fmt.pretty_method("CTYneg_AIMpos") == "AIM⁺CTY⁻"
+        finally:
+            fmt.set_baseline_markers(*original)
+        assert fmt.BASELINE_MARKERS == original
+
+
 class TestTopLevelExport:
     def test_importable_from_top_level(self):
         assert tcrsift.pretty_method("AIMpos") == "AIM⁺"
         assert tcrsift.pretty_sample("tetpos-3") == "tet⁺"
+        assert tcrsift.order_conditions(["CTYneg", "AIMpos"]) == ["AIMpos", "CTYneg"]

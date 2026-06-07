@@ -2094,6 +2094,16 @@ def plot_set_overlap(
     if len(sets) < 2:
         return
 
+    # Prettify set names (AIMpos -> AIM⁺) and order them consistently so a
+    # baseline marker (CTY⁻) always reads last — matching every other figure.
+    from .format import order_conditions
+
+    ordered_names = order_conditions(sets)
+    pretty = {name: pretty_method(name) for name in ordered_names}
+    # Guard against two raw names collapsing to one pretty label.
+    if len(set(pretty.values())) == len(pretty):
+        sets = {pretty[name]: sets[name] for name in ordered_names}
+
     try:
         import upsetplot
 
@@ -2117,10 +2127,12 @@ def plot_set_overlap(
     table = table[table["n_clones"] >= min_subset_size].head(max_bars)
     if table.empty:
         return
+    # Labels are already prettified+ordered above; just space the ∩ for reading.
+    labels = [s.replace("+", " ∩ ") for s in table["sets"].values]
     fig, ax = plt.subplots(figsize=(max(7, 0.4 * len(table) + 3), 5))
     ax.bar(range(len(table)), table["n_clones"].values, color="#4c72b0")
     ax.set_xticks(range(len(table)))
-    ax.set_xticklabels(table["sets"].values, rotation=60, ha="right", fontsize=8)
+    ax.set_xticklabels(labels, rotation=60, ha="right", fontsize=8)
     ax.set_ylabel("clones")
     ax.set_title(f"{title} (install 'upsetplot' for UpSet view)")
     for i, n in enumerate(table["n_clones"].values):
