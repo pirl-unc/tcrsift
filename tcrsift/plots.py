@@ -2889,7 +2889,8 @@ def _expand_annotation_lines(lines, *, max_lines: int = 18) -> list[str]:
     through :func:`tcrsift.format.pdf_safe` so superscript ``⁺``/``⁻`` and other
     non-WinAnsi glyphs render as ASCII instead of missing-glyph boxes. A line
     of the form ``"label: a ; b ; c"`` becomes a ``label:`` header followed by
-    indented ``a`` / ``b`` / ``c``. Capped at ``max_lines``.
+    indented ``a`` / ``b`` / ``c``. Capped at ``max_lines`` with an explicit
+    ``... (+N more)`` marker rather than a silent truncation.
     """
     from .format import pdf_safe
 
@@ -2906,7 +2907,11 @@ def _expand_annotation_lines(lines, *, max_lines: int = 18) -> list[str]:
             out.extend(p.strip() for p in line.split(";") if p.strip())
         else:
             out.append(line)
-    return out[:max_lines]
+    if len(out) > max_lines:
+        kept = out[: max_lines - 1]
+        kept.append(f"... (+{len(out) - (max_lines - 1)} more)")
+        return kept
+    return out
 
 
 def create_tcr_sequence_pdf(

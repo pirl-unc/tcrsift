@@ -413,11 +413,21 @@ class TestSequencePdfAnnotations:
         assert out[4] == "dual-alpha variant of CAAIGNDMRF_CASKDPSSSYEQYF"
         assert all("⁺" not in line and "⁻" not in line for line in out)
 
-    def test_annotation_lines_capped(self):
+    def test_annotation_lines_capped_with_marker(self):
         from tcrsift.plots import _expand_annotation_lines
 
         many = [f"line{i}" for i in range(50)]
-        assert len(_expand_annotation_lines(many, max_lines=18)) == 18
+        out = _expand_annotation_lines(many, max_lines=18)
+        assert len(out) == 18
+        # Truncation is explicit, not silent (#202 review).
+        assert out[-1] == "... (+33 more)"
+
+    def test_annotation_key_value_no_semicolon_passthrough(self):
+        # A plain "key: value" line (no ;) stays a single line, unmangled.
+        from tcrsift.plots import _expand_annotation_lines
+
+        out = _expand_annotation_lines(["frequency: 0.90%"])
+        assert out == ["frequency: 0.90%"]
 
     def test_renders_when_annotation_key_missing(self, tmp_path):
         # A clone with no annotation entry must still render (no crash).

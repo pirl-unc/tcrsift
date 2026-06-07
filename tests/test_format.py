@@ -172,6 +172,12 @@ class TestPdfSafe:
         # Em-dash + curly quote are in WinAnsi (cp1252) and must survive.
         assert pdf_safe("a — b") == "a — b"
 
+    def test_winansi_multiplication_sign_preserved(self):
+        from tcrsift.format import pdf_safe
+
+        # × is in cp1252, so it must NOT be downgraded to 'x' (#202 review).
+        assert pdf_safe("freq × PRISM") == "freq × PRISM"
+
     def test_unknown_glyph_replaced_not_box(self):
         from tcrsift.format import pdf_safe
 
