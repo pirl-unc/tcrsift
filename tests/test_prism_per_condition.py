@@ -150,3 +150,38 @@ def test_cli_select_prism_mode(tmp_path):
     assert set(res["selection_route"]) <= {"freq", "prism", "both"}
     # C5 is below the 0.1% gate -> excluded even though it has the best PRISM.
     assert "C5" not in set(res["CDR3ab"])
+
+
+def test_cli_select_prism_grid(tmp_path):
+    """`tcrsift select --prism --prism-grid` emits the trade-off CSV + heatmap (#207)."""
+    from tcrsift.cli import create_parser
+
+    long = pd.DataFrame({
+        "CDR3ab": [f"C{i}" for i in range(6)],
+        "sample": ["S1"] * 6,
+        "method": ["AIMpos"] * 6,
+        "frequency": [0.02, 0.015, 0.012, 0.01, 0.008, 0.005],
+    })
+    scores = pd.DataFrame({
+        "CDR3ab": [f"C{i}" for i in range(6)],
+        "ppost_alpha": [1e-9, 1e-5, 1e-7, 1e-8, 1e-6, 1e-4],
+        "ppost_beta": [1e-9, 1e-5, 1e-7, 1e-8, 1e-6, 1e-4],
+        "antigen_response_score": [2.0, 0.1, 1.0, 1.5, 0.5, 0.2],
+        "naive_score": [0.0, 2.0, 1.0, 0.5, 1.5, 1.8],
+    })
+    li = tmp_path / "long.csv"
+    long.to_csv(li, index=False)
+    sc = tmp_path / "scores.csv"
+    scores.to_csv(sc, index=False)
+    out = tmp_path / "selected.csv"
+    args = create_parser().parse_args([
+        "select", "-i", str(li), "--clone-scores", str(sc), "--prism",
+        "--condition-col", "method", "--prism-grid", "-o", str(out),
+    ])
+    args.func(args)
+    grid_csv = tmp_path / "freq_prism_grid.csv"
+    grid_png = tmp_path / "freq_prism_grid.png"
+    assert grid_csv.exists()
+    grid = pd.read_csv(grid_csv)
+    assert set(grid.columns) == {"top_freq", "top_prism", "n_clones"}
+    assert grid_png.exists()

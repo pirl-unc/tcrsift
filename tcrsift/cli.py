@@ -2109,6 +2109,25 @@ def cmd_select(args):
             f"Wrote {sel['CDR3ab'].nunique()} distinct clones "
             f"({len(sel)} clone×condition rows) by per-condition freq∪PRISM → {args.output}"
         )
+        if getattr(args, "prism_grid", False):
+            from .selection import freq_prism_grid
+
+            grid = freq_prism_grid(
+                feat, condition_col=cond_col, freq_col="frequency", gate=args.gate,
+            )
+            grid_csv = Path(args.output).with_name("freq_prism_grid.csv")
+            grid.to_csv(grid_csv, index=False)
+            print(f"Wrote freq×PRISM trade-off grid → {grid_csv}")
+            try:
+                from .plots import plot_freq_prism_grid
+
+                grid_png = Path(args.output).with_name("freq_prism_grid.png")
+                plot_freq_prism_grid(
+                    grid, grid_png, chosen=(args.top_freq, args.top_prism)
+                )
+                print(f"Wrote freq×PRISM heatmap → {grid_png}")
+            except Exception as exc:  # pragma: no cover - plotting is best-effort
+                print(f"  (skipped heatmap: {exc})")
         return
 
     selection = {}
@@ -2527,6 +2546,11 @@ def create_parser():
     )
     p_select.add_argument(
         "--top-prism", type=int, default=5, help="--prism top-K by PRISM (default: 5)",
+    )
+    p_select.add_argument(
+        "--prism-grid", action="store_true",
+        help="With --prism: also sweep a (top_freq × top_prism) grid and write "
+        "the distinct-clone trade-off CSV + heatmap PNG (#207)",
     )
     p_select.add_argument(
         "--clonotypes",

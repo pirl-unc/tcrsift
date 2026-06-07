@@ -144,6 +144,7 @@ _MODULE_EXPORTS = {
         "plot_assembly_qc",
         "plot_cells_per_sample_stacked",
         "plot_clone_freq_vs_signature_per_sample",
+        "plot_freq_prism_grid",
         "plot_pgen_distribution",
         "plot_publicness_vs_match_score",
         "create_pipeline_funnel",
