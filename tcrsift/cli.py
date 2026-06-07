@@ -1422,6 +1422,29 @@ def cmd_run(args):
                 f"{len(overlap_matrices)} donor matrices"
             )
 
+        # N-way method overlap (UpSet) over filter-passing clones (#208). The
+        # method × method matrices above are pairwise; this shows which sets of
+        # methods share which clones across all methods at once. CSV (exact
+        # intersection patterns) + plot. Skipped when <2 methods are populated.
+        from .clonotype import build_selection_sets, set_overlap_table
+
+        method_sets = build_selection_sets(
+            long_df, set_col="method", clones=set(filtered["CDR3ab"])
+        )
+        if len(method_sets) >= 2:
+            set_overlap_table(method_sets).to_csv(
+                data_dir / "method_overlap_sets.csv", index=False
+            )
+            if config.output.generate_plots:
+                from .plots import plot_set_overlap
+
+                plot_set_overlap(
+                    method_sets,
+                    plots_dir / "method_overlap_upset.png",
+                    title="Selected-clone overlap across methods",
+                )
+            print(f"  Method set overlap (UpSet): {len(method_sets)} methods")
+
         # Method-recovery table + bar plot (#27 chunk 4). Targets the strictest
         # *populated* tier on `filtered` (not a hardcoded tier1, which empties
         # the table for unexpanded cohorts and silently drops the panel, #167);
