@@ -397,6 +397,28 @@ class TestSequencePdfAnnotations:
         create_tcr_sequence_pdf(df, out, strict=False, annotations=annotations)
         assert out.exists() and out.stat().st_size > 0
 
+    def test_annotation_lines_split_and_sanitized(self):
+        # The provenance overlay: ;-joined conditions become one line each, and
+        # superscript +/- are ASCII (no missing-glyph boxes in the PDF) — #202.
+        from tcrsift.plots import _expand_annotation_lines
+
+        out = _expand_annotation_lines([
+            "selection: AIM⁺=freq#6(0.90%) ; CTY⁻=freq#7(0.34%) ; IFN⁺CTY⁻=freq#11(0.25%)",
+            "dual-alpha variant of CAAIGNDMRF_CASKDPSSSYEQYF",
+        ])
+        assert out[0] == "selection:"
+        assert out[1] == "    AIM+=freq#6(0.90%)"
+        assert out[2] == "    CTY-=freq#7(0.34%)"
+        assert out[3] == "    IFN+CTY-=freq#11(0.25%)"
+        assert out[4] == "dual-alpha variant of CAAIGNDMRF_CASKDPSSSYEQYF"
+        assert all("⁺" not in line and "⁻" not in line for line in out)
+
+    def test_annotation_lines_capped(self):
+        from tcrsift.plots import _expand_annotation_lines
+
+        many = [f"line{i}" for i in range(50)]
+        assert len(_expand_annotation_lines(many, max_lines=18)) == 18
+
     def test_renders_when_annotation_key_missing(self, tmp_path):
         # A clone with no annotation entry must still render (no crash).
         pytest.importorskip("reportlab")

@@ -157,6 +157,7 @@ _MODULE_EXPORTS = {
         "BASELINE_MARKERS",
         "condition_sort_key",
         "order_conditions",
+        "pdf_safe",
         "pretty_method",
         "pretty_methods",
         "pretty_sample",

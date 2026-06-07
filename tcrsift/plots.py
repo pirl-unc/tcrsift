@@ -2881,6 +2881,34 @@ def _default_tcr_sequence_columns(df: pd.DataFrame) -> dict[str, str]:
     return detected
 
 
+def _expand_annotation_lines(lines, *, max_lines: int = 18) -> list[str]:
+    """Lay out per-clone annotation lines for the sequence PDF (#202).
+
+    Makes the block readable: each ``;``-separated item gets its own indented
+    line (so one condition per line, not a long run-on), and all text is run
+    through :func:`tcrsift.format.pdf_safe` so superscript ``⁺``/``⁻`` and other
+    non-WinAnsi glyphs render as ASCII instead of missing-glyph boxes. A line
+    of the form ``"label: a ; b ; c"`` becomes a ``label:`` header followed by
+    indented ``a`` / ``b`` / ``c``. Capped at ``max_lines``.
+    """
+    from .format import pdf_safe
+
+    out: list[str] = []
+    for raw in lines:
+        line = pdf_safe(raw).rstrip()
+        head, sep, rest = line.partition(":")
+        if sep and ";" in rest:
+            out.append(f"{head}:")
+            out.extend(
+                f"    {p.strip()}" for p in rest.split(";") if p.strip()
+            )
+        elif ";" in line and not sep:
+            out.extend(p.strip() for p in line.split(";") if p.strip())
+        else:
+            out.append(line)
+    return out[:max_lines]
+
+
 def create_tcr_sequence_pdf(
     df: pd.DataFrame,
     output_path: str | Path,
@@ -3158,14 +3186,15 @@ def create_tcr_sequence_pdf(
             if ann_lines is None and key is not None:
                 ann_lines = annotations.get(str(key))
             if ann_lines:
-                ann_y = 60 + 13 * min(len(ann_lines), 10)
+                disp = _expand_annotation_lines(ann_lines)
+                ann_y = 60 + 13 * min(len(disp), 18)
                 c.setFillColor(colors.black)
                 c.setFont("Helvetica-Bold", label_font_size)
-                c.drawString(30, ann_y, "Per-method evidence:")
+                c.drawString(30, ann_y, "Selection evidence:")
                 ann_y -= 13
                 c.setFont("Helvetica", label_font_size - 1)
-                for line in ann_lines[:10]:
-                    c.drawString(36, ann_y, str(line))
+                for line in disp:
+                    c.drawString(36, ann_y, line)
                     ann_y -= 13
 
         c.showPage()
