@@ -552,6 +552,7 @@ def cmd_assemble(args):
         assemble_full_sequences,
         assemble_qc_report,
         export_fasta,
+        synthesis_qc_report,
         validate_sequences,
     )
     from .plots import plot_assembly
@@ -608,6 +609,9 @@ def cmd_assemble(args):
     for w in warnings:
         print(f"WARNING: {w}")
     print(assemble_qc_report(assembled))
+    synth_text = synthesis_qc_report(assembled)
+    if synth_text:
+        print(synth_text)
 
     # Save
     assembled.to_csv(args.output, index=False)

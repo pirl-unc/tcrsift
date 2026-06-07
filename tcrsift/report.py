@@ -384,7 +384,12 @@ def build_selected_report(
     ``selected_clones_sequences.pdf``, and ``selected_clones_qc.txt`` under
     ``output_dir``. Returns the assembled DataFrame.
     """
-    from .assemble import assemble_full_sequences, assemble_qc_report, validate_sequences
+    from .assemble import (
+        assemble_full_sequences,
+        assemble_qc_report,
+        synthesis_qc_report,
+        validate_sequences,
+    )
     from .plots import create_tcr_sequence_pdf
 
     out_dir = Path(output_dir)
@@ -403,6 +408,9 @@ def build_selected_report(
     )
     validate_sequences(assembled, strict=False)
     qc_text = assemble_qc_report(assembled)
+    synth_text = synthesis_qc_report(assembled)
+    if synth_text:
+        qc_text = f"{qc_text}\n\n{synth_text}"
     (out_dir / "selected_clones_qc.txt").write_text(qc_text + "\n")
 
     # Per-clone provenance lines for the sequence PDF.
