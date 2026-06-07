@@ -252,6 +252,10 @@ class OutputConfig:
     # Figure output format (#169): 'png' (default), 'pdf', or 'svg'. A vector
     # choice emits the vector file alongside a PNG (the PDF report embeds raster).
     plot_format: str = "png"
+    # Baseline/exclusion markers pushed last in combined figure labels (#208):
+    # e.g. ['CTY'] makes CTY⁻ read last in AIM⁺CTY⁻ and in overlap combinations.
+    # None = use the format module default (("CTY",)). Set to [] to disable.
+    baseline_markers: list[str] | None = None
 
 
 @dataclass
@@ -429,6 +433,7 @@ class TCRsiftConfig:
             "per_method_top_n": ("output", "per_method_top_n"),
             "method_overlap_similarity": ("output", "method_overlap_similarity"),
             "plot_format": ("output", "plot_format"),
+            "baseline_markers": ("output", "baseline_markers"),
             "generate_report": ("output", "generate_report"),
             "report_format": ("output", "report_format"),
             "output_airr": ("output", "output_airr"),
