@@ -154,10 +154,14 @@ _MODULE_EXPORTS = {
         "create_tcr_sequence_pdf",
     ),
     ".format": (
+        "BASELINE_MARKERS",
+        "condition_sort_key",
+        "order_conditions",
         "pretty_method",
         "pretty_methods",
         "pretty_sample",
         "pretty_samples",
+        "set_baseline_markers",
     ),
     ".pgen": (
         "annotate_publicness",
