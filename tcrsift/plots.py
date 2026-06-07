@@ -2113,6 +2113,67 @@ def plot_method_overlap(
     plt.close(fig)
 
 
+def plot_freq_prism_grid(
+    grid: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    chosen: tuple[int, int] | None = None,
+    title: str = "Distinct clones selected: frequency × PRISM",
+):
+    """Heatmap of total distinct clones over a ``top_freq`` × ``top_prism`` grid (#207).
+
+    ``grid`` is the tidy DataFrame from
+    :func:`tcrsift.selection.freq_prism_grid` (columns ``top_freq``,
+    ``top_prism``, ``n_clones``). Rows are ``top_prism`` (PRISM picks per
+    condition), columns are ``top_freq`` (frequency picks per condition); each
+    cell is annotated with the distinct-clone count. Pass ``chosen=(top_freq,
+    top_prism)`` to box the operating point (e.g. the ``(10, 5)`` default).
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if grid is None or grid.empty:
+        return
+
+    pivot = grid.pivot(index="top_prism", columns="top_freq", values="n_clones")
+    # Ascending so the origin (0, 0) sits at the lower-left like the downstream.
+    pivot = pivot.sort_index(ascending=True).sort_index(axis=1, ascending=True)
+
+    n_rows, n_cols = pivot.shape
+    fig, ax = plt.subplots(
+        figsize=(max(6, 0.8 * n_cols + 2), max(5, 0.8 * n_rows + 1))
+    )
+    sns.heatmap(
+        pivot,
+        annot=True,
+        fmt="d",
+        cmap="viridis",
+        ax=ax,
+        cbar_kws={"label": "distinct clones"},
+        square=True,
+    )
+    ax.invert_yaxis()  # PRISM increases upward
+    ax.set_title(title)
+    ax.set_xlabel("top clones by frequency (per condition)")
+    ax.set_ylabel("top clones by PRISM (per condition)")
+
+    if chosen is not None:
+        cf, cp = int(chosen[0]), int(chosen[1])
+        if cf in list(pivot.columns) and cp in list(pivot.index):
+            col_i = list(pivot.columns).index(cf)
+            row_i = list(pivot.index).index(cp)
+            ax.add_patch(
+                plt.Rectangle(
+                    (col_i, row_i), 1, 1, fill=False,
+                    edgecolor="red", lw=3, clip_on=False,
+                )
+            )
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_method_recovery(
     recovery: pd.DataFrame,
     output_path: str | Path,

@@ -30,6 +30,7 @@ Foundation increment of the #125 CLI-first roadmap.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -60,6 +61,7 @@ __all__ = [
     "pivot_per_sample_tiers",
     "percentile_rank_score",
     "select_freq_prism_per_condition",
+    "freq_prism_grid",
     "PRISM_TERMS",
 ]
 
@@ -804,3 +806,47 @@ def select_freq_prism_per_condition(
         columns=[clone_col, condition_col, "selection_route",
                  "rank_within_route", "prism_score", freq_col],
     )
+
+
+def freq_prism_grid(
+    feat: pd.DataFrame,
+    *,
+    condition_col: str,
+    freq_values: Sequence[int] = (0, 5, 10, 15, 20),
+    prism_values: Sequence[int] = (0, 5, 10, 15, 20),
+    freq_col: str = "frequency",
+    clone_col: str = "CDR3ab",
+    score_terms: list[dict] | None = None,
+    gate: float = 0.001,
+) -> pd.DataFrame:
+    """Sweep ``(top_freq, top_prism)`` and count total distinct clones (#207).
+
+    For each cell of the ``freq_values`` × ``prism_values`` grid, runs
+    :func:`select_freq_prism_per_condition` with that ``(top_freq, top_prism)``
+    and records the number of *distinct* clones selected across all conditions
+    (the union — a clone picked in two conditions counts once). This is the
+    trade-off the downstream ``make_plots.py`` heatmap shows when picking how
+    many clones to take by frequency vs. by PRISM.
+
+    A ``0`` in either axis means "take none by that route", so the row/column at
+    0 isolates the pure-PRISM / pure-frequency yield. Returns a tidy DataFrame
+    with columns ``top_freq``, ``top_prism``, ``n_clones`` (one row per cell);
+    pivot to ``top_prism`` × ``top_freq`` for a heatmap via
+    :func:`tcrsift.plots.plot_freq_prism_grid`.
+    """
+    rows: list[dict] = []
+    for nf in freq_values:
+        for npr in prism_values:
+            sel = select_freq_prism_per_condition(
+                feat,
+                condition_col=condition_col,
+                freq_col=freq_col,
+                clone_col=clone_col,
+                score_terms=score_terms,
+                gate=gate,
+                top_freq=int(nf),
+                top_prism=int(npr),
+            )
+            n = sel[clone_col].nunique() if not sel.empty else 0
+            rows.append({"top_freq": int(nf), "top_prism": int(npr), "n_clones": int(n)})
+    return pd.DataFrame(rows, columns=["top_freq", "top_prism", "n_clones"])
