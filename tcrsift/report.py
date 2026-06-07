@@ -276,43 +276,81 @@ def expand_dual_alpha_variants(
     return pd.DataFrame(rows).reset_index(drop=True), variant_of
 
 
+# Construct legend / cover page (#202). Entries are (kind, text):
+#   "h1"   section heading (bold)
+#   "p"    body line
+#   "mono" fixed-width line (the architecture diagram / column names)
+#   ""     blank spacer
+# Rendered by _legend_reader; kept structured so the layout stays tidy and the
+# text is easy to edit. ASCII-only (beta/alpha spelled out, plain +/-) so it is
+# safe in the base-14 PDF fonts — see format.pdf_safe (#202).
 _CONSTRUCT_LEGEND = [
-    "Each page is one synthesis-ready single-chain construct, in N->C order:",
-    "",
-    "   [β leader] — VDJ-β — [β constant] — [T2A] — [α leader] — VDJ-α — [α constant]",
-    "",
-    "• Architecture: beta-T2A-alpha. The T2A is a 2A 'ribosomal skip' peptide —",
-    "  the ribosome releases the beta chain and re-initiates the alpha, so one",
-    "  transcript yields two separate chains in ~1:1 ratio.",
-    "• Leaders (signal peptides): default CD8A (beta) / CD28 (alpha) — configurable.",
-    "• Constants: J-family parity sets the TRBC allele (TRBJ1->TRBC1, TRBJ2->TRBC2);",
-    "  alpha uses TRAC. With contigs, the donor's observed allele is verified and any",
-    "  divergence from canonical is flagged (constant_allele_divergence).",
-    "• Two CDS forms per construct in selected_clones.csv: full_*_nt (unoptimized,",
-    "  the observed/native codons) and *_optimized (codon-optimized for expression).",
-    "• Dual-alpha (allelic-inclusion) clones are emitted as TWO labeled construct",
-    "  variants of the same clone (same beta, each alpha) — pick one to synthesize.",
-    "",
-    "Per-clone header shows selection provenance (route, rank, frequency); the",
-    "color legend on each page maps the V / CDR3 / J / constant / leader / linker segments.",
+    ("p", "Each page is one synthesis-ready single-chain construct."),
+    ("p", "Segments run N -> C in this order:"),
+    ("", ""),
+    ("mono", "  [beta leader]-VDJ_beta-[beta C]-[T2A]-[alpha leader]-VDJ_alpha-[alpha C]"),
+    ("", ""),
+    ("h1", "Architecture: beta-T2A-alpha"),
+    ("p", "T2A is a self-cleaving 2A 'ribosomal-skip' peptide: the ribosome"),
+    ("p", "releases the beta chain and re-initiates the alpha, so one transcript"),
+    ("p", "yields two separate chains in ~1:1 ratio."),
+    ("", ""),
+    ("h1", "Leaders (signal peptides)"),
+    ("p", "Default CD8A (beta) / CD28 (alpha). Configurable."),
+    ("", ""),
+    ("h1", "Constants"),
+    ("p", "J-family parity sets the TRBC allele (TRBJ1 -> TRBC1, TRBJ2 -> TRBC2);"),
+    ("p", "alpha uses TRAC. With contigs the donor's observed allele is verified,"),
+    ("p", "and any divergence from canonical is flagged (constant_allele_divergence)."),
+    ("", ""),
+    ("h1", "Sequence forms (per construct, in selected_clones.csv)"),
+    ("mono", "  full_*_nt        unoptimized - observed / native codons"),
+    ("mono", "  *_nt_optimized   codon-optimized for expression"),
+    ("", ""),
+    ("h1", "Dual-alpha (allelic inclusion)"),
+    ("p", "Emitted as TWO labeled variants of one clone (shared beta, one per"),
+    ("p", "alpha). Pick one to synthesize."),
+    ("", ""),
+    ("h1", "On each page"),
+    ("p", "The header shows selection provenance (route, rank, frequency); the"),
+    ("p", "color key maps the V / CDR3 / J / constant / leader / linker segments."),
 ]
 
 
-def _legend_reader(title: str, lines: list[str]):
-    """A reportlab text page (PdfReader) — used for the construct cover (#202)."""
+def _legend_reader(title: str, entries: list):
+    """A reportlab text page (PdfReader) — the construct cover (#202).
+
+    ``entries`` is a list of ``(kind, text)`` tuples (see _CONSTRUCT_LEGEND) or
+    plain strings (rendered as body lines). All text is routed through
+    ``pdf_safe`` so non-WinAnsi glyphs don't render as boxes (#202).
+    """
     from pypdf import PdfReader
     from reportlab.pdfgen import canvas
+
+    from .format import pdf_safe
 
     w, h = _LETTER
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=_LETTER)
     c.setFont("Helvetica-Bold", 20)
-    c.drawString(54, h - 70, title)
-    c.setFont("Helvetica", 10.5)
-    y = h - 110
-    for line in lines:
-        c.drawString(54, y, line)
-        y -= 16
+    c.drawString(54, h - 70, pdf_safe(title))
+    y = h - 108
+    for entry in entries:
+        kind, text = entry if isinstance(entry, tuple) else ("p", entry)
+        if not text:
+            y -= 9
+            continue
+        if kind == "h1":
+            y -= 4
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(54, y, pdf_safe(text))
+        elif kind == "mono":
+            c.setFont("Courier", 9.5)
+            c.drawString(60, y, pdf_safe(text))
+        else:
+            c.setFont("Helvetica", 10.5)
+            c.drawString(60, y, pdf_safe(text))
+        y -= 15
     c.showPage()
     c.save()
     buf.seek(0)

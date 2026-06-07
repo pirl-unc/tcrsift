@@ -100,6 +100,39 @@ def order_conditions(
     )
 
 
+# Glyphs we emit for screen/matplotlib (TrueType fonts) that the reportlab
+# base-14 PDF fonts (Helvetica/Courier, WinAnsi) can't render — they show as
+# missing-glyph boxes. Mapped to ASCII before any PDF drawString (#202).
+_PDF_TEXT_SUBS = {
+    "⁺": "+",
+    "⁻": "-",
+    "β": "beta",
+    "α": "alpha",
+    "∩": "&",
+    "∪": "|",
+    "≥": ">=",
+    "≤": "<=",
+    "→": "->",
+}
+
+
+def pdf_safe(text: str) -> str:
+    """Make text safe for the reportlab base-14 PDF fonts (#202).
+
+    The figures use Unicode (``AIM⁺``, ``β-T2A-α``, ``∩``) that the standard
+    PDF fonts lack, so they render as black boxes. This maps the known glyphs to
+    ASCII (``AIM+``, ``beta-T2A-alpha``, ``&``) and drops anything else outside
+    WinAnsi, so PDF text never shows a missing-glyph box. (Matplotlib output is
+    unaffected — it keeps the nicer Unicode.)
+    """
+    s = str(text)
+    for k, v in _PDF_TEXT_SUBS.items():
+        s = s.replace(k, v)
+    # Backstop: WinAnsi (cp1252) is reportlab's default base-14 encoding; it
+    # keeps em-dash / curly quotes but replaces any remaining exotic glyph.
+    return s.encode("cp1252", "replace").decode("cp1252")
+
+
 def _format_part(part: str) -> str:
     """One ``pos``/``neg`` translation for a single marker token."""
     if part.endswith("pos"):

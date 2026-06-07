@@ -150,6 +150,41 @@ class TestSetBaselineMarkers:
         assert fmt.BASELINE_MARKERS == original
 
 
+class TestPdfSafe:
+    def test_superscripts_to_ascii(self):
+        from tcrsift.format import pdf_safe
+
+        assert pdf_safe("AIM⁺CTY⁻") == "AIM+CTY-"
+
+    def test_greek_chain_labels_spelled_out(self):
+        from tcrsift.format import pdf_safe
+
+        assert pdf_safe("β-T2A-α") == "beta-T2A-alpha"
+
+    def test_set_symbols(self):
+        from tcrsift.format import pdf_safe
+
+        assert pdf_safe("AIM⁺ ∩ CTY⁻") == "AIM+ & CTY-"
+
+    def test_winansi_glyphs_preserved(self):
+        from tcrsift.format import pdf_safe
+
+        # Em-dash + curly quote are in WinAnsi (cp1252) and must survive.
+        assert pdf_safe("a — b") == "a — b"
+
+    def test_winansi_multiplication_sign_preserved(self):
+        from tcrsift.format import pdf_safe
+
+        # × is in cp1252, so it must NOT be downgraded to 'x' (#202 review).
+        assert pdf_safe("freq × PRISM") == "freq × PRISM"
+
+    def test_unknown_glyph_replaced_not_box(self):
+        from tcrsift.format import pdf_safe
+
+        # An exotic glyph with no mapping becomes '?' (never a missing-glyph box).
+        assert "★" not in pdf_safe("a★b")
+
+
 class TestTopLevelExport:
     def test_importable_from_top_level(self):
         assert tcrsift.pretty_method("AIMpos") == "AIM⁺"
