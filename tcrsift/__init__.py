@@ -67,8 +67,10 @@ _MODULE_EXPORTS = {
         "aggregate_clonotypes",
         "build_clone_method_long",
         "build_clone_sample_long",
+        "build_selection_sets",
         "compute_sample_overlap_matrices",
         "get_clonotype_summary",
+        "set_overlap_table",
         "export_clonotypes_airr",
     ),
     ".candidate": (
@@ -145,6 +147,7 @@ _MODULE_EXPORTS = {
         "plot_cells_per_sample_stacked",
         "plot_clone_freq_vs_signature_per_sample",
         "plot_freq_prism_grid",
+        "plot_set_overlap",
         "plot_pgen_distribution",
         "plot_publicness_vs_match_score",
         "create_pipeline_funnel",

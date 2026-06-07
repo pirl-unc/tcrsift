@@ -2069,6 +2069,67 @@ def plot_til(matched_clonotypes: pd.DataFrame, output_dir: str | Path):
 # =============================================================================
 
 
+def plot_set_overlap(
+    sets: dict[str, set],
+    output_path: str | Path,
+    *,
+    title: str = "Selection overlap",
+    min_subset_size: int = 1,
+    max_bars: int = 30,
+):
+    """N-way set-overlap (UpSet) plot over selected-clone sets (#208).
+
+    ``sets`` is ``{set_name: {clones}}`` (e.g. from
+    :func:`tcrsift.clonotype.build_selection_sets`, keyed by method / condition
+    / donor). Renders an UpSet plot when the optional ``upsetplot`` dependency
+    is installed; otherwise falls back to a bar chart of the largest
+    intersection patterns so the plot still renders without the extra dep.
+
+    No-op (writes nothing) when fewer than two non-empty sets are given.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sets = {k: set(v) for k, v in (sets or {}).items() if v}
+    if len(sets) < 2:
+        return
+
+    try:
+        import upsetplot
+
+        data = upsetplot.from_contents(sets)
+        fig = plt.figure(figsize=(max(7, 0.6 * len(sets) + 5), 5))
+        upsetplot.plot(
+            data, fig=fig, sort_by="cardinality", show_counts=True,
+            min_subset_size=min_subset_size,
+        )
+        fig.suptitle(title)
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        return
+    except ImportError:
+        pass
+
+    # Fallback: bar chart of the top intersection patterns.
+    from .clonotype import set_overlap_table
+
+    table = set_overlap_table(sets)
+    table = table[table["n_clones"] >= min_subset_size].head(max_bars)
+    if table.empty:
+        return
+    fig, ax = plt.subplots(figsize=(max(7, 0.4 * len(table) + 3), 5))
+    ax.bar(range(len(table)), table["n_clones"].values, color="#4c72b0")
+    ax.set_xticks(range(len(table)))
+    ax.set_xticklabels(table["sets"].values, rotation=60, ha="right", fontsize=8)
+    ax.set_ylabel("clones")
+    ax.set_title(f"{title} (install 'upsetplot' for UpSet view)")
+    for i, n in enumerate(table["n_clones"].values):
+        ax.text(i, n, str(int(n)), ha="center", va="bottom", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_method_overlap(
     matrix: pd.DataFrame,
     output_path: str | Path,

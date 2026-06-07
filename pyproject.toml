@@ -66,6 +66,11 @@ reports = [
     "reportlab>=4.0.0,<5.0.0",
     "pdfkit",
 ]
+# Optional N-way set-overlap (UpSet) plots (#208). Without it, plot_set_overlap
+# falls back to a top-intersections bar chart, so this is purely a nicer view.
+plots = [
+    "upsetplot>=0.8",
+]
 # Gold-standard Pgen/Ppost (#143). OLGA + SONIA are GPL-3.0 — kept as a
 # runtime-optional extra (NOT vendored) so tcrsift stays Apache-2.0.
 pgen = [
@@ -75,6 +80,7 @@ pgen = [
 full = [
     "reportlab>=4.0.0,<5.0.0",
     "pdfkit",
+    "upsetplot>=0.8",
 ]
 
 [tool.setuptools.dynamic]

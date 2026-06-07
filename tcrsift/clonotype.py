@@ -1224,6 +1224,66 @@ def build_method_overlap_matrices(
     return matrices
 
 
+def build_selection_sets(
+    long_df: pd.DataFrame,
+    *,
+    set_col: str = "method",
+    clone_col: str = "CDR3ab",
+    clones: set[str] | None = None,
+) -> dict[str, set[str]]:
+    """Map each value of ``set_col`` to its set of clones (#208).
+
+    The building block for N-way overlap (UpSet) over selected-clone sets keyed
+    by e.g. method, condition, or donor. When ``clones`` is given, restricts to
+    that clone universe first (e.g. the filter-passing / selected clones).
+    Returns ``{}`` when ``set_col`` is absent. Empty sets are dropped.
+    """
+    if long_df is None or len(long_df) == 0 or set_col not in long_df.columns:
+        return {}
+    df = long_df
+    if clones is not None:
+        df = df[df[clone_col].isin(set(clones))]
+    out: dict[str, set[str]] = {}
+    for key, grp in df.groupby(set_col, observed=True):
+        members = set(grp[clone_col].dropna().astype(str).unique())
+        if members:
+            out[str(key)] = members
+    return out
+
+
+def set_overlap_table(sets: dict[str, set[str]]) -> pd.DataFrame:
+    """Tidy intersection-pattern table for N-way overlap (#208).
+
+    Given ``{set_name: {clones}}``, returns one row per *observed* membership
+    pattern — the exact UpSet decomposition where every clone is counted once,
+    under the unique combination of sets it belongs to. Columns: ``sets``
+    (``+``-joined sorted set names), ``degree`` (number of sets in the pattern),
+    and ``n_clones``. Sorted by descending ``n_clones``. Empty when no sets.
+    """
+    cols = ["sets", "degree", "n_clones"]
+    if not sets:
+        return pd.DataFrame(columns=cols)
+    names = sorted(sets)
+    # Map each clone -> the tuple of sets it appears in.
+    membership: dict[str, list[str]] = {}
+    for name in names:
+        for clone in sets[name]:
+            membership.setdefault(clone, []).append(name)
+    counts: dict[tuple[str, ...], int] = {}
+    for mem in membership.values():
+        key = tuple(sorted(mem))
+        counts[key] = counts.get(key, 0) + 1
+    rows = [
+        {"sets": "+".join(key), "degree": len(key), "n_clones": n}
+        for key, n in counts.items()
+    ]
+    return (
+        pd.DataFrame(rows, columns=cols)
+        .sort_values(["n_clones", "degree"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+
 def build_method_recovery_table(
     filtered: pd.DataFrame,
     long_df: pd.DataFrame,
