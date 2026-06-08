@@ -69,6 +69,10 @@ class ClonotypeConfig:
     # Warn (loudly, regardless of verbose) when the multi-chain/doublet rate
     # meets/exceeds this fraction (#165). 0 disables the warning.
     doublet_warn_rate: float = 0.1
+    # Annotate every clonotype with data-driven Pgen/Ppost (per α/β chain) from
+    # the shipped k-mer background, so ppost_alpha/ppost_beta are available for
+    # PRISM selection without a separate step. Default on; no extra deps.
+    add_pgen_ppost: bool = True
 
 
 @dataclass

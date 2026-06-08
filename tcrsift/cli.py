@@ -956,6 +956,11 @@ def cmd_run(args):
     # Load config with CLI overrides
     config = load_config_with_args(args)
 
+    # --no-pgen-ppost opts out of the default k-mer Pgen/Ppost clonotype
+    # annotation (store_true, so only override when explicitly passed).
+    if getattr(args, "no_pgen_ppost", False):
+        config.clonotype.add_pgen_ppost = False
+
     # Figure output format (#169): png (default) or a vector format (pdf/svg)
     # emitted alongside a PNG. Applies to every save_figure in this run.
     set_plot_format(config.output.plot_format)
@@ -1077,6 +1082,18 @@ def cmd_run(args):
     )
     if config.attribution.enabled:
         print("  Attribution ON: weighted fractional clone counts (#176)")
+
+    # Annotate every clonotype with data-driven Pgen/Ppost (per α/β chain) from
+    # the shipped k-mer background, so ppost_alpha/ppost_beta are available for
+    # PRISM selection without a separate step. No extra deps; a chain whose CDR3
+    # column is absent is skipped. Disable with --no-pgen-ppost.
+    if config.clonotype.add_pgen_ppost:
+        from .annotate_tcrs import add_pgen_ppost
+        clonotypes = add_pgen_ppost(clonotypes, backend="kmer")
+        scored = [c for c in ("ppost_alpha", "ppost_beta") if c in clonotypes.columns]
+        if scored:
+            print(f"  Added k-mer Pgen/Ppost → {', '.join(scored)} (for PRISM)")
+
     clonotypes.to_csv(data_dir / "clonotypes.csv", index=False)
     funnel_counts["Clonotypes"] = len(clonotypes)
     print(f"  Found {len(clonotypes)} clonotypes")
@@ -3448,6 +3465,12 @@ CONDITIONALLY REQUIRED:
         type=float,
         help="Warn when the multi-chain rate meets/exceeds this fraction "
         "(default: 0.1; 0 disables, #165)",
+    )
+    clone_group.add_argument(
+        "--no-pgen-ppost",
+        action="store_true",
+        help="Skip the default k-mer Pgen/Ppost annotation of clonotypes "
+        "(otherwise ppost_alpha/ppost_beta are emitted for PRISM)",
     )
 
     # Attribution options (#176). Opt-in; flags default to None so they don't
