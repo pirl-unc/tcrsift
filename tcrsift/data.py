@@ -185,28 +185,3 @@ def load_sample_cellranger_count_and_vdj_outputs(
     df_annotations = pd.read_csv(vdj_annotations_csv_path)
     print("Loaded data")
     return (gene_expression_data, df_clonotypes, df_annotations)
-
-
-def run_from_sample_sheet_for_cellranger_count_and_vdj_outputs(
-    sample_sheet_csv_path: str | PathLike,
-):
-    """
-    Load CellRanger 5'GEX+3'VDJ data for each sample based on paths in a sample sheet CSV file.
-    Assumes you have run 'cellranger vdj' and 'cellranger count' on the samples.
-
-    Parameters
-    ----------
-    sample_sheet_csv_path
-        CSV file with columns 'sample', 'gene_expression_dir', 'vdj_dir'.
-    """
-    print("Running from sample sheet")
-    sample_sheet = pd.read_csv(sample_sheet_csv_path)
-    for _, row in sample_sheet.iterrows():
-        print(row)
-        (gene_expression_data, df_clonotypes, df_annotations) = (
-            load_sample_cellranger_count_and_vdj_outputs(
-                row["gene_expression_matrix_dir"],
-                row["vdj_clonotypes_csv_path"],
-                row["vdj_annotations_csv_path"],
-            )
-        )

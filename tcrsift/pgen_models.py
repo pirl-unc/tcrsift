@@ -214,7 +214,10 @@ def fetch_repertoire(
     raw.parent.mkdir(parents=True, exist_ok=True)
     _download(url, raw)
     opener = gzip.open if str(raw).endswith(".gz") else open
-    sep = "\t" if ".tsv" in url else ","
+    # Key the separator off the resolved file extension, not a substring of the
+    # whole URL (a query string or path segment containing ".tsv" on a real CSV
+    # would otherwise pick the wrong separator).
+    sep = "\t" if _suffix(url) in (".tsv", ".tsv.gz") else ","
     with opener(raw, "rt") as fh:
         frame = pd.read_csv(fh, sep=sep)
     if seq_col not in frame.columns:

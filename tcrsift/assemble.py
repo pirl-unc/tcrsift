@@ -3438,8 +3438,17 @@ def _longest_repeat(nt: str, *, min_len: int = 8) -> int:
 
 
 def _restriction_hits(nt: str) -> str:
+    # Scan BOTH strands. Non-palindromic Type IIS enzymes (BsaI GGTCTC,
+    # BsmBI CGTCTC) cut from a site that may appear on the reverse strand —
+    # i.e. as its reverse complement (GAGACC / GAGACG) in the given sequence.
+    # A forward-only scan misses these; e.g. the P2A/F2A linker DNA carries a
+    # reverse-strand BsmBI site that a Golden-Gate/Type IIS assembly would cut.
     s = str(nt).upper()
-    return ";".join(nm for nm, site in SYNTHESIS_RESTRICTION_SITES.items() if site in s)
+    rc = s.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+    return ";".join(
+        nm for nm, site in SYNTHESIS_RESTRICTION_SITES.items()
+        if site in s or site in rc
+    )
 
 
 def add_synthesis_qc(

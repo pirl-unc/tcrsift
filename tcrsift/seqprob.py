@@ -195,8 +195,12 @@ def _fit_gene_marginal(genes, alpha: float = 1.0):
     """Laplace-smoothed log gene marginal → (dict, unseen-tail logprob).
 
     Genes are canonicalized first (shared :func:`tcrsift.genes.canonicalize_gene`),
-    so format variants collapse. The tail reserves mass for unseen genes so
-    ``P(gene) > 0`` always — never a "gene not found" zero.
+    so format variants collapse. The tail is a single reserved back-off slot used
+    as the prior for ANY unseen (or missing) gene at scoring time — so
+    ``P(gene) > 0`` always, never a "gene not found" zero. Note it is a shared
+    back-off prior, not a per-gene mass: the seen genes plus one tail slot sum to
+    1, but assigning ``tail`` to several distinct unseen genes does not (this term
+    is an additive ranking offset, not a normalized distribution over novel genes).
     """
     from collections import Counter
 
@@ -258,9 +262,11 @@ class GeneAwareKmerModel(SequenceProbabilityModel):
     def _gene_term(self, genes, logp: dict[str, float], tail: float) -> np.ndarray:
         from .genes import canonicalize_gene
 
+        # A missing/blank gene backs off to the unseen-gene tail prior, exactly
+        # like an unrecognized gene — returning NaN here would poison the whole
+        # gene-aware score (CDR3 + other gene included) for that clone.
         return np.array(
-            [logp.get(canonicalize_gene(g), tail) if canonicalize_gene(g)
-             else np.nan for g in genes],
+            [logp.get(canonicalize_gene(g), tail) for g in genes],
             dtype=float,
         )
 

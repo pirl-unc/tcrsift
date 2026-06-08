@@ -1963,11 +1963,16 @@ def plot_clone_freq_vs_signature_per_sample(
             linewidth=0.4,
         )
         if len(m) >= 5 and m["frequency"].std() > 0:
-            r = np.corrcoef(np.log10(m["frequency"].clip(lower=1e-6)), m["mean"])[0, 1]
+            # Spearman = Pearson of ranks (rank-based, so no log transform needed
+            # and monotonic-robust). Previously labeled "Spearman" but computed
+            # Pearson on log-frequency — now the label matches the statistic.
+            r = np.corrcoef(
+                m["frequency"].rank().to_numpy(), m["mean"].rank().to_numpy()
+            )[0, 1]
             ax.text(
                 0.02,
                 0.97,
-                f"Spearman log-freq vs sig: r = {r:.2f}\nn clones = {len(m)}",
+                f"Spearman freq vs sig: r = {r:.2f}\nn clones = {len(m)}",
                 transform=ax.transAxes,
                 va="top",
                 ha="left",
@@ -2429,7 +2434,10 @@ def plot_funnel(
 
     stages = list(stage_counts.keys())
     counts = list(stage_counts.values())
-    max_count = max(counts) if counts else 1
+    # `or 1` guards both the empty-dict and all-zero-counts cases (a sample
+    # where no cells clear any gate) — otherwise width = count / max_count
+    # divides by zero.
+    max_count = (max(counts) if counts else 0) or 1
 
     fig, ax = plt.subplots(figsize=(10, 8))
 

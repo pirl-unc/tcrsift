@@ -95,6 +95,18 @@ class Sample:
     til_h5ad: str | None = None  # path to pre-processed h5ad file
 
     def __post_init__(self):
+        # Coerce culture_days consistently for both CSV and YAML inputs (which
+        # may deliver str/float). Round rather than silently truncate, and fail
+        # clearly on non-numeric instead of raising a bare ValueError later.
+        if self.culture_days is not None and not isinstance(self.culture_days, int):
+            try:
+                self.culture_days = int(round(float(self.culture_days)))
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"culture_days must be numeric for sample '{self.sample}', "
+                    f"got {self.culture_days!r}"
+                )
+
         # Validate at least one data source
         has_cellranger = self.gex_dir or self.vdj_dir
         has_sct = self.sct_path is not None
@@ -339,6 +351,25 @@ def load_sample_sheet(path: str | Path) -> SampleSheet:
         )
 
 
+def _build_sample(data: dict) -> Sample:
+    """Construct a Sample from a row/record, rejecting unknown columns.
+
+    A typo'd or stray sample-sheet column would otherwise reach ``Sample(**data)``
+    as an unexpected keyword and raise an opaque ``TypeError``; this surfaces a
+    clear, actionable error instead. Shared by the YAML and CSV loaders.
+    """
+    from dataclasses import fields as _fields
+
+    valid = {f.name for f in _fields(Sample)}
+    unknown = sorted(k for k in data if k not in valid)
+    if unknown:
+        raise ValueError(
+            f"Unknown sample-sheet column(s): {unknown}. "
+            f"Valid columns: {sorted(valid)}"
+        )
+    return Sample(**data)
+
+
 def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
     """Load sample sheet from YAML file."""
     try:
@@ -366,7 +397,7 @@ def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
             if value == "null" or value == "":
                 sample_data[key] = None
 
-        samples.append(Sample(**sample_data))
+        samples.append(_build_sample(sample_data))
 
     sheet = SampleSheet(samples=samples)
     # Sheet-level flags (#26). Accept any truthy YAML value — bare `true`
@@ -400,15 +431,13 @@ def _load_csv_sample_sheet(path: Path, sep: str = ",") -> SampleSheet:
         sample_data = {}
         for col in df.columns:
             value = row[col]
-            # Convert NaN to None
+            # Convert NaN to None; culture_days coercion is centralized in
+            # Sample.__post_init__ so CSV and YAML behave identically.
             if pd.isna(value):
                 value = None
-            # Convert numeric strings for culture_days
-            elif col == "culture_days" and value is not None:
-                value = int(value)
             sample_data[col] = value
 
-        samples.append(Sample(**sample_data))
+        samples.append(_build_sample(sample_data))
 
     return SampleSheet(samples=samples)
 
