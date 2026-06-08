@@ -167,6 +167,12 @@ def load_cellranger_vdj(
             df_clonotypes_subset = df_clonotypes_subset.rename(
                 columns={"clonotype_id": "raw_clonotype_id"}
             )
+            # Drop duplicate clonotype ids before the left merge: a malformed /
+            # concatenated clonotypes.csv with a repeated id would otherwise
+            # fan-out (duplicate) every contig row for that clonotype.
+            df_clonotypes_subset = df_clonotypes_subset.drop_duplicates(
+                "raw_clonotype_id"
+            )
             df = df.merge(df_clonotypes_subset, on="raw_clonotype_id", how="left")
 
     # Combine VDJ segments into full sequence if available

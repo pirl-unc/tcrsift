@@ -85,6 +85,19 @@ def merge_experiments(
             hint="Provide a list of (DataFrame, name) tuples",
         )
 
+    # Experiment names become column prefixes (``{name}.{col}``) and occurrence
+    # flags (``occurs_in_{name}``). Duplicate names produce colliding prefixed
+    # columns, which the outer merge then silently suffixes ``_x``/``_y`` so the
+    # combined-stat aggregation reads only one — wrong counts, no error. Reject.
+    names = [name for _df, name in experiments]
+    if len(set(names)) != len(names):
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        raise TCRsiftValidationError(
+            f"Duplicate experiment name(s) passed to merge_experiments: {dupes}",
+            hint="Each (DataFrame, name) must have a unique name; names become "
+            "column prefixes and occurrence flags.",
+        )
+
     if key_cols is None:
         key_cols = ["CDR3_pair", "CDR3_alpha", "CDR3_beta"]
 
@@ -344,13 +357,18 @@ def compute_condition_statistics(
 
     # Find condition columns for each condition
     for condition in conditions:
-        # Find fraction columns for this condition
-        frac_pattern = (
-            f"condition_{condition}"
-            if not source_prefix
-            else f"{source_prefix}.condition_{condition}"
-        )
-        frac_cols = [c for c in df.columns if frac_pattern in c and c.endswith(".frac")]
+        # Find fraction columns for this condition. Match the EXACT dot-segment
+        # ``condition_{condition}`` rather than substring containment — otherwise
+        # condition ``pool1`` also matches ``...condition_pool10.frac`` (any
+        # prefix-substring pair: pool1/pool10, d7/d70), silently pooling the
+        # wrong fractions into the per-condition statistics.
+        segment = f"condition_{condition}"
+        frac_cols = [
+            c for c in df.columns
+            if c.endswith(".frac")
+            and segment in c.split(".")
+            and (not source_prefix or c.startswith(f"{source_prefix}."))
+        ]
 
         if not frac_cols:
             if verbose:

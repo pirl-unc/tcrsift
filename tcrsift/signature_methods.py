@@ -523,16 +523,24 @@ def call_positive(
     raise it (e.g. 0.8) for a signature expected to be broadly positive.
     """
     arr = scores.to_numpy(dtype=float)
+    # Compute the cutoff over finite scores only. A single NaN otherwise
+    # propagates through np.quantile / Otsu / largest-gap into a NaN cutoff,
+    # making ``scores > cut`` False for EVERY cell — silently emptying the whole
+    # signature's positive set. NaN scores still never count as positive because
+    # the final ``scores > cut`` comparison is False for them.
+    finite = arr[np.isfinite(arr)]
     if threshold is not None:
         cut = float(threshold)
+    elif finite.size == 0:
+        return pd.Series(False, index=scores.index)
     elif method == "quantile":
         if quantile is None:
             raise ValueError("call_positive(method='quantile') needs quantile")
-        cut = float(np.quantile(arr, quantile))
+        cut = float(np.quantile(finite, quantile))
     elif method == "gap":
-        cut = _largest_gap_cutoff(arr, search_top=search_top, min_gap_ratio=min_gap_ratio)
+        cut = _largest_gap_cutoff(finite, search_top=search_top, min_gap_ratio=min_gap_ratio)
     elif method == "otsu":
-        cut = _otsu_cutoff(arr)
+        cut = _otsu_cutoff(finite)
     else:
         raise ValueError(
             f"call_positive: unknown method {method!r} "

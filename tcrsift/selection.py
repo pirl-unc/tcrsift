@@ -848,14 +848,15 @@ def select_freq_prism_per_condition(
 
     Returns one row per (clone, condition) with ``selection_route`` (``freq`` /
     ``prism`` / ``both``), ``rank_within_route``, ``prism_score``, the
-    condition, and the frequency. A clone selected in multiple conditions
-    appears once per condition.
+    condition, the frequency, and ``rescued`` (True when the clone cleared no
+    gate and was added back by coverage rescue — a low-confidence pick). A
+    clone selected in multiple conditions appears once per condition.
     """
     terms = score_terms or PRISM_TERMS
     if feat.empty or condition_col not in feat.columns:
         return pd.DataFrame(
             columns=[clone_col, condition_col, "selection_route",
-                     "rank_within_route", "prism_score", freq_col]
+                     "rank_within_route", "prism_score", freq_col, "rescued"]
         )
     # Guard: PRISM requested but its score columns are unusable. With
     # require_complete scoring, an all-NaN or missing term means NO clone is
@@ -881,10 +882,16 @@ def select_freq_prism_per_condition(
     out_rows: list[dict] = []
     for cond, grp in feat.groupby(condition_col, observed=True):
         cand = grp[grp[freq_col].fillna(0) > gate].copy()
-        if rescue_target and len(cand) < rescue_target and rescue_rank_col in (grp.columns):
+        rescued_clones: set[str] = set()
+        if rescue_target and len(cand) < rescue_target and rescue_rank_col in grp.columns:
             need = rescue_target - len(cand)
             sub = grp[grp[freq_col].fillna(0) <= gate].copy()
-            sub = sub.sort_values(rescue_rank_col, ascending=False).head(need)
+            # Deterministic: break rescue-rank ties by clone id so which thin
+            # clones are rescued is reproducible, not input-row-order dependent.
+            sub = sub.sort_values(
+                [rescue_rank_col, clone_col], ascending=[False, True],
+            ).head(need)
+            rescued_clones = set(sub[clone_col].astype(str))
             cand = pd.concat([cand, sub], ignore_index=True)
         if cand.empty:
             continue
@@ -944,11 +951,14 @@ def select_freq_prism_per_condition(
                 "rank_within_route": f_rank.get(c) if in_f else p_rank.get(c),
                 "prism_score": float(row["prism_score"]) if pd.notna(row["prism_score"]) else None,
                 freq_col: float(row[freq_col]) if pd.notna(row[freq_col]) else 0.0,
+                # True when this clone cleared no condition gate and was added
+                # back by coverage rescue (#228) — a low-confidence pick.
+                "rescued": str(c) in rescued_clones,
             })
     return pd.DataFrame(
         out_rows,
         columns=[clone_col, condition_col, "selection_route",
-                 "rank_within_route", "prism_score", freq_col],
+                 "rank_within_route", "prism_score", freq_col, "rescued"],
     )
 
 

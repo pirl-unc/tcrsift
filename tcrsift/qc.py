@@ -764,7 +764,10 @@ def read_cellranger_metrics(gex_dir) -> dict[str, str]:
     if not gex_dir:
         return {}
     start = Path(str(gex_dir))
-    candidates = [start, *start.parents]
+    # Bound the upward search to a few levels (the cellranger `outs` layout puts
+    # metrics_summary.csv within 1-2 dirs of the matrix). An unbounded walk to
+    # the filesystem root could grab a sibling/parent sample's shared metrics.
+    candidates = [start, *list(start.parents)[:3]]
     for base in candidates:
         f = base / "metrics_summary.csv"
         if not f.is_file():

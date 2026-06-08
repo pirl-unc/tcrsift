@@ -402,6 +402,23 @@ def combine_selected_pdfs(
     return out_path
 
 
+def _format_selection_item(item: str) -> str:
+    """Format one compact selection token for the sequence-PDF footer.
+
+    ``"AIM+=freq#6(0.90%)"`` -> ``"AIM+ freq#6 (0.90%)"`` — a space after the
+    condition (no ``=``) and a space before the parenthesised frequency. Tokens
+    without an ``=`` are returned unchanged.
+    """
+    item = item.strip()
+    if not item:
+        return ""
+    cond, sep, rest = item.partition("=")
+    if not sep:
+        return item
+    rest = rest.replace("(", " (", 1)
+    return f"{cond} {rest}"
+
+
 def build_selected_report(
     selected,
     clonotypes,
@@ -454,12 +471,39 @@ def build_selected_report(
     # Per-clone provenance lines for the sequence PDF.
     annotations = None
     if prov_cols:
+        # Stable variant numbering: within each parent clone, number its
+        # dual-alpha variants #1, #2, … by sorted variant id, so the PDF label
+        # is reproducible (#188 emits them in partner-list order, not sorted).
+        variant_rank: dict[str, int] = {}
+        if "dual_alpha_variant" in expanded.columns and "selected_clone" in expanded.columns:
+            dav = expanded[expanded["dual_alpha_variant"].notna()]
+            for _parent, grp in dav.groupby("selected_clone", sort=True):
+                for i, cdr in enumerate(sorted(grp["CDR3ab"].astype(str)), 1):
+                    variant_rank[cdr] = i
         annotations = {}
         for _, r in expanded.iterrows():
             key = r["CDR3ab"]
-            lines = [f"{c}: {r[c]}" for c in prov_cols if pd.notna(r.get(c))]
+            lines: list[str] = []
+            for c in prov_cols:
+                if not pd.notna(r.get(c)):
+                    continue
+                if c.lower() == "selection":
+                    # One condition per indented line, reformatted; no
+                    # "selection:" sub-label (the bold "Selection:" header
+                    # already titles the block).
+                    for item in str(r[c]).split(";"):
+                        formatted = _format_selection_item(item)
+                        if formatted:
+                            lines.append(f"    {formatted}")
+                else:
+                    lines.append(f"{c}: {r[c]}")
             if r.get("dual_alpha_variant"):
-                lines.append(f"dual-alpha variant of {r.get('selected_clone')}")
+                n = variant_rank.get(str(key))
+                parent = r.get("selected_clone")
+                lines.append(
+                    f"dual-alpha variant #{n} of {parent}" if n
+                    else f"dual-alpha variant of {parent}"
+                )
             if lines:
                 annotations[key] = lines
 

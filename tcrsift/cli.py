@@ -199,8 +199,10 @@ def cmd_filter(args):
     import pandas as pd
 
     from .filter import (
+        DEFAULT_FDR_TIERS,
         filter_clonotypes,
         get_filter_summary,
+        resolve_fdr_tiers_for_method,
         resolve_filter_mode_kwargs,
         split_by_tier,
     )
@@ -212,10 +214,22 @@ def cmd_filter(args):
     clonotypes = pd.read_csv(args.input)
     print(f"Loaded {len(clonotypes)} clonotypes from {args.input}")
 
-    # Parse FDR tiers
+    # Parse FDR tiers. fdr_tiers only drives logistic tiering; under
+    # method='threshold' it is inert (#170). Resolve so the default tiers left
+    # untouched don't trigger a spurious "ignored" warning on every run — only
+    # a genuine customization warns. Mirrors cmd_run.
     fdr_tiers = None
     if args.fdr_tiers:
         fdr_tiers = [float(x) for x in args.fdr_tiers.split(",")]
+    fdr_tiers, warn_fdr_inert = resolve_fdr_tiers_for_method(
+        args.method, fdr_tiers, DEFAULT_FDR_TIERS
+    )
+    if warn_fdr_inert:
+        logger.warning(
+            "fdr_tiers customized but method=%r; fdr_tiers only applies to "
+            "method='logistic' — using fixed abundance tiers, list ignored.",
+            args.method,
+        )
 
     # Resolve named filter mode preset, then layer user-supplied knobs.
     mode = getattr(args, "filter_mode", "fdr")
@@ -2039,7 +2053,7 @@ def cmd_mnemonic(args):
 
     if not cdr3_col or cdr3_col not in df.columns:
         print(f"ERROR: Could not find CDR3 column. Available columns: {list(df.columns)}")
-        return
+        return 1
 
     # Generate names
     df[args.name_col] = df[cdr3_col].apply(lambda x: tcr_name(x) if pd.notna(x) else None)
@@ -2086,29 +2100,66 @@ def cmd_select(args):
                 hint="Run `tcrsift annotate` / add_pgen_ppost first to produce "
                 "ppost_alpha/ppost_beta/antigen_response_score/naive_score.",
             )
-        cond_col = next(
-            (c for c in (args.condition_col, "method", "sample") if c and c in long_df.columns),
-            None,
-        )
-        if cond_col is None:
-            raise TCRsiftValidationError(
-                "No condition column in the long table.",
-                hint="Pass --condition-col (e.g. method or sample).",
+        # If --condition-col was given explicitly, require it — don't silently
+        # fall through to method/sample, which would produce a plausible but
+        # wrong per-axis selection on a typo or wrong file.
+        if args.condition_col:
+            if args.condition_col not in long_df.columns:
+                raise TCRsiftValidationError(
+                    f"--condition-col {args.condition_col!r} is not a column in "
+                    "the long table.",
+                    hint=f"Available columns: {list(long_df.columns)}",
+                )
+            cond_col = args.condition_col
+        else:
+            cond_col = next(
+                (c for c in ("method", "sample") if c in long_df.columns), None,
             )
+            if cond_col is None:
+                raise TCRsiftValidationError(
+                    "No condition column in the long table.",
+                    hint="Pass --condition-col (e.g. method or sample).",
+                )
         score_cols = [c for c in clone_scores.columns if c != "CDR3ab"]
         feat = long_df.merge(clone_scores[["CDR3ab", *score_cols]], on="CDR3ab", how="left")
-        # Optional configurable, non-PRISM tie-break (#221/#223); default
-        # heuristic (single-α > UMI > CD8 purity > CDR3ab) when unset. Its
-        # columns (merged_alpha_partners/TRA_1_umis/TRB_1_umis/Tcell_type_purity)
-        # come in via --clonotypes; absent ones are skipped.
+        # Non-PRISM tie-break for boundary ties (#221/#223). Precedence:
+        # --tie-break flag > config selection.tie_break > DEFAULT_TIE_BREAK.
+        # Its columns (merged_alpha_partners/TRA_1_umis/TRB_1_umis/
+        # Tcell_type_purity) come in via --clonotypes; absent ones are skipped.
         tie_break = None
         if args.config:
             tie_break = (TCRsiftConfig.from_yaml(args.config).selection or {}).get("tie_break")
+        if getattr(args, "tie_break", None) is not None:
+            tie_break = [k.strip() for k in args.tie_break.split(",") if k.strip()]
+        # Coverage rescue for thin conditions (#228).
+        rescue_target = getattr(args, "rescue_target", 0) or 0
+        rescue_rank_col = getattr(args, "rescue_rank_col", None)
+        if rescue_target > 0 and not rescue_rank_col:
+            raise TCRsiftValidationError(
+                "--rescue-target > 0 requires --rescue-rank-col.",
+                hint="Pass a coverage column (from --clone-scores) to rank "
+                "sub-threshold clones for rescue.",
+            )
+        if rescue_rank_col and rescue_rank_col not in feat.columns:
+            raise TCRsiftValidationError(
+                f"--rescue-rank-col {rescue_rank_col!r} is not a column in the "
+                "feature table.",
+                hint="It must be present in --clone-scores or the long table.",
+            )
         sel = select_freq_prism_per_condition(
             feat, condition_col=cond_col, freq_col="frequency",
             gate=args.gate, top_freq=args.top_freq, top_prism=args.top_prism,
-            tie_break=tie_break,
+            tie_break=tie_break, rescue_target=rescue_target,
+            rescue_rank_col=rescue_rank_col,
         )
+        if rescue_target > 0 and "rescued" in sel.columns:
+            n_rescued = int(sel["rescued"].sum())
+            if n_rescued:
+                print(
+                    f"  Coverage rescue: {n_rescued} sub-threshold clone×condition "
+                    f"pick(s) added (rescue_target={rescue_target}, "
+                    f"by {rescue_rank_col!r}) — low-confidence, flagged rescued=True."
+                )
         sel.to_csv(args.output, index=False)
         print(
             f"Wrote {sel['CDR3ab'].nunique()} distinct clones "
@@ -2551,6 +2602,25 @@ def create_parser():
     )
     p_select.add_argument(
         "--top-prism", type=int, default=5, help="--prism top-K by PRISM (default: 5)",
+    )
+    p_select.add_argument(
+        "--tie-break",
+        help="--prism: comma-separated tie-break keys for boundary ties "
+        "(default: single_alpha,umi,cd8_purity,cdr3ab; use 'cdr3ab' for "
+        "CDR3ab-only). Precedence: this flag > config selection.tie_break > "
+        "default (#229).",
+    )
+    p_select.add_argument(
+        "--rescue-target", type=int, default=0,
+        help="--prism: when a condition has fewer than N gated clones, rescue "
+        "the best sub-threshold clones by --rescue-rank-col so thin conditions "
+        "still get a meaningful top-K (default: 0 = off) (#228).",
+    )
+    p_select.add_argument(
+        "--rescue-rank-col",
+        help="--prism: column (from --clone-scores, e.g. a coverage/UMI metric) "
+        "ranking sub-threshold clones for rescue (descending). Required when "
+        "--rescue-target > 0.",
     )
     p_select.add_argument(
         "--prism-grid", action="store_true",

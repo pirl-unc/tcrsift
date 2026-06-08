@@ -593,16 +593,20 @@ def _pick_best_allele(
         return None, 0.0, {}
     all_scores: dict[str, float] = {}
     best_allele: str | None = None
+    best_score = -1.0
     best_n_agree = -1
     for allele, allele_aa in pool.items():
         n_agree, n_compared = _score_allele_against_contig(contig_aa, allele_aa)
         if n_compared >= min_compared:
             score = n_agree / n_compared
             all_scores[allele] = round(score, 3)
-            # Prefer higher absolute n_agree (more positions matched);
-            # tie-break by FASTA order (dict iteration is insertion
-            # order in Python 3.7+).
-            if n_agree > best_n_agree:
+            # Prefer higher fractional agreement (score = n_agree / n_compared),
+            # not raw n_agree: alleles can differ in length, so a longer allele
+            # compared over more positions could win on absolute count despite a
+            # strictly worse fraction. Tie-break by more positions matched, then
+            # FASTA order (dict iteration is insertion order in Python 3.7+).
+            if score > best_score or (score == best_score and n_agree > best_n_agree):
+                best_score = score
                 best_n_agree = n_agree
                 best_allele = allele
     if best_allele is None:
@@ -1914,6 +1918,11 @@ def _add_constant_regions(
         allele_score: float | None = None
         allele_alternatives: dict[str, float] = {}
         allele_called_reason: str | None = None
+        # Best-fit allele AA used as the reference for per-position divergence
+        # reporting. Set whenever the picker has a frame-valid best fit — even
+        # when the *call* is punted (divergent-at-polymorphic-position), so the
+        # divergence that caused the no-call is still recorded (#187 fidelity).
+        divergence_ref_aa: str | None = None
 
         # Translate the contig past the J→C junction codon up-front so
         # every code path can use it for #120's per-clone audit
@@ -1940,6 +1949,8 @@ def _add_constant_regions(
                 allele_called = allele_choice
                 allele_score = 1.0  # by definition; user chose it
                 allele_called_reason = ALLELE_REASON_OVERRIDDEN
+                # Report contig divergence vs the user-chosen allele too.
+                divergence_ref_aa = canonical_aa
             else:
                 allele_called_reason = ALLELE_REASON_INVALID_OVERRIDE
                 result.setdefault("qc_warnings", []).append(
@@ -2024,6 +2035,9 @@ def _add_constant_regions(
                     # ``divergent_at_polymorphic_position`` reason;
                     # the user is expected to inspect those before
                     # ordering a construct.
+                    # Frame check passed → this best-fit allele is the
+                    # reference for divergence reporting, called or not.
+                    divergence_ref_aa = candidate_aa
                     polymorphic = _polymorphic_positions(allele_pool)
                     disagreed_at_polymorphic = sorted(
                         i for i in polymorphic
@@ -2142,12 +2156,14 @@ def _add_constant_regions(
             contig_aa_past_junction[:15] if contig_aa_past_junction else None
         )
 
-        # #120 ask 2: per-position divergences between the called
+        # #120 ask 2: per-position divergences between the best-fit
         # allele and the observation. Format: "3:N->K;7:V->I". None
-        # when no allele was called OR when there's no divergence.
-        if allele_called is not None and contig_aa_past_junction:
-            called_aa = allele_pool[allele_called]
-            divs = _divergence_positions(called_aa, contig_aa_past_junction)
+        # when there's no frame-valid best fit OR no divergence. Reported
+        # against ``divergence_ref_aa`` (the best fit) even when the call
+        # was punted for divergence at a polymorphic position — that is
+        # exactly the divergence #187's fidelity warning must surface.
+        if divergence_ref_aa is not None and contig_aa_past_junction:
+            divs = _divergence_positions(divergence_ref_aa, contig_aa_past_junction)
             result[f"{chain}_allele_divergence_positions"] = (
                 _format_divergence_positions(divs)
             )
@@ -3965,9 +3981,18 @@ def detect_novel_alleles(
 
     # Vectorized aggregation. ``unique`` -> nunique on clone_idx and
     # v_gene; samples need to be expanded via the helper.
+    # NOTE: ``reference_allele`` is deliberately NOT a groupby key. The same
+    # physical variant — identical (chain, gene, position, expected_aa,
+    # observed_aa) — can arrive labelled against different reference alleles
+    # (Source 1 tags it with the *called* allele, e.g. TRBC2*03; Source 2
+    # recomputes against the gene *default*, TRBC2*01). ``expected_aa`` already
+    # pins the reference residue at that position, so equal-expected rows are
+    # the same variant and must aggregate together; keying on reference_allele
+    # would split them and deflate n_clones/n_v_genes/n_samples below the
+    # candidate thresholds. We pick a deterministic representative label below.
     grouped = long_df.groupby(
         [
-            "chain", "gene", "reference_allele", "position",
+            "chain", "gene", "position",
             "expected_aa", "observed_aa",
         ],
         dropna=False, sort=False, observed=True,
@@ -3975,7 +4000,12 @@ def detect_novel_alleles(
     n_clones = grouped["clone_idx"].nunique().rename("n_clones")
     n_v_genes = grouped["v_gene"].nunique(dropna=True).rename("n_v_genes")
     n_samples = grouped["sample"].agg(_expand_samples_unique).rename("n_samples")
-    summary = pd.concat([n_clones, n_v_genes, n_samples], axis=1).reset_index()
+    reference_allele = grouped["reference_allele"].agg(
+        lambda s: sorted(set(s.dropna().astype(str)))[0] if s.notna().any() else None
+    ).rename("reference_allele")
+    summary = pd.concat(
+        [n_clones, n_v_genes, n_samples, reference_allele], axis=1
+    ).reset_index()
 
     if observed_position_counts:
         position_counts = pd.concat(observed_position_counts, ignore_index=True)
