@@ -116,6 +116,7 @@ def save_figure(fig: plt.Figure, output_path: str | Path, dpi: int = 300):
     primary output path (the vector file when one was requested, else the PNG).
     """
     output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     if _PLOT_FORMAT == "png":
         # Default / back-compat: honor the caller's exact path and suffix
         # (byte-identical to pre-#169 behavior, including explicit non-png
@@ -1022,8 +1023,7 @@ def plot_matched_clone_heatmap(
 
     filename = filename or f"annotation_heatmap_{granularity}.png"
     out_path = output_dir / filename
-    grid.figure.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(grid.figure)
+    save_figure(grid.figure, out_path, dpi=300)
     logger.info(f"Saved plot to {out_path}")
     return out_path
 
@@ -2115,8 +2115,7 @@ def plot_set_overlap(
             min_subset_size=min_subset_size,
         )
         fig.suptitle(title)
-        fig.savefig(output_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        save_figure(fig, output_path, dpi=150)
         return
     except ImportError:
         pass
@@ -2139,8 +2138,7 @@ def plot_set_overlap(
     for i, n in enumerate(table["n_clones"].values):
         ax.text(i, n, str(int(n)), ha="center", va="bottom", fontsize=8)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path, dpi=150)
 
 
 def plot_method_overlap(
@@ -2183,8 +2181,7 @@ def plot_method_overlap(
     ax.set_yticklabels(pretty_methods(matrix.index))
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path, dpi=150)
 
 
 def plot_freq_prism_grid(
@@ -2244,8 +2241,7 @@ def plot_freq_prism_grid(
             )
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path, dpi=150)
 
 
 def plot_method_recovery(
@@ -2315,8 +2311,7 @@ def plot_method_recovery(
     if n_donors > 1:
         ax.legend(title="donor", loc="best")
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path, dpi=150)
 
 
 # =============================================================================

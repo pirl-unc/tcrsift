@@ -140,6 +140,32 @@ class TestPlotFormat:
             set_plot_format("tiff")
         set_plot_format("png")
 
+    def test_grid_and_upset_emit_vector_under_pdf(self, tmp_path):
+        # These plots previously hardcoded fig.savefig(dpi=150), silently losing
+        # the vector copy under plot_format=pdf (#169 regression). They now route
+        # through save_figure, so a .pdf must appear alongside the .png.
+        import pandas as pd
+
+        from tcrsift.plots import (
+            plot_freq_prism_grid,
+            plot_set_overlap,
+            set_plot_format,
+        )
+
+        grid = pd.DataFrame(
+            {"top_freq": [0, 0, 5, 5], "top_prism": [0, 5, 0, 5], "n_clones": [0, 2, 3, 4]}
+        )
+        sets = {"AIMpos": {"A", "B"}, "CTYneg": {"A", "C"}, "tetpos": {"B", "C", "D"}}
+        set_plot_format("pdf")
+        try:
+            plot_freq_prism_grid(grid, tmp_path / "grid.png")
+            plot_set_overlap(sets, tmp_path / "upset.png")
+        finally:
+            set_plot_format("png")
+        for stem in ("grid", "upset"):
+            assert (tmp_path / f"{stem}.pdf").exists(), f"{stem}: vector copy missing"
+            assert (tmp_path / f"{stem}.png").exists()
+
 
 # --------------------------------------------------------------------------- #
 # #148 — alpha-beta pairing promiscuity
