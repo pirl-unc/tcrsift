@@ -60,6 +60,14 @@ class TestPrimitives:
         hit = _restriction_hits("GAATTCGGATCC")
         assert "EcoRI" in hit and "BamHI" in hit
 
+    def test_restriction_hits_reverse_strand(self):
+        # Non-palindromic Type IIS sites must be caught on the reverse strand:
+        # BsmBI CGTCTC -> reverse complement GAGACG; BsaI GGTCTC -> GAGACC (F1).
+        assert "BsmBI" in _restriction_hits("AAA" + "GAGACG" + "AAA")
+        assert "BsaI" in _restriction_hits("TTT" + "GAGACC" + "TTT")
+        # Palindromic sites already caught either way (EcoRI is its own RC).
+        assert _restriction_hits("GAGACG").count(";") == 0  # only BsmBI
+
 
 class TestAddSynthesisQc:
     def test_columns_added(self):

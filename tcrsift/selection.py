@@ -228,9 +228,17 @@ def percentile_rank_score(
         weighted.append((pr, w))
     if not weighted:
         return {}
-    num = sum(pr * w for pr, w in weighted)
-    den = sum(w for _, w in weighted) or 1.0
-    composite = num / den
+    # NaN-aware weighted mean: a clone missing ONE term's score still ranks on
+    # its remaining terms instead of going NaN (which would both drop it from
+    # the PRISM route and corrupt Python's list.sort in _rank_candidates). A
+    # clone missing every term gets NaN (no information).
+    prs = np.vstack([np.asarray(pr, dtype=float) for pr, _ in weighted])
+    wts = np.array([w for _, w in weighted], dtype=float)
+    present = ~np.isnan(prs)
+    num = np.nansum(prs * wts[:, None], axis=0)
+    den = (present * wts[:, None]).sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        composite = np.where(den > 0, num / den, np.nan)
     return dict(zip(clone_scores[clone_col].astype(str), composite))
 
 
@@ -251,7 +259,11 @@ def _rank_candidates(cands: list[dict], composite) -> str | None:
     None so the caller keeps its configured metric)."""
     if composite is not None:
         for c in cands:
-            c["value"] = float(composite.get(str(c["clone"]), float("inf")))
+            v = composite.get(str(c["clone"]))
+            # A missing OR NaN composite sorts last — Python's list.sort does
+            # not sink NaN, so it must be coerced to +inf to avoid corrupting
+            # the order of the well-scored candidates around it.
+            c["value"] = float(v) if v is not None and np.isfinite(v) else float("inf")
         cands.sort(key=lambda r: r["value"])
         return "percentile_rank"
     cands.sort(key=lambda r: r["value"], reverse=True)

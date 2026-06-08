@@ -16,6 +16,28 @@ from tcrsift.sample_sheet import (
 )
 
 
+class TestSampleSheetInputValidation:
+    """Friendly errors / coercion for sample-sheet inputs (F11/F16)."""
+
+    def test_unknown_csv_column_raises_clear_error(self, tmp_path):
+        from tcrsift.sample_sheet import load_sample_sheet
+
+        csv = tmp_path / "sheet.csv"
+        csv.write_text("sample,vdj_dir,notez\nS1,/path,hi\n")
+        with pytest.raises(ValueError, match="Unknown sample-sheet column"):
+            load_sample_sheet(csv)
+
+    def test_culture_days_float_rounds_not_truncates(self):
+        assert Sample(sample="S1", vdj_dir="/p", culture_days=14.7).culture_days == 15
+
+    def test_culture_days_string_coerced(self):
+        assert Sample(sample="S1", vdj_dir="/p", culture_days="12").culture_days == 12
+
+    def test_culture_days_non_numeric_raises(self):
+        with pytest.raises(ValueError, match="culture_days must be numeric"):
+            Sample(sample="S1", vdj_dir="/p", culture_days="abc")
+
+
 class TestSample:
     """Tests for the Sample dataclass."""
 

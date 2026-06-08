@@ -63,6 +63,18 @@ def test_match_by_no_collision_on_merge():
     assert merged.til.match_by == "CDR3b_only"
 
 
+def test_insilico_filter_survives_to_dict_and_merge():
+    """insilico_filter must round-trip through to_dict/merge_with_args (F9) so it
+    isn't silently dropped before the pipeline runs or when saving config.yaml."""
+    import argparse
+
+    spec = {"predicates": [{"score": "ppost_beta", "min_percentile": 50}]}
+    cfg = TCRsiftConfig._from_dict({"insilico_filter": spec})
+    assert cfg.to_dict()["insilico_filter"] == spec
+    merged = cfg.merge_with_args(argparse.Namespace(func=None))
+    assert merged.insilico_filter == spec
+
+
 def test_baseline_markers_default_is_none():
     """Defaults to None so the format-module default (CTY) is used unchanged."""
     assert TCRsiftConfig().output.baseline_markers is None

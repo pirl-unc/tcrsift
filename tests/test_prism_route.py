@@ -54,6 +54,49 @@ class TestPercentileRankScore:
         assert percentile_rank_score(pd.DataFrame(), _PRISM_TERMS) == {}
         assert percentile_rank_score(_SCORES, []) == {}
 
+    def test_partial_nan_term_still_ranks(self):
+        # A clone missing ONE term's score must still rank on its remaining
+        # terms (NaN-aware weighted mean), not collapse to NaN (F4).
+        import math
+
+        scores = _SCORES.copy()
+        scores.loc[scores["CDR3ab"] == "A", "ppost_alpha"] = float("nan")
+        comp = percentile_rank_score(scores, _PRISM_TERMS)
+        assert math.isfinite(comp["A"])  # not NaN
+        # A is still the strongest on its 3 present terms.
+        assert comp["A"] < comp["C"] < comp["B"]
+
+    def test_all_nan_clone_is_nan(self):
+        import math
+
+        scores = _SCORES.copy()
+        for col in ("ppost_alpha", "ppost_beta", "antigen_response_score", "naive_score"):
+            scores.loc[scores["CDR3ab"] == "A", col] = float("nan")
+        comp = percentile_rank_score(scores, _PRISM_TERMS)
+        assert math.isnan(comp["A"])  # no information -> NaN
+
+    def test_build_selection_rules_sinks_nan_composite(self):
+        # A present-but-NaN composite must sort LAST, not corrupt the order of
+        # well-scored clones (Python list.sort doesn't sink NaN) (F4).
+        scores = _SCORES.copy()
+        for col in ("ppost_alpha", "ppost_beta", "antigen_response_score", "naive_score"):
+            scores.loc[scores["CDR3ab"] == "C", col] = float("nan")
+        cml = pd.DataFrame({
+            "CDR3ab": ["A", "B", "C"],
+            "method": ["m", "m", "m"],
+            "tier": ["tier1", "tier1", "tier1"],
+            "max_freq_in_method": [0.1, 0.1, 0.1],
+            "cells_in_method": [10, 10, 10],
+        })
+        config = {"rules": {"shared": {
+            "include_tiers": ["tier1"],
+            "rank_by": {"percentile_rank": _PRISM_TERMS},
+        }}}
+        out = build_selection_rules(cml, config, clone_scores=scores)
+        ranks = out.set_index("CDR3ab")["global_rank"]
+        # C (all-NaN) ranks worst; A and B keep their correct relative order.
+        assert ranks["A"] < ranks["B"] < ranks["C"]
+
 
 class TestPrismRoute:
     def _cml(self):

@@ -531,6 +531,7 @@ class TCRsiftConfig:
             "assemble": dataclasses.asdict(self.assemble),
             "output": dataclasses.asdict(self.output),
             "selection": self.selection,
+            "insilico_filter": self.insilico_filter,
             "verbose": self.verbose,
         }
 
@@ -563,8 +564,11 @@ class TCRsiftConfig:
         # otherwise its nested keys get hoisted and dropped on rebuild.
         flat_config = {}
         for section, params in config_dict.items():
-            if section == "selection":
-                flat_config["selection"] = params
+            # Free-form nested dicts (rules / predicate lists), not flat
+            # scalar-param namespaces — keep intact rather than spreading them,
+            # else their nested keys get hoisted and dropped on rebuild.
+            if section in ("selection", "insilico_filter"):
+                flat_config[section] = params
             elif isinstance(params, dict):
                 # `match_by` is the one field name shared across sections
                 # (annotate + til). Flattening by bare name would let til's

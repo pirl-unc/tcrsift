@@ -67,6 +67,12 @@ class TestPlotFunnelCallouts:
         plot_funnel(stages, tmp_path, section_starts=("scRNA QC",))
         assert (tmp_path / "funnel_plot.png").exists()
 
+    def test_all_zero_counts_no_crash(self, tmp_path):
+        # A sample where no cells clear any gate -> all-zero counts must not
+        # ZeroDivisionError on the width calculation (F18).
+        plot_funnel({"Loaded": 0, "Clones": 0}, tmp_path)
+        assert (tmp_path / "funnel_plot.png").exists()
+
     def test_unknown_denominator_stage_no_error(self, tmp_path):
         """If the caller names a stage that isn't in the dict, the
         callout simply doesn't fire — no crash."""
