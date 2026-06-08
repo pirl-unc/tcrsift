@@ -45,18 +45,18 @@ import numpy as np
 import pandas as pd
 
 from . import seqprob
-from .insilico_filter import FilterPredicate, percentile_rank
+from .insilico_filter import (
+    PRISM_PREDICATES,
+    FilterPredicate,
+    average_percentile_rank,
+)
 
 logger = logging.getLogger(__name__)
 
-# PRISM's default criteria (#158): low α/β Ppost, high antigen-response,
-# low naive. Each is a (column, direction) lower-is-better percentile dim.
-PRISM_DEFAULT_PREDICATES = [
-    FilterPredicate("ppost_alpha", "low", 1.0),
-    FilterPredicate("ppost_beta", "low", 1.0),
-    FilterPredicate("antigen_response_score", "high", 1.0),
-    FilterPredicate("naive_score", "low", 1.0),
-]
+# PRISM's default criteria (#158): low α/β Ppost, high antigen-response, low
+# naive. Single source of truth lives in insilico_filter.PRISM_PREDICATES; this
+# is a back-compat alias so the two PRISM representations can't drift.
+PRISM_DEFAULT_PREDICATES = PRISM_PREDICATES
 
 
 def naive_signature():
@@ -338,37 +338,22 @@ def prism_score(
     a strong multi-criterion candidate. ``rank_col`` is the 1-based ordering
     (1 = best). When ``group_col`` is given, percentile ranks are computed
     within each group (e.g. per assay condition). Missing any dimension →
-    NaN PRISM score (ranked last). Returns a copy with the two columns added.
+    NaN PRISM score (ranked last) — a clone we can't fully score isn't picked.
+    Returns a copy with the two columns added.
+
+    Delegates the composite to :func:`insilico_filter.average_percentile_rank`
+    (the single row-wise PRISM engine) so this and the selection-path PRISM
+    can't diverge.
     """
     predicates = predicates or PRISM_DEFAULT_PREDICATES
     missing = [p.score for p in predicates if p.score not in df.columns]
     if missing:
         raise ValueError(f"prism_score: missing predicate columns {missing}")
-    if weights is None:
-        weights = [1.0] * len(predicates)
-    if len(weights) != len(predicates):
-        raise ValueError("prism_score: weights length != predicates length")
 
     out = df.copy()
-    grouped = group_col is not None and group_col in out.columns
-
-    parts = []
-    for pred in predicates:
-        lower, method = pred.lower_is_better, pred.rank_method
-        if grouped:
-            pr = out.groupby(group_col, observed=True)[pred.score].transform(
-                lambda s, _l=lower, _m=method: percentile_rank(
-                    s, lower_is_better=_l, method=_m,
-                )
-            )
-        else:
-            pr = percentile_rank(out[pred.score], lower_is_better=lower,
-                                 method=method)
-        parts.append(pr)
-    mat = pd.concat(parts, axis=1)
-    w = np.asarray(weights, dtype=float)
-    scores = (mat * w).sum(axis=1, skipna=False) / w.sum()
-
+    scores = average_percentile_rank(
+        out, predicates, group_col=group_col, weights=weights, require_complete=True,
+    )
     out[score_col] = scores
     out[rank_col] = scores.rank(method="min", ascending=True, na_option="bottom")
     return out
