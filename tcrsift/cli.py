@@ -2097,9 +2097,17 @@ def cmd_select(args):
             )
         score_cols = [c for c in clone_scores.columns if c != "CDR3ab"]
         feat = long_df.merge(clone_scores[["CDR3ab", *score_cols]], on="CDR3ab", how="left")
+        # Optional configurable, non-PRISM tie-break (#221/#223); default
+        # heuristic (single-α > UMI > CD8 purity > CDR3ab) when unset. Its
+        # columns (merged_alpha_partners/TRA_1_umis/TRB_1_umis/Tcell_type_purity)
+        # come in via --clonotypes; absent ones are skipped.
+        tie_break = None
+        if args.config:
+            tie_break = (TCRsiftConfig.from_yaml(args.config).selection or {}).get("tie_break")
         sel = select_freq_prism_per_condition(
             feat, condition_col=cond_col, freq_col="frequency",
             gate=args.gate, top_freq=args.top_freq, top_prism=args.top_prism,
+            tie_break=tie_break,
         )
         sel.to_csv(args.output, index=False)
         print(

@@ -116,6 +116,63 @@ class TestSelectFreqPrismPerCondition:
         out = select_freq_prism_per_condition(pd.DataFrame(), condition_col="condition")
         assert out.empty
 
+    def test_freq_tiebreak_is_deterministic(self):
+        # #221: equally-frequent clones at the top-K boundary must select the
+        # same set regardless of input row order (was an arbitrary artifact).
+        from tcrsift.selection import select_freq_prism_per_condition
+
+        base = pd.DataFrame({
+            "CDR3ab": ["Cb", "Ca", "Cd", "Cc"],
+            "method": ["m"] * 4,
+            "frequency": [0.02] * 4,  # all tied
+        })
+        picks = set()
+        for seed in range(4):
+            shuf = base.sample(frac=1, random_state=seed).reset_index(drop=True)
+            sel = select_freq_prism_per_condition(
+                shuf, condition_col="method", top_freq=2, top_prism=0,
+            )
+            picks.add(tuple(sorted(sel["CDR3ab"])))
+        assert len(picks) == 1  # reproducible
+        # CDR3ab fallback alone (no metadata) → lexical: Ca, Cb.
+        assert next(iter(picks)) == ("Ca", "Cb")
+
+    def test_freq_tiebreak_heuristic_single_alpha_then_quality(self):
+        # #223: among equally-frequent clones, single-α beats dual-α, then UMIs,
+        # then purity — a quality ranking, not arbitrary.
+        from tcrsift.selection import select_freq_prism_per_condition
+
+        feat = pd.DataFrame({
+            "CDR3ab": ["Cb", "Ca", "Cd", "Cc"],
+            "method": ["m"] * 4,
+            "frequency": [0.02] * 4,
+            "merged_alpha_partners": [None, "X;Y", None, None],  # Ca is dual-α
+            "TRA_1_umis": [10, 99, 50, 10],
+            "TRB_1_umis": [10, 99, 5, 10],
+            "Tcell_type_purity": [1.0, 1.0, 1.0, 0.5],
+        })
+        sel = select_freq_prism_per_condition(
+            feat, condition_col="method", top_freq=2, top_prism=0,
+        )
+        picked = set(sel["CDR3ab"])
+        assert "Ca" not in picked  # dual-α de-prioritized despite equal freq
+        assert picked == {"Cd", "Cb"}  # single-α, higher UMI / purity
+
+    def test_tiebreak_configurable_cdr3ab_only(self):
+        from tcrsift.selection import select_freq_prism_per_condition
+
+        feat = pd.DataFrame({
+            "CDR3ab": ["Cb", "Ca", "Cd", "Cc"],
+            "method": ["m"] * 4,
+            "frequency": [0.02] * 4,
+            "merged_alpha_partners": [None, "X;Y", None, None],
+        })
+        # tie_break=[] disables the heuristic → pure lexical CDR3ab.
+        sel = select_freq_prism_per_condition(
+            feat, condition_col="method", top_freq=2, top_prism=0, tie_break=[],
+        )
+        assert set(sel["CDR3ab"]) == {"Ca", "Cb"}
+
     def test_all_nan_ppost_raises(self):
         # PRISM requested but a score column is entirely NaN -> loud error, not
         # a silent empty PRISM route (the "all ppost NaN = error" guard).
