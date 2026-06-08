@@ -566,6 +566,16 @@ class TCRsiftConfig:
             if section == "selection":
                 flat_config["selection"] = params
             elif isinstance(params, dict):
+                # `match_by` is the one field name shared across sections
+                # (annotate + til). Flattening by bare name would let til's
+                # value clobber annotate's (and til's would reset to default
+                # on rebuild). Emit til.match_by under its unambiguous flat
+                # alias so both round-trip independently.
+                if section == "til" and "match_by" in params:
+                    params = {
+                        ("til_match_by" if k == "match_by" else k): v
+                        for k, v in params.items()
+                    }
                 flat_config.update(params)
             else:
                 flat_config[section] = params

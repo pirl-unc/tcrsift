@@ -1502,8 +1502,18 @@ def match_clonotypes(
 
     if strictness in ("strict_ab", "ab_with_partial"):
         allow_b_fallback = strictness == "ab_with_partial"
+        # Only genuine paired (αβ) DB rows seed the paired-match set. A DB row
+        # with an empty/NA alpha is NOT a paired entry — including it would let
+        # an alpha-less clone (alpha="") match ("", beta) and be mislabeled as a
+        # full-confidence "ab" hit instead of beta-only (and, because the later
+        # row-filter `cdr3_alpha == ""` matches no NA rows, get no annotation at
+        # all in ab_with_partial). See the `alpha and ...` guard below.
+        _db_paired = database[
+            database["cdr3_alpha"].notna()
+            & (database["cdr3_alpha"].astype(str) != "")
+        ]
         db_alpha_beta = set(
-            zip(database["cdr3_alpha"].fillna(""), database["cdr3_beta"].fillna(""))
+            zip(_db_paired["cdr3_alpha"], _db_paired["cdr3_beta"].fillna(""))
         )
         db_beta_values = (
             set(database["cdr3_beta"].dropna()) if allow_b_fallback else set()
@@ -1521,7 +1531,7 @@ def match_clonotypes(
             alpha = row.get("CDR3_alpha", "") or ""
             beta = row.get("CDR3_beta", "") or ""
 
-            if (alpha, beta) in db_alpha_beta:
+            if alpha and (alpha, beta) in db_alpha_beta:
                 matches = database[
                     (database["cdr3_alpha"] == alpha) & (database["cdr3_beta"] == beta)
                 ]

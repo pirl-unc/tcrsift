@@ -116,6 +116,28 @@ class TestSelectFreqPrismPerCondition:
         out = select_freq_prism_per_condition(pd.DataFrame(), condition_col="condition")
         assert out.empty
 
+    def test_dedups_clone_rows_within_condition(self):
+        # Per-(clone, sample) input: clone C0 appears in 3 samples of method m1.
+        # It must take ONE top-K slot, not three, so top_freq=3 yields 3 DISTINCT
+        # clones with correct ranks (F2 — the duplicate-row undercount).
+        feat = pd.DataFrame({
+            "CDR3ab": ["C0", "C0", "C0", "C1", "C2", "C3"],
+            "method": ["m1"] * 6,
+            "frequency": [0.05, 0.04, 0.03, 0.02, 0.015, 0.01],
+            "ppost_alpha": [1e-9] * 6,
+            "ppost_beta": [1e-9] * 6,
+            "antigen_response_score": [1.0] * 6,
+            "naive_score": [0.0] * 6,
+        })
+        sel = select_freq_prism_per_condition(
+            feat, condition_col="method", top_freq=3, top_prism=0,
+        )
+        assert sel["CDR3ab"].nunique() == 3
+        assert set(sel["CDR3ab"]) == {"C0", "C1", "C2"}
+        c0 = sel[sel["CDR3ab"] == "C0"]
+        assert len(c0) == 1
+        assert c0.iloc[0]["rank_within_route"] == 1
+
 
 def test_cli_select_prism_mode(tmp_path):
     """`tcrsift select --prism` runs the recipe end-to-end."""

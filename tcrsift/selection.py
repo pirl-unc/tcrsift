@@ -777,6 +777,16 @@ def select_freq_prism_per_condition(
             cand = pd.concat([cand, sub], ignore_index=True)
         if cand.empty:
             continue
+        # Collapse to one row per clone within the condition. The input may be
+        # per-(clone, sample) (e.g. condition_col='method' over clone_sample_long),
+        # so a clone present in several samples of one condition would otherwise
+        # occupy multiple top-K slots — undercounting distinct clones, skewing the
+        # within-condition percentile ranks, and producing wrong rank_within_route.
+        # Keep each clone's best (highest-frequency) row.
+        cand = (
+            cand.sort_values(freq_col, ascending=False)
+            .drop_duplicates(subset=[clone_col], keep="first")
+        )
         # PRISM percentile ranks computed WITHIN this condition's candidates.
         composite = percentile_rank_score(cand, terms, clone_col=clone_col)
         cand["prism_score"] = cand[clone_col].astype(str).map(composite)

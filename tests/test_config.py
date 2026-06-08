@@ -50,6 +50,19 @@ def test_min_cd3_reads_default_is_gentle_floor():
     assert config.phenotype.min_cd3_reads == 3
 
 
+def test_match_by_no_collision_on_merge():
+    """annotate.match_by and til.match_by must not clobber each other through
+    merge_with_args' flatten/rebuild (they share the field name match_by, F8)."""
+    import argparse
+
+    cfg = TCRsiftConfig._from_dict(
+        {"annotate": {"match_by": "CDR3ab"}, "til": {"match_by": "CDR3b_only"}}
+    )
+    merged = cfg.merge_with_args(argparse.Namespace(func=None))
+    assert merged.annotate.match_by == "CDR3ab"
+    assert merged.til.match_by == "CDR3b_only"
+
+
 def test_baseline_markers_default_is_none():
     """Defaults to None so the format-module default (CTY) is used unchanged."""
     assert TCRsiftConfig().output.baseline_markers is None
