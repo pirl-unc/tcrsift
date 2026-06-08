@@ -72,6 +72,15 @@ class TestSetOverlapTable:
         # m1-only (B, C => 2) should rank above the shared (A => 1).
         assert table.iloc[0]["n_clones"] >= table.iloc[-1]["n_clones"]
 
+    def test_equal_count_rows_deterministic(self):
+        # #230: rows tied on (n_clones, degree) must keep a stable order across
+        # runs so method_overlap_sets.csv doesn't churn. Several singleton
+        # patterns all have n_clones=1, degree=1 — only the `sets` tie-break
+        # makes their order reproducible.
+        sets = {"m1": {"A"}, "m2": {"B"}, "m3": {"C"}, "m4": {"D"}}
+        table = set_overlap_table(sets)
+        assert list(table["sets"]) == sorted(table["sets"])
+
     def test_empty(self):
         table = set_overlap_table({})
         assert table.empty

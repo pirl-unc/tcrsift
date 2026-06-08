@@ -1283,7 +1283,10 @@ def set_overlap_table(sets: dict[str, set[str]]) -> pd.DataFrame:
     ]
     return (
         pd.DataFrame(rows, columns=cols)
-        .sort_values(["n_clones", "degree"], ascending=[False, True])
+        # Final ``sets`` key makes equal-(n_clones, degree) rows deterministic:
+        # ``counts`` iteration order depends on set iteration, so without it the
+        # CSV row order churns across runs with no semantic change (#230).
+        .sort_values(["n_clones", "degree", "sets"], ascending=[False, True, True])
         .reset_index(drop=True)
     )
 

@@ -927,7 +927,13 @@ def select_freq_prism_per_condition(
         freq_set, prism_set = set(top_f), set(top_p)
         f_rank = {c: i + 1 for i, c in enumerate(top_f)}
         p_rank = {c: i + 1 for i, c in enumerate(top_p)}
-        for c in freq_set | prism_set:
+        # Emit in deterministic "order of selected clones": the freq route in
+        # frequency-rank order first (incl. 'both'), then prism-only clones in
+        # PRISM-rank order. top_f/top_p are already rank-ordered lists; iterating
+        # the set union directly would be order-nondeterministic across runs and
+        # churn selection_native.csv row order with no semantic change (#230).
+        ordered = top_f + [c for c in top_p if c not in freq_set]
+        for c in ordered:
             in_f, in_p = c in freq_set, c in prism_set
             route = "both" if (in_f and in_p) else ("freq" if in_f else "prism")
             row = cand[cand[clone_col] == c].iloc[0]
