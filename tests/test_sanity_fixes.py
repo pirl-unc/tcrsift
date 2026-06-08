@@ -255,9 +255,21 @@ class TestAddObsColumnsNoFragmentation:
 
         adata = ad.AnnData(np.zeros((3, 2), dtype="float32"))
         adata.obs["x"] = [1, 2, 3]
-        _add_obs_columns(adata, {"x": [9, 9, 9], "label": "donorA"})
+        # Mix: array overwrite, scalar broadcast, and a None scalar.
+        _add_obs_columns(adata, {"x": [9, 9, 9], "label": "donorA", "miss": None})
         assert adata.obs["x"].tolist() == [9, 9, 9]
         assert adata.obs["label"].tolist() == ["donorA"] * 3
+        assert adata.obs["miss"].isna().all()
+
+    def test_empty_dict_is_noop(self):
+        import anndata as ad
+
+        from tcrsift.loader import _add_obs_columns
+
+        adata = ad.AnnData(np.zeros((2, 2), dtype="float32"))
+        before = list(adata.obs.columns)
+        _add_obs_columns(adata, {})
+        assert list(adata.obs.columns) == before
 
 
 class TestCanonicalBuildsPairedId:
