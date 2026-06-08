@@ -77,6 +77,31 @@ class TestPrismScore:
         assert out.prism_selected.sum() == 2
         assert out.loc[out.clone == "A", "prism_selected"].iloc[0]
 
+    def test_prism_term_forms_share_one_source(self):
+        # The dict form (selection.PRISM_TERMS) and the FilterPredicate form
+        # (PRISM_DEFAULT_PREDICATES) must derive from one constant so they can't
+        # drift apart (the root cause of the two PRISM engines diverging).
+        from tcrsift.insilico_filter import PRISM_PREDICATES
+        from tcrsift.selection import PRISM_TERMS
+
+        assert PRISM_DEFAULT_PREDICATES is PRISM_PREDICATES
+        assert [(t["col"], t["direction"]) for t in PRISM_TERMS] == [
+            (p.score, p.direction) for p in PRISM_PREDICATES
+        ]
+
+    def test_prism_score_matches_shared_engine(self):
+        # prism_score must equal the single row-wise engine it delegates to.
+        from tcrsift.insilico_filter import average_percentile_rank
+
+        df = self._df()
+        out = prism_score(df)
+        expected = average_percentile_rank(
+            df, PRISM_DEFAULT_PREDICATES, require_complete=True,
+        )
+        pd.testing.assert_series_equal(
+            out["prism_score"], expected, check_names=False,
+        )
+
 
 class TestGexSignaturePerClone:
     def test_group_zscore_then_per_clone_mean(self):

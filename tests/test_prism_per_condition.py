@@ -116,6 +116,30 @@ class TestSelectFreqPrismPerCondition:
         out = select_freq_prism_per_condition(pd.DataFrame(), condition_col="condition")
         assert out.empty
 
+    def test_incomplete_term_clone_not_prism_picked(self):
+        # require_complete policy: a clone missing a PRISM term (e.g. no GEX) is
+        # NOT eligible for the PRISM route, even if strong on the terms it has.
+        # Complete-term clones fill the PRISM slots; the deliverable is unchanged
+        # when no pick has missing terms.
+        from tcrsift.selection import select_freq_prism_per_condition
+
+        feat = pd.DataFrame({
+            "CDR3ab": ["C0", "C1", "C2"],
+            "method": ["m1"] * 3,
+            "frequency": [0.02, 0.015, 0.012],
+            "ppost_alpha": [1e-9, 1e-8, 1e-7],
+            "ppost_beta": [1e-9, 1e-8, 1e-7],
+            # C0 has the best Ppost but is MISSING antigen/naive GEX.
+            "antigen_response_score": [float("nan"), 1.0, 0.5],
+            "naive_score": [float("nan"), 0.0, 1.0],
+        })
+        sel = select_freq_prism_per_condition(
+            feat, condition_col="method", top_freq=0, top_prism=2,
+        )
+        prism_clones = set(sel[sel["selection_route"] == "prism"]["CDR3ab"])
+        assert "C0" not in prism_clones  # incomplete -> not PRISM-picked
+        assert prism_clones == {"C1", "C2"}
+
     def test_dedups_clone_rows_within_condition(self):
         # Per-(clone, sample) input: clone C0 appears in 3 samples of method m1.
         # It must take ONE top-K slot, not three, so top_freq=3 yields 3 DISTINCT

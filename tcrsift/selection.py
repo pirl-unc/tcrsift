@@ -37,6 +37,7 @@ import pandas as pd
 
 from .clonotype import build_clone_method_long, build_clone_sample_long
 from .filter import DEFAULT_THRESHOLD_TIERS, per_sample_tier
+from .insilico_filter import PRISM_PREDICATES as _PRISM_PREDICATES
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,7 @@ def percentile_rank_score(
     *,
     clone_col: str = "CDR3ab",
     group_col: str | None = None,
+    require_complete: bool = False,
 ) -> dict:
     """Weighted mean-percentile composite per clone — the PRISM math (#193).
 
@@ -203,6 +205,14 @@ def percentile_rank_score(
     where a **low** composite = a strong multi-criterion candidate (private +
     antigen-responding + non-naive, when given those terms). Percentile ranks
     are computed within ``group_col`` (e.g. per condition) when provided.
+
+    Missing-data policy (explicit, #193 audit): with ``require_complete=False``
+    (default) a clone missing one term still ranks on its remaining terms
+    (NaN-aware) — used by the config-driven ``select`` ``rank_by`` route, and
+    NaN never corrupts ``_rank_candidates`` ordering (it coerces to +inf). With
+    ``require_complete=True`` a clone missing ANY term gets a NaN composite and
+    is therefore never PRISM-picked — "don't pick a clone we can't fully score",
+    which is the behavior the validated per-condition recipe relies on.
 
     This lets a ``tcrsift select`` route ``rank_by`` reproduce PRISM exactly by
     combining Ppost with GEX/RNA score terms — a deliberate, config-driven
@@ -228,17 +238,20 @@ def percentile_rank_score(
         weighted.append((pr, w))
     if not weighted:
         return {}
-    # NaN-aware weighted mean: a clone missing ONE term's score still ranks on
-    # its remaining terms instead of going NaN (which would both drop it from
-    # the PRISM route and corrupt Python's list.sort in _rank_candidates). A
-    # clone missing every term gets NaN (no information).
     prs = np.vstack([np.asarray(pr, dtype=float) for pr, _ in weighted])
     wts = np.array([w for _, w in weighted], dtype=float)
-    present = ~np.isnan(prs)
-    num = np.nansum(prs * wts[:, None], axis=0)
-    den = (present * wts[:, None]).sum(axis=0)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        composite = np.where(den > 0, num / den, np.nan)
+    if require_complete:
+        # Any missing term -> NaN composite (clone not fully scorable).
+        num = (prs * wts[:, None]).sum(axis=0)
+        composite = num / wts.sum()
+    else:
+        # NaN-aware weighted mean over the terms that ARE present; a clone
+        # missing every term gets NaN (no information).
+        present = ~np.isnan(prs)
+        num = np.nansum(prs * wts[:, None], axis=0)
+        den = (present * wts[:, None]).sum(axis=0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            composite = np.where(den > 0, num / den, np.nan)
     return dict(zip(clone_scores[clone_col].astype(str), composite))
 
 
@@ -732,12 +745,13 @@ def pivot_per_sample_tiers(
 
 # Default PRISM terms (tcrsift column names), matching the validated
 # selection_analysis recipe: low private Ppost + high antigen-response GEX +
-# low naive GEX. Override `score_terms` to change the criteria.
+# low naive GEX. Derived from the single source of truth
+# (insilico_filter.PRISM_PREDICATES) so the dict form here and the
+# FilterPredicate form in annotate_tcrs can't drift. Override `score_terms`
+# to change the criteria.
 PRISM_TERMS: list[dict] = [
-    {"col": "ppost_alpha", "direction": "low"},
-    {"col": "ppost_beta", "direction": "low"},
-    {"col": "antigen_response_score", "direction": "high"},
-    {"col": "naive_score", "direction": "low"},
+    {"col": _p.score, "direction": _p.direction, "weight": 1.0}
+    for _p in _PRISM_PREDICATES
 ]
 
 
@@ -800,7 +814,13 @@ def select_freq_prism_per_condition(
             .drop_duplicates(subset=[clone_col], keep="first")
         )
         # PRISM percentile ranks computed WITHIN this condition's candidates.
-        composite = percentile_rank_score(cand, terms, clone_col=clone_col)
+        # require_complete=True: a clone missing any term gets a NaN PRISM score
+        # and sorts last, so it is not PRISM-picked — "don't pick a clone we
+        # can't fully score", matching the validated recipe (a clone scored on a
+        # subset of criteria is not comparable to fully-scored ones).
+        composite = percentile_rank_score(
+            cand, terms, clone_col=clone_col, require_complete=True,
+        )
         cand["prism_score"] = cand[clone_col].astype(str).map(composite)
         top_f = list(
             cand.sort_values(freq_col, ascending=False)[clone_col].head(top_freq)

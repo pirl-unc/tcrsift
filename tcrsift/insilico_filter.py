@@ -107,6 +107,19 @@ def predicates_from_config(cfg: dict) -> list[FilterPredicate]:
     return out
 
 
+# Canonical PRISM criteria (#158) — the SINGLE source of truth. Both the
+# FilterPredicate form (annotate_tcrs.PRISM_DEFAULT_PREDICATES) and the dict
+# form (selection.PRISM_TERMS) derive from this so they cannot drift apart
+# (their drift is exactly how the two PRISM engines diverged): low α/β Ppost,
+# high antigen-response, low naive.
+PRISM_PREDICATES: list[FilterPredicate] = [
+    FilterPredicate("ppost_alpha", "low"),
+    FilterPredicate("ppost_beta", "low"),
+    FilterPredicate("antigen_response_score", "high"),
+    FilterPredicate("naive_score", "low"),
+]
+
+
 def percentile_rank(
     values,
     *,
@@ -178,19 +191,36 @@ def average_percentile_rank(
     predicates: list[FilterPredicate],
     *,
     group_col: str | None = None,
+    weights: list[float] | None = None,
+    require_complete: bool = True,
 ) -> pd.Series:
-    """Mean of the per-dimension percentile ranks (0 = best) for ranking.
+    """(Weighted) mean of the per-dimension percentile ranks (0 = best).
 
-    The composite's own ranking metric: average the lower-is-better
-    percentile ranks across all predicate dimensions, then take top-k or a
-    percentile cut. Rows with any missing dimension get NaN.
+    The single row-wise composite engine for in-silico ranking and PRISM. Each
+    predicate contributes a lower-is-better percentile rank in [0, 1]; the means
+    are averaged (optionally weighted by ``weights``).
+
+    ``require_complete`` (default True) makes a row missing ANY dimension get
+    NaN — i.e. don't score a clone you can't fully rank. Set False for a
+    NaN-aware mean over the dimensions that ARE present.
     """
     if not predicates:
         return pd.Series(np.nan, index=df.index)
-    parts = [
-        _grouped_percentile_rank(df, pred, group_col) for pred in predicates
-    ]
-    return pd.concat(parts, axis=1).mean(axis=1, skipna=False)
+    mat = pd.concat(
+        [_grouped_percentile_rank(df, pred, group_col) for pred in predicates],
+        axis=1,
+    )
+    if weights is None:
+        return mat.mean(axis=1, skipna=not require_complete)
+    w = np.asarray(weights, dtype=float)
+    if len(w) != len(predicates):
+        raise ValueError("average_percentile_rank: weights length != predicates length")
+    if require_complete:
+        return (mat * w).sum(axis=1, skipna=False) / w.sum()
+    present = mat.notna()
+    num = (mat.fillna(0.0) * w).sum(axis=1)
+    den = (present * w).sum(axis=1)
+    return num / den.where(den > 0)
 
 
 def apply_insilico_filter(
