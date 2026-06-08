@@ -116,6 +116,46 @@ class TestSelectFreqPrismPerCondition:
         out = select_freq_prism_per_condition(pd.DataFrame(), condition_col="condition")
         assert out.empty
 
+    def test_all_nan_ppost_raises(self):
+        # PRISM requested but a score column is entirely NaN -> loud error, not
+        # a silent empty PRISM route (the "all ppost NaN = error" guard).
+        import pytest
+
+        from tcrsift.selection import select_freq_prism_per_condition
+        from tcrsift.validation import TCRsiftValidationError
+
+        feat = pd.DataFrame({
+            "CDR3ab": ["C0", "C1"],
+            "method": ["m1", "m1"],
+            "frequency": [0.02, 0.015],
+            "ppost_alpha": [float("nan"), float("nan")],  # never populated
+            "ppost_beta": [1e-9, 1e-8],
+            "antigen_response_score": [1.0, 0.5],
+            "naive_score": [0.0, 1.0],
+        })
+        with pytest.raises(TCRsiftValidationError, match="missing or entirely NaN"):
+            select_freq_prism_per_condition(
+                feat, condition_col="method", top_freq=0, top_prism=2,
+            )
+
+    def test_all_nan_ppost_ok_when_prism_off(self):
+        # top_prism=0 -> frequency route only -> the guard must NOT fire.
+        from tcrsift.selection import select_freq_prism_per_condition
+
+        feat = pd.DataFrame({
+            "CDR3ab": ["C0", "C1"],
+            "method": ["m1", "m1"],
+            "frequency": [0.02, 0.015],
+            "ppost_alpha": [float("nan"), float("nan")],
+            "ppost_beta": [float("nan"), float("nan")],
+            "antigen_response_score": [float("nan"), float("nan")],
+            "naive_score": [float("nan"), float("nan")],
+        })
+        sel = select_freq_prism_per_condition(
+            feat, condition_col="method", top_freq=2, top_prism=0,
+        )
+        assert set(sel["CDR3ab"]) == {"C0", "C1"}
+
     def test_incomplete_term_clone_not_prism_picked(self):
         # require_complete policy: a clone missing a PRISM term (e.g. no GEX) is
         # NOT eligible for the PRISM route, even if strong on the terms it has.

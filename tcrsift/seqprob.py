@@ -99,7 +99,8 @@ class KmerProbabilityModel(SequenceProbabilityModel):
     smoothing keeps unseen contexts from giving ``-inf``.
 
     Parameters are a dense ``(N_SYM**order, N_SYM)`` log-probability table,
-    compact enough to ship: order 3 → ~1 MB float32 per chain.
+    compact enough to ship: the shipped defaults are order 2 (~20-32 KB
+    float32 per chain); order 3 would be ~1 MB.
     """
 
     def __init__(self, *, order: int = 2, alpha: float = 1.0, chain: str = ""):
