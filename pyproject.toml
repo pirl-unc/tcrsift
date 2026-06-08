@@ -51,7 +51,8 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-    # Parallel test execution (-n auto in addopts) — ~2.5x faster suite.
+    # Parallel test execution; CI runs `pytest -n auto` (~2.5x). Not in addopts
+    # so single-file iteration stays fast (see [tool.pytest.ini_options]).
     "pytest-xdist>=3.0.0",
     "ruff>=0.1.0",
     "pylint>=3.0.0,<4.0.0",
@@ -98,8 +99,12 @@ tcrsift = "tcrsift.cli:main"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-# -n auto runs the suite across all CPU cores via pytest-xdist (~2.5x faster).
-addopts = "-n auto --tb=short"
+# Keep the default fast for iterating on a few tests: NO `-n auto` here. xdist
+# pays a large fixed cost per invocation (each worker imports scanpy/anndata/
+# torch and collects all ~1800 tests), ~6s — a 4x tax on a one-file run (8s vs
+# 2s). CI passes `-n auto` explicitly for the full suite (~2.5x faster there).
+# Run the whole suite locally in parallel with:  pytest -n auto
+addopts = "--tb=short"
 
 [tool.ruff]
 line-length = 100
