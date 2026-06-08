@@ -1,9 +1,9 @@
 # Sequence probability (data-driven Pgen)
 
 Data-driven CDR3 generation/occurrence probability — the **precursor-
-frequency / publicness** axis. This replaces the brittle OLGA/SONIA runtime
-path ([`olga_ppost`](olga_ppost.md)) with a model **fit once on an external
-reference repertoire**, so `log_pgen(seq)` is a fast, calibrated score for
+frequency / publicness** axis — a model **fit once on an external
+reference repertoire** (it replaced an earlier OLGA/SONIA runtime path, since
+removed), so `log_pgen(seq)` is a fast, calibrated score for
 "how generatable / common is this CDR3" — lower = rarer precursor / more
 private.
 
