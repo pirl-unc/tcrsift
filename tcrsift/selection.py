@@ -38,6 +38,7 @@ import pandas as pd
 from .clonotype import build_clone_method_long, build_clone_sample_long
 from .filter import DEFAULT_THRESHOLD_TIERS, per_sample_tier
 from .insilico_filter import PRISM_PREDICATES as _PRISM_PREDICATES
+from .validation import TCRsiftValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -782,6 +783,12 @@ def select_freq_prism_per_condition(
     condition has fewer than ``rescue_target`` gated clones, the best
     sub-threshold clones by ``rescue_rank_col`` (descending) are added back.
 
+    Note: the ppost terms are ~0.9 |corr| with CDR3 length (longer CDR3 ->
+    lower Pgen/Ppost), inherent to any generation-probability score, so the
+    PRISM ppost axes partly rank on length, not just rarity. Raises (when
+    ``top_prism > 0``) if a PRISM score column is missing or entirely NaN, since
+    PRISM would otherwise pick nothing.
+
     Returns one row per (clone, condition) with ``selection_route`` (``freq`` /
     ``prism`` / ``both``), ``rank_within_route``, ``prism_score``, the
     condition, and the frequency. A clone selected in multiple conditions
@@ -793,6 +800,27 @@ def select_freq_prism_per_condition(
             columns=[clone_col, condition_col, "selection_route",
                      "rank_within_route", "prism_score", freq_col]
         )
+    # Guard: PRISM requested but its score columns are unusable. With
+    # require_complete scoring, an all-NaN or missing term means NO clone is
+    # fully scorable, so the PRISM route would silently pick nothing (e.g. when
+    # ppost was never populated). Fail loudly instead of degenerating.
+    if top_prism > 0:
+        term_cols = [t.get("col") for t in terms if t.get("col")]
+        unusable = [
+            c for c in term_cols
+            if c not in feat.columns or not feat[c].notna().any()
+        ]
+        if unusable:
+            raise TCRsiftValidationError(
+                f"PRISM requested (top_prism={top_prism}) but its score "
+                f"column(s) {unusable} are missing or entirely NaN — every "
+                "clone is unscorable, so PRISM would pick nothing.",
+                hint="Populate the PRISM score columns first (e.g. "
+                "annotate_tcrs.add_pgen_ppost / add_gex_signature_scores for "
+                "ppost_alpha/ppost_beta/antigen_response_score/naive_score), "
+                "pass score_terms for the columns you do have, or set "
+                "top_prism=0 to use the frequency route alone.",
+            )
     out_rows: list[dict] = []
     for cond, grp in feat.groupby(condition_col, observed=True):
         cand = grp[grp[freq_col].fillna(0) > gate].copy()

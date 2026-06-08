@@ -55,6 +55,14 @@ class TestPrismScore:
         with pytest.raises(ValueError, match="missing predicate columns"):
             prism_score(df)
 
+    def test_all_nan_predicate_column_raises(self):
+        # A present-but-entirely-NaN score (e.g. ppost never computed) must
+        # error, not silently rank nothing.
+        df = self._df()
+        df["ppost_alpha"] = float("nan")
+        with pytest.raises(ValueError, match="entirely NaN"):
+            prism_score(df)
+
     def test_weights_change_ranking(self):
         df = self._df()
         # Weight antigen-response and naive to zero → rank on ppost only.

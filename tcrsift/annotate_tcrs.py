@@ -344,11 +344,26 @@ def prism_score(
     Delegates the composite to :func:`insilico_filter.average_percentile_rank`
     (the single row-wise PRISM engine) so this and the selection-path PRISM
     can't diverge.
+
+    Note: the ``ppost_*`` dimensions are strongly anti-correlated with CDR3
+    length (longer CDR3 -> lower Pgen/Ppost, ~0.9 |corr| for an order-2 k-mer),
+    so those PRISM axes partly encode length, not just rarity. This is inherent
+    to any generation-probability score; interpret accordingly.
+
+    Raises if a predicate column is missing OR entirely NaN — PRISM on an
+    unpopulated score (e.g. ppost never computed) would silently rank nothing.
     """
     predicates = predicates or PRISM_DEFAULT_PREDICATES
     missing = [p.score for p in predicates if p.score not in df.columns]
     if missing:
         raise ValueError(f"prism_score: missing predicate columns {missing}")
+    all_nan = [p.score for p in predicates if not df[p.score].notna().any()]
+    if all_nan:
+        raise ValueError(
+            f"prism_score: predicate column(s) {all_nan} are entirely NaN — "
+            "every clone is unscorable so PRISM would rank nothing. Populate "
+            "these scores (e.g. add_pgen_ppost / add_gex_signature_scores) first."
+        )
 
     out = df.copy()
     scores = average_percentile_rank(
