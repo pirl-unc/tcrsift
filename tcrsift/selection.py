@@ -65,6 +65,7 @@ __all__ = [
     "select_freq_prism_per_condition",
     "freq_prism_grid",
     "PRISM_TERMS",
+    "DEFAULT_TIE_BREAK",
 ]
 
 # Tier label -> numeric rank (lower = stronger enrichment). Used to
@@ -278,9 +279,11 @@ def _rank_candidates(cands: list[dict], composite) -> str | None:
             # not sink NaN, so it must be coerced to +inf to avoid corrupting
             # the order of the well-scored candidates around it.
             c["value"] = float(v) if v is not None and np.isfinite(v) else float("inf")
-        cands.sort(key=lambda r: r["value"])
+        # Secondary key = clone id so ties are reproducible across runs/versions
+        # (#221), not an artifact of input order.
+        cands.sort(key=lambda r: (r["value"], str(r["clone"])))
         return "percentile_rank"
-    cands.sort(key=lambda r: r["value"], reverse=True)
+    cands.sort(key=lambda r: (-float(r["value"]), str(r["clone"])))
     return None
 
 
@@ -756,6 +759,51 @@ PRISM_TERMS: list[dict] = [
 ]
 
 
+# Principled, deterministic, NON-PRISM tie-break (#221/#223). Among clones tied
+# on the primary key (frequency, or an exact PRISM score), prefer — in order:
+#   single_alpha — a single-α clone over a merged dual-α (allelic-inclusion) one
+#   umi          — higher per-clone UMI coverage (better-sequenced)
+#   cd8_purity   — higher phenotype purity (consistent CD8/CD4 across the clone)
+#   cdr3ab       — lexical CDR3ab, full determinism (always terminates the chain)
+# Keys whose column is absent are skipped; cdr3ab guarantees a reproducible order
+# regardless of input row order or version (fixing #221 even with no metadata).
+DEFAULT_TIE_BREAK: tuple[str, ...] = ("single_alpha", "umi", "cd8_purity", "cdr3ab")
+
+
+def _tie_break_sort(cand: pd.DataFrame, tie_break, clone_col: str):
+    """Return ``(sort_cols, ascending)`` for the configured tie-break, adding
+    private ``_tb_*`` derived columns to ``cand``. Always ends on ``clone_col``."""
+    cols: list[str] = []
+    asc: list[bool] = []
+    for key in tie_break or ():
+        if key == "single_alpha" and "merged_alpha_partners" in cand.columns:
+            p = cand["merged_alpha_partners"].astype(str).str.strip().str.lower()
+            cand["_tb_dual"] = cand["merged_alpha_partners"].notna() & ~p.isin(("", "nan"))
+            cols.append("_tb_dual")
+            asc.append(True)  # single (False) before dual (True)
+        elif key == "umi":
+            umi_cols = [c for c in ("TRA_1_umis", "TRB_1_umis") if c in cand.columns]
+            if umi_cols:
+                cand["_tb_umi"] = (
+                    cand[umi_cols].apply(pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
+                )
+                cols.append("_tb_umi")
+                asc.append(False)  # higher coverage first
+        elif key in ("cd8_purity", "cd4_purity", "purity") and "Tcell_type_purity" in cand.columns:
+            cand["_tb_purity"] = pd.to_numeric(
+                cand["Tcell_type_purity"], errors="coerce"
+            ).fillna(0.0)
+            cols.append("_tb_purity")
+            asc.append(False)  # higher purity first
+        elif key == "cdr3ab" and clone_col not in cols:
+            cols.append(clone_col)
+            asc.append(True)
+    if clone_col not in cols:  # always terminate deterministically
+        cols.append(clone_col)
+        asc.append(True)
+    return cols, asc
+
+
 def select_freq_prism_per_condition(
     feat: pd.DataFrame,
     *,
@@ -768,6 +816,7 @@ def select_freq_prism_per_condition(
     top_prism: int = 5,
     rescue_target: int = 0,
     rescue_rank_col: str | None = None,
+    tie_break: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Per-condition ``top-K freq ∪ top-K PRISM`` selection (#193).
 
@@ -788,6 +837,14 @@ def select_freq_prism_per_condition(
     PRISM ppost axes partly rank on length, not just rarity. Raises (when
     ``top_prism > 0``) if a PRISM score column is missing or entirely NaN, since
     PRISM would otherwise pick nothing.
+
+    Both route sorts use a deterministic, principled, NON-PRISM ``tie_break``
+    (default :data:`DEFAULT_TIE_BREAK` — single-α > dual-α, then UMI coverage,
+    then phenotype purity, then CDR3ab) so boundary ties among equally-frequent
+    (or equally-scored) clones are reproducible and quality-ranked rather than
+    an arbitrary artifact of input row order (#221/#223). Tie-break keys whose
+    column is absent are skipped; the CDR3ab fallback always guarantees
+    determinism. Pass ``[]`` for CDR3ab-only.
 
     Returns one row per (clone, condition) with ``selection_route`` (``freq`` /
     ``prism`` / ``both``), ``rank_within_route``, ``prism_score``, the
@@ -837,8 +894,10 @@ def select_freq_prism_per_condition(
         # occupy multiple top-K slots — undercounting distinct clones, skewing the
         # within-condition percentile ranks, and producing wrong rank_within_route.
         # Keep each clone's best (highest-frequency) row.
+        # Deterministic dedup: keep each clone's highest-frequency row, breaking
+        # ties by clone id so which row survives is reproducible (not row-order).
         cand = (
-            cand.sort_values(freq_col, ascending=False)
+            cand.sort_values([freq_col, clone_col], ascending=[False, True])
             .drop_duplicates(subset=[clone_col], keep="first")
         )
         # PRISM percentile ranks computed WITHIN this condition's candidates.
@@ -850,11 +909,20 @@ def select_freq_prism_per_condition(
             cand, terms, clone_col=clone_col, require_complete=True,
         )
         cand["prism_score"] = cand[clone_col].astype(str).map(composite)
+        # Deterministic, principled NON-PRISM tie-break (#221/#223) applied to
+        # BOTH routes so tied boundary picks are reproducible and meaningful.
+        tb_cols, tb_asc = _tie_break_sort(
+            cand, DEFAULT_TIE_BREAK if tie_break is None else tie_break, clone_col,
+        )
         top_f = list(
-            cand.sort_values(freq_col, ascending=False)[clone_col].head(top_freq)
+            cand.sort_values([freq_col, *tb_cols], ascending=[False, *tb_asc])[
+                clone_col
+            ].head(top_freq)
         )
         top_p = list(
-            cand.sort_values("prism_score", ascending=True)[clone_col].head(top_prism)
+            cand.sort_values(["prism_score", *tb_cols], ascending=[True, *tb_asc])[
+                clone_col
+            ].head(top_prism)
         )
         freq_set, prism_set = set(top_f), set(top_p)
         f_rank = {c: i + 1 for i, c in enumerate(top_f)}
