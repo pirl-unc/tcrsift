@@ -357,13 +357,6 @@ def plot_annotation_summary(df: pd.DataFrame, output_dir: Path) -> None:
             plt.close(fig)
 
 
-def _strip_barcode_suffix(barcode: str) -> str:
-    """Strip gem-group style suffix (e.g. ``-1``) when present."""
-    if "-" in barcode:
-        return barcode.rsplit("-", 1)[0]
-    return barcode
-
-
 def parse_sample_args(items: list[str]) -> dict[str, dict[str, Path]]:
     """
     Parse ``--samples`` / ``--inputs`` entries.
@@ -710,14 +703,6 @@ def _extract_paired_cdr3_from_consensus_df(
     ]
     ordered_cols = [col for col in ordered_cols if col in base.columns]
     return base[ordered_cols], work
-
-
-def _build_consensus_pairs(consensus_df: pd.DataFrame, require_paired: bool = True) -> pd.DataFrame:
-    """Backwards-compatible paired clone extraction helper."""
-    pairs, _work = _extract_paired_cdr3_from_consensus_df(consensus_df, Path("<in_memory>"))
-    if require_paired:
-        return pairs
-    return pairs
 
 
 def load_from_consensus(
