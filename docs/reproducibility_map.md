@@ -46,7 +46,7 @@ non-interpretable gene set (ZBTB16, ISG15, IL7R, CCL20, stress genes — not
 a naïve program).
 
 > For **high-specificity / high-avidity / low-cross-reactivity** selection,
-> use **Pgen/Ppost + sequence features** ([`tcrsift.olga_ppost`](api/olga_ppost.md),
+> use **Pgen/Ppost + sequence features** ([`tcrsift.seqprob`](api/seqprob.md),
 > #143), **not RNA**. RNA is for **differentiation / expansion state**, not
 > specificity.
 

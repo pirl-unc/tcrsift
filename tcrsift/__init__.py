@@ -181,16 +181,6 @@ _MODULE_EXPORTS = {
         "percentile_rank",
         "predicates_from_config",
     ),
-    ".olga_ppost": (
-        "annotate_nearest_supported_allele",
-        "compute_pgen_ppost",
-        "flag_private_candidates",
-        "load_chain_model",
-        "nearest_supported_allele",
-        "normalize_gene_name",
-        "olga_sonia_available",
-        "supported_alleles",
-    ),
     ".seqprob": (
         "GeneAwareKmerModel",
         "KmerProbabilityModel",

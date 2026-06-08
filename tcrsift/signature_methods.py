@@ -261,7 +261,7 @@ RNA_REPRODUCIBILITY_NOTE = (
     "and a cross-donor-validated transcriptome classifier (TCR genes removed) "
     "reaches only AUROC ~0.62–0.69 for publicness, on a diffuse "
     "non-interpretable gene set. For high-specificity / low-cross-reactivity "
-    "selection, use Pgen/Ppost + sequence features (tcrsift.olga_ppost, #143), "
+    "selection, use Pgen/Ppost + sequence features (tcrsift.seqprob, #143), "
     "not RNA. RNA is for differentiation / expansion state, not specificity. "
     "Methodology: do NOT fit/trim signatures on the selection target — with "
     "n=2 donors per-gene direction consistency is ~chance, so trimming to the "

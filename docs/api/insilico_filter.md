@@ -3,7 +3,7 @@
 A **stackable filter layer** (#149) that composes *on top of* the
 assay/enrichment groups (the sorts) and the selection rules. Each layer is
 a per-clone percentile predicate on an existing feature — Ppost
-([#143](olga_ppost.md)) or a GEX signature score
+([#143](seqprob.md)) or a GEX signature score
 ([signatures](signatures.md)) — so a group can be progressively refined:
 
 ```

@@ -111,7 +111,7 @@ def add_pgen_ppost(
         try:
             return ensure_model(chain, backend=backend, role=role,
                                 auto_train=auto_train), backend
-        except ImportError as exc:  # pgen training needs OLGA
+        except (ImportError, ValueError) as exc:  # Pgen can't be (re)trained
             if role == "pgen":
                 logger.warning("%s; using shipped k-mer Pgen for %s", exc, chain)
                 from .seqprob import load_background_model

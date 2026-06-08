@@ -12,8 +12,9 @@
 
 """Data-driven CDR3 sequence-probability models — the publicness axis.
 
-Replaces the brittle OLGA/SONIA runtime path (:mod:`tcrsift.olga_ppost`)
-for the **precursor-frequency / publicness** axis. Instead of a fixed,
+The data-driven, dependency-light publicness axis (it replaced an earlier
+OLGA/SONIA runtime path, since removed) for the **precursor-frequency /
+publicness** measure. Instead of a fixed,
 allele-masked GPL prior, a background generation/occurrence model is **fit
 once on an external reference repertoire** and reused; ``log_pgen(seq)`` is
 then a fast, dependency-light, calibrated score for "how generatable /

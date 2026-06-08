@@ -23,9 +23,9 @@ auto-trains and caches on first use when a model isn't shipped/cached.
 Training data, by role (kept strictly non-circular — never the experiment's
 own clones):
 
-- **pgen** — OLGA-generated synthetic sequences (pre-selection generation
-  probability). Needs ``olga`` (optional, GPL) at train time; if absent,
-  the shipped numpy k-mer Pgen model is used.
+- **pgen** — pre-selection generation probability. The shipped numpy k-mer
+  Pgen model is used; it was generated offline (OLGA, no longer a dependency)
+  and cannot be retrained at runtime — see refseqs/PROVENANCE.md.
 - **ppost** — an **external observed neutral** repertoire (post-selection
   publicness). The shipped α/β defaults are fit on the **5 pooled public
   10x healthy-PBMC VDJ-T sets** (:func:`fetch_healthy_pbmc`, ≈16k α / 18k β
@@ -250,48 +250,6 @@ def _observed_seqs(chain: str, *, url: str | None = None) -> list[str]:
     return pd.read_csv(path)["seq"].dropna().astype(str).tolist()
 
 
-def _olga_synth_seqs(chain: str, n: int) -> list[str]:
-    """OLGA-generated synthetic CDR3s for Pgen training (needs olga)."""
-    import importlib.util
-
-    if importlib.util.find_spec("olga") is None:
-        raise ImportError(
-            "Training a TCRpeg Pgen model needs OLGA (GPL, optional) to "
-            "generate synthetic sequences: pip install 'tcrsift[pgen]'. The "
-            "numpy k-mer Pgen model ships pre-built and needs nothing."
-        )
-    import os
-
-    import olga  # pylint: disable=import-error
-    import olga.load_model as load_model  # pylint: disable=import-error
-    import olga.sequence_generation as seq_gen  # pylint: disable=import-error
-
-    name = "human_T_alpha" if chain == "alpha" else "human_T_beta"
-    d = os.path.join(os.path.dirname(olga.__file__), "default_models", name)
-    args = (os.path.join(d, "model_params.txt"),
-            os.path.join(d, "V_gene_CDR3_anchors.csv"),
-            os.path.join(d, "J_gene_CDR3_anchors.csv"))
-    marg = os.path.join(d, "model_marginals.txt")
-    if chain == "alpha":
-        gd = load_model.GenomicDataVJ()
-        gd.load_igor_genomic_data(*args)
-        gm = load_model.GenerativeModelVJ()
-        gm.load_and_process_igor_model(marg)
-        gen = seq_gen.SequenceGenerationVJ(gm, gd)
-    else:
-        gd = load_model.GenomicDataVDJ()
-        gd.load_igor_genomic_data(*args)
-        gm = load_model.GenerativeModelVDJ()
-        gm.load_and_process_igor_model(marg)
-        gen = seq_gen.SequenceGenerationVDJ(gm, gd)
-    out = []
-    while len(out) < n:
-        aa = gen.gen_rnd_prod_CDR3()[1]
-        if aa:
-            out.append(aa)
-    return out
-
-
 # ---------------------------------------------------------------------------
 # Train + cache
 # ---------------------------------------------------------------------------
@@ -302,17 +260,27 @@ def train_model(
     backend: str = DEFAULT_BACKEND,
     role: str = "ppost",
     url: str | None = None,
-    n_olga: int = 200_000,
     order: int = 3,
     epochs: int = 30,
     batch_size: int = 2000,
     device: str | None = None,
 ) -> Path:
-    """Train a (backend, role, chain) model and cache it; return its path."""
+    """Train a (backend, role, chain) model and cache it; return its path.
+
+    Only Ppost (observed-repertoire) models are trainable here. Pgen models are
+    shipped pre-built (``refseqs/kmer_pgen_*.npz``); they were generated offline
+    with OLGA, which is no longer a tcrsift dependency, so Pgen can't be
+    (re)trained at runtime — use the shipped model.
+    """
     if role == "ppost":
         seqs = _observed_seqs(chain, url=url)
     elif role == "pgen":
-        seqs = _olga_synth_seqs(chain, n_olga)
+        raise ValueError(
+            "Pgen models are shipped pre-built and cannot be trained at "
+            "runtime (OLGA, the synthetic-sequence generator, is no longer a "
+            "dependency). Use the shipped k-mer Pgen model, or regenerate "
+            "offline — see refseqs/PROVENANCE.md."
+        )
     else:
         raise ValueError(f"role must be 'pgen'/'ppost', got {role!r}")
 
@@ -369,9 +337,10 @@ def ensure_model(
     **never substitutes one role for another** — a Ppost request never falls
     back to a Pgen model (that would privilege Pgen and fake selection
     correction). Raises :class:`FileNotFoundError` (no model / no training
-    data) or :class:`ImportError` (Pgen training needs OLGA) so the caller
-    can decide how to degrade honestly. Cross-*estimator* fallback within a
-    role (e.g. TCRpeg-Pgen → k-mer-Pgen) is the caller's call, not this one's.
+    data) or :class:`ValueError` (Pgen can't be trained at runtime — use the
+    shipped k-mer model) so the caller can decide how to degrade honestly.
+    Cross-*estimator* fallback within a role (e.g. TCRpeg-Pgen → k-mer-Pgen) is
+    the caller's call, not this one's.
     """
     key = (chain.lower(), backend, role)
     if key in _CACHE:
@@ -396,8 +365,8 @@ def ensure_model(
             f"`tcrsift pgen train` or set auto_train=True"
         )
 
-    # Auto-train (tcrpeg). Propagates FileNotFoundError (no observed data for
-    # this chain/role) and ImportError (pgen needs OLGA) to the caller.
+    # Auto-train (tcrpeg, ppost only). Propagates FileNotFoundError (no observed
+    # data) and ValueError (Pgen isn't trainable at runtime) to the caller.
     if role == "ppost" and chain == "alpha" and url is None \
             and not cached_repertoire_file("alpha").is_file():
         raise FileNotFoundError(
