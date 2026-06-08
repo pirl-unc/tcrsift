@@ -90,7 +90,7 @@ version = {attr = "tcrsift.version.__version__"}
 packages = ["tcrsift", "tcrsift.refseqs"]
 
 [tool.setuptools.package-data]
-"tcrsift.refseqs" = ["*.fasta", "*.npz"]
+"tcrsift.refseqs" = ["*.fasta", "*.npz", "*.csv.gz", "PROVENANCE.md"]
 
 [project.urls]
 "Homepage" = "https://github.com/pirl-unc/tcrsift"
