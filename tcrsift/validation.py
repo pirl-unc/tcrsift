@@ -611,6 +611,53 @@ def pick_representative_cell(
     return clone_df.loc[rep_idx]
 
 
+# Common synonyms for tcrsift's canonical CDR3 column names. Keyed by a
+# normalized form (lowercased, non-alphanumerics stripped) so case and
+# separators (CDR3a / cdr3.alpha / TRA_cdr3) all collapse to one key. Applied
+# only when the canonical name is absent, and never overwrites an existing
+# canonical column. Deliberately conservative — extend as real inputs require.
+_CDR3_COLUMN_ALIASES: dict[str, str] = {
+    # -> CDR3_alpha
+    "cdr3a": "CDR3_alpha", "cdr3alpha": "CDR3_alpha", "cdr3tra": "CDR3_alpha",
+    "tracdr3": "CDR3_alpha", "alphacdr3": "CDR3_alpha", "cdr3aa": "CDR3_alpha",
+    # -> CDR3_beta
+    "cdr3b": "CDR3_beta", "cdr3beta": "CDR3_beta", "cdr3trb": "CDR3_beta",
+    "trbcdr3": "CDR3_beta", "betacdr3": "CDR3_beta", "cdr3ba": "CDR3_beta",
+    # -> CDR3ab (paired key)
+    "cdr3ab": "CDR3ab",
+}
+# "cdr3aa"/"cdr3ba" are ambiguous (alpha-AA? beta-AA?); included as alpha/beta
+# respectively only because that is their overwhelming real-world meaning. If a
+# dataset uses them otherwise, rename upstream before calling tcrsift.
+
+
+def _normalize_colname(name: object) -> str:
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+def canonicalize_clonotype_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename common CDR3 column-name synonyms to tcrsift's canonical names.
+
+    Maps e.g. ``CDR3a`` → ``CDR3_alpha``, ``CDR3b`` → ``CDR3_beta`` (case- and
+    separator-insensitive; see :data:`_CDR3_COLUMN_ALIASES`). A canonical column
+    already present is never overwritten, and each canonical target is filled
+    from at most one synonym. Returns a renamed copy (or the input unchanged
+    when there is nothing to rename). Does NOT build ``CDR3ab`` from separate
+    alpha/beta — that pairing is :func:`tcrsift.aggregate_clonotypes`' job.
+    """
+    canonical = {"CDR3_alpha", "CDR3_beta", "CDR3ab"}
+    used_targets = {c for c in canonical if c in df.columns}
+    rename: dict[str, str] = {}
+    for col in df.columns:
+        if col in canonical:
+            continue
+        target = _CDR3_COLUMN_ALIASES.get(_normalize_colname(col))
+        if target and target not in used_targets:
+            rename[col] = target
+            used_targets.add(target)
+    return df.rename(columns=rename) if rename else df
+
+
 def validate_clonotype_df(
     df: pd.DataFrame,
     for_filtering: bool = False,
@@ -639,11 +686,18 @@ def validate_clonotype_df(
     # Basic validation
     df = validate_dataframe(df, "Clonotype DataFrame", min_rows=1)
 
+    # Accept common CDR3 column-name synonyms (CDR3a/CDR3b, cdr3_alpha, …) by
+    # renaming them to the canonical names before the column checks below.
+    df = canonicalize_clonotype_columns(df)
+
     # Check for clone identifier
     if "CDR3ab" not in df.columns and "CDR3_beta" not in df.columns:
         raise TCRsiftValidationError(
             "Clonotype DataFrame must have 'CDR3ab' or 'CDR3_beta' column",
-            hint="Make sure you're using output from tcrsift.aggregate_clonotypes().",
+            hint="Use output from tcrsift.aggregate_clonotypes(), or provide a "
+            "recognized CDR3 column. Common synonyms (CDR3a/CDR3b, cdr3_alpha, "
+            "TRB_cdr3, …) are auto-canonicalized; rename yours to CDR3_beta / "
+            "CDR3_alpha / CDR3ab if it isn't picked up.",
         )
 
     if for_filtering:

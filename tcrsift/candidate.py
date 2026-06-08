@@ -115,13 +115,16 @@ def select_candidates(
             df[track_col] = False
             continue
         # Rank the tier3+ subset by descending score; ties broken by
-        # original order. NaN scores sort to the bottom.
-        pool = df.loc[pool_mask, col]
-        if pool.empty or pool.dropna().empty:
+        # original order. Drop NaN-scored clones BEFORE ranking: a clone with
+        # no signature score is not a top pick. (Ranking with na_option="bottom"
+        # and nsmallest(top_n) would pull NaN-scored clones in whenever the
+        # non-NaN pool is smaller than top_n — flagging zero-evidence clones.)
+        pool = df.loc[pool_mask, col].dropna()
+        if pool.empty:
             df[track_col] = False
             continue
         top_indices = (
-            pool.rank(ascending=False, method="first", na_option="bottom")
+            pool.rank(ascending=False, method="first")
             .nsmallest(top_n)
             .index
         )

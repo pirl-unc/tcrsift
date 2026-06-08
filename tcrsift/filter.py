@@ -350,7 +350,7 @@ def filter_clonotypes_threshold(
     clonotypes: pd.DataFrame,
     min_cells: int = 2,
     min_frequency: float = 0.0,
-    max_conditions: int = 999,
+    max_conditions: int | None = None,
     require_complete: bool = True,
     tcell_type: str | None = None,
     exclude_viral: bool = False,
@@ -376,9 +376,10 @@ def filter_clonotypes_threshold(
         Minimum cell count per clone
     min_frequency : float
         Minimum frequency in any condition
-    max_conditions : int
-        Maximum number of conditions clone can appear in. Uses antigen/condition
-        counts when available, otherwise sample count is used as a proxy.
+    max_conditions : int or None
+        Maximum number of conditions a clone can appear in. ``None`` (default)
+        disables the filter. Uses antigen/condition counts when available,
+        otherwise sample count is used as a proxy.
     require_complete : bool
         Require both alpha and beta chains
     tcell_type : str, optional
@@ -397,7 +398,8 @@ def filter_clonotypes_threshold(
     clonotypes = validate_clonotype_df(clonotypes, for_filtering=True)
     validate_numeric_param(min_cells, "min_cells", min_value=0)
     validate_numeric_param(min_frequency, "min_frequency", min_value=0, max_value=1)
-    validate_numeric_param(max_conditions, "max_conditions", min_value=1)
+    if max_conditions is not None:
+        validate_numeric_param(max_conditions, "max_conditions", min_value=1)
 
     if tcell_type is not None:
         valid_types = ["cd8", "cd4"]
@@ -433,7 +435,7 @@ def filter_clonotypes_threshold(
 
     # Condition specificity filter
     condition_counts, condition_count_col = _get_condition_count_info(df)
-    if max_conditions < 999 and condition_counts is not None:
+    if max_conditions is not None and condition_counts is not None:
         before = len(df)
         df = df[condition_counts <= max_conditions]
         if verbose:
@@ -576,8 +578,17 @@ def assign_tiers_threshold(
     else:
         viral_mask = pd.Series(True, index=df.index)
 
-    # Assign tiers from highest to lowest (so higher tiers override)
-    for tier_name in reversed(sorted(tier_definitions.keys())):
+    # Assign from most-permissive to strictest so the strictest tier a clone
+    # qualifies for wins. Order by actual threshold strictness — (min_cells,
+    # min_frequency) ascending — NOT by sorted tier NAME: lexical name order
+    # breaks for custom tier labels (e.g. "tier10" sorts before "tier2", or
+    # non-"tierN" names), silently mis-ranking the override precedence. For the
+    # default tier1..tier5 this yields the identical order.
+    def _strictness(name: str) -> tuple[float, float]:
+        d = tier_definitions[name]
+        return (d.get("min_cells", 0), d.get("min_frequency", 0.0))
+
+    for tier_name in sorted(tier_definitions.keys(), key=_strictness):
         tier_def = tier_definitions[tier_name]
 
         cell_mask = df["cell_count"] >= tier_def["min_cells"]

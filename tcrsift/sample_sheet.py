@@ -416,7 +416,11 @@ def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
 
 def _load_csv_sample_sheet(path: Path, sep: str = ",") -> SampleSheet:
     """Load sample sheet from CSV/TSV file."""
-    df = pd.read_csv(path, sep=sep)
+    # Force ID-bearing columns to string so pandas type inference doesn't read
+    # e.g. sample "0012" as int 12 (leading zeros dropped) or "12" as 12.0,
+    # which would collide distinct samples and diverge from the YAML loader.
+    # (pandas ignores dtype keys for columns not present in the file.)
+    df = pd.read_csv(path, sep=sep, dtype={"sample": str, "patient_id": str})
 
     # Required column
     if "sample" not in df.columns:

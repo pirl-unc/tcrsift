@@ -3194,7 +3194,7 @@ def create_tcr_sequence_pdf(
                 ann_y = 60 + 13 * min(len(disp), 18)
                 c.setFillColor(colors.black)
                 c.setFont("Helvetica-Bold", label_font_size)
-                c.drawString(30, ann_y, "Selection evidence:")
+                c.drawString(30, ann_y, "Selection:")
                 ann_y -= 13
                 c.setFont("Helvetica", label_font_size - 1)
                 for line in disp:
