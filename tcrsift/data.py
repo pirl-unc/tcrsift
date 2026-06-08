@@ -12,11 +12,7 @@
 
 from __future__ import annotations
 
-from os import PathLike
-from os.path import join
-
 import pandas as pd
-import scanpy as sc
 
 from .genes import TCELL_MARKERS, build_versioned_rename_map
 
@@ -140,48 +136,3 @@ def annotate_combined_df(
     df["filter:all"] = df[filter_cols].all(axis=1)
     df["filtered_confident_and_complete"] = df["confident_and_complete"] & df["filter:all"]
     return df
-
-
-def load_combined_tsv(multisample_tsv_path: str | PathLike, **kwargs):
-    """
-    Load a TSV file with multiple samples of combined gene expression and VDJ sequence data.
-
-    multisample_tsv_path
-        Expected columns:
-        - "barcode" or "Barcode": nucleotide barcode for each cell
-        - "sample" or "Sample": antigen specific expansion pool name
-        - "cdr3_aa1" or "CDR3_alpha": amino acid sequence of TCR alpha chain
-        - "cdr3_aa2" or "CDR3_beta": amino acid sequence of TCR beta chain
-        - "nCount_RNA": number of reads per cell
-        - "nFeature_RNA": number of genes detected per cell
-
-        --- Gene expression columns ---
-        - "ENSG00000167286.10" (or CD3D): read count of CD3 delta chain
-        - "ENSG00000198851.10" (or CD3E): read count of CD3 epsilon chain
-        - "ENSG00000160654.11" (or "CD3G"): read count of CD3 gamma chain
-        - "ENSG00000010610.10" (or "CD4"):  read count of CD4
-        - "ENSG00000153563.16" (or "CD8A"): read count of CD8 alpha chain
-        - "ENSG00000172116.23" (or "CD8B"): read count of CD8 beta chain
-
-    tcell_annotation_ratio_cutoff
-        Ratio of CD4 to CD8 RNA reads to consider a cell confidently CD4+ or CD8+.
-
-
-    """
-    return annotate_combined_df(pd.read_csv(multisample_tsv_path, sep="\t"), **kwargs)
-
-
-def load_sample_cellranger_count_and_vdj_outputs(
-    gene_expression__dir: str | PathLike,
-    vdj_dir: str | PathLike,
-    vdj_clonotypes_filename="clonotypes.csv",
-    vdj_annotations_filename="all_contig_annotations.csv",
-):
-    gene_expression_matrix_dir = join(gene_expression__dir, "filtered_feature_bc_matrix")
-    vdj_clonotypes_csv_path = join(vdj_dir, vdj_clonotypes_filename)
-    vdj_annotations_csv_path = join(vdj_dir, vdj_annotations_filename)
-    gene_expression_data = sc.read_10x_mtx(gene_expression_matrix_dir, var_names="gene_ids")
-    df_clonotypes = pd.read_csv(vdj_clonotypes_csv_path)
-    df_annotations = pd.read_csv(vdj_annotations_csv_path)
-    print("Loaded data")
-    return (gene_expression_data, df_clonotypes, df_annotations)

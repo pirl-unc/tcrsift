@@ -89,10 +89,6 @@ def set_plot_format(fmt: str | None) -> None:
     _PLOT_FORMAT = fmt
 
 
-def get_plot_format() -> str:
-    return _PLOT_FORMAT
-
-
 def set_polished_style(style: str = "clean-white") -> None:
     """Apply a publication style profile to matplotlib (#123 report polished).
 

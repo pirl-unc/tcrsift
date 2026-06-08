@@ -10,17 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "2.54.0"
+__version__ = "2.55.0"
 
 version_string = f"v{__version__}"
 
 
 def print_version():
     print(version_string)
-
-
-def print_name_and_version():
-    print(f"TCRsift {version_string}")
 
 
 if __name__ == "__main__":

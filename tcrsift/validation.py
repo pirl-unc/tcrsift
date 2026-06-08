@@ -611,49 +611,6 @@ def pick_representative_cell(
     return clone_df.loc[rep_idx]
 
 
-def validate_sample_sheet_entry(
-    entry: dict,
-    index: int,
-) -> list[str]:
-    """
-    Validate a single sample sheet entry.
-
-    Parameters
-    ----------
-    entry : dict
-        Sample entry to validate
-    index : int
-        Entry index for error messages
-
-    Returns
-    -------
-    list of str
-        List of warning messages (empty if valid)
-    """
-    warnings = []
-
-    # Required fields
-    if "sample_name" not in entry and "name" not in entry:
-        raise TCRsiftValidationError(
-            f"Sample sheet entry {index + 1} is missing 'sample_name' or 'name' field",
-            hint="Each sample must have a name. Check your sample sheet format.",
-        )
-
-    # Check paths exist
-    for path_field in ["vdj_path", "gex_path"]:
-        if path_field in entry:
-            path = Path(entry[path_field])
-            if not path.exists():
-                warnings.append(f"Sample {index + 1}: {path_field} does not exist: {path}")
-
-    # Check for unusual values
-    sample_name = entry.get("sample_name") or entry.get("name", "")
-    if not sample_name.strip():
-        warnings.append(f"Sample {index + 1} has empty name")
-
-    return warnings
-
-
 def validate_clonotype_df(
     df: pd.DataFrame,
     for_filtering: bool = False,
@@ -763,36 +720,6 @@ def validate_numeric_param(
         )
 
     return value
-
-
-def log_validation_summary(
-    n_valid: int,
-    n_total: int,
-    item_name: str = "items",
-    warnings: list[str] | None = None,
-):
-    """
-    Log a summary of validation results.
-
-    Parameters
-    ----------
-    n_valid : int
-        Number of valid items
-    n_total : int
-        Total number of items
-    item_name : str
-        Name of items for message
-    warnings : list of str, optional
-        Warning messages to log
-    """
-    pct = n_valid / n_total * 100 if n_total > 0 else 0
-    logger.info(f"Validated {n_valid}/{n_total} {item_name} ({pct:.1f}% passed)")
-
-    if warnings:
-        for w in warnings[:10]:  # Limit to first 10 warnings
-            logger.warning(w)
-        if len(warnings) > 10:
-            logger.warning(f"... and {len(warnings) - 10} more warnings")
 
 
 # =============================================================================
