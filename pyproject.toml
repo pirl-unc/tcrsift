@@ -40,9 +40,9 @@ dependencies = [
     # lookups); openpyxl backs Excel export. Both permissively licensed.
     "pyensembl>=2.0.0,<3.0.0",
     "openpyxl>=3.0.0,<4.0.0",
-    # TCRpeg is the default Pgen/Ppost backend (tcrsift.seqprob), auto-trained
-    # on first use — so it + torch are core, not an extra. (OLGA/SONIA stay
-    # optional: GPL-3.0, and only the legacy olga_ppost path needs them.)
+    # TCRpeg is a Ppost backend (tcrsift.seqprob), auto-trained on first use —
+    # so it + torch are core, not an extra. (OLGA/SONIA are no longer a
+    # dependency: the shipped k-mer Pgen/Ppost models need nothing at runtime.)
     "tcrpeg>=1.0.0",
     "torch>=2.0.0",
 ]
@@ -70,12 +70,6 @@ reports = [
 # falls back to a top-intersections bar chart, so this is purely a nicer view.
 plots = [
     "upsetplot>=0.8",
-]
-# Gold-standard Pgen/Ppost (#143). OLGA + SONIA are GPL-3.0 — kept as a
-# runtime-optional extra (NOT vendored) so tcrsift stays Apache-2.0.
-pgen = [
-    "olga>=1.2.4",
-    "sonia>=0.0.51",
 ]
 full = [
     "reportlab>=4.0.0,<5.0.0",
