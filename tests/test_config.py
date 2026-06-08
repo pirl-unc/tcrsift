@@ -75,6 +75,22 @@ def test_insilico_filter_survives_to_dict_and_merge():
     assert merged.insilico_filter == spec
 
 
+def test_clonotype_pgen_ppost_default_on():
+    """Every run annotates clonotypes with k-mer Pgen/Ppost by default, so
+    ppost_alpha/ppost_beta are available for PRISM without a separate step."""
+    assert TCRsiftConfig().clonotype.add_pgen_ppost is True
+
+
+def test_no_pgen_ppost_flag_parses_and_overrides():
+    from tcrsift.cli import create_parser
+
+    a = create_parser().parse_args(["run", "-s", "s.csv", "-o", "out", "--no-pgen-ppost"])
+    assert a.no_pgen_ppost is True
+    # default off (so the k-mer Pgen/Ppost annotation runs) when not passed
+    b = create_parser().parse_args(["run", "-s", "s.csv", "-o", "out"])
+    assert getattr(b, "no_pgen_ppost", False) is False
+
+
 def test_baseline_markers_default_is_none():
     """Defaults to None so the format-module default (CTY) is used unchanged."""
     assert TCRsiftConfig().output.baseline_markers is None
