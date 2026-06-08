@@ -141,6 +141,27 @@ class TestSampleIntegrityQC:
         assert out.loc["A", "gex_vdj_overlap_fraction"] == pytest.approx(0.80)
         assert out.loc["C", "n_with_vdj"] == 10
 
+    def test_gex_vdj_overlap_duplicate_index_across_samples(self):
+        # 10x reuses one barcode whitelist and load_samples does NOT uniquify
+        # obs_names, so the same label appears in multiple samples. Per-sample
+        # counts must not bleed across samples and the fraction must stay <= 1.0
+        # (the old label-based .loc pulled rows from every sample, F7).
+        from tcrsift.qc import gex_vdj_overlap
+
+        obs = pd.DataFrame(
+            {
+                "sample": ["A", "A", "B", "B"],
+                "CDR3_beta": ["CASSLF", None, "CASSLF", "CASSLF"],
+            },
+            index=["BC1-1", "BC2-1", "BC1-1", "BC3-1"],  # BC1-1 in both A and B
+        )
+        out = gex_vdj_overlap(_adata(obs)).set_index("sample")
+        assert out.loc["A", "n_cells"] == 2
+        assert out.loc["A", "n_with_vdj"] == 1  # only A's own row, not B's BC1-1
+        assert out.loc["A", "gex_vdj_overlap_fraction"] == pytest.approx(0.5)
+        assert out.loc["B", "n_with_vdj"] == 2
+        assert (out["gex_vdj_overlap_fraction"] <= 1.0).all()
+
     def test_duplicate_input_high_jaccard(self):
         from tcrsift.qc import inter_sample_barcode_jaccard
         jac = inter_sample_barcode_jaccard(self._data())

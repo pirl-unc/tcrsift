@@ -699,13 +699,21 @@ def gex_vdj_overlap(
     else:
         has_vdj = pd.Series(False, index=obs.index)
     rows = []
+    # Index POSITIONALLY, not by label: load_samples concatenates without
+    # making obs_names unique and 10x reuses one barcode whitelist across
+    # samples, so `has_vdj.loc[barcode]` would pull rows from *other* samples
+    # (inflating counts; fraction could exceed 1.0). A boolean mask over the
+    # sample column is immune to duplicate obs indices.
+    has_vdj_arr = has_vdj.to_numpy()
     if sample_col in obs.columns:
-        groups = obs.groupby(sample_col, observed=True).groups.items()
+        sample_vals = obs[sample_col]
+        keys = list(sample_vals.dropna().unique())
+        masks = [(s, (sample_vals == s).to_numpy()) for s in keys]
     else:
-        groups = [("(all)", obs.index)]
-    for sample, idx in groups:
-        n = len(idx)
-        nv = int(has_vdj.loc[idx].sum())
+        masks = [("(all)", np.ones(len(obs), dtype=bool))]
+    for sample, mask in masks:
+        n = int(mask.sum())
+        nv = int(has_vdj_arr[mask].sum())
         rows.append({
             sample_col: sample, "n_cells": n, "n_with_vdj": nv,
             "gex_vdj_overlap_fraction": nv / n if n else float("nan"),

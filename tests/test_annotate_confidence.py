@@ -140,6 +140,51 @@ class TestComputeMatchScore:
 # Integration tests through match_clonotypes
 
 
+class TestAlphaLessPairedMatch:
+    """A DB row with an empty/NA alpha is beta-only, not paired (F5/F6)."""
+
+    def test_alphaless_clone_falls_back_to_b_only(self):
+        # ab_with_partial (the default). Alpha-less clone vs empty-alpha DB row
+        # must be b_only, NOT a false full-confidence "ab".
+        clones = pd.DataFrame({"CDR3_alpha": [None], "CDR3_beta": ["CASS"]})
+        db = _db([{"cdr3_alpha": "", "cdr3_beta": "CASS", "reference": "r1"}])
+        out = match_clonotypes(
+            clones, db, match_strictness="ab_with_partial",
+            verbose=False, show_progress=False,
+        )
+        assert out["db_match_strength"].iloc[0] == "b_only"
+
+    def test_alphaless_clone_vs_na_alpha_db_still_annotates(self):
+        # F6: DB alpha as pd.NA must not cause a silent no-match for a beta hit.
+        clones = pd.DataFrame({"CDR3_alpha": [None], "CDR3_beta": ["CASS"]})
+        db = _db([{"cdr3_alpha": pd.NA, "cdr3_beta": "CASS", "reference": "r1"}])
+        out = match_clonotypes(
+            clones, db, match_strictness="ab_with_partial",
+            verbose=False, show_progress=False,
+        )
+        assert out["db_match_strength"].iloc[0] == "b_only"
+
+    def test_alphaless_clone_no_paired_in_strict_ab(self):
+        # strict_ab has no b-fallback; an alpha-less clone yields no paired match.
+        clones = pd.DataFrame({"CDR3_alpha": [None], "CDR3_beta": ["CASS"]})
+        db = _db([{"cdr3_alpha": "", "cdr3_beta": "CASS", "reference": "r1"}])
+        out = match_clonotypes(
+            clones, db, match_strictness="strict_ab",
+            verbose=False, show_progress=False,
+        )
+        assert out["db_match_strength"].iloc[0] != "ab"
+
+    def test_real_paired_clone_still_matches_ab(self):
+        # Guard against over-correction: a genuine αβ clone still matches "ab".
+        clones = pd.DataFrame({"CDR3_alpha": ["CAVX"], "CDR3_beta": ["CASS"]})
+        db = _db([{"cdr3_alpha": "CAVX", "cdr3_beta": "CASS", "reference": "r1"}])
+        out = match_clonotypes(
+            clones, db, match_strictness="ab_with_partial",
+            verbose=False, show_progress=False,
+        )
+        assert out["db_match_strength"].iloc[0] == "ab"
+
+
 class TestVGeneAgreementColumn:
     def test_agreement_when_clone_and_db_v_genes_match(self):
         clones = pd.DataFrame({
