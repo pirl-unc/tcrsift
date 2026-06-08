@@ -85,6 +85,25 @@ class TestSelectFreqPrismPerCondition:
         for _, r in out[out["selection_route"] == "both"].iterrows():
             assert r["rank_within_route"] >= 1
 
+    def test_rows_emitted_in_selection_rank_order(self):
+        # #230: rows must be serialized in a deterministic "order of selected
+        # clones" — within each condition the freq route by ascending rank
+        # (incl. 'both'), then prism-only clones by ascending rank. The old
+        # ``set(top_f) | set(top_p)`` iteration had no such contract and churned
+        # selection_native.csv row order across processes (hash-seed dependent).
+        feat = _fixture(seed=7)
+        out = select_freq_prism_per_condition(feat, condition_col="condition")
+        for _, grp in out.groupby("condition", sort=False):
+            is_prism_only = (grp["selection_route"] == "prism").to_numpy()
+            # All freq-route rows come before any prism-only row.
+            split = is_prism_only.argmax() if is_prism_only.any() else len(grp)
+            assert not is_prism_only[:split].any()
+            # Each block is strictly ascending by rank_within_route.
+            freq_ranks = list(grp["rank_within_route"].iloc[:split])
+            prism_ranks = list(grp["rank_within_route"].iloc[split:])
+            assert freq_ranks == sorted(freq_ranks)
+            assert prism_ranks == sorted(prism_ranks)
+
     def test_gate_excludes_low_freq(self):
         feat = pd.DataFrame([
             {"CDR3ab": "A", "condition": "c", "frequency": 0.02,
