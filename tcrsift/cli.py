@@ -616,6 +616,7 @@ def cmd_assemble(args):
         trbc1_allele=args.trbc1_allele,
         trbc2_allele=args.trbc2_allele,
         stop_codons=stop_codons,
+        leader_fallback=getattr(args, "leader_fallback", None),
     )
 
     # Fail closed on unverified (canonical-fallback) constructs unless the
@@ -1651,6 +1652,7 @@ def cmd_run(args):
             stop_codons=tuple(
                 getattr(config.assemble, "stop_codons", ("TAA", "TGA"))
             ),
+            leader_fallback=getattr(config.assemble, "leader_fallback", None),
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -3378,6 +3380,16 @@ CONDITIONALLY REQUIRED:
     )
     asm_leaders.add_argument(
         "--no-leaders", action="store_true", help="Disable leaders on both chains"
+    )
+    asm_leaders.add_argument(
+        "--leader-fallback",
+        choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC"],
+        default=None,
+        metavar="NAME",
+        help="With --*-leader=from_contig: when a contig-extracted signal "
+        "peptide is implausible (weak-Kozak over-capture, out-of-range length, "
+        "no Met/h-region), substitute this curated leader instead of keeping "
+        "the flagged extraction (#263). Default: keep + flag.",
     )
     asm_leaders.add_argument(
         "--leaders-from-contigs",

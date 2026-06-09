@@ -227,6 +227,10 @@ class AssembleConfig:
     enabled: bool = True
     alpha_leader: str | None = "CD28"  # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
     beta_leader: str | None = "CD8A"  # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
+    # Curated SP to substitute when a from_contig leader is implausible (#263).
+    # None (default) keeps the contig-extracted leader + its {chain}_leader_qc
+    # flag; a key (CD8A/CD28/IgK/TRAC/TRBC) swaps in that curated signal peptide.
+    leader_fallback: str | None = None
     include_constant: bool = True
     constant_source: str = "ensembl"
     linker: str = "T2A"
@@ -432,6 +436,7 @@ class TCRsiftConfig:
             # Assemble
             "alpha_leader": ("assemble", "alpha_leader"),
             "beta_leader": ("assemble", "beta_leader"),
+            "leader_fallback": ("assemble", "leader_fallback"),
             "include_constant": ("assemble", "include_constant"),
             "constant_source": ("assemble", "constant_source"),
             "linker": ("assemble", "linker"),
