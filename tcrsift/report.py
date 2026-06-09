@@ -201,18 +201,25 @@ def bundle_figure_pdf(
 _ALPHA_COL_TO_CELL = {
     "CDR3_alpha": "cdr3", "alpha_v_gene": "v_gene", "alpha_j_gene": "j_gene",
     "alpha_c_gene": "c_gene", "VDJ_alpha_aa": "vdj_aa", "VDJ_alpha_nt": "vdj_nt",
-    # Each variant MUST point at its OWN α's contig, not the merged clone's
-    # (which only carries the dominant α's contig ids). Without this, the
-    # non-dominant α variant searches the wrong contigs in
-    # _extract_c_region_nt_from_contig → no_contig → blanket-N fallback, even
-    # when that α is fully sequenced through the C region (#235 dual-α footgun).
-    "alpha_contig_ids": "contig_id",
 }
+# ``alpha_contig_ids`` is NOT refreshed from the rep cell here — it's set
+# per-variant from the co-expressing cells' contigs (see expand_dual_alpha_
+# variants). The merged clone's list only carries the DOMINANT α's contigs, so
+# without a per-variant override the non-dominant α variant searches the wrong
+# contigs in _extract_c_region_nt_from_contig → no_contig → blanket-N fallback,
+# even when that α is fully sequenced through the C region (#235 dual-α footgun).
 
 
 def _rep_cell_both_alphas(obs, beta: str, a_lo: str, a_hi: str):
-    """Return ``(alpha_cdr3 -> slot_prefix, cell_row)`` for the highest-UMI cell
-    that genuinely co-expresses both alphas with this beta, else None."""
+    """Return ``(alpha_cdr3 -> slot_prefix, cell_row, alpha_contigs)`` for the
+    highest-UMI cell that genuinely co-expresses both alphas with this beta,
+    else None.
+
+    ``alpha_contigs`` maps each α CDR3 to a ``;``-joined list of EVERY contig id
+    for that α across ALL co-expressing cells (not just the rep cell) — so the
+    per-α C-region extraction keeps its multi-contig consensus and maximal
+    coverage, mirroring how the merged clone's contig list is built. The rep
+    cell still supplies the VDJ/gene bytes (one coherent source)."""
     s = obs.astype({c: str for c in ("TRA_1_cdr3", "TRA_2_cdr3", "TRB_1_cdr3") if c in obs.columns})
     if not {"TRA_1_cdr3", "TRA_2_cdr3", "TRB_1_cdr3"} <= set(obs.columns):
         return None
@@ -228,7 +235,22 @@ def _rep_cell_both_alphas(obs, beta: str, a_lo: str, a_hi: str):
         if c in cells.columns
     )
     cell = cells.loc[tot.idxmax()]
-    return {str(cell["TRA_1_cdr3"]): "TRA_1", str(cell["TRA_2_cdr3"]): "TRA_2"}, cell
+    # Collect each α's contig ids across all co-expressing cells (the α may sit
+    # in TRA_1 in one cell, TRA_2 in another), de-duplicated, order-preserving.
+    s_cells = s.loc[cells.index]
+    alpha_contigs: dict[str, str] = {}
+    for a in (a_lo, a_hi):
+        ids: list[str] = []
+        for slot in ("TRA_1", "TRA_2"):
+            cid_col = f"{slot}_contig_id"
+            if cid_col not in cells.columns:
+                continue
+            hit = cells[cid_col][(s_cells[f"{slot}_cdr3"] == a).values]
+            for cid in hit.dropna().astype(str):
+                if cid and cid.lower() != "nan" and cid not in ids:
+                    ids.append(cid)
+        alpha_contigs[a] = ";".join(ids)
+    return {str(cell["TRA_1_cdr3"]): "TRA_1", str(cell["TRA_2_cdr3"]): "TRA_2"}, cell, alpha_contigs
 
 
 def expand_dual_alpha_variants(
@@ -259,7 +281,7 @@ def expand_dual_alpha_variants(
         beta = str(r.get("CDR3_beta", "") or "")
         rc = _rep_cell_both_alphas(obs, beta, *sorted(alphas)) if len(alphas) == 2 else None
         if rc:
-            amap, cell = rc
+            amap, cell, alpha_contigs = rc
             for a in alphas:
                 prefix = amap.get(a)
                 if prefix is None:
@@ -269,6 +291,11 @@ def expand_dual_alpha_variants(
                     cellcol = f"{prefix}_{suf}"
                     if cellcol in cell.index:
                         vr[col] = cell[cellcol]
+                # Point this variant at ITS OWN α's contigs (across the
+                # co-expressing cells), never the merged clone's dominant-α
+                # list. None when no contig id is available, so extraction
+                # falls back cleanly rather than searching the wrong α (#235).
+                vr["alpha_contig_ids"] = alpha_contigs.get(a) or None
                 vr["CDR3ab"] = f"{a}_{beta}"
                 vr["dual_alpha_variant"] = a
                 vr["selected_clone"] = r["CDR3ab"]

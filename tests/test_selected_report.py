@@ -139,9 +139,11 @@ class TestDualAlphaContigWiring:
         assert cid[f"{a1}_{beta}"] == "slot2_contig" and jg[f"{a1}_{beta}"] == "TRAJ1"
         assert cid[f"{a2}_{beta}"] == "slot1_contig" and jg[f"{a2}_{beta}"] == "TRAJ2"
 
-    def test_obs_without_contig_id_columns_does_not_crash_or_misassign(self):
-        # Older h5ad lacking TRA_*_contig_id: graceful — keep the clone's value,
-        # never silently assign the wrong α's contig.
+    def test_obs_without_contig_id_columns_clears_to_none(self):
+        # Older h5ad lacking TRA_*_contig_id: no per-α contig is recoverable, so
+        # the variant's alpha_contig_ids is cleared to None — NOT left as the
+        # merged clone's dominant-α list (which would feed the WRONG α into
+        # extraction). None → extraction falls back cleanly.
         a1, a2, beta = "CAAAF", "CBBBF", "CASSBETAF"
         obs = pd.DataFrame([{
             "TRA_1_cdr3": a1, "TRA_2_cdr3": a2, "TRB_1_cdr3": beta,
@@ -150,11 +152,11 @@ class TestDualAlphaContigWiring:
             "TRA_2_vdj_aa": a2, "TRA_2_vdj_nt": back_translate(a2),
         }])
         out, _ = expand_dual_alpha_variants(self._clone(a1, a2, beta), obs)
-        # No contig_id slots → both keep the (unchanged) clone-level value.
-        assert (out["alpha_contig_ids"] == "DOMINANT_only_c1;DOMINANT_only_c2").all()
+        assert out["alpha_contig_ids"].isna().all()
 
     def test_one_slot_missing_contig_id_is_per_variant(self):
-        # Only TRA_1 has a contig id; the TRA_2 variant must NOT inherit TRA_1's.
+        # Only TRA_1 has a contig id; the TRA_2 variant must NOT inherit TRA_1's
+        # (or the dominant-α clone list) — it clears to None.
         a1, a2, beta = "CAAAF", "CBBBF", "CASSBETAF"
         obs = pd.DataFrame([{
             "TRA_1_cdr3": a1, "TRA_2_cdr3": a2, "TRB_1_cdr3": beta,
@@ -167,9 +169,30 @@ class TestDualAlphaContigWiring:
         out, _ = expand_dual_alpha_variants(self._clone(a1, a2, beta), obs)
         cid = dict(zip(out["CDR3ab"], out["alpha_contig_ids"]))
         assert cid[f"{a1}_{beta}"] == "only_a1_contig"
-        # a2 must NOT be given a1's contig; either NaN or the clone value — never
-        # 'only_a1_contig' (which would feed the WRONG α into extraction).
-        assert cid[f"{a2}_{beta}"] != "only_a1_contig"
+        # a2 has no contig → None (never a1's contig, never the dominant list).
+        assert pd.isna(cid[f"{a2}_{beta}"])
+
+    def test_multi_cell_contigs_unioned_per_alpha(self):
+        # Each α's contig list spans ALL co-expressing cells (not just the rep
+        # cell), de-duplicated — preserving the multi-contig consensus / max
+        # C-region coverage the merged clone's list had.
+        a1, a2, beta = "CAAAF", "CBBBF", "CASSBETAF"
+        common = dict(
+            TRB_1_cdr3=beta, TRA_1_cdr3=a1, TRA_2_cdr3=a2,
+            TRA_1_vdj_aa=a1, TRA_1_vdj_nt=back_translate(a1),
+            TRA_2_vdj_aa=a2, TRA_2_vdj_nt=back_translate(a2),
+        )
+        obs = pd.DataFrame([
+            {**common, "TRA_1_umis": 9, "TRA_2_umis": 9, "TRB_1_umis": 9,
+             "TRA_1_contig_id": "cellA_a1", "TRA_2_contig_id": "cellA_a2"},
+            {**common, "TRA_1_umis": 3, "TRA_2_umis": 3, "TRB_1_umis": 3,
+             "TRA_1_contig_id": "cellB_a1", "TRA_2_contig_id": "cellA_a2"},  # dup a2
+        ])
+        out, _ = expand_dual_alpha_variants(self._clone(a1, a2, beta), obs)
+        cid = dict(zip(out["CDR3ab"], out["alpha_contig_ids"]))
+        # a1 seen in two cells → both contigs; a2 duplicated → de-duped to one.
+        assert set(cid[f"{a1}_{beta}"].split(";")) == {"cellA_a1", "cellB_a1"}
+        assert cid[f"{a2}_{beta}"] == "cellA_a2"
 
     def test_three_alphas_not_expanded(self):
         # >2 α in merged_alpha_partners: expansion only handles the 2-α case;
