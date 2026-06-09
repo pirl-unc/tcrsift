@@ -1873,3 +1873,76 @@ class TestJunctionSeamQC:
             if m.severity == "load_bearing" and "junction" in m
         ]
         assert not seam, f"junction-present chain must pass; got {[str(m) for m in seam]}"
+
+
+class TestContigFidelityGate:
+    """Fail-closed fidelity gate (#241/#243/#244): unverified (canonical
+    fallback) constructs are refused unless explicitly allowed, plus dual-α
+    surfacing (#237)."""
+
+    @staticmethod
+    def _row(alpha_src, beta_src):
+        return {
+            "full_alpha_aa": "M" + "A" * 250,
+            "full_beta_aa": "M" + "B" * 260,
+            "alpha_junction_residue_source": alpha_src,
+            "beta_junction_residue_source": beta_src,
+        }
+
+    def test_summary_counts(self):
+        from tcrsift.assemble import assemble_fidelity_summary
+
+        df = pd.DataFrame([
+            self._row("contig", "contig"),                       # verified
+            self._row("canonical_fallback", "contig"),           # α fallback
+            self._row("canonical_fallback", "canonical_fallback"),  # both
+        ])
+        s = assemble_fidelity_summary(df)
+        assert (s["n_total"], s["n_verified"], s["n_unverified"]) == (3, 1, 2)
+        assert s["alpha_fallback"] == 2
+        assert s["beta_fallback"] == 1
+
+    def test_enforce_raises_when_unverified_and_not_allowed(self):
+        from tcrsift.assemble import enforce_contig_fidelity
+        from tcrsift.validation import TCRsiftValidationError
+
+        df = pd.DataFrame([self._row("canonical_fallback", "contig")])
+        with pytest.raises(TCRsiftValidationError, match="NO contig verification"):
+            enforce_contig_fidelity(df, allow_canonical_fallback=False)
+
+    def test_enforce_returns_summary_when_allowed(self):
+        from tcrsift.assemble import enforce_contig_fidelity
+
+        df = pd.DataFrame([self._row("canonical_fallback", "contig")])
+        msg = enforce_contig_fidelity(df, allow_canonical_fallback=True)
+        assert "NO contig verification" in msg
+
+    def test_enforce_silent_when_all_verified(self):
+        from tcrsift.assemble import enforce_contig_fidelity
+
+        df = pd.DataFrame([self._row("contig", "contig")])
+        assert enforce_contig_fidelity(df, allow_canonical_fallback=False) == ""
+
+    def test_dual_alpha_and_verified_columns_on_assembly(self):
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_a = "CASS" + "A" * 50 + "VLPHA"
+        vdj_b = "CASS" + "G" * 50 + "VETA"
+        base = {
+            "CDR3_alpha": vdj_a, "CDR3_beta": vdj_b,
+            "VDJ_alpha_aa": vdj_a, "VDJ_beta_aa": vdj_b,
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1", "samples": "S1",
+        }
+        df = pd.DataFrame([
+            {**base, "CDR3ab": "c1", "merged_alpha_partners": ""},
+            {**base, "CDR3ab": "c2", "merged_alpha_partners": "CAAA;CABB"},
+        ])
+        out = assemble_full_sequences(
+            df, alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        assert out["alpha_count"].tolist() == [1, 2]
+        assert out["dual_alpha"].tolist() == [False, True]
+        # No contig provided → constructs are not contig-verified.
+        assert (~out["construct_contig_verified"]).all()

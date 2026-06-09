@@ -429,6 +429,7 @@ def build_selected_report(
     provenance_cols: list[str] | None = None,
     title: str = "Selected clones",
     cover: bool = True,
+    allow_canonical_fallback: bool = False,
 ):
     """Assemble a selected clone set into a synthesis-ready deliverable (#188).
 
@@ -461,6 +462,20 @@ def build_selected_report(
     assembled = assemble_full_sequences(
         expanded, verbose=False, show_progress=False, **(assemble_kwargs or {})
     )
+    # Fail closed on canonical-fallback constructs unless explicitly allowed
+    # (#241/#243/#244): this is the command that shipped the all-canonical
+    # deliverable when --cellranger-dir was omitted. The QC text is written
+    # below regardless; this gate refuses to call the output synthesis-ready
+    # when junctions/alleles weren't contig-verified.
+    from .assemble import enforce_contig_fidelity
+
+    fidelity = enforce_contig_fidelity(
+        assembled,
+        allow_canonical_fallback=allow_canonical_fallback,
+        context="report selected",
+    )
+    if fidelity:
+        logger.warning(fidelity)
     validate_sequences(assembled, strict=False)
     qc_text = assemble_qc_report(assembled)
     synth_text = synthesis_qc_report(assembled)
