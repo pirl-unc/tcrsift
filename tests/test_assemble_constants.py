@@ -1754,3 +1754,122 @@ class TestJunctionResidueUniformly:
             "validator should still flag genuine start mismatches; the "
             "#107 fix may have softened the check too far"
         )
+
+
+class TestJunctionSeamQC:
+    """Aggressive coverage of the #235 fix: the J→C junction residue is always
+    present (every chain, every C-gene, every clone in a batch), the chain NT
+    round-trips through the fallback junction codon, and ``validate_sequences``
+    GUARDS the seam (a self-consistency check could not — that's how #235
+    shipped silently)."""
+
+    @staticmethod
+    def _no_contig_df(n=1, c_gene="TRBC1"):
+        rows = []
+        for i in range(n):
+            vdj_alpha = "CASS" + "A" * (50 + i) + "VLPHA"
+            vdj_beta = "CASS" + "G" * (50 + i) + "VETA"
+            rows.append({
+                "CDR3ab": f"c{i}",
+                "CDR3_alpha": vdj_alpha, "CDR3_beta": vdj_beta,
+                "VDJ_alpha_aa": vdj_alpha, "VDJ_beta_aa": vdj_beta,
+                "VDJ_alpha_nt": "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_alpha),
+                "VDJ_beta_nt": "".join(HUMAN_PREFERRED_CODONS[r] for r in vdj_beta),
+                "alpha_c_gene": "TRAC", "beta_c_gene": c_gene,
+                "beta_j_gene": "TRBJ1-1" if c_gene == "TRBC1" else "TRBJ2-1",
+                "samples": "S1",
+            })
+        return pd.DataFrame(rows)
+
+    @pytest.mark.parametrize("c_gene,bare", [
+        ("TRBC1", HUMAN_TRBC1_AA), ("TRBC2", HUMAN_TRBC2_AA),
+    ])
+    def test_beta_junction_e_present_for_both_c_genes(self, c_gene, bare):
+        from tcrsift.assemble import assemble_full_sequences
+
+        out = assemble_full_sequences(
+            self._no_contig_df(c_gene=c_gene),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        assert out["beta_constant_aa"].iloc[0] == "E" + bare
+        assert out["beta_junction_residue"].iloc[0] == "E"
+
+    def test_every_clone_in_batch_gets_junction(self):
+        """The deliverable had 62/62 and 70/70 clones hit the fallback — assert
+        a whole batch is uniformly covered, none left 1 aa short."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        out = assemble_full_sequences(
+            self._no_contig_df(n=20),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        assert (out["beta_junction_residue"] == "E").all()
+        assert (out["alpha_junction_residue"] == "N").all()
+        assert out["beta_constant_aa"].str.startswith("E" + HUMAN_TRBC1_AA[:8]).all()
+        assert out["alpha_constant_aa"].str.startswith("N" + HUMAN_TRAC_AA[:8]).all()
+
+    def test_fallback_chain_nt_round_trips(self):
+        """translate(full_{chain}_nt) == full_{chain}_aa even when the junction
+        codon came from the canonical fallback (back-translated) — i.e. the
+        prepend is in-frame at the NT level too."""
+        from tcrsift.assemble import assemble_full_sequences, translate_dna
+
+        out = assemble_full_sequences(
+            self._no_contig_df(),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        for chain in ("alpha", "beta"):
+            full_nt = out[f"full_{chain}_nt"].iloc[0]
+            full_aa = out[f"full_{chain}_aa"].iloc[0]
+            nt = full_nt[:-3] if full_nt[-3:] in {"TAA", "TAG", "TGA"} else full_nt
+            translated, _ = translate_dna(nt)
+            assert translated == full_aa, f"{chain} NT does not round-trip"
+
+    def test_validate_sequences_flags_missing_junction(self):
+        """The #235 regression guard: a constant that begins at the BARE
+        canonical (junction dropped) must be a load-bearing failure."""
+        from tcrsift.assemble import validate_sequences
+
+        leader = "M" + "A" * 19
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        df = pd.DataFrame([{
+            "CDR3_beta": vdj_beta,
+            "beta_leader_aa": leader,
+            "vdj_beta_aa": vdj_beta,
+            "beta_constant_aa": HUMAN_TRBC1_AA,           # bare — no junction E
+            "beta_c_gene_canonical": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "full_beta_aa": leader + vdj_beta + HUMAN_TRBC1_AA,
+        }])
+        msgs = validate_sequences(df, strict=False)
+        seam = [
+            m for m in msgs
+            if m.severity == "load_bearing" and "junction residue missing" in m
+        ]
+        assert seam, f"guard should flag missing junction; got {[str(m) for m in msgs]}"
+
+    def test_validate_sequences_passes_with_junction(self):
+        """A correctly-assembled chain (junction E present) must NOT trip the
+        seam guard."""
+        from tcrsift.assemble import validate_sequences
+
+        leader = "M" + "A" * 19
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        df = pd.DataFrame([{
+            "CDR3_beta": vdj_beta,
+            "beta_leader_aa": leader,
+            "vdj_beta_aa": vdj_beta,
+            "beta_constant_aa": "E" + HUMAN_TRBC1_AA,     # junction present
+            "beta_c_gene_canonical": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "full_beta_aa": leader + vdj_beta + "E" + HUMAN_TRBC1_AA,
+        }])
+        msgs = validate_sequences(df, strict=False)
+        seam = [
+            m for m in msgs
+            if m.severity == "load_bearing" and "junction" in m
+        ]
+        assert not seam, f"junction-present chain must pass; got {[str(m) for m in seam]}"
