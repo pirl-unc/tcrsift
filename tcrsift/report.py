@@ -201,6 +201,12 @@ def bundle_figure_pdf(
 _ALPHA_COL_TO_CELL = {
     "CDR3_alpha": "cdr3", "alpha_v_gene": "v_gene", "alpha_j_gene": "j_gene",
     "alpha_c_gene": "c_gene", "VDJ_alpha_aa": "vdj_aa", "VDJ_alpha_nt": "vdj_nt",
+    # Each variant MUST point at its OWN α's contig, not the merged clone's
+    # (which only carries the dominant α's contig ids). Without this, the
+    # non-dominant α variant searches the wrong contigs in
+    # _extract_c_region_nt_from_contig → no_contig → blanket-N fallback, even
+    # when that α is fully sequenced through the C region (#235 dual-α footgun).
+    "alpha_contig_ids": "contig_id",
 }
 
 
