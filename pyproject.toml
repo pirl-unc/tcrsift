@@ -105,6 +105,16 @@ python_functions = ["test_*"]
 # 2s). CI passes `-n auto` explicitly for the full suite (~2.5x faster there).
 # Run the whole suite locally in parallel with:  pytest -n auto
 addopts = "--tb=short"
+# Silence third-party deprecation/notice noise we can't fix at the source, so
+# the test log stays signal-clean (our own code is warning-clean). Matched by
+# message prefix. The matplotlib "ndim>0 to scalar" warning is also suppressed
+# in-code around the upsetplot draw (plot_set_overlap) for production runs.
+filterwarnings = [
+    "ignore:Conversion of an array with ndim > 0 to a scalar",  # matplotlib via upsetplot
+    "ignore:Observation names are not unique",                  # anndata (dup-barcode fixtures)
+    "ignore:Transforming to str index",                         # anndata (int obs_names fixtures)
+    "ignore:ast.NameConstant is deprecated",                    # reportlab on import
+]
 
 [tool.ruff]
 line-length = 100
