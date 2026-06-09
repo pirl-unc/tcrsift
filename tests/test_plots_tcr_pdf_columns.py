@@ -230,17 +230,18 @@ class TestCreateTcrSequencePdfStrict:
 
     def _trbc1_full_beta(self, vdj_beta):
         """Build a full β chain that passes everything except possibly
-        J/C parity (helper for the autocorrect / skip tests)."""
+        J/C parity (helper for the autocorrect / skip tests). The constant
+        carries the invariant β junction E (#235)."""
         from tcrsift.assemble import HUMAN_TRBC1_AA
 
         leader = "M" + "A" * 19
-        return leader + vdj_beta + HUMAN_TRBC1_AA
+        return leader + vdj_beta + "E" + HUMAN_TRBC1_AA
 
     def _trac_full_alpha(self, vdj_alpha):
         from tcrsift.assemble import HUMAN_TRAC_AA
 
         leader = "M" + "A" * 19
-        return leader + vdj_alpha + HUMAN_TRAC_AA
+        return leader + vdj_alpha + "N" + HUMAN_TRAC_AA
 
     def test_strict_autocorrects_jc_parity_then_renders(
         self, tmp_path, caplog
@@ -265,15 +266,15 @@ class TestCreateTcrSequencePdfStrict:
                     "beta_leader_aa": leader,
                     "vdj_alpha_aa": vdj_alpha,
                     "vdj_beta_aa": vdj_beta,
-                    "alpha_constant_aa": HUMAN_TRAC_AA,
-                    "beta_constant_aa": HUMAN_TRBC1_AA,
+                    "alpha_constant_aa": "N" + HUMAN_TRAC_AA,
+                    "beta_constant_aa": "E" + HUMAN_TRBC1_AA,
                     "alpha_c_gene": "TRAC",
                     "beta_c_gene": "TRBC2",  # CellRanger says TRBC2 ...
                     "alpha_c_gene_canonical": "TRAC",
                     "beta_c_gene_canonical": "TRBC2",
                     "beta_j_gene": "TRBJ1-1",  # ... but J says TRBC1
-                    "full_alpha_aa": leader + vdj_alpha + HUMAN_TRAC_AA,
-                    "full_beta_aa": leader + vdj_beta + HUMAN_TRBC1_AA,
+                    "full_alpha_aa": leader + vdj_alpha + "N" + HUMAN_TRAC_AA,
+                    "full_beta_aa": leader + vdj_beta + "E" + HUMAN_TRBC1_AA,
                 }
             ]
         )
@@ -307,15 +308,15 @@ class TestCreateTcrSequencePdfStrict:
             "beta_leader_aa": leader,
             "vdj_alpha_aa": vdj_alpha,
             "vdj_beta_aa": vdj_beta,
-            "alpha_constant_aa": HUMAN_TRAC_AA,
-            "beta_constant_aa": HUMAN_TRBC1_AA,
+            "alpha_constant_aa": "N" + HUMAN_TRAC_AA,
+            "beta_constant_aa": "E" + HUMAN_TRBC1_AA,
             "alpha_c_gene": "TRAC",
             "beta_c_gene": "TRBC1",
             "alpha_c_gene_canonical": "TRAC",
             "beta_c_gene_canonical": "TRBC1",
             "beta_j_gene": "TRBJ1-1",
-            "full_alpha_aa": leader + vdj_alpha + HUMAN_TRAC_AA,
-            "full_beta_aa": leader + vdj_beta + HUMAN_TRBC1_AA,
+            "full_alpha_aa": leader + vdj_alpha + "N" + HUMAN_TRAC_AA,
+            "full_beta_aa": leader + vdj_beta + "E" + HUMAN_TRBC1_AA,
         }
         broken_row = {**good_row, "alpha_constant_aa": "RT",
                       "full_alpha_aa": leader + vdj_alpha + "RT"}

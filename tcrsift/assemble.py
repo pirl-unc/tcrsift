@@ -283,6 +283,16 @@ del _canonical
 # overrides it per-clone when C-region NT is present.
 _FALLBACK_JUNCTION_RESIDUE: dict[str, str] = {"alpha": "N", "beta": "E"}
 
+# Biologically valid J→C junction residues per chain (the residue spelled by the
+# J segment's terminal nt + the C exon's start). β is invariantly E across the
+# B1 audit; α is J-dependent N/Y/D/H. Used by validate_sequences to GUARD that
+# the seam residue is actually present — a self-consistency check against the
+# row's own constant_aa can't catch a uniformly-dropped junction (#235).
+_VALID_JUNCTION_RESIDUES: dict[str, frozenset] = {
+    "alpha": frozenset("NYDH"),
+    "beta": frozenset("E"),
+}
+
 
 def _fallback_junction_residue(chain: str) -> str:
     """The canonical J→C junction residue to use when the contig can't supply it."""
@@ -2961,6 +2971,32 @@ def validate_sequences(
                     _lb(idx,
                         f"{chain}_constant_aa too short "
                         f"({len(const)} aa, floor {floor})")
+
+            # J→C junction-seam guard (#235). The constant must begin with a
+            # valid junction residue (β: E; α: N/Y/D/H) followed by the bare
+            # canonical — NOT the bare canonical directly. A direct-canonical
+            # start means the junction residue was dropped and the chain is 1 aa
+            # short at the seam. This is the check the prior self-consistent
+            # canonical-start comparison (observed vs the row's own constant_aa)
+            # could not make, which is how #235 shipped silently.
+            c_base = _resolve_c_gene(row, chain).split("*")[0]
+            bare = HUMAN_CONSTANT_REGIONS_AA.get(c_base)
+            if isinstance(const, str) and const and bare:
+                bare8 = bare[:8]
+                if const.startswith(bare8):
+                    _lb(idx,
+                        f"{chain}_constant_aa starts at the bare canonical "
+                        f"{bare8!r} — J→C junction residue missing (chain 1 aa "
+                        f"short at the seam)")
+                elif not (
+                    const[0] in _VALID_JUNCTION_RESIDUES.get(chain, frozenset())
+                    and const[1:].startswith(bare8)
+                ):
+                    _lb(idx,
+                        f"{chain}_constant_aa has an unexpected J→C seam: "
+                        f"{const[:9]!r} (expected a valid junction residue "
+                        f"{sorted(_VALID_JUNCTION_RESIDUES.get(chain, ()))} "
+                        f"+ canonical {bare8!r})")
 
             # Byte-for-byte: full == leader + vdj + constant when all
             # parts are available. Catches dropped/added residues
