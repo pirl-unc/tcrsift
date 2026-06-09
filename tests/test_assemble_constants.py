@@ -1321,7 +1321,7 @@ class TestJunctionResidueUniformly:
         assert out["alpha_junction_residue_source"].iloc[0] == "canonical_fallback"
         qc = out["qc_warnings"].iloc[0] or []
         assert any(
-            "canonical fallback" in m and "alpha" in m for m in qc
+            "canonical_fallback" in m and "alpha" in m for m in qc
         ), f"expected α fallback warning, got {qc}"
 
     def test_no_contigs_dir_still_prepends_canonical_junction(self):
@@ -1589,7 +1589,7 @@ class TestJunctionResidueUniformly:
         # And the QC warning explicitly names β and the fallback.
         qc = out["qc_warnings"].iloc[0] or []
         assert any(
-            "beta" in m and "canonical fallback" in m for m in qc
+            "beta" in m and "canonical_fallback" in m for m in qc
         )
 
     def test_alpha_and_beta_use_same_code_path(self, tmp_path):
@@ -2002,3 +2002,75 @@ class TestCohortAlphaJunction:
         stayed = out.iloc[2]
         assert stayed["alpha_junction_residue"] == "N"
         assert stayed["alpha_junction_residue_source"] == "canonical_fallback"
+
+
+class TestTrajJunctionInference:
+    """#242: infer the no-contig α J→C junction from the J gene (per-TRAJ
+    germline residue) instead of a blanket N, and cross-check it in QC."""
+
+    def test_fallback_lookup_maps_and_defaults(self):
+        from tcrsift.assemble import _fallback_junction_residue
+
+        # Mapped α J genes → germline residue, source j_inferred.
+        assert _fallback_junction_residue("alpha", "TRAJ45") == ("Y", "j_inferred")
+        assert _fallback_junction_residue("alpha", "TRAJ33") == ("D", "j_inferred")
+        assert _fallback_junction_residue("alpha", "TRAJ35") == ("H", "j_inferred")
+        assert _fallback_junction_residue("alpha", "TRAJ48*01") == ("N", "j_inferred")
+        # Unmapped / unknown α J gene → most-common N, low-confidence.
+        assert _fallback_junction_residue("alpha", "TRAJ99") == ("N", "canonical_fallback")
+        assert _fallback_junction_residue("alpha", None) == ("N", "canonical_fallback")
+        # β is invariant E.
+        assert _fallback_junction_residue("beta", "TRBJ1-1") == ("E", "canonical_fallback")
+
+    def test_no_contig_alpha_uses_j_inferred_residue(self):
+        from tcrsift.assemble import HUMAN_TRAC_AA, assemble_full_sequences
+
+        # No-contig α with a mapped J gene (TRAJ45 → Y) must NOT default to N.
+        vdj_a = "CASS" + "A" * 55 + "VLPHA"
+        vdj_b = "CASS" + "G" * 55 + "VETA"
+        df = pd.DataFrame([{
+            "CDR3ab": "c1", "CDR3_alpha": vdj_a, "CDR3_beta": vdj_b,
+            "VDJ_alpha_aa": vdj_a, "VDJ_beta_aa": vdj_b,
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "alpha_j_gene": "TRAJ45", "beta_j_gene": "TRBJ1-1", "samples": "S1",
+        }])
+        out = assemble_full_sequences(
+            df, alpha_leader=None, beta_leader=None, verbose=False, show_progress=False,
+        )
+        r = out.iloc[0]
+        assert r["alpha_junction_residue"] == "Y"
+        assert r["alpha_junction_residue_source"] == "j_inferred"
+        assert r["alpha_constant_aa"] == "Y" + HUMAN_TRAC_AA
+
+    def test_qc_flags_junction_disagreeing_with_j_gene(self):
+        from tcrsift.assemble import HUMAN_TRAC_AA, validate_sequences
+
+        leader = "M" + "A" * 19
+        vdj_a = "CASS" + "A" * 60 + "VLPHA"
+        # TRAJ45 germline junction is Y, but this construct has N at the seam —
+        # exactly the wrongly-defaulted-N case the cross-check must catch.
+        df = pd.DataFrame([{
+            "CDR3_alpha": vdj_a, "alpha_leader_aa": leader, "vdj_alpha_aa": vdj_a,
+            "alpha_c_gene_canonical": "TRAC", "alpha_j_gene": "TRAJ45",
+            "alpha_constant_aa": "N" + HUMAN_TRAC_AA,
+            "full_alpha_aa": leader + vdj_a + "N" + HUMAN_TRAC_AA,
+        }])
+        msgs = validate_sequences(df, strict=False)
+        assert any(
+            m.severity == "load_bearing" and "disagrees with the germline residue" in m
+            for m in msgs
+        ), f"expected J-gene disagreement flag; got {[str(m) for m in msgs]}"
+
+    def test_qc_passes_when_junction_matches_j_gene(self):
+        from tcrsift.assemble import HUMAN_TRAC_AA, validate_sequences
+
+        leader = "M" + "A" * 19
+        vdj_a = "CASS" + "A" * 60 + "VLPHA"
+        df = pd.DataFrame([{
+            "CDR3_alpha": vdj_a, "alpha_leader_aa": leader, "vdj_alpha_aa": vdj_a,
+            "alpha_c_gene_canonical": "TRAC", "alpha_j_gene": "TRAJ45",
+            "alpha_constant_aa": "Y" + HUMAN_TRAC_AA,   # matches TRAJ45 → Y
+            "full_alpha_aa": leader + vdj_a + "Y" + HUMAN_TRAC_AA,
+        }])
+        msgs = validate_sequences(df, strict=False)
+        assert not any("disagrees with the germline residue" in m for m in msgs)
