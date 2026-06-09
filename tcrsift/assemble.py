@@ -299,6 +299,66 @@ def _fallback_junction_residue(chain: str) -> str:
     return _FALLBACK_JUNCTION_RESIDUE.get(chain, "")
 
 
+def _apply_cohort_alpha_junctions(df: pd.DataFrame) -> pd.DataFrame:
+    """Replace the blanket-``N`` α junction fallback with a per-J consensus read
+    from the donor's OWN contig-verified clones (#242).
+
+    The α J→C junction residue is J-dependent (N/Y/D/H) and a splice product, so
+    it can't be inferred from germline protein and isn't recoverable when a clone
+    has no contig. But within one assembly the contig-verified α clones DO reveal
+    the residue per ``alpha_j_gene``; we apply that cohort consensus to no-contig
+    α clones of the same J gene. This is self-validating (donor's own sequence)
+    and corrects the ~30% of fallback α junctions the blanket ``N`` gets wrong.
+
+    The swap is localized to the seam (first residue of the constant / first
+    codon of its NT), so the rest of the construct is untouched. Clones whose J
+    gene has no contig-verified example keep the flagged ``N``. The provenance is
+    ``cohort_j_consensus`` (still NOT this clone's own contig → still treated as
+    unverified by the fidelity gate, just a better residue).
+    """
+    src_col, j_col = "alpha_junction_residue_source", "alpha_j_gene"
+    if src_col not in df.columns or j_col not in df.columns or df.empty:
+        return df
+    # Consensus residue per J gene from this clone's-own-contig reads.
+    by_j: dict = {}
+    verified = df[df[src_col] == "contig"]
+    for j_gene, grp in verified.groupby(j_col, dropna=True):
+        res = grp["alpha_junction_residue"].dropna().astype(str)
+        if len(res):
+            by_j[str(j_gene)] = res.mode().iloc[0]
+    if not by_j:
+        return df
+    for idx in df.index[df[src_col] == "canonical_fallback"]:
+        j_gene = df.at[idx, j_col]
+        r = by_j.get(str(j_gene))
+        cur = df.at[idx, "alpha_junction_residue"]
+        if not r or r == cur:
+            continue
+        # Localized seam swap: residue [0] of the constant, codon [0] of its NT.
+        const_aa = df.at[idx, "alpha_constant_aa"]
+        if isinstance(const_aa, str) and const_aa:
+            new_aa = r + const_aa[1:]
+            df.at[idx, "alpha_constant_aa"] = new_aa
+            full_aa = df.at[idx, "full_alpha_aa"]
+            if isinstance(full_aa, str) and full_aa.endswith(const_aa):
+                df.at[idx, "full_alpha_aa"] = full_aa[: -len(const_aa)] + new_aa
+        new_codon = back_translate(r)
+        # Capture full_nt and the ORIGINAL constant NT before mutating columns.
+        full_nt = df.at[idx, "full_alpha_nt"] if "full_alpha_nt" in df.columns else None
+        old_const_nt = df.at[idx, "alpha_constant_nt"] if "alpha_constant_nt" in df.columns else None
+        if isinstance(full_nt, str) and isinstance(old_const_nt, str) and full_nt.endswith(old_const_nt):
+            df.at[idx, "full_alpha_nt"] = (
+                full_nt[: -len(old_const_nt)] + new_codon + old_const_nt[3:]
+            )
+        for nt_col in ("alpha_constant_nt", "alpha_constant_nt_optimized"):
+            nt = df.at[idx, nt_col] if nt_col in df.columns else None
+            if isinstance(nt, str) and len(nt) >= 3:
+                df.at[idx, nt_col] = new_codon + nt[3:]
+        df.at[idx, "alpha_junction_residue"] = r
+        df.at[idx, src_col] = "cohort_j_consensus"
+    return df
+
+
 def _load_canonical_alleles_fasta() -> dict[str, dict[str, str]]:
     """Parse the packaged multi-allele FASTA into a {gene: {allele: AA}}
     nested dict. Used by the per-clone allele picker (#113).
@@ -1717,7 +1777,40 @@ def assemble_full_sequences(
     # restriction sites) plus cross-construct hazards (duplicate CDS, α/β swap).
     # No-op when no construct-NT column exists. Warn (regardless of verbose) on
     # any flagged construct so a vendor-rejection risk isn't silent.
+    # Correct blanket-N α junctions using a per-J consensus from this cohort's
+    # contig-verified clones, before QC/provenance (#242).
+    df = _apply_cohort_alpha_junctions(df)
+
     df = add_synthesis_qc(df)
+
+    # Surface dual-α (allelic-inclusion) clones explicitly (#237) — easy to miss
+    # when the second α is packed into ``merged_alpha_partners``. ``alpha_count``
+    # is the number of distinct α the clone carries; ``dual_alpha`` flags >1.
+    if "merged_alpha_partners" in df.columns and len(df):
+        def _alpha_partners(val: object) -> list:
+            s = "" if val is None or (isinstance(val, float) and pd.isna(val)) else str(val)
+            return [p.strip() for p in s.split(";") if p.strip() and p.strip().lower() != "nan"]
+        partners = df["merged_alpha_partners"].map(_alpha_partners)
+        df["alpha_count"] = partners.map(lambda p: len(p) if p else 1)
+        df["dual_alpha"] = df["alpha_count"] > 1
+        # Explicit second-α identity (#237): the partner α that isn't this row's
+        # primary CDR3_alpha (else the 2nd listed), so the dual nature reads
+        # without unpacking merged_alpha_partners. None for single-α clones.
+        prim = df["CDR3_alpha"] if "CDR3_alpha" in df.columns else pd.Series([None] * len(df), index=df.index)
+        df["CDR3_alpha_2"] = [
+            next((a for a in ps if a != p), (ps[1] if len(ps) > 1 else None))
+            for ps, p in zip(partners, prim)
+        ]
+
+    # Per-construct contig-verification provenance (#243/#244): a construct is
+    # contig-verified only when every present chain's J→C junction residue was
+    # read from the donor's contig (not the canonical fallback). Drives the
+    # fail-closed fidelity gate.
+    if len(df):
+        df["construct_contig_verified"] = [
+            not _unverified_chains(row) for _, row in df.iterrows()
+        ]
+
     if "synth_gc_ok" in df.columns and len(df):
         n_hazard = int(
             (~df["synth_gc_ok"]).sum()
@@ -2858,6 +2951,86 @@ def fix_jc_parity(df: pd.DataFrame) -> list[ValidationMessage]:
                 )
             )
     return messages
+
+
+def _unverified_chains(row) -> list:
+    """Chains present in ``row`` whose J→C junction residue was NOT read from
+    the contig (i.e. came from the canonical fallback). A non-empty list means
+    the construct is not contig-verified: its junction residue is defaulted
+    (α blanket N — wrong ~30%, #242) and its donor allele is unverified.
+    """
+    out = []
+    for chain in ("alpha", "beta"):
+        if not isinstance(row.get(f"full_{chain}_aa"), str) or not row.get(f"full_{chain}_aa"):
+            continue
+        src = row.get(f"{chain}_junction_residue_source")
+        if src is not None and src != "contig":
+            out.append(chain)
+    return out
+
+
+def assemble_fidelity_summary(df: pd.DataFrame) -> dict:
+    """Summarize per-construct contig-verification across an assembled frame.
+
+    Returns ``{n_total, n_verified, n_unverified, alpha_fallback, beta_fallback,
+    unverified_idx}``. A construct is unverified when any present chain's J→C
+    junction residue came from the canonical fallback rather than the donor's
+    contig (#241/#243/#244) — meaning reference constants, a defaulted junction,
+    and an unverified donor allele.
+    """
+    n_total = len(df)
+    unverified_idx, a_fb, b_fb = [], 0, 0
+    for idx, row in df.iterrows():
+        chains = _unverified_chains(row)
+        if chains:
+            unverified_idx.append(idx)
+        a_fb += "alpha" in chains
+        b_fb += "beta" in chains
+    return {
+        "n_total": n_total,
+        "n_verified": n_total - len(unverified_idx),
+        "n_unverified": len(unverified_idx),
+        "alpha_fallback": a_fb,
+        "beta_fallback": b_fb,
+        "unverified_idx": unverified_idx,
+    }
+
+
+def enforce_contig_fidelity(
+    df: pd.DataFrame,
+    *,
+    allow_canonical_fallback: bool = False,
+    context: str = "assembly",
+) -> str:
+    """Fail-closed gate for synthesis-ready constructs (#243/#244).
+
+    Builds a cohort fidelity summary. When any construct is not contig-verified
+    (canonical fallback: reference constants, defaulted junction residue,
+    unverified donor allele) and ``allow_canonical_fallback`` is False, raises
+    :class:`TCRsiftValidationError` — refusing to silently emit constructs whose
+    junctions/alleles can't be verified. When the fallback IS allowed, returns a
+    loud summary string for the caller to surface as a warning instead (#241).
+
+    Returns the summary string (empty when everything is contig-verified).
+    """
+    s = assemble_fidelity_summary(df)
+    if s["n_unverified"] == 0:
+        return ""
+    summary = (
+        f"{s['n_unverified']}/{s['n_total']} constructs assembled with NO contig "
+        f"verification (α fallback: {s['alpha_fallback']}, β fallback: "
+        f"{s['beta_fallback']}) — reference constants, J→C junction residues "
+        f"defaulted (α blanket N is wrong for ~30% of J genes), donor alleles "
+        f"unverified."
+    )
+    if not allow_canonical_fallback:
+        raise TCRsiftValidationError(
+            f"{context}: {summary}",
+            hint="Pass --cellranger-dir / --contigs-dir so junctions and alleles "
+            "are read from the donor's contigs, or pass --allow-canonical-fallback "
+            "to consciously accept reference/approximate constants.",
+        )
+    return summary
 
 
 def validate_sequences(

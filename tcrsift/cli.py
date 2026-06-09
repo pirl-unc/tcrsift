@@ -618,6 +618,19 @@ def cmd_assemble(args):
         stop_codons=stop_codons,
     )
 
+    # Fail closed on unverified (canonical-fallback) constructs unless the
+    # user explicitly opted in (#243/#244). Raises TCRsiftValidationError when
+    # any construct's junction/allele couldn't be contig-verified.
+    from .assemble import enforce_contig_fidelity
+
+    fidelity = enforce_contig_fidelity(
+        assembled,
+        allow_canonical_fallback=getattr(args, "allow_canonical_fallback", False),
+        context="assemble",
+    )
+    if fidelity:
+        print(f"WARNING: {fidelity}")
+
     # Validate (per-row warnings + aggregate QC report).
     warnings = validate_sequences(assembled)
     for w in warnings:
@@ -1632,6 +1645,19 @@ def cmd_run(args):
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
 
+        # Fail closed on unverified (canonical-fallback) constructs unless
+        # explicitly allowed (#243/#244). The CSV is written first so the
+        # provenance is inspectable even when the gate refuses.
+        from .assemble import enforce_contig_fidelity
+
+        _fidelity = enforce_contig_fidelity(
+            assembled,
+            allow_canonical_fallback=getattr(args, "allow_canonical_fallback", False),
+            context="run",
+        )
+        if _fidelity:
+            print(f"  WARNING: {_fidelity}")
+
         # Config-driven clone selection (#122/#125). When a `selection`
         # block is present, match/rank the assembled clones against the
         # selection rules and emit selected_clones.csv (selection columns
@@ -2273,6 +2299,7 @@ def cmd_report_selected(args):
         selected, clonotypes, args.output_dir, obs=obs,
         assemble_kwargs=assemble_kwargs, provenance_cols=prov_cols,
         cover=not getattr(args, "no_cover", False),
+        allow_canonical_fallback=getattr(args, "allow_canonical_fallback", False),
     )
     print(f"Wrote selected-clones report to {args.output_dir}")
 
@@ -2703,6 +2730,12 @@ def create_parser():
         help="Skip the construct cover/legend page on the sequence PDF (#202)",
     )
     ps.add_argument("--verbose", action="store_true", help="Verbose output")
+    ps.add_argument(
+        "--allow-canonical-fallback", action="store_true",
+        help="Permit constructs assembled from canonical/reference constants when "
+        "no contig verifies the donor's junction/allele. Without it, report "
+        "selected fails closed if any construct is unverified (#241/#243).",
+    )
     ps.set_defaults(func=cmd_report_selected)
 
     pscomb = p_report_sub.add_parser(
@@ -3383,6 +3416,12 @@ CONDITIONALLY REQUIRED:
         "--output-dir", metavar="DIR", help="Output directory for plots (default: next to output)"
     )
     asm_out.add_argument("--verbose", action="store_true", help="Verbose output")
+    p_asm.add_argument(
+        "--allow-canonical-fallback", action="store_true",
+        help="Permit constructs assembled from canonical/reference constants when "
+        "no contig verifies the donor's junction/allele (fail-closed otherwise) "
+        "(#243).",
+    )
     p_asm.set_defaults(func=cmd_assemble)
 
     # -------------------------------------------------------------------------
@@ -3808,6 +3847,12 @@ CONDITIONALLY REQUIRED:
         "(default: jaccard).",
     )
     out_group.add_argument("--verbose", action="store_true", help="Verbose output")
+    out_group.add_argument(
+        "--allow-canonical-fallback", action="store_true",
+        help="Permit constructs assembled from canonical/reference constants when "
+        "no contig verifies the donor's junction/allele (fail-closed otherwise) "
+        "(#243).",
+    )
 
     p_run.set_defaults(func=cmd_run)
 

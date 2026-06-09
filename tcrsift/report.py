@@ -429,6 +429,7 @@ def build_selected_report(
     provenance_cols: list[str] | None = None,
     title: str = "Selected clones",
     cover: bool = True,
+    allow_canonical_fallback: bool = False,
 ):
     """Assemble a selected clone set into a synthesis-ready deliverable (#188).
 
@@ -461,11 +462,35 @@ def build_selected_report(
     assembled = assemble_full_sequences(
         expanded, verbose=False, show_progress=False, **(assemble_kwargs or {})
     )
+    # Fail closed on canonical-fallback constructs unless explicitly allowed
+    # (#241/#243/#244): this is the command that shipped the all-canonical
+    # deliverable when --cellranger-dir was omitted. The QC text is written
+    # below regardless; this gate refuses to call the output synthesis-ready
+    # when junctions/alleles weren't contig-verified.
+    from .assemble import enforce_contig_fidelity
+
+    fidelity = enforce_contig_fidelity(
+        assembled,
+        allow_canonical_fallback=allow_canonical_fallback,
+        context="report selected",
+    )
+    if fidelity:
+        logger.warning(fidelity)
     validate_sequences(assembled, strict=False)
     qc_text = assemble_qc_report(assembled)
     synth_text = synthesis_qc_report(assembled)
     if synth_text:
         qc_text = f"{qc_text}\n\n{synth_text}"
+    # Dual-α rollup (#237): make the clone→construct expansion explicit so it's
+    # impossible to overlook that some clones carry two α and become 2 constructs.
+    n_dual = len(set(variant_of.values())) if variant_of else 0
+    if n_dual:
+        dual_line = (
+            f"Dual-α clones: {n_dual} (each carries two α → 2 single-chain "
+            f"constructs; {n_variants} dual-α construct rows total)."
+        )
+        logger.info(dual_line)
+        qc_text = f"{dual_line}\n\n{qc_text}"
     (out_dir / "selected_clones_qc.txt").write_text(qc_text + "\n")
 
     # Per-clone provenance lines for the sequence PDF.

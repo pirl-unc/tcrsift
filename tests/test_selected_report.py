@@ -113,6 +113,7 @@ class TestBuildSelectedReport:
         out = build_selected_report(
             selected, clonotypes, tmp_path,
             provenance_cols=["selection_rule", "global_rank"],
+            allow_canonical_fallback=True,  # synthetic fixture: no contigs
         )
         assert (tmp_path / "selected_clones.csv").exists()
         assert (tmp_path / "selected_clones_sequences.pdf").exists()
@@ -140,6 +141,7 @@ class TestBuildSelectedReport:
         }])
         out = build_selected_report(
             selected, clonotypes, tmp_path, obs=obs, provenance_cols=["selection_rule"],
+            allow_canonical_fallback=True,  # synthetic fixture: no contigs
         )
         # Two constructs (one per alpha variant) of the same selected clone.
         assert len(out) == 2
@@ -159,6 +161,7 @@ class TestCoverAndCombine:
         selected = pd.DataFrame([{"CDR3ab": "c1", "selection_rule": "shared"}])
         out = build_selected_report(
             selected, clonotypes, tmp_path, provenance_cols=["selection_rule"], cover=True,
+            allow_canonical_fallback=True,  # synthetic fixture: no contigs
         )
         assert len(out) == 1
         pdf = PdfReader(str(tmp_path / "selected_clones_sequences.pdf"))
@@ -173,7 +176,7 @@ class TestCoverAndCombine:
         b = "CASS" + "G" * 40 + "VEF"
         clonotypes = pd.DataFrame([_assembleable_clone("c1", a, b)])
         selected = pd.DataFrame([{"CDR3ab": "c1"}])
-        build_selected_report(selected, clonotypes, tmp_path, cover=False)
+        build_selected_report(selected, clonotypes, tmp_path, cover=False, allow_canonical_fallback=True)
         pdf = PdfReader(str(tmp_path / "selected_clones_sequences.pdf"))
         assert len(pdf.pages) == 1  # just the construct page
 
