@@ -572,9 +572,11 @@ class TestSingleChainTriad:
         for col in (
             "single_chain_nt",
             "single_chain_nt_optimized",
-            "single_chain_nt_contig",
         ):
             assert col in out.columns
+        # The stitched-contig single-chain variant is intentionally NOT emitted
+        # (truncated, non-CDS; per-chain *_nt_contig carry the provenance).
+        assert "single_chain_nt_contig" not in out.columns
 
     def test_optimized_translates_to_single_chain_aa(self):
         out = assemble_full_sequences(
@@ -588,16 +590,18 @@ class TestSingleChainTriad:
         translated, _ = translate_dna(nt)
         assert translated == aa
 
-    def test_assembly_is_none_when_no_contig(self):
-        # Without contigs, full_*_nt_contig is None for both chains,
-        # so the single-chain assembly must be None too.
+    def test_per_chain_contig_none_when_no_contig(self):
+        # Without contigs, the per-chain full_*_nt_contig provenance columns are
+        # None for both chains (no stitched single-chain contig variant exists).
         out = assemble_full_sequences(
             self._df_no_contig(),
             alpha_leader=None, beta_leader=None,
             linker="T2A",
             verbose=False, show_progress=False,
         )
-        assert out["single_chain_nt_contig"].iloc[0] is None
+        assert "single_chain_nt_contig" not in out.columns
+        assert out["full_alpha_nt_contig"].iloc[0] is None
+        assert out["full_beta_nt_contig"].iloc[0] is None
 
     def test_optimized_ends_with_dual_stop(self):
         # The β CDS in the cassette has all stops stripped (the
@@ -709,23 +713,20 @@ class TestSingleChainTriad:
             linker="T2A",
             verbose=False, show_progress=False,
         )
-        sc_asm = out["single_chain_nt_contig"].iloc[0]
-        assert isinstance(sc_asm, str), (
-            "single_chain_nt_contig should be a string when both "
-            f"chains have contig coverage, got {type(sc_asm).__name__}"
-        )
-        # In-frame.
-        assert len(sc_asm) % 3 == 0, (
-            f"single_chain_nt_contig length {len(sc_asm)} not divisible "
-            "by 3 — frame broken"
-        )
-        # No mid-chain stops in the coding portion.
-        translated, ragged = translate_dna(sc_asm)
-        assert not ragged
-        assert "*" not in translated[:-1], (
-            "single_chain_nt_contig has a premature stop in the "
-            "coding region"
-        )
+        # No stitched single-chain contig variant is emitted; the contig-byte
+        # provenance lives on the per-chain full_*_nt_contig columns. Both must
+        # be valid in-frame strings when both chains have contig coverage.
+        assert "single_chain_nt_contig" not in out.columns
+        for col in ("full_alpha_nt_contig", "full_beta_nt_contig"):
+            seq = out[col].iloc[0]
+            assert isinstance(seq, str), (
+                f"{col} should be a string when the chain has contig "
+                f"coverage, got {type(seq).__name__}"
+            )
+            assert len(seq) % 3 == 0, f"{col} length {len(seq)} not divisible by 3"
+            translated, ragged = translate_dna(seq)
+            assert not ragged
+            assert "*" not in translated[:-1], f"{col} has a premature stop"
 
 
 class TestPickerStopBugRegression:

@@ -2782,13 +2782,12 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     * ``single_chain_nt_optimized`` — built from
       ``full_*_nt_optimized``. The ready-to-order synthesis construct;
       same bytes for every donor with the same picked allele.
-    * ``single_chain_nt_contig`` — built from ``full_*_nt_contig``.
-      ``None`` for any clone where either chain's contig didn't cover
-      its constant region (``_contig`` columns are ``None`` there).
-      **Truncated at contig coverage** — useful for QC and inspecting
-      the donor's actual bytes, but not a complete CDS and not
-      synthesis-ready. Reach for ``_optimized`` if you want a
-      complete cassette.
+
+    No ``single_chain_nt_contig`` is emitted: the stitched contig construct is
+    truncated at contig coverage (not a CDS, not synthesis-ready) and carries no
+    QC signal beyond the per-chain ``{chain}_constant_nt_contig`` /
+    ``full_{chain}_nt_contig`` provenance columns it was built from. Inspect
+    those for the donor's raw bytes / contig backing.
 
     The β CDS in each variant has ALL trailing stops stripped before
     the linker — the 2A construct requires a continuous ORF across
@@ -2833,10 +2832,13 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
         # (contig view when contig didn't cover the C region) the
         # output is None — splicing a None into a 2A construct would
         # be silently wrong.
+        # No ``_contig`` single-chain variant: the stitched contig construct is
+        # truncated at contig coverage (not a CDS, not synthesis-ready) and adds
+        # nothing over the per-chain ``{chain}_constant_nt_contig`` /
+        # ``full_{chain}_nt_contig`` provenance columns it's built from.
         for suffix, out_col in (
             ("", "single_chain_nt"),
             ("_optimized", "single_chain_nt_optimized"),
-            ("_contig", "single_chain_nt_contig"),
         ):
             beta_col = f"full_beta_nt{suffix}"
             alpha_col = f"full_alpha_nt{suffix}"
@@ -4564,17 +4566,6 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
                         _lb(idx,
                             f"{nt_col} does not translate to single_chain_aa "
                             f"— frame likely broken at a splice boundary (#91)")
-    nt_col = "single_chain_nt_contig"
-    if nt_col in df.columns and "single_chain_aa" in df.columns:
-        for idx, row in df.iterrows():
-            nt = row.get(nt_col)
-            aa = row.get("single_chain_aa")
-            if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
-                if not _nt_contig_in_frame_no_premature_stop(nt, aa):
-                    _lb(idx,
-                        f"{nt_col} is out-of-frame or hits a premature "
-                        f"stop within the coding region — the donor's "
-                        f"contig appears non-coding past the J→C boundary")
 
 
 def _expected_constant_start_from_full(
