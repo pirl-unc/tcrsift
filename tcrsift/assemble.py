@@ -275,6 +275,19 @@ HUMAN_TRBC1_AA: str = _canonical["TRBC1"]
 HUMAN_TRBC2_AA: str = _canonical["TRBC2"]
 del _canonical
 
+# Fallback J→C junction residue used when no contig C-region NT is available to
+# read the donor's actual residue. β is invariant (E, GAG — the splice spells it
+# the same in every clone); α is J-dependent (N/Y/D/H) so without the contig we
+# use the most common (N). Prepending this keeps the assembled chain the correct
+# length instead of 1 aa short at the J→C seam (#105/#235). The contig path
+# overrides it per-clone when C-region NT is present.
+_FALLBACK_JUNCTION_RESIDUE: dict[str, str] = {"alpha": "N", "beta": "E"}
+
+
+def _fallback_junction_residue(chain: str) -> str:
+    """The canonical J→C junction residue to use when the contig can't supply it."""
+    return _FALLBACK_JUNCTION_RESIDUE.get(chain, "")
+
 
 def _load_canonical_alleles_fasta() -> dict[str, dict[str, str]]:
     """Parse the packaged multi-allele FASTA into a {gene: {allele: AA}}
@@ -2091,44 +2104,53 @@ def _add_constant_regions(
         # Reading the junction codon from the contig handles both
         # chains the same way and lets β's per-clone junction NT be
         # the donor's actual bytes instead of codon-optimized AAC.
+        # Identity of the J→C junction residue. Prefer the donor's actual
+        # residue read from the contig's first codon past the junction; when the
+        # contig can't supply it, fall back to the canonical residue so the chain
+        # is NEVER left 1 aa short at the seam (β invariant E; α default N).
+        # (#105/#235)
         junction_residue: str | None = None
+        junction_from_contig = False
+        fallback_reason: str | None = None
         if contig_nt_past_vdj and len(contig_nt_past_vdj) >= 3:
             junction_codon = contig_nt_past_vdj[:3]
             translated = CODON_TABLE.get(junction_codon, "X")
             if translated and translated not in {"*", "X"}:
                 junction_residue = translated
-                canonical_aa = junction_residue + canonical_aa
-                # Prepend the codon for the junction residue. Using
-                # `back_translate` (single-best codon, no motif
-                # logic) is intentional here: it's one codon at the
-                # start of the construct, and `canonical_nt_codon_opt`
-                # already has its own motif-optimized body. Stops are
-                # already on canonical_nt_codon_opt's tail — don't
-                # re-append.
-                canonical_nt_codon_opt = (
-                    back_translate(junction_residue) + canonical_nt_codon_opt
-                )
+                junction_from_contig = True
             else:
-                result.setdefault("qc_warnings", []).append(
-                    f"{chain}: junction codon {junction_codon!r} translates "
-                    f"to {translated!r}; not prepended to "
-                    f"{chain}_constant_aa. The assembled {chain} may be 1 "
-                    "aa shorter than the donor's expressed protein at the "
-                    "J→C junction."
+                fallback_reason = (
+                    f"contig junction codon {junction_codon!r} translates to "
+                    f"{translated!r}"
                 )
         elif sample_contigs:
-            # Contigs were loaded but this clone's contig didn't
-            # extend past VDJ — assembled chain is 1 aa short.
-            result.setdefault("qc_warnings", []).append(
-                f"{chain}: no contig coverage past VDJ; "
-                f"{chain}_constant_aa will be missing the J→C junction "
-                f"residue (1 aa shorter than the donor's expressed "
-                f"{chain} protein)."
+            # Contigs were loaded but this clone's didn't cover the J→C seam
+            # (the #235 secondary: 10x C-region coverage / extraction).
+            fallback_reason = "no contig C-region coverage past VDJ"
+        if junction_residue is None:
+            junction_residue = _fallback_junction_residue(chain) or None
+            if junction_residue is not None and fallback_reason is not None:
+                result.setdefault("qc_warnings", []).append(
+                    f"{chain}: J→C junction residue from canonical fallback "
+                    f"({junction_residue!r}; {fallback_reason})"
+                    + (" — α junction is J-dependent (N is the most common)"
+                       if chain == "alpha" else " — β junction is invariantly E")
+                    + "."
+                )
+        if junction_residue:
+            canonical_aa = junction_residue + canonical_aa
+            # Prepend the codon for the junction residue. `back_translate`
+            # (single-best codon, no motif logic) is intentional: it's one codon
+            # at the start of the construct, and `canonical_nt_codon_opt` already
+            # has its own motif-optimized body. Stops are already on its tail —
+            # don't re-append.
+            canonical_nt_codon_opt = (
+                back_translate(junction_residue) + canonical_nt_codon_opt
             )
-        # else: no contigs_dir provided at all — silent. The user opted
-        # out of contig-derived NT entirely; assembly uses bare mature
-        # canonical, same as if the clone had no contig.
         result[f"{chain}_junction_residue"] = junction_residue
+        result[f"{chain}_junction_residue_source"] = (
+            "contig" if junction_from_contig else "canonical_fallback"
+        )
 
         # Record the allele-picker audit (#113, expanded #118/#120).
         result[f"{chain}_allele_called"] = (
@@ -2290,6 +2312,11 @@ def _extract_c_region_nt_from_contig(
         return None
 
     contig_ids = str(row[contig_col]).split(";")
+    # Match case-insensitively: the assembler's ``vdj_{chain}_nt`` is lowercase
+    # (#91) while CellRanger ``filtered_contig.fasta`` is uppercase, so a
+    # case-sensitive ``find`` misses EVERY clone and silently forces the
+    # canonical/no-contig fallback even with --cellranger-dir (#235 secondary).
+    vdj_nt_u = vdj_nt.upper()
     candidates: Counter = Counter()
     for sample in samples:
         if sample not in sample_contigs:
@@ -2298,12 +2325,12 @@ def _extract_c_region_nt_from_contig(
             if contig_id not in sample_contigs[sample]:
                 continue
             contig_seq = sample_contigs[sample][contig_id]
-            # Locate vdj_nt as an exact substring. Try both the contig as
-            # given and its reverse complement (CellRanger contigs are
-            # already oriented, but defensive).
-            idx = contig_seq.find(vdj_nt)
+            # CellRanger contigs are already oriented, so only the forward
+            # strand is searched. NT returned uppercase for downstream codon
+            # translation.
+            idx = contig_seq.upper().find(vdj_nt_u)
             if idx >= 0:
-                after = contig_seq[idx + len(vdj_nt):]
+                after = contig_seq[idx + len(vdj_nt_u):].upper()
                 if after:
                     candidates[after] += 1
     if candidates:

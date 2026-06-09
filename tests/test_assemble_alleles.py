@@ -338,9 +338,11 @@ class TestE2eNoContigFallback:
         )
         # No allele call (picker couldn't run); default TRBC2*01 used.
         assert out["beta_allele_called"].iloc[0] is None
-        # The constant_aa is the default TRBC2 (= *01), which is
-        # ``HUMAN_TRBC2_AA``.
-        assert out["beta_constant_aa"].iloc[0] == HUMAN_TRBC2_AA
+        # The constant_aa is the default TRBC2 (= *01) = ``HUMAN_TRBC2_AA``,
+        # now prefixed with the invariant β junction E from the canonical
+        # fallback (no contig available) so the chain isn't 1 aa short (#235).
+        assert out["beta_constant_aa"].iloc[0] == "E" + HUMAN_TRBC2_AA
+        assert out["beta_junction_residue"].iloc[0] == "E"
 
 
 class TestE2eAlphaTracPicker:

@@ -1296,10 +1296,10 @@ class TestJunctionResidueUniformly:
         ]
         assert translation_failures == []
 
-    def test_no_contig_emits_warning_and_skips_prepend(self, tmp_path):
-        """When contigs are loaded but α has no contig past VDJ, the
-        assembly preserves pre-#105 behavior (no junction residue) and
-        surfaces a QC warning so users know α is 1 aa short."""
+    def test_no_contig_falls_back_to_canonical_junction(self, tmp_path):
+        """When contigs are loaded but α has no contig past VDJ, assembly
+        prepends the canonical fallback junction residue (α default N) so the
+        chain is NOT 1 aa short, and surfaces a QC warning (#235)."""
         from tcrsift.assemble import assemble_full_sequences
 
         df, contigs_dir = self._build_alpha_fixture(tmp_path, "AAT")
@@ -1315,19 +1315,19 @@ class TestJunctionResidueUniformly:
             alpha_leader=None, beta_leader=None,
             verbose=False, show_progress=False,
         )
-        # alpha_constant_aa starts at the canonical (no prepend).
-        assert out["alpha_constant_aa"].iloc[0].startswith(HUMAN_TRAC_AA[:8])
-        assert out["alpha_junction_residue"].iloc[0] is None
-        # And a QC warning records the gap.
+        # alpha_constant_aa begins with the fallback junction N, then canonical.
+        assert out["alpha_constant_aa"].iloc[0].startswith("N" + HUMAN_TRAC_AA[:8])
+        assert out["alpha_junction_residue"].iloc[0] == "N"
+        assert out["alpha_junction_residue_source"].iloc[0] == "canonical_fallback"
         qc = out["qc_warnings"].iloc[0] or []
         assert any(
-            "no contig coverage past VDJ" in m for m in qc
-        ), f"expected α-no-contig warning, got {qc}"
+            "canonical fallback" in m and "alpha" in m for m in qc
+        ), f"expected α fallback warning, got {qc}"
 
-    def test_no_contigs_dir_silent_pre_105_behavior(self):
-        """When ``contigs_dir`` isn't provided at all (user opted out
-        of contig-derived NT entirely), the assembly stays silent and
-        produces pre-#105 alpha output. No warning."""
+    def test_no_contigs_dir_still_prepends_canonical_junction(self):
+        """When ``contigs_dir`` isn't provided at all, assembly still prepends
+        the canonical fallback junction (so the chain is the right length) but
+        stays silent — there's no contig to have expected coverage from (#235)."""
         from tcrsift.assemble import assemble_full_sequences
 
         vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
@@ -1347,18 +1347,18 @@ class TestJunctionResidueUniformly:
             df, alpha_leader=None, beta_leader=None,
             verbose=False, show_progress=False,
         )
-        # alpha_junction_residue isn't populated (None or column absent).
-        if "alpha_junction_residue" in out.columns:
-            assert out["alpha_junction_residue"].iloc[0] is None
-        # And no warning about missing contig coverage.
+        # Junction residue is the canonical fallback (α N, β E), chain not short.
+        assert out["alpha_junction_residue"].iloc[0] == "N"
+        assert out["beta_junction_residue"].iloc[0] == "E"
+        assert out["alpha_constant_aa"].iloc[0].startswith("N" + HUMAN_TRAC_AA[:8])
+        # No contig was provided, so no "fallback" warning noise.
         qc = out.get("qc_warnings", pd.Series([[]])).iloc[0] or []
-        assert not any(
-            "no contig coverage past VDJ" in m for m in qc
-        )
+        assert not any("canonical fallback" in m for m in qc)
 
-    def test_stop_or_unknown_junction_codon_warns(self, tmp_path):
-        """If the contig's junction codon is a stop (TAA/TAG/TGA) or
-        a codon with N, we don't prepend — instead emit a QC warning."""
+    def test_stop_junction_codon_falls_back_and_warns(self, tmp_path):
+        """If the contig's junction codon is a stop (TAA/TAG/TGA) or N-codon,
+        we fall back to the canonical residue (not 1 aa short) and warn,
+        naming the offending codon (#235)."""
         from tcrsift.assemble import assemble_full_sequences
 
         df, contigs_dir = self._build_alpha_fixture(tmp_path, "TAA")  # stop
@@ -1368,14 +1368,65 @@ class TestJunctionResidueUniformly:
             alpha_leader=None, beta_leader=None,
             verbose=False, show_progress=False,
         )
-        # No prepend.
-        assert out["alpha_constant_aa"].iloc[0].startswith(HUMAN_TRAC_AA[:8])
-        assert out["alpha_junction_residue"].iloc[0] is None
+        # Falls back to the canonical α junction N.
+        assert out["alpha_constant_aa"].iloc[0].startswith("N" + HUMAN_TRAC_AA[:8])
+        assert out["alpha_junction_residue"].iloc[0] == "N"
         # Warning surfaces the stop codon and names α.
         qc = out["qc_warnings"].iloc[0] or []
         assert any(
             "alpha" in m and "junction codon" in m and "TAA" in m for m in qc
-        ), f"expected α stop-codon warning, got {qc}"
+        ), f"expected α stop-codon fallback warning, got {qc}"
+
+    def test_golden_full_chain_constant_includes_junction(self):
+        """Golden anchor (#235): with no contig, each chain's constant region
+        must equal EXACTLY the junction residue + the native canonical — a
+        dropped OR added residue at the J→C seam fails this. β: E + TRBC; α:
+        N + TRAC. Also asserts full_{chain}_aa ends with that exact constant."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        vdj_alpha = "CASS" + "A" * 60 + "VLPHA"
+        vdj_beta = "CASS" + "G" * 60 + "VETA"
+        df = pd.DataFrame([{
+            "CDR3ab": "c1",
+            "CDR3_alpha": vdj_alpha, "CDR3_beta": vdj_beta,
+            "VDJ_alpha_aa": vdj_alpha, "VDJ_beta_aa": vdj_beta,
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1",
+            "samples": "S1",
+        }])
+        out = assemble_full_sequences(
+            df, alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        beta_const = "E" + HUMAN_TRBC1_AA
+        alpha_const = "N" + HUMAN_TRAC_AA
+        # Exact-equality golden: catches both a missing and an extra residue.
+        assert out["beta_constant_aa"].iloc[0] == beta_const
+        assert out["alpha_constant_aa"].iloc[0] == alpha_const
+        assert out["full_beta_aa"].iloc[0].endswith(beta_const)
+        assert out["full_alpha_aa"].iloc[0].endswith(alpha_const)
+
+    def test_lowercase_vdj_nt_still_matches_uppercase_contig(self, tmp_path):
+        """#235 secondary: the loader writes lowercase VDJ_nt (#91) but
+        CellRanger contigs are uppercase. C-region extraction must match
+        case-insensitively, else every clone silently falls back to no_contig
+        even with --cellranger-dir. Here the contig's junction is Y (TAT) — if
+        the match worked, the junction residue is read FROM the contig (source
+        'contig'), not the canonical fallback N."""
+        from tcrsift.assemble import assemble_full_sequences
+
+        # Real-loader-style lowercase VDJ_alpha_nt; uppercase contig.
+        df, contigs_dir = self._build_alpha_fixture(tmp_path, "TAT")  # Y junction
+        df["VDJ_alpha_nt"] = df["VDJ_alpha_nt"].str.lower()
+        out = assemble_full_sequences(
+            df,
+            contigs_dir=str(contigs_dir),
+            alpha_leader=None, beta_leader=None,
+            verbose=False, show_progress=False,
+        )
+        assert out["alpha_junction_residue"].iloc[0] == "Y"
+        assert out["alpha_junction_residue_source"].iloc[0] == "contig"
+        assert out["alpha_constant_aa"].iloc[0].startswith("Y" + HUMAN_TRAC_AA[:8])
 
     # ------------------------------------------------------------
     # β junction tests — same code path as α since 2.0 (#105).
@@ -1512,11 +1563,11 @@ class TestJunctionResidueUniformly:
                 f"{out['beta_constant_aa'].iloc[0][-12:]!r}"
             )
 
-    def test_no_synthetic_e_when_no_contig_for_beta(self, tmp_path):
-        """Pre-2.0, β chains got a synthetic E even without contigs.
-        Since 2.0, no contig means no E — bare mature TRBC, with a
-        QC warning indicating the assembled chain is 1 aa short of the
-        donor's expressed β protein. This is the 2.0 behaviour change."""
+    def test_beta_canonical_e_when_no_contig(self, tmp_path):
+        """β's J→C junction is the invariant E — knowable with zero contig
+        info. With no usable contig, assembly MUST still prepend E so the
+        chain matches the donor's expressed β (not 1 aa short). This is the
+        #235 fix (it reverses the buggy 2.0 'bare mature, no E' fallback)."""
         from tcrsift.assemble import assemble_full_sequences
 
         df, contigs_dir = self._build_beta_fixture(tmp_path, "GAG", c_gene="TRBC1")
@@ -1531,14 +1582,14 @@ class TestJunctionResidueUniformly:
             alpha_leader=None, beta_leader=None,
             verbose=False, show_progress=False,
         )
-        # β-constant starts at bare mature D, NOT synthetic E.
-        assert out["beta_constant_aa"].iloc[0].startswith("DLNK")
-        assert not out["beta_constant_aa"].iloc[0].startswith("EDLN")
-        assert out["beta_junction_residue"].iloc[0] is None
-        # And the QC warning explicitly names β.
+        # β-constant begins with the invariant junction E, then mature TRBC.
+        assert out["beta_constant_aa"].iloc[0].startswith("EDLNK")
+        assert out["beta_junction_residue"].iloc[0] == "E"
+        assert out["beta_junction_residue_source"].iloc[0] == "canonical_fallback"
+        # And the QC warning explicitly names β and the fallback.
         qc = out["qc_warnings"].iloc[0] or []
         assert any(
-            "beta" in m and "no contig coverage past VDJ" in m for m in qc
+            "beta" in m and "canonical fallback" in m for m in qc
         )
 
     def test_alpha_and_beta_use_same_code_path(self, tmp_path):
