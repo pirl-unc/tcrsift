@@ -9,10 +9,12 @@ from tcrsift._dtypes import rehydrate_obs
 
 def _make_adata(obs_dict):
     n = len(next(iter(obs_dict.values())))
-    return ad.AnnData(
-        X=np.zeros((n, 1), dtype=np.float32),
-        obs=pd.DataFrame(obs_dict),
-    )
+    obs = pd.DataFrame(obs_dict)
+    # Relabel to string obs_names AFTER construction: passing index= to the
+    # constructor would realign dict values that are Series (their integer
+    # index wouldn't match string labels → all-NaN). astype(str) just renames.
+    obs.index = obs.index.astype(str)
+    return ad.AnnData(X=np.zeros((n, 1), dtype=np.float32), obs=obs)
 
 
 class TestRehydrateObs:
@@ -112,7 +114,8 @@ class TestRehydrateObs:
                 "CDR3_alpha": [f"CAV_{i % 5}" for i in range(n)],
                 "CDR3_beta": [f"CASS_{i % 5}" for i in range(n)],
                 "is_CD8": [True] * n,
-            }
+            },
+            index=[str(i) for i in range(n)],
         )
         adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32), obs=obs)
 

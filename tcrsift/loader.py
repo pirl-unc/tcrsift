@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import warnings
 from pathlib import Path
 
 import anndata as ad
@@ -876,7 +877,17 @@ def load_samples(
                 spill_paths, out_path,
                 join="outer", label="sample", keys=sample_keys,
             )
-            combined = ad.read_h5ad(out_path)
+            # Non-unique obs_names are EXPECTED and intentional here: 10x reuses
+            # one barcode whitelist across samples, and we deliberately do not
+            # uniquify (downstream code indexes positionally with a sample-column
+            # mask — see qc.py `gex_vdj_overlap`). So anndata's "Observation names
+            # are not unique" notice on read-back is noise, not a problem to fix.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", message="Observation names are not unique",
+                    category=UserWarning,
+                )
+                combined = ad.read_h5ad(out_path)
             pbar.update(1)
 
     # Tempdir is cleaned up here; `combined` is fully in-memory.

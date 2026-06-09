@@ -210,7 +210,8 @@ class TestAggregateDonorMethodColumns:
                     "enrichment_method": [r[1] for r in rows],
                     "CDR3_alpha": [r[2] for r in rows],
                     "CDR3_beta": [r[3] for r in rows],
-                }
+                },
+                index=[str(i) for i in range(n)],
             ),
         )
         return adata
@@ -272,7 +273,8 @@ class TestAggregateDonorMethodColumns:
                     "sample": ["A", "A", "B", "B"],
                     "CDR3_alpha": ["CAVA"] * n,
                     "CDR3_beta": ["CASS_A"] * n,
-                }
+                },
+                index=[str(i) for i in range(n)],
             ),
         )
 
@@ -315,7 +317,8 @@ class TestAggregateDonorMethodColumns:
                     "tissue": [r[3] for r in rows],
                     "CDR3_alpha": [r[4] for r in rows],
                     "CDR3_beta": [r[5] for r in rows],
-                }
+                },
+                index=[str(i) for i in range(n)],
             ),
         )
 
@@ -373,7 +376,8 @@ class TestAggregateDonorMethodColumns:
                     "apc_type": ["mDC", "mDC", "B-LCL", "B-LCL"],
                     "CDR3_alpha": ["CAVA"] * n,
                     "CDR3_beta": ["CASS_A"] * n,
-                }
+                },
+                index=[str(i) for i in range(n)],
             ),
         )
         clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
@@ -394,7 +398,8 @@ class TestAggregateDonorMethodColumns:
                     "sample": ["S1"] * n,
                     "CDR3_alpha": ["CAVA"] * n,
                     "CDR3_beta": ["CASS_A"] * n,
-                }
+                },
+                index=[str(i) for i in range(n)],
             ),
         )
         clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
@@ -423,7 +428,8 @@ class TestAggregateDonorMethodColumns:
                     "patient_id": ["B1-2", "B1-2", "B1-3", "B1-3"],
                     "CDR3_alpha": ["CAVA"] * n,
                     "CDR3_beta": ["CASS_A"] * n,
-                }
+                },
+                index=[str(i) for i in range(n)],
             ),
         )
         clonotypes = aggregate_clonotypes(adata, group_by="CDR3ab")
@@ -808,7 +814,7 @@ class TestBuildCloneSampleLong:
             obs_data["TRB_1_umis"] = [r[6] for r in rows]
         return ad.AnnData(
             X=np.zeros((n, 1), dtype=np.float32),
-            obs=pd.DataFrame(obs_data),
+            obs=pd.DataFrame(obs_data, index=[str(i) for i in range(len(rows))]),
         )
 
     def test_basic_long_table_shape(self):
@@ -890,7 +896,8 @@ class TestBuildCloneSampleLong:
                     "sample": ["S1", "S1", "S2", "S2"],
                     "CDR3_alpha": ["CAVA", "", None, "CAVB"],
                     "CDR3_beta": ["CASS_A", "", None, "CASS_B"],
-                }
+                },
+                index=[str(i) for i in range(4)],
             ),
         )
         long = build_clone_sample_long(adata)
@@ -906,7 +913,7 @@ class TestBuildCloneSampleLong:
 
         adata = ad.AnnData(
             X=np.zeros((2, 1), dtype=np.float32),
-            obs=pd.DataFrame({"sample": ["S1", "S2"]}),
+            obs=pd.DataFrame({"sample": ["S1", "S2"]}, index=[str(i) for i in range(2)]),
         )
         with pytest.raises(TCRsiftValidationError, match="CDR3"):
             build_clone_sample_long(adata)
@@ -951,6 +958,7 @@ class TestBuildCloneSampleLongCategorical:
         obs["enrichment_method"] = pd.Categorical(
             obs["enrichment_method"], categories=["AIMpos", "tetpos", "IFN_UNUSED"]
         )
+        obs.index = obs.index.astype(str)
         adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32), obs=obs)
 
         long_df = build_clone_sample_long(adata)
@@ -1000,7 +1008,8 @@ class TestBuildPerMethodRankings:
                     "enrichment_method": [r[2] for r in rows],
                     "CDR3_alpha": [r[3] for r in rows],
                     "CDR3_beta": [r[4] for r in rows],
-                }
+                },
+                index=[str(i) for i in range(n)],
             ),
         )
         long_df = build_clone_sample_long(adata)
@@ -1141,7 +1150,8 @@ class TestBuildMethodOverlapMatrices:
                     "enrichment_method": [r[2] for r in rows],
                     "CDR3_alpha": [r[3] for r in rows],
                     "CDR3_beta": [r[4] for r in rows],
-                }
+                },
+                index=[str(i) for i in range(n)],
             ),
         )
         long_df = build_clone_sample_long(adata)
@@ -1275,7 +1285,8 @@ class TestBuildMethodRecoveryTable:
                     "enrichment_method": [r[2] for r in rows],
                     "CDR3_alpha": [r[3] for r in rows],
                     "CDR3_beta": [r[4] for r in rows],
-                }
+                },
+                index=[str(i) for i in range(n)],
             ),
         )
         long_df = build_clone_sample_long(adata)

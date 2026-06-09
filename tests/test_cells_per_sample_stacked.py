@@ -38,7 +38,7 @@ def _adata(
     for s, n in n_per_sample.items():
         samples.extend([s] * n)
     n = len(samples)
-    obs = pd.DataFrame({"sample": samples})
+    obs = pd.DataFrame({"sample": samples}, index=[str(i) for i in range(n)])
 
     if with_qc:
         rng = np.random.default_rng(0)
@@ -75,7 +75,7 @@ class TestStackedQCBars:
 
     def test_skips_when_no_sample_column(self, tmp_path):
         X = csr_matrix((5, 1))
-        a = ad.AnnData(X=X, obs=pd.DataFrame({"foo": [1, 2, 3, 4, 5]}))
+        a = ad.AnnData(X=X, obs=pd.DataFrame({"foo": [1, 2, 3, 4, 5]}, index=list("abcde")))
         out = plot_cells_per_sample_stacked(a, tmp_path / "qc.png")
         assert out is None
 

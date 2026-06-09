@@ -27,6 +27,7 @@ from tcrsift.clonotype import build_clone_sample_long
 def _adata(rows):
     """Build a minimal AnnData from a list of obs dicts."""
     obs = pd.DataFrame(rows)
+    obs.index = obs.index.astype(str)  # anndata wants string obs_names
     X = csr_matrix((len(obs), 1))
     return ad.AnnData(X=X, obs=obs)
 
