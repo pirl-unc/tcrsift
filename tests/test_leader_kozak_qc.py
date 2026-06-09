@@ -129,7 +129,7 @@ class TestLeakyScan:
         )
         return nt
 
-    def test_leaky_scan_collapses_to_m35(self):
+    def test_overcapture_reselects_to_m35(self):
         from tcrsift.assemble import find_longest_orf
 
         nt = self._build_contig()
@@ -137,41 +137,63 @@ class TestLeakyScan:
         orig_leader = translated.split(self.VDJ_AA)[0]
         assert len(orig_leader) == 54  # the over-capture (M0 start)
 
-        leader_aa, leader_nt, score, kind = _kozak_correct_leader(
+        leader_aa, leader_nt, score, source = _kozak_correct_leader(
             nt, offset, orig_leader
         )
-        # First adequate-context AUG is M35 → 19-aa leader, not 54.
-        assert kind == "kozak"
+        # Over-capture (>25) → first adequate in-range AUG is M35 → 19-aa leader.
+        assert source == "contig_kozak_reselected"
         assert len(leader_aa) == 19
         assert leader_aa == orig_leader[35:]
         assert score >= KOZAK_ADEQUATE
-        # NT trimmed in lockstep with the AA.
-        assert len(leader_nt) == 19 * 3
+        assert len(leader_nt) == 19 * 3  # NT trimmed in lockstep
 
-    def test_no_adequate_aug_flags_weak_kozak(self):
-        # A single weak-context ATG (pyrimidine -3, non-G +4): nothing clears the
-        # bar → weak_kozak, and we keep the longest-ORF leader (visible, flagged).
+    def test_in_range_leader_with_weak_start_is_kept_unchanged(self):
+        # REGRESSION GUARD: a 19-aa (in-range) leader whose true start is weak
+        # Kozak but which HAS an adequate downstream Met must NOT be shortened —
+        # only over-captures (>25) are reselected. Keeps a correct leader intact.
         from tcrsift.assemble import find_longest_orf
 
-        nt = "TTTTTT" + "ATG" + self.L * 18 + self.VDJ_NT
+        nt = (
+            "TTTTTT"
+            + "ATG" + self.L * 5      # weak M0 (-3='T', +4='C')        (k=0)
+            + self.THR                 #   Thr → next Met gets -3 purine  (k=6)
+            + "ATG" + self.L * 11     # adequate Met at k=7 (12-aa tail)
+            + self.VDJ_NT
+        )
         translated, offset, _ = find_longest_orf(nt)
         orig_leader = translated.split(self.VDJ_AA)[0]
-        leader_aa, leader_nt, score, kind = _kozak_correct_leader(
+        assert len(orig_leader) == 19 <= 25  # in range
+        leader_aa, leader_nt, score, source = _kozak_correct_leader(
             nt, offset, orig_leader
         )
-        assert kind == "weak_kozak"
-        assert leader_aa == orig_leader  # fell back to the longest-ORF start
+        assert source == "contig"          # kept, NOT reselected
+        assert leader_aa == orig_leader    # unchanged 19-aa leader
+        assert score < KOZAK_ADEQUATE      # its start really is weak (surfaced as QC)
+
+    def test_overcapture_without_in_range_adequate_start_is_kept(self):
+        # 40-aa over-capture, single weak ATG, no in-range adequate Met → kept
+        # (the caller flags it too_long); we never fabricate a worse leader.
+        from tcrsift.assemble import find_longest_orf
+
+        nt = "TTTTTT" + "ATG" + self.L * 39 + self.VDJ_NT
+        translated, offset, _ = find_longest_orf(nt)
+        orig_leader = translated.split(self.VDJ_AA)[0]
+        assert len(orig_leader) == 40
+        leader_aa, leader_nt, score, source = _kozak_correct_leader(
+            nt, offset, orig_leader
+        )
+        assert source == "contig"
+        assert leader_aa == orig_leader  # kept the over-capture, unfixable
 
 
 class TestFromContigIntegration:
     """End-to-end: leaky-scan QC columns + curated fallback through assembly."""
 
     L = "CTG"
-    THR = "ACT"
     VDJ_NT = "GAATTCGAATTCGAA"
     VDJ_AA = "EFEFE"
 
-    # Over-capture contig: M0/M13 weak, M35 adequate → leaky-scan picks M35.
+    # Over-capture: M0/M13 weak, M35 adequate, 54 aa → reselect to M35 (19 aa).
     OVERCAPTURE = (
         "TTTTTT"
         + "ATG" + "CTG" * 12
@@ -180,10 +202,12 @@ class TestFromContigIntegration:
         + "ATG" + "CTG" * 18
         + "GAATTCGAATTCGAA"
     )
-    # Weak-only contig: one weak ATG, nothing clears the bar → weak_kozak.
-    WEAK_ONLY = "TTTTTT" + "ATG" + "CTG" * 18 + "GAATTCGAATTCGAA"
+    # In-range (19 aa) leader with a weak start → kept + flagged weak_kozak_start.
+    INRANGE_WEAK = "TTTTTT" + "ATG" + "CTG" * 18 + "GAATTCGAATTCGAA"
+    # Unfixable 40-aa over-capture (no in-range adequate start) → too_long.
+    OVERCAPTURE_UNFIXABLE = "TTTTTT" + "ATG" + "CTG" * 39 + "GAATTCGAATTCGAA"
 
-    def _row(self, contig_id):
+    def _row(self, contig_id, contig_ids=None):
         import pandas as pd
 
         return pd.DataFrame([{
@@ -193,17 +217,21 @@ class TestFromContigIntegration:
             "VDJ_beta_aa": "CASS" + "G" * 40 + "VETA",
             "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
             "alpha_j_gene": "TRAJ45", "beta_j_gene": "TRBJ1-1",
-            "samples": "S1", "alpha_contig_ids": contig_id,
+            "samples": "S1", "alpha_contig_ids": contig_ids or contig_id,
         }])
 
-    def _assemble(self, tmp_path, contig_id, contig_seq, **kw):
+    def _assemble(self, tmp_path, contigs, contig_ids=None, **kw):
+        # contigs: list of (id, seq); contig_ids: the row's alpha_contig_ids.
         from tcrsift.assemble import assemble_full_sequences
 
         d = tmp_path / "S1" / "vdj_t"
         d.mkdir(parents=True)
-        (d / "filtered_contig.fasta").write_text(f">{contig_id}\n{contig_seq}\n")
+        (d / "filtered_contig.fasta").write_text(
+            "".join(f">{cid}\n{seq}\n" for cid, seq in contigs)
+        )
+        row = self._row(contigs[0][0], contig_ids=contig_ids or contigs[0][0])
         out = assemble_full_sequences(
-            self._row(contig_id), contigs_dir=str(tmp_path),
+            row, contigs_dir=str(tmp_path),
             sample_name_from="grandparent", alpha_leader="from_contig",
             beta_leader=None, include_constant=False,
             verbose=False, show_progress=False, **kw,
@@ -211,21 +239,50 @@ class TestFromContigIntegration:
         return out.iloc[0]
 
     def test_overcapture_collapses_to_19aa_ok(self, tmp_path):
-        r = self._assemble(tmp_path, "c1", self.OVERCAPTURE)
+        r = self._assemble(tmp_path, [("c1", self.OVERCAPTURE)])
         assert r["alpha_leader_aa"] == "M" + "L" * 18      # 19-aa real leader
         assert r["alpha_leader_qc"] == "ok"
-        assert r["alpha_leader_source"] == "contig_kozak"
+        assert r["alpha_leader_source"] == "contig_kozak_reselected"
         assert r["alpha_leader_kozak_score"] >= 2
+        assert r["alpha_leader_support"] == "1/1"
 
-    def test_weak_only_flagged_weak_kozak(self, tmp_path):
-        r = self._assemble(tmp_path, "c2", self.WEAK_ONLY)
-        assert r["alpha_leader_qc"] == "weak_kozak"
-        assert r["alpha_leader_source"] == "contig_weak_fallback"
+    def test_in_range_weak_start_kept_and_flagged(self, tmp_path):
+        r = self._assemble(tmp_path, [("c2", self.INRANGE_WEAK)])
+        assert r["alpha_leader_aa"] == "M" + "L" * 18      # kept, not shortened
+        assert r["alpha_leader_qc"] == "weak_kozak_start"
+        assert r["alpha_leader_source"] == "contig"
 
-    def test_leader_fallback_substitutes_curated_sp(self, tmp_path):
+    def test_unfixable_overcapture_flagged_too_long(self, tmp_path):
+        r = self._assemble(tmp_path, [("c3", self.OVERCAPTURE_UNFIXABLE)])
+        assert r["alpha_leader_qc"] == "too_long"
+        assert r["alpha_leader_source"] == "contig"
+
+    def test_leader_fallback_substitutes_only_implausible(self, tmp_path):
         from tcrsift.assemble import DEFAULT_LEADERS
 
-        r = self._assemble(tmp_path, "c3", self.WEAK_ONLY, leader_fallback="CD8A")
+        # too_long is implausible → curated substitution applies.
+        r = self._assemble(
+            tmp_path, [("c4", self.OVERCAPTURE_UNFIXABLE)], leader_fallback="CD8A"
+        )
         assert r["alpha_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]
         assert r["alpha_leader_qc"] == "curated_fallback"
         assert r["alpha_leader_source"] == "curated_fallback:CD8A"
+
+    def test_leader_fallback_does_not_touch_weak_kozak_start(self, tmp_path):
+        # weak_kozak_start is plausible (in-range, well-shaped) → NOT substituted
+        # even when a fallback is configured. The kept leader survives.
+        r = self._assemble(
+            tmp_path, [("c5", self.INRANGE_WEAK)], leader_fallback="CD8A"
+        )
+        assert r["alpha_leader_aa"] == "M" + "L" * 18
+        assert r["alpha_leader_qc"] == "weak_kozak_start"
+
+    def test_multi_contig_consensus_support(self, tmp_path):
+        # Two contigs both yielding the same reselected leader → support 2/2.
+        r = self._assemble(
+            tmp_path,
+            [("c6a", self.OVERCAPTURE), ("c6b", self.OVERCAPTURE)],
+            contig_ids="c6a;c6b",
+        )
+        assert r["alpha_leader_aa"] == "M" + "L" * 18
+        assert r["alpha_leader_support"] == "2/2"

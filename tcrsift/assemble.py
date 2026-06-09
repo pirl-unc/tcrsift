@@ -189,10 +189,13 @@ SP_LENGTH_MAX = 25
 # h-region check — a signal peptide's defining feature is a hydrophobic core.
 _HYDROPHOBIC_AA = frozenset("AILMFWVC")
 
-# Leader QC verdicts that mark an implausible signal peptide — these are the
-# ones a configured curated fallback (leader_fallback) substitutes away (#263).
+# Leader QC verdicts that mark an implausible signal peptide — the ones a
+# configured curated fallback (leader_fallback) substitutes away (#263).
+# NOTE: ``weak_kozak_start`` is deliberately NOT here — it's an in-range,
+# well-shaped leader we kept on purpose (weak start is a flag, not a defect to
+# overwrite); only genuine shape failures are eligible for substitution.
 _IMPLAUSIBLE_LEADER_QC = frozenset(
-    {"weak_kozak", "too_long", "too_short", "no_met", "no_h_region", "internal_stop", "missing"}
+    {"too_long", "too_short", "no_met", "no_h_region", "internal_stop", "missing"}
 )
 
 
@@ -2085,41 +2088,52 @@ def _assemble_clone(
 def _kozak_correct_leader(
     contig_seq: str, offset: int, orig_leader: str
 ) -> tuple[str, str, int, str]:
-    """Choose the leader's start codon by LEAKY SCANNING (#263).
+    """Choose the leader's start codon, auto-shortening ONLY an over-capture (#263).
 
     ``orig_leader`` is the ORF prefix before the VDJ (translated from the ATG at
-    ``offset``). The in-frame Met starts within it are scanned 5'→3' and
-    initiation is assigned to the FIRST one with adequate Kozak context
-    (``>= KOZAK_ADEQUATE``, i.e. a -3 purine) — exactly what the ribosome does
-    when it leaky-scans past weak upstream AUGs. The longest-ORF rule instead
-    grabbed the first AUG *period* (e.g. a weak 5'-UTR M0), over-capturing.
+    ``offset``). Policy:
 
-    Returns ``(leader_aa, leader_nt, kozak_score, kind)`` where ``kind`` is:
-    ``"kozak"`` (an adequate-context start was found — ``offset`` itself or a
-    downstream re-selection) or ``"weak_kozak"`` (NO in-frame AUG cleared the
-    -3-purine bar → fall back to the longest-ORF start, flagged so the
-    over-capture is visible, never silent). Length sanity on the result is
-    applied separately by :func:`leader_qc`.
+    - **In-range leaders (len ≤ SP_LENGTH_MAX) are never altered.** The ORF
+      start is kept. This avoids silently shortening a correct leader whose true
+      start happens to have weak Kozak context (a downstream adequate Met must
+      NOT win here). Weakness of the kept start is still surfaced as QC by the
+      caller (``weak_kozak_start``) — leaky-scan informs, it doesn't act.
+    - **Over-captures (len > SP_LENGTH_MAX)** trigger a leaky scan: the in-frame
+      Mets are walked 5'→3' and initiation moves to the FIRST one with adequate
+      Kozak context (``>= KOZAK_ADEQUATE``) whose resulting leader lands in the
+      ``SP_LENGTH_MIN..MAX`` window — what the ribosome does, leaky-scanning past
+      weak upstream AUGs. If no such start exists the over-capture is kept (the
+      caller flags it ``too_long``); we never fabricate a worse leader.
+
+    Returns ``(leader_aa, leader_nt, kozak_score_of_chosen_start, source)`` where
+    ``source`` is ``"contig"`` (ORF start kept) or ``"contig_kozak_reselected"``
+    (over-capture auto-shortened to an in-range adequate start).
     """
     orig_len = len(orig_leader)
-    # In-frame Met starts within the leader region, as aa offsets into the ORF;
-    # nt position of each is ``offset + 3*k`` (all share the VDJ reading frame).
+    # In-frame Met starts (aa offsets into the ORF); nt position is offset+3*k.
     atgs = [k for k in range(orig_len) if orig_leader[k] == "M"]
 
-    chosen_k, kind = None, "weak_kozak"
-    for k in atgs:  # 5'→3'
-        if _kozak_score(contig_seq, offset + 3 * k) >= KOZAK_ADEQUATE:
-            chosen_k, kind = k, "kozak"
-            break
-    if chosen_k is None:
-        # No adequate-context AUG: fall back to the longest-ORF start (the
-        # original over-capture) but flag it weak so it isn't silent.
-        chosen_k = atgs[0] if atgs else 0
+    chosen_k, source = 0, "contig"
+    if orig_len > SP_LENGTH_MAX:
+        # Leaky-scan for the first (most upstream) adequate Met whose leader
+        # lands in-range. atgs ascend in k, so the resulting length descends;
+        # once it drops below the floor, no later Met can qualify → stop.
+        for k in atgs:
+            if k == 0:
+                continue  # can't shorten the over-capture to itself
+            new_len = orig_len - k
+            if new_len < SP_LENGTH_MIN:
+                break
+            if new_len <= SP_LENGTH_MAX and (
+                _kozak_score(contig_seq, offset + 3 * k) >= KOZAK_ADEQUATE
+            ):
+                chosen_k, source = k, "contig_kozak_reselected"
+                break
 
     leader_aa = orig_leader[chosen_k:]
     leader_nt = contig_seq[offset + 3 * chosen_k : offset + orig_len * 3]
     score = _kozak_score(contig_seq, offset + 3 * chosen_k)
-    return leader_aa, leader_nt, score, kind
+    return leader_aa, leader_nt, score, source
 
 
 def _extract_leader_from_contigs_single(
@@ -2130,13 +2144,19 @@ def _extract_leader_from_contigs_single(
 ):
     """Extract + QC the signal peptide from contigs for a single chain (#263).
 
-    Each supporting contig votes its Kozak-corrected leader; the consensus
-    (most-common) leader is recorded along with QC provenance:
-    ``{chain}_leader_qc`` (ok/too_long/no_h_region/…), ``_leader_len``,
-    ``_leader_kozak_score``, ``_leader_source`` (contig / contig_kozak_reselected
-    / contig_failed), and ``_leader_support`` (n agreeing / n total). A
-    ``contig_failed`` outcome (no contig yields an in-range start) leaves the
-    leader unset for the caller's error/fallback policy.
+    Each supporting contig votes its (over-capture-corrected) leader; the
+    consensus (most-common) leader is recorded with QC provenance:
+
+    - ``{chain}_leader_qc`` — ``ok`` / ``weak_kozak_start`` (in-range, kept, but
+      its start has weak Kozak context) / ``too_long`` / ``too_short`` /
+      ``no_met`` / ``no_h_region`` / ``internal_stop`` / ``missing``.
+    - ``{chain}_leader_source`` — ``contig`` (ORF start kept) or
+      ``contig_kozak_reselected`` (over-capture auto-shortened to an in-range
+      adequate-Kozak start).
+    - ``{chain}_leader_len``, ``_leader_kozak_score`` (of the chosen start),
+      ``_leader_support`` (n agreeing / n total).
+
+    When no contig covers the VDJ the leader is simply left unset (no QC fields).
     """
     samples = str(row.get("samples", "")).split(";")
 
@@ -2148,8 +2168,9 @@ def _extract_leader_from_contigs_single(
     vdj_aa = result.get(f"vdj_{chain}_aa", "")
 
     leader_counter = Counter()
-    # leader_aa -> (leader_nt, kozak_score, kind); first sighting wins
-    # (corrected leaders for the same aa share these by construction).
+    # leader_aa -> (leader_nt, kozak_score, source). The metadata is consistent
+    # across contigs voting the same leader_aa (same translation + same
+    # reselection decision yield the same aa), so first sighting is fine.
     leader_meta: dict = {}
     n_total = 0
 
@@ -2167,29 +2188,32 @@ def _extract_leader_from_contigs_single(
             if vdj_aa and vdj_aa in translated and offset is not None:
                 orig_leader = translated.split(vdj_aa)[0]
                 n_total += 1
-                leader_aa, leader_nt, score, kind = _kozak_correct_leader(
+                leader_aa, leader_nt, score, source = _kozak_correct_leader(
                     contig_seq, offset, orig_leader
                 )
                 leader_counter[leader_aa] += 1
-                leader_meta.setdefault(leader_aa, (leader_nt, score, kind))
+                leader_meta.setdefault(leader_aa, (leader_nt, score, source))
 
     if not leader_counter:
         return  # no contig covered the VDJ — leader simply absent
 
     leader_aa, support = leader_counter.most_common(1)[0]
-    leader_nt, score, kind = leader_meta[leader_aa]
+    leader_nt, score, source = leader_meta[leader_aa]
     result[f"{chain}_leader_aa"] = leader_aa
     result[f"{chain}_leader_nt"] = leader_nt
     result[f"{chain}_leader_len"] = len(leader_aa)
-    # weak_kozak (no adequate-context AUG) overrides the shape QC — it's the
-    # over-capture case; otherwise classify by length/structure.
-    result[f"{chain}_leader_qc"] = (
-        "weak_kozak" if kind == "weak_kozak" else leader_qc(leader_aa)
-    )
     result[f"{chain}_leader_kozak_score"] = score
-    result[f"{chain}_leader_source"] = (
-        "contig_weak_fallback" if kind == "weak_kozak" else "contig_kozak"
-    )
+    result[f"{chain}_leader_source"] = source
+    # QC verdict on the FINAL leader. Shape problems (length/Met/h-region) take
+    # precedence; a well-shaped, in-range leader that we KEPT despite a
+    # weak-Kozak start is surfaced as ``weak_kozak_start`` (leaky-scan-for-QC:
+    # informative, not a defect we acted on). A reselected leader is judged
+    # purely on shape (its start is adequate by construction).
+    shape = leader_qc(leader_aa)
+    if source == "contig" and shape == "ok" and score < KOZAK_ADEQUATE:
+        result[f"{chain}_leader_qc"] = "weak_kozak_start"
+    else:
+        result[f"{chain}_leader_qc"] = shape
     result[f"{chain}_leader_support"] = f"{support}/{n_total}"
 
 
