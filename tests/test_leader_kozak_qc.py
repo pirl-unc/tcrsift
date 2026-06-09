@@ -16,13 +16,27 @@ from __future__ import annotations
 from tcrsift.assemble import (
     DEFAULT_LEADERS,
     KOZAK_ADEQUATE,
+    SP_LENGTH_HARD,
     SP_LENGTH_MAX,
     SP_LENGTH_MIN,
+    _classify_leader,
     _has_h_region,
     _kozak_correct_leader,
     _kozak_score,
     leader_qc,
 )
+
+# Minimal aa→codon map for building synthetic leader contigs in tests.
+_CODON = {
+    "M": "ATG", "L": "CTG", "S": "AGC", "P": "CCC", "D": "GAC", "A": "GCC",
+    "W": "TGG", "N": "AAC", "T": "ACC", "R": "CGC", "C": "TGC", "V": "GTG",
+    "G": "GGC", "E": "GAA", "F": "TTC", "K": "AAG", "Y": "TAC", "H": "CAC",
+    "Q": "CAG", "I": "ATC",
+}
+
+
+def _nt(aa: str) -> str:
+    return "".join(_CODON[a] for a in aa)
 
 
 class TestLeaderQC:
@@ -171,7 +185,7 @@ class TestLeakyScan:
         assert score < KOZAK_ADEQUATE      # its start really is weak (surfaced as QC)
 
     def test_overcapture_without_in_range_adequate_start_is_kept(self):
-        # 40-aa over-capture, single weak ATG, no in-range adequate Met → kept
+        # 40-aa over-capture, single weak ATG, no nested SP at all → kept
         # (the caller flags it too_long); we never fabricate a worse leader.
         from tcrsift.assemble import find_longest_orf
 
@@ -184,6 +198,60 @@ class TestLeakyScan:
         )
         assert source == "contig"
         assert leader_aa == orig_leader  # kept the over-capture, unfixable
+
+    # Real TRAV1-2 SP nested at the tail of a 34-aa over-capture; its start is
+    # weak-Kozak (why leaky-scan skips it) but it has a clear h-region.
+    TRAV1_2_SP = "MWGVFLLYVSMKMGGTT"
+    TRAV1_2_SP_NT = (
+        "ATGTGGGGCGTGTTCCTGCTGTACGTGAGCATGAAGATGGGCGGCACCACC"
+    )
+
+    def test_structural_trim_recovers_weak_kozak_nested_sp(self):
+        # 34-aa over-capture = M + 16 filler + 17-aa TRAV1-2 SP. No adequate
+        # Kozak start in range → structural (h-region) trim recovers the 17-aa SP.
+        from tcrsift.assemble import find_longest_orf
+
+        nt = (
+            "TTTTTT" + "ATG" + self.L * 16   # weak M0 + 16 L (no nested Met)
+            + self.TRAV1_2_SP_NT             # 17-aa SP, weak-Kozak start at k=17
+            + self.VDJ_NT
+        )
+        translated, offset, _ = find_longest_orf(nt)
+        orig_leader = translated.split(self.VDJ_AA)[0]
+        assert len(orig_leader) == 34
+        leader_aa, leader_nt, score, source = _kozak_correct_leader(
+            nt, offset, orig_leader
+        )
+        assert source == "contig_hregion_trimmed"
+        assert leader_aa == self.TRAV1_2_SP   # MWGVFLLYVSMKMGGTT
+        assert len(leader_aa) == 17
+        assert score < KOZAK_ADEQUATE         # its start really is weak-Kozak
+
+
+class TestLengthBanding:
+    """_classify_leader length bands: ok / weak_kozak_start / long_leader / too_long."""
+
+    OK20 = "M" + "L" * 19  # 20 aa, hydrophobic h-region
+
+    def test_in_range_adequate_start_is_ok(self):
+        assert _classify_leader(self.OK20, 3, "contig") == "ok"
+
+    def test_in_range_weak_start_flagged(self):
+        assert _classify_leader(self.OK20, 0, "contig") == "weak_kozak_start"
+
+    def test_26_to_30_is_accepted_long_leader(self):
+        # TRBV13's real 29-aa leader → long_leader, NOT an error.
+        assert _classify_leader("M" + "L" * 28, 0, "contig") == "long_leader"
+        assert _classify_leader("M" + "L" * 25, 0, "contig") == "long_leader"  # 26 aa
+
+    def test_over_hard_max_is_too_long(self):
+        assert _classify_leader("M" + "L" * 30, 0, "contig") == "too_long"  # 31 aa
+        assert SP_LENGTH_HARD == 30
+
+    def test_hregion_trim_and_reselect_sources(self):
+        assert _classify_leader("M" + "L" * 16, 0, "contig_hregion_trimmed") == "hregion_trimmed"
+        # reselected leader judged purely on shape (in-range → ok)
+        assert _classify_leader("M" + "L" * 16, 0, "contig_kozak_reselected") == "ok"
 
 
 class TestFromContigIntegration:
@@ -286,3 +354,33 @@ class TestFromContigIntegration:
         )
         assert r["alpha_leader_aa"] == "M" + "L" * 18
         assert r["alpha_leader_support"] == "2/2"
+
+    # TRAV1-2: 34-aa over-capture (M + 16 filler + real 17-aa SP), weak-Kozak
+    # nested start → structural h-region trim recovers MWGVFLLYVSMKMGGTT.
+    TRAV1_2 = (
+        "TTTTTT" + "ATG" + "CTG" * 16
+        + "ATGTGGGGCGTGTTCCTGCTGTACGTGAGCATGAAGATGGGCGGCACCACC"
+        + "GAATTCGAATTCGAA"
+    )
+    # TRBV13: real 29-aa leader (IMGT TRBV13*01, donor-variant), no nested SP.
+    TRBV13 = "GCAGCA" + _nt("MLSPDLPDSAWNTRLLCRVMLCLLGAGSV") + "GAATTCGAATTCGAA"
+
+    def test_trav1_2_overcapture_structural_trim(self, tmp_path):
+        r = self._assemble(tmp_path, [("c7", self.TRAV1_2)])
+        assert r["alpha_leader_aa"] == "MWGVFLLYVSMKMGGTT"   # real 17-aa SP
+        assert r["alpha_leader_qc"] == "hregion_trimmed"
+        assert r["alpha_leader_source"] == "contig_hregion_trimmed"
+
+    def test_trbv13_long_leader_accepted_not_trimmed(self, tmp_path):
+        r = self._assemble(tmp_path, [("c8", self.TRBV13)])
+        # Genuinely-long 29-aa native leader → kept, accepted (not an error).
+        assert r["alpha_leader_aa"] == "MLSPDLPDSAWNTRLLCRVMLCLLGAGSV"
+        assert r["alpha_leader_qc"] == "long_leader"
+        assert r["alpha_leader_source"] == "contig"
+
+    def test_fallback_leaves_long_leader_alone(self, tmp_path):
+        # long_leader is accepted (not implausible) → curated fallback won't touch
+        # it even when configured.
+        r = self._assemble(tmp_path, [("c9", self.TRBV13)], leader_fallback="CD8A")
+        assert r["alpha_leader_aa"] == "MLSPDLPDSAWNTRLLCRVMLCLLGAGSV"
+        assert r["alpha_leader_qc"] == "long_leader"
