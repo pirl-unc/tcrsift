@@ -170,6 +170,108 @@ DEFAULT_LEADERS = {
     },
 }
 
+# --- Signal-peptide (leader) QC + Kozak start selection (#263) -------------
+#
+# `from_contig` leader extraction takes the ORF prefix before the VDJ, but the
+# longest-ORF rule can begin at an upstream 5'-UTR ATG that reads in-frame into
+# the VDJ — over-capturing the leader (observed: a 54-aa α leader on B1-2 where
+# the real signal peptide is ~19 aa). The fix is to pick the START codon by
+# Kozak context strength, not ORF length, and to bound the leader to a sane
+# signal-peptide length.
+
+# Acceptance window for a TCR signal peptide (aa). Real TCR leaders run ~15-25;
+# the curated DEFAULT_LEADERS span 18-21. A from_contig leader OUTSIDE this
+# window triggers Kozak-based start re-selection.
+SP_LENGTH_MIN = 12
+SP_LENGTH_MAX = 25
+
+# Hydrophobic residues (Kyte-Doolittle positive side) for the signal-peptide
+# h-region check — a signal peptide's defining feature is a hydrophobic core.
+_HYDROPHOBIC_AA = frozenset("AILMFWVC")
+
+# Leader QC verdicts that mark an implausible signal peptide — these are the
+# ones a configured curated fallback (leader_fallback) substitutes away (#263).
+_IMPLAUSIBLE_LEADER_QC = frozenset(
+    {"weak_kozak", "too_long", "too_short", "no_met", "no_h_region", "internal_stop", "missing"}
+)
+
+
+def _has_h_region(leader: str, *, window: int = 6, min_hydrophobic: int = 4) -> bool:
+    """True if the leader contains a hydrophobic h-region.
+
+    Looks for any ``window``-residue stretch with at least ``min_hydrophobic``
+    hydrophobic residues — the hydrophobic core every signal peptide has. The
+    curated DEFAULT_LEADERS all pass comfortably.
+    """
+    if not leader or len(leader) < window:
+        return False
+    flags = [1 if aa in _HYDROPHOBIC_AA else 0 for aa in leader]
+    return any(
+        sum(flags[i : i + window]) >= min_hydrophobic
+        for i in range(len(flags) - window + 1)
+    )
+
+
+def leader_qc(
+    leader: str | None,
+    *,
+    lo: int = SP_LENGTH_MIN,
+    hi: int = SP_LENGTH_MAX,
+    require_h_region: bool = True,
+) -> str:
+    """Classify a signal peptide: ``ok`` / ``missing`` / ``no_met`` /
+    ``internal_stop`` / ``too_short`` / ``too_long`` / ``no_h_region`` (#263).
+
+    Order matters: a structurally broken leader (no Met, internal stop) is
+    reported before a length/shape complaint.
+    """
+    if not leader or not isinstance(leader, str):
+        return "missing"
+    if not leader.startswith("M"):
+        return "no_met"
+    if "*" in leader:  # a leader should never carry a stop (see translate_dna)
+        return "internal_stop"
+    if len(leader) < lo:
+        return "too_short"
+    if len(leader) > hi:
+        return "too_long"
+    if require_h_region and not _has_h_region(leader):
+        return "no_h_region"
+    return "ok"
+
+
+# Kozak context scoring (Kozak 1987/1991). The optimal context is gccRccATGG
+# with the A of ATG counted as +1; of the ~10 positions only two carry most of
+# the functional weight — a purine (A/G) at -3 (dominant) and a G at +4. We
+# score just those: a -3 purine is "adequate", +4=G adds to it. The bar for
+# initiation is ADEQUATE (-3 purine), NOT a textbook-consensus match — even a
+# real start need not be optimal (the validated TRAV16 start M35 is -3=G/+4=A,
+# adequate but not strong). Score: 0 weak · >=2 adequate · >=4 strong.
+KOZAK_ADEQUATE = 2  # threshold: a -3 purine is present
+
+
+def _kozak_score(contig_nt: str, atg_pos: int) -> int:
+    """Kozak initiation-context score for the ATG whose A is at ``atg_pos``.
+
+    ``-3`` purine (A/G) contributes +2 (the dominant position; +1 more if it's
+    the preferred A), ``+4`` = G contributes +2. Returns ``-1`` for incomplete
+    context (ATG hard against the contig 5' end) so such starts are never
+    chosen over a real downstream one.
+    """
+    if atg_pos < 3 or atg_pos + 3 >= len(contig_nt):
+        return -1
+    seq = contig_nt.upper()
+    m3, p4 = seq[atg_pos - 3], seq[atg_pos + 3]
+    s = 0
+    if m3 in "AG":
+        s += 2  # -3 purine — the dominant position
+    if m3 == "A":
+        s += 1  # A preferred over G at -3
+    if p4 == "G":
+        s += 2  # +4 = G
+    return s
+
+
 # Standard constant region endings for QC
 CONSTANT_REGION_ENDINGS = {
     "TRAC": "LLMTLRLWSS",
@@ -1449,6 +1551,7 @@ def assemble_full_sequences(
     sample_name_from: str = "parent",
     cellranger_dir: str | Path | None = None,
     sample_sheet: pd.DataFrame | None = None,
+    leader_fallback: str | None = None,
 ) -> pd.DataFrame:
     """
     Assemble full-length TCR sequences.
@@ -1469,6 +1572,12 @@ def assemble_full_sequences(
     beta_leader : str or None
         Leader sequence for beta chain. Same options as alpha_leader.
         Default is "CD8A" to provide distinct sequences from alpha chain.
+    leader_fallback : str or None
+        Curated signal peptide (CD8A/CD28/IgK/TRAC/TRBC) to substitute when a
+        ``from_contig`` leader is implausible — weak-Kozak over-capture,
+        out-of-window length, missing Met/h-region (#263). Default ``None``
+        keeps the contig-extracted leader and leaves its ``{chain}_leader_qc``
+        flag set (visible, not silent). Only affects ``from_contig`` leaders.
     include_constant : bool
         Include constant region sequences.
     constant_source : str
@@ -1605,10 +1714,11 @@ def assemble_full_sequences(
         if leader_param is None:
             leader_config[chain] = None
         elif leader_param.lower() == "from_contig":
-            if not contigs_dir:
+            if not contigs_dir and not cellranger_dir:
                 raise TCRsiftValidationError(
-                    f"{chain}_leader='from_contig' requires contigs_dir to be specified",
-                    hint="Provide contigs_dir with CellRanger FASTA files, or use a default leader like 'CD8A'",
+                    f"{chain}_leader='from_contig' requires contigs_dir or "
+                    "cellranger_dir to be specified",
+                    hint="Provide contigs_dir/cellranger_dir with CellRanger FASTA files, or use a default leader like 'CD8A'",
                 )
             leader_config[chain] = "from_contig"
         elif leader_param.upper() in DEFAULT_LEADERS:
@@ -1735,6 +1845,7 @@ def assemble_full_sequences(
             constant_source,
             allele_overrides=allele_overrides,
             stops_nt=stops_nt,
+            leader_fallback=leader_fallback,
         )
         assembly_results.append(result)
 
@@ -1881,6 +1992,7 @@ def _assemble_clone(
     constant_source: str,
     allele_overrides: dict[str, str] | None = None,
     stops_nt: str = "TAATGA",
+    leader_fallback: str | None = None,
 ) -> dict:
     """Assemble full sequence for a single clone."""
     result = {}
@@ -1922,8 +2034,24 @@ def _assemble_clone(
         if chain_leader is None:
             continue
         elif chain_leader == "from_contig":
-            # Extract native leader from contigs
+            # Extract + QC native leader from contigs (Kozak leaky-scan).
             _extract_leader_from_contigs_single(row, sample_contigs, result, chain)
+            # Optional curated substitution (#263): when the extracted leader is
+            # implausible (weak_kozak over-capture, out-of-window length, no Met,
+            # no h-region) AND a fallback SP is configured, swap in the curated
+            # one. Default (no fallback) keeps the extracted leader but leaves
+            # the {chain}_leader_qc flag set so the issue stays visible — never
+            # silent.
+            if (
+                leader_fallback
+                and result.get(f"{chain}_leader_qc") in _IMPLAUSIBLE_LEADER_QC
+            ):
+                fb = DEFAULT_LEADERS[leader_fallback]
+                result[f"{chain}_leader_aa"] = fb["aa"]
+                result[f"{chain}_leader_nt"] = fb["dna"]
+                result[f"{chain}_leader_len"] = len(fb["aa"])
+                result[f"{chain}_leader_qc"] = "curated_fallback"
+                result[f"{chain}_leader_source"] = f"curated_fallback:{leader_fallback}"
         elif isinstance(chain_leader, dict):
             # Use specified default leader
             result[f"{chain}_leader_aa"] = chain_leader["aa"]
@@ -1954,13 +2082,62 @@ def _assemble_clone(
     return result
 
 
+def _kozak_correct_leader(
+    contig_seq: str, offset: int, orig_leader: str
+) -> tuple[str, str, int, str]:
+    """Choose the leader's start codon by LEAKY SCANNING (#263).
+
+    ``orig_leader`` is the ORF prefix before the VDJ (translated from the ATG at
+    ``offset``). The in-frame Met starts within it are scanned 5'→3' and
+    initiation is assigned to the FIRST one with adequate Kozak context
+    (``>= KOZAK_ADEQUATE``, i.e. a -3 purine) — exactly what the ribosome does
+    when it leaky-scans past weak upstream AUGs. The longest-ORF rule instead
+    grabbed the first AUG *period* (e.g. a weak 5'-UTR M0), over-capturing.
+
+    Returns ``(leader_aa, leader_nt, kozak_score, kind)`` where ``kind`` is:
+    ``"kozak"`` (an adequate-context start was found — ``offset`` itself or a
+    downstream re-selection) or ``"weak_kozak"`` (NO in-frame AUG cleared the
+    -3-purine bar → fall back to the longest-ORF start, flagged so the
+    over-capture is visible, never silent). Length sanity on the result is
+    applied separately by :func:`leader_qc`.
+    """
+    orig_len = len(orig_leader)
+    # In-frame Met starts within the leader region, as aa offsets into the ORF;
+    # nt position of each is ``offset + 3*k`` (all share the VDJ reading frame).
+    atgs = [k for k in range(orig_len) if orig_leader[k] == "M"]
+
+    chosen_k, kind = None, "weak_kozak"
+    for k in atgs:  # 5'→3'
+        if _kozak_score(contig_seq, offset + 3 * k) >= KOZAK_ADEQUATE:
+            chosen_k, kind = k, "kozak"
+            break
+    if chosen_k is None:
+        # No adequate-context AUG: fall back to the longest-ORF start (the
+        # original over-capture) but flag it weak so it isn't silent.
+        chosen_k = atgs[0] if atgs else 0
+
+    leader_aa = orig_leader[chosen_k:]
+    leader_nt = contig_seq[offset + 3 * chosen_k : offset + orig_len * 3]
+    score = _kozak_score(contig_seq, offset + 3 * chosen_k)
+    return leader_aa, leader_nt, score, kind
+
+
 def _extract_leader_from_contigs_single(
     row: pd.Series,
     sample_contigs: dict,
     result: dict,
     chain: str,
 ):
-    """Extract leader peptide from contig sequences for a single chain."""
+    """Extract + QC the signal peptide from contigs for a single chain (#263).
+
+    Each supporting contig votes its Kozak-corrected leader; the consensus
+    (most-common) leader is recorded along with QC provenance:
+    ``{chain}_leader_qc`` (ok/too_long/no_h_region/…), ``_leader_len``,
+    ``_leader_kozak_score``, ``_leader_source`` (contig / contig_kozak_reselected
+    / contig_failed), and ``_leader_support`` (n agreeing / n total). A
+    ``contig_failed`` outcome (no contig yields an in-range start) leaves the
+    leader unset for the caller's error/fallback policy.
+    """
     samples = str(row.get("samples", "")).split(";")
 
     contig_col = f"{chain}_contig_ids"
@@ -1971,7 +2148,10 @@ def _extract_leader_from_contigs_single(
     vdj_aa = result.get(f"vdj_{chain}_aa", "")
 
     leader_counter = Counter()
-    leader_dna_counter = Counter()
+    # leader_aa -> (leader_nt, kozak_score, kind); first sighting wins
+    # (corrected leaders for the same aa share these by construction).
+    leader_meta: dict = {}
+    n_total = 0
 
     for sample in samples:
         if sample not in sample_contigs:
@@ -1984,20 +2164,33 @@ def _extract_leader_from_contigs_single(
             contig_seq = sample_contigs[sample][contig_id]
             translated, offset, ragged = find_longest_orf(contig_seq)
 
-            if vdj_aa and vdj_aa in translated:
-                parts = translated.split(vdj_aa)
-                leader = parts[0]
-                leader_counter[leader] += 1
+            if vdj_aa and vdj_aa in translated and offset is not None:
+                orig_leader = translated.split(vdj_aa)[0]
+                n_total += 1
+                leader_aa, leader_nt, score, kind = _kozak_correct_leader(
+                    contig_seq, offset, orig_leader
+                )
+                leader_counter[leader_aa] += 1
+                leader_meta.setdefault(leader_aa, (leader_nt, score, kind))
 
-                # Get leader DNA
-                if offset is not None:
-                    leader_dna = contig_seq[offset : offset + len(leader) * 3]
-                    leader_dna_counter[leader_dna] += 1
+    if not leader_counter:
+        return  # no contig covered the VDJ — leader simply absent
 
-    if leader_counter:
-        result[f"{chain}_leader_aa"] = leader_counter.most_common(1)[0][0]
-    if leader_dna_counter:
-        result[f"{chain}_leader_nt"] = leader_dna_counter.most_common(1)[0][0]
+    leader_aa, support = leader_counter.most_common(1)[0]
+    leader_nt, score, kind = leader_meta[leader_aa]
+    result[f"{chain}_leader_aa"] = leader_aa
+    result[f"{chain}_leader_nt"] = leader_nt
+    result[f"{chain}_leader_len"] = len(leader_aa)
+    # weak_kozak (no adequate-context AUG) overrides the shape QC — it's the
+    # over-capture case; otherwise classify by length/structure.
+    result[f"{chain}_leader_qc"] = (
+        "weak_kozak" if kind == "weak_kozak" else leader_qc(leader_aa)
+    )
+    result[f"{chain}_leader_kozak_score"] = score
+    result[f"{chain}_leader_source"] = (
+        "contig_weak_fallback" if kind == "weak_kozak" else "contig_kozak"
+    )
+    result[f"{chain}_leader_support"] = f"{support}/{n_total}"
 
 
 def _add_constant_regions(
@@ -3183,6 +3376,21 @@ def validate_sequences(
                 _lb(idx,
                     f"full_{chain}_aa doesn't start with M "
                     f"(starts with {seq[:5]!r}; leader present)")
+
+            # Surface a from_contig signal-peptide QC flag (#263) as an
+            # informational note — the extracted leader is kept (it's the best
+            # available), but a weak-Kozak over-capture / out-of-range length /
+            # missing h-region shouldn't pass silently. Never load-bearing here:
+            # the assembler already substitutes a curated SP when leader_fallback
+            # is set; this just keeps the flag visible in a validation pass.
+            lqc = row.get(f"{chain}_leader_qc")
+            if isinstance(lqc, str) and lqc not in ("ok", "curated_fallback"):
+                support = row.get(f"{chain}_leader_support")
+                _info(idx,
+                    f"{chain} signal peptide QC={lqc} "
+                    f"(len {row.get(f'{chain}_leader_len')}, "
+                    f"kozak {row.get(f'{chain}_leader_kozak_score')}, "
+                    f"support {support})")
 
             cdr3_col = f"CDR3_{chain}"
             if cdr3_col in row:
