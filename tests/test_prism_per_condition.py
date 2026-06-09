@@ -347,3 +347,39 @@ def test_cli_select_prism_grid(tmp_path):
     grid = pd.read_csv(grid_csv)
     assert set(grid.columns) == {"top_freq", "top_prism", "n_clones"}
     assert grid_png.exists()
+
+
+class TestPrismCandidates:
+    def test_emits_all_gated_with_routes(self):
+        from tcrsift.selection import prism_candidates, select_freq_prism_per_condition
+
+        feat = _fixture(seed=5)
+        gate, top_freq, top_prism = 0.001, 10, 5
+        cand = prism_candidates(
+            feat, condition_col="condition", gate=gate,
+            top_freq=top_freq, top_prism=top_prism,
+        )
+        # Columns + route vocabulary.
+        assert set(cand.columns) == {
+            "CDR3ab", "condition", "frequency", "prism_score", "selection_route"
+        }
+        assert set(cand["selection_route"]) <= {"freq", "prism", "both", "unselected"}
+        # Every emitted candidate is above the gate.
+        assert (cand["frequency"] > gate).all()
+        # The non-'unselected' rows exactly match the actual selection.
+        picked = set(zip(
+            cand.loc[cand.selection_route != "unselected", "CDR3ab"],
+            cand.loc[cand.selection_route != "unselected", "condition"],
+        ))
+        sel = select_freq_prism_per_condition(
+            feat, condition_col="condition", gate=gate,
+            top_freq=top_freq, top_prism=top_prism,
+        )
+        assert picked == set(zip(sel["CDR3ab"], sel["condition"]))
+
+    def test_empty_input(self):
+        from tcrsift.selection import prism_candidates
+
+        out = prism_candidates(pd.DataFrame(), condition_col="condition")
+        assert out.empty
+        assert "selection_route" in out.columns

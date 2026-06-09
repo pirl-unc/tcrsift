@@ -18,6 +18,8 @@ Generates plots for QC, phenotyping, clonotype analysis, and filtering.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from itertools import combinations
 from pathlib import Path
 
 import anndata as ad
@@ -2254,6 +2256,264 @@ def plot_freq_prism_grid(
 
     fig.tight_layout()
     save_figure(fig, output_path, dpi=150)
+
+
+def plot_freq_prism_scatter(
+    candidates: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    condition_col: str = "method",
+    gate: float | None = None,
+    title: str = "Selection: frequency × PRISM",
+) -> Path | None:
+    """Faceted scatter of frequency × PRISM, colored by selection route (#248).
+
+    ``candidates`` is the per-clone selection table (see
+    :func:`tcrsift.selection.prism_candidates`) with columns ``CDR3ab``,
+    ``<condition_col>``, ``frequency``, ``prism_score`` (lower = better; may be
+    NaN), and ``selection_route`` (``freq``/``prism``/``both``/``unselected``).
+    One small-multiple subplot per condition: ``unselected`` clones in light
+    grey, selected routes overlaid in distinct colors, frequency on a log
+    x-axis, with the ``gate`` drawn as a vertical dashed red line. Returns the
+    saved path, or None when there's nothing to plot.
+    """
+    output_path = Path(output_path)
+    if candidates is None or candidates.empty:
+        return None
+    route_colors = {"freq": "tab:blue", "prism": "tab:orange", "both": "tab:green"}
+    conditions = sorted(candidates[condition_col].dropna().unique(), key=str)
+    if not conditions:
+        return None
+    ncols = min(3, len(conditions))
+    nrows = int(np.ceil(len(conditions) / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(5.0 * ncols, 4.0 * nrows), squeeze=False,
+    )
+    flat_axes = axes.flatten()
+    for ax, condition in zip(flat_axes, conditions):
+        sub = candidates[candidates[condition_col] == condition]
+        sub = sub[sub["prism_score"].notna()]
+        bg = sub[sub["selection_route"] == "unselected"]
+        ax.scatter(
+            bg["frequency"], bg["prism_score"], s=12, color="lightgrey",
+            alpha=0.6, linewidths=0, zorder=1,
+        )
+        for route, color in route_colors.items():
+            sel = sub[sub["selection_route"] == route]
+            ax.scatter(
+                sel["frequency"], sel["prism_score"], s=45, color=color,
+                edgecolors="black", linewidths=0.4, label=route, zorder=2,
+            )
+        if gate is not None:
+            ax.axvline(gate, color="red", linestyle="--", linewidth=1)
+        ax.set_xscale("log")
+        ax.set_xlabel("clone frequency (within condition)")
+        ax.set_ylabel("PRISM score (lower = better)")
+        ax.set_title(pretty_method(condition))
+    for ax in flat_axes[len(conditions):]:
+        ax.set_visible(False)
+    handles = [
+        plt.Line2D(
+            [], [], marker="o", linestyle="", color=color,
+            markeredgecolor="black", markeredgewidth=0.4, label=route,
+        )
+        for route, color in route_colors.items()
+    ]
+    fig.legend(handles=handles, loc="upper right", fontsize="small", frameon=False)
+    fig.suptitle(title)
+    fig.tight_layout()
+    return save_figure(fig, output_path)
+
+
+def plot_prism_components(
+    scores: pd.DataFrame,
+    selected_ids,
+    output_path: str | Path,
+    *,
+    clone_col: str = "CDR3ab",
+    terms=("ppost_alpha", "ppost_beta", "antigen_response_score", "naive_score"),
+    title: str = "PRISM components: selected vs background",
+) -> Path | None:
+    """Small-multiples of PRISM component distributions: selected vs background (#249).
+
+    One histogram per present ``terms`` column — all gated candidates' values in
+    grey, with the PRISM-selected subset (``selected_ids``) overlaid in orange —
+    so it reads at a glance which components separate the picks from the
+    background (and surfaces the length-confound / weighting concerns of #238).
+    Absent term columns are skipped; NaNs dropped per term. Returns the saved
+    path, or None when there's nothing to plot.
+    """
+    output_path = Path(output_path)
+    if scores is None or scores.empty:
+        return None
+    present = [t for t in terms if t in scores.columns]
+    if not present:
+        return None
+    selected_ids = set(selected_ids)
+    is_selected = scores[clone_col].isin(selected_ids)
+    n = len(present)
+    ncols = min(n, 4)
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(max(4, 3.5 * ncols), 3.5 * nrows), squeeze=False,
+    )
+    flat = axes.flatten()
+    for i, term in enumerate(present):
+        ax = flat[i]
+        all_vals = scores[term].dropna()
+        sel_vals = scores.loc[is_selected, term].dropna()
+        if len(all_vals):
+            ax.hist(all_vals, bins=40, color="grey", label="candidates")
+        if len(sel_vals):
+            ax.hist(sel_vals, bins=40, color="tab:orange", alpha=0.8, label="PRISM-selected")
+        ax.set_title(term)
+        ax.set_xlabel("score")
+        ax.set_ylabel("clones")
+        if i == 0:
+            ax.legend(fontsize="small", frameon=False)
+    for ax in flat[n:]:
+        ax.set_visible(False)
+    fig.suptitle(title)
+    fig.tight_layout()
+    return save_figure(fig, output_path)
+
+
+def plot_cross_donor_venn(
+    clonotypes_by_donor: dict,
+    output_path: str | Path,
+    *,
+    keys: Sequence = (
+        ("CDR3ab", "CDR3αβ (paired)"),
+        ("CDR3_beta", "CDR3β only"),
+    ),
+    title: str = "Cross-donor clonotype sharing",
+) -> Path | None:
+    """Pairwise cross-donor clonotype-sharing Venn diagrams (#250).
+
+    For every unordered pair of donors and each granularity in ``keys`` (paired
+    αβ and β-only), draws a 2-way Venn of shared clonotypes — rows = keys,
+    columns = donor-pairs. β-only sharing (the permissive "public TCR" view) is
+    typically much larger than αβ. Uses the optional ``matplotlib_venn`` when
+    installed, else falls back to a grouped |A only|/|shared|/|B only| bar so it
+    still renders. No-op (returns None) for fewer than two donors.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    donors = list(clonotypes_by_donor or {})
+    if len(donors) < 2:
+        logger.info("plot_cross_donor_venn: need >= 2 donors; skipping.")
+        return None
+    sets_by_key: dict = {}
+    for col, _label in keys:
+        sets_by_key[col] = {
+            d: (set(df[col].dropna().astype(str)) if col in df.columns else set())
+            for d, df in clonotypes_by_donor.items()
+        }
+    pairs = list(combinations(donors, 2))
+    n_rows, n_cols = len(keys), len(pairs)
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(max(4.0, 4.0 * n_cols), max(4.0, 4.0 * n_rows)),
+        squeeze=False,
+    )
+    try:
+        import warnings
+
+        import matplotlib_venn
+        from pandas.errors import PerformanceWarning
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            warnings.simplefilter("ignore", PerformanceWarning)
+            for r, (col, label) in enumerate(keys):
+                for c, (a, b) in enumerate(pairs):
+                    matplotlib_venn.venn2(
+                        [sets_by_key[col][a], sets_by_key[col][b]],
+                        set_labels=(a, b), ax=axes[r][c],
+                    )
+                    axes[r][c].set_title(f"{label}: {a} vs {b}", fontsize=11)
+    except ImportError:
+        for r, (col, label) in enumerate(keys):
+            for c, (a, b) in enumerate(pairs):
+                ax = axes[r][c]
+                sa, sb = sets_by_key[col][a], sets_by_key[col][b]
+                heights = [len(sa - sb), len(sa & sb), len(sb - sa)]
+                ax.bar(range(3), heights, color=["#4c72b0", "#55a868", "#c44e52"])
+                ax.set_xticks(range(3))
+                ax.set_xticklabels([f"{a} only", "shared", f"{b} only"],
+                                   rotation=30, ha="right", fontsize=8)
+                ax.set_ylabel("clones")
+                for i, h in enumerate(heights):
+                    ax.text(i, h, str(h), ha="center", va="bottom", fontsize=8)
+                ax.set_title(f"{label}: {a} vs {b}\n(install 'matplotlib_venn' for Venn view)",
+                             fontsize=9)
+    fig.suptitle(title)
+    fig.tight_layout()
+    save_figure(fig, output_path, dpi=150)
+    return output_path
+
+
+def plot_vgene_usage_by_method(
+    long_df: pd.DataFrame,
+    clonotypes: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    vgene_cols=(("alpha_v_gene", "TRAV"), ("beta_v_gene", "TRBV")),
+    method_col: str = "method",
+    clone_col: str = "CDR3ab",
+    min_prevalence: float = 0.01,
+    title: str = "V-gene usage by method",
+) -> Path | None:
+    """Per-method V-gene usage heatmap(s), one subplot per V-gene column (#251).
+
+    Merges ``long_df`` (``CDR3ab``, ``method``, ``frequency``) with
+    ``clonotypes`` V-gene columns, builds a method × V-gene matrix
+    **row-normalized** per method (fraction of that method's clones using each
+    gene), applies a ``min_prevalence`` floor, and orders columns by descending
+    usage. Skips absent/empty V-gene columns; returns None when nothing renders.
+    """
+    output_path = Path(output_path)
+    if long_df is None or clonotypes is None or long_df.empty or clonotypes.empty:
+        return None
+    present = [(c, p) for c, p in vgene_cols if c in clonotypes.columns]
+    if not present:
+        return None
+    matrices = []
+    for vgcol, pretty in present:
+        merged = long_df.merge(clonotypes[[clone_col, vgcol]], on=clone_col, how="inner")
+        merged = merged[merged[vgcol].notna()]
+        if merged.empty:
+            continue
+        counts = merged.groupby([method_col, vgcol]).size().unstack(fill_value=0)
+        if counts.empty or counts.shape[1] == 0:
+            continue
+        row_sums = counts.sum(axis=1).replace(0, np.nan)
+        frac = counts.div(row_sums, axis=0).fillna(0.0)
+        keep = frac.columns[frac.max(axis=0) >= min_prevalence]
+        frac = frac[keep]
+        if frac.empty or frac.shape[1] == 0:
+            continue
+        col_order = frac.sum(axis=0).sort_values(ascending=False).index
+        matrices.append((frac[col_order], pretty))
+    if not matrices:
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    n = len(matrices)
+    widths = [max(6, 0.45 * m.shape[1] + 3) for m, _ in matrices]
+    height = max(4, 0.5 * max(m.shape[0] for m, _ in matrices) + 2)
+    fig, axes = plt.subplots(1, n, figsize=(sum(widths), height), squeeze=False)
+    for ax, (frac, pretty) in zip(axes[0], matrices):
+        sns.heatmap(
+            frac, cmap="viridis", linewidths=0.3, ax=ax,
+            cbar_kws={"label": "fraction of method's clones"},
+        )
+        ax.set_yticklabels([pretty_method(m) for m in frac.index], rotation=0)
+        ax.set_title(f"{pretty} usage by method")
+        ax.set_xlabel("V gene")
+        ax.set_ylabel("method")
+    fig.suptitle(title)
+    fig.tight_layout()
+    return save_figure(fig, output_path)
 
 
 def plot_method_recovery(
