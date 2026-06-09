@@ -63,6 +63,7 @@ __all__ = [
     "pivot_per_sample_tiers",
     "percentile_rank_score",
     "select_freq_prism_per_condition",
+    "prism_candidates",
     "freq_prism_grid",
     "PRISM_TERMS",
     "DEFAULT_TIE_BREAK",
@@ -959,6 +960,88 @@ def select_freq_prism_per_condition(
         out_rows,
         columns=[clone_col, condition_col, "selection_route",
                  "rank_within_route", "prism_score", freq_col, "rescued"],
+    )
+
+
+def prism_candidates(
+    feat: pd.DataFrame,
+    *,
+    condition_col: str,
+    freq_col: str = "frequency",
+    clone_col: str = "CDR3ab",
+    score_terms: list[dict] | None = None,
+    gate: float = 0.001,
+    top_freq: int = 10,
+    top_prism: int = 5,
+    tie_break: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Per-condition gated-candidate frame for the freq×PRISM selection plots.
+
+    Mirrors :func:`select_freq_prism_per_condition`'s gating, per-clone dedup,
+    and within-condition PRISM percentile scoring, but emits EVERY gated
+    candidate (``frequency > gate``) — not just the picks — each tagged with the
+    ``selection_route`` it would receive (``freq`` / ``prism`` / ``both`` /
+    ``unselected``). This is the 2-D selection space (#248) and the PRISM-vs-
+    background view (#249): the per-candidate PRISM score only exists at select
+    time, so it's surfaced here for plotting.
+
+    Returns one row per (clone, condition) with ``clone_col``, ``condition_col``,
+    ``freq_col``, ``prism_score`` (low = better; NaN when not fully scorable),
+    and ``selection_route``. Empty when ``feat`` is empty or the condition
+    column is absent.
+    """
+    terms = score_terms or PRISM_TERMS
+    if feat.empty or condition_col not in feat.columns:
+        return pd.DataFrame(
+            columns=[clone_col, condition_col, freq_col, "prism_score",
+                     "selection_route"]
+        )
+    out_rows: list[dict] = []
+    for cond, grp in feat.groupby(condition_col, observed=True):
+        cand = grp[grp[freq_col].fillna(0) > gate].copy()
+        if cand.empty:
+            continue
+        cand = (
+            cand.sort_values([freq_col, clone_col], ascending=[False, True])
+            .drop_duplicates(subset=[clone_col], keep="first")
+        )
+        composite = percentile_rank_score(
+            cand, terms, clone_col=clone_col, require_complete=True,
+        )
+        cand["prism_score"] = cand[clone_col].astype(str).map(composite)
+        tb_cols, tb_asc = _tie_break_sort(
+            cand, DEFAULT_TIE_BREAK if tie_break is None else tie_break, clone_col,
+        )
+        freq_set = set(
+            cand.sort_values([freq_col, *tb_cols], ascending=[False, *tb_asc])[
+                clone_col
+            ].head(top_freq)
+        )
+        prism_set = set(
+            cand.sort_values(["prism_score", *tb_cols], ascending=[True, *tb_asc])[
+                clone_col
+            ].head(top_prism)
+        ) if top_prism > 0 else set()
+        for _, row in cand.iterrows():
+            c = row[clone_col]
+            in_f, in_p = c in freq_set, c in prism_set
+            route = (
+                "both" if (in_f and in_p)
+                else "freq" if in_f
+                else "prism" if in_p
+                else "unselected"
+            )
+            out_rows.append({
+                clone_col: c,
+                condition_col: cond,
+                freq_col: float(row[freq_col]) if pd.notna(row[freq_col]) else 0.0,
+                "prism_score": float(row["prism_score"]) if pd.notna(row["prism_score"]) else None,
+                "selection_route": route,
+            })
+    return pd.DataFrame(
+        out_rows,
+        columns=[clone_col, condition_col, freq_col, "prism_score",
+                 "selection_route"],
     )
 
 

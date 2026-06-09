@@ -1826,6 +1826,15 @@ def cmd_run(args):
             non_viral=n_non_viral,
         )
 
+        # Per-method V-gene usage heatmaps (TRAV/TRBV) — does a sort condition
+        # skew the repertoire toward particular V genes? (#251)
+        if long_df is not None and "method" in getattr(long_df, "columns", []):
+            from .plots import plot_vgene_usage_by_method
+
+            plot_vgene_usage_by_method(
+                long_df, clonotypes, plots_dir / "vgene_usage_by_method.png",
+            )
+
     # Generate report
     if config.output.generate_report:
         print("\nGenerating report...")
@@ -2191,6 +2200,32 @@ def cmd_select(args):
             f"Wrote {sel['CDR3ab'].nunique()} distinct clones "
             f"({len(sel)} clone×condition rows) by per-condition freq∪PRISM → {args.output}"
         )
+        # Context plots next to the selection output (#248/#249): the 2-D
+        # freq×PRISM selection space and the per-component distributions —
+        # both need the PRISM score for ALL gated candidates, which only the
+        # select step has.
+        try:
+            from .plots import plot_freq_prism_scatter, plot_prism_components
+            from .selection import prism_candidates
+
+            cand = prism_candidates(
+                feat, condition_col=cond_col, freq_col="frequency",
+                gate=args.gate, top_freq=args.top_freq, top_prism=args.top_prism,
+                tie_break=tie_break,
+            )
+            scatter_png = Path(args.output).with_name("freq_prism_scatter.png")
+            if plot_freq_prism_scatter(
+                cand, scatter_png, condition_col=cond_col, gate=args.gate
+            ):
+                print(f"Wrote freq×PRISM scatter → {scatter_png}")
+            selected_ids = set(
+                sel.loc[sel["selection_route"].isin(["prism", "both"]), "CDR3ab"]
+            )
+            comp_png = Path(args.output).with_name("prism_components.png")
+            if plot_prism_components(clone_scores, selected_ids, comp_png):
+                print(f"Wrote PRISM-component distributions → {comp_png}")
+        except Exception as exc:  # pragma: no cover - plotting is best-effort
+            print(f"  (skipped selection context plots: {exc})")
         if getattr(args, "prism_grid", False):
             from .selection import freq_prism_grid
 

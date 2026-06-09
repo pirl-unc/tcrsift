@@ -152,6 +152,17 @@ def run_cohort_analysis(
 
     if emit_plots:
         _emit_heatmaps(matrices, output_dir)
+        # Pairwise cross-donor sharing Venn at CDR3αβ (paired) and CDR3β-only
+        # (the permissive "public TCR" view) (#250).
+        try:
+            from .plots import plot_cross_donor_venn
+
+            by_donor = {
+                str(d): g for d, g in cohort_long.groupby("donor", observed=True)
+            }
+            plot_cross_donor_venn(by_donor, output_dir / "cross_donor_venn.png")
+        except Exception:  # pragma: no cover - plotting is best-effort
+            pass
 
     return matrices
 
