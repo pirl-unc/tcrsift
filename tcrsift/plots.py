@@ -2319,7 +2319,9 @@ def plot_freq_prism_scatter(
         )
         for route, color in route_colors.items()
     ]
-    fig.legend(handles=handles, loc="upper right", fontsize="small", frameon=False)
+    # Legend on the first panel (not fig-level) so it can't overlap a subplot
+    # in a dense grid.
+    flat_axes[0].legend(handles=handles, fontsize="small", frameon=False)
     fig.suptitle(title)
     fig.tight_layout()
     return save_figure(fig, output_path)
@@ -2363,9 +2365,14 @@ def plot_prism_components(
         all_vals = scores[term].dropna()
         sel_vals = scores.loc[is_selected, term].dropna()
         if len(all_vals):
-            ax.hist(all_vals, bins=40, color="grey", label="candidates")
-        if len(sel_vals):
-            ax.hist(sel_vals, bins=40, color="tab:orange", alpha=0.8, label="PRISM-selected")
+            # Shared bin edges (from the full candidate range) so the selected
+            # overlay is bin-aligned with the background — the comparison this
+            # plot exists to make.
+            edges = np.histogram_bin_edges(all_vals, bins=40)
+            ax.hist(all_vals, bins=edges, color="grey", label="candidates")
+            if len(sel_vals):
+                ax.hist(sel_vals, bins=edges, color="tab:orange", alpha=0.8,
+                        label="PRISM-selected")
         ax.set_title(term)
         ax.set_xlabel("score")
         ax.set_ylabel("clones")
@@ -2387,6 +2394,7 @@ def plot_cross_donor_venn(
         ("CDR3_beta", "CDR3β only"),
     ),
     title: str = "Cross-donor clonotype sharing",
+    max_pairs: int = 15,
 ) -> Path | None:
     """Pairwise cross-donor clonotype-sharing Venn diagrams (#250).
 
@@ -2410,6 +2418,15 @@ def plot_cross_donor_venn(
             for d, df in clonotypes_by_donor.items()
         }
     pairs = list(combinations(donors, 2))
+    if len(pairs) > max_pairs:
+        # Avoid an unreadably wide figure for many donors; an UpSet over donors
+        # is the better view at that scale (#250). Cap + log what was dropped.
+        logger.info(
+            "plot_cross_donor_venn: %d donor-pairs > max_pairs=%d; plotting the "
+            "first %d (consider an UpSet over donors instead).",
+            len(pairs), max_pairs, max_pairs,
+        )
+        pairs = pairs[:max_pairs]
     n_rows, n_cols = len(keys), len(pairs)
     fig, axes = plt.subplots(
         n_rows, n_cols,
