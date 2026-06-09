@@ -179,11 +179,18 @@ DEFAULT_LEADERS = {
 # Kozak context strength, not ORF length, and to bound the leader to a sane
 # signal-peptide length.
 
-# Acceptance window for a TCR signal peptide (aa). Real TCR leaders run ~15-25;
-# the curated DEFAULT_LEADERS span 18-21. A from_contig leader OUTSIDE this
-# window triggers Kozak-based start re-selection.
+# Length bands for a TCR signal peptide (aa). Real TCR leaders run ~15-25 (the
+# curated DEFAULT_LEADERS span 18-21), but a few V genes have genuinely long
+# leaders — e.g. IMGT TRBV13*01 is 29 aa (long polar n-region). So:
+#   - len > SP_LENGTH_MAX (25): TRY to recover a better nested SP at the tail
+#     (Kozak reselect / h-region trim). A real over-capture (TRAV1 → 17 aa)
+#     gets trimmed regardless of how long it is.
+#   - if NO better nested SP exists: 26-30 aa is ACCEPTED as a genuinely-long
+#     leader (``long_leader``, not an error — e.g. TRBV13); only > SP_LENGTH_HARD
+#     (30) is a ``too_long`` error (override-able via leader_fallback).
 SP_LENGTH_MIN = 12
 SP_LENGTH_MAX = 25
+SP_LENGTH_HARD = 30
 
 # Hydrophobic residues (Kyte-Doolittle positive side) for the signal-peptide
 # h-region check — a signal peptide's defining feature is a hydrophobic core.
@@ -241,6 +248,34 @@ def leader_qc(
     if require_h_region and not _has_h_region(leader):
         return "no_h_region"
     return "ok"
+
+
+def _classify_leader(leader_aa: str, kozak_score: int, source: str) -> str:
+    """Final QC verdict for a from_contig leader given its provenance (#263).
+
+    Applies the length banding on top of :func:`leader_qc`:
+
+    - An h-region structural trim → ``hregion_trimmed`` (usable for synthesis,
+      resolved on the weaker h-region basis, kept visible for review).
+    - A Kozak-reselected leader → judged purely on shape (in-range by
+      construction).
+    - A KEPT leader (``source == "contig"``): a 26-30 aa leader with no better
+      nested SP is an accepted ``long_leader`` (a genuinely long native leader
+      like TRBV13's 29 aa), NOT an error; only ``> SP_LENGTH_HARD`` is
+      ``too_long`` (override-able). A well-shaped in-range leader whose start has
+      weak Kozak context is ``weak_kozak_start`` (leaky-scan informs, doesn't act).
+    """
+    shape = leader_qc(leader_aa)  # ok/too_short/too_long/no_met/no_h_region/…
+    if source == "contig_hregion_trimmed":
+        return "hregion_trimmed"
+    if source == "contig_kozak_reselected":
+        return shape
+    # source == "contig": the ORF start was kept (no better nested SP found).
+    if shape == "too_long":  # len > SP_LENGTH_MAX
+        return "long_leader" if len(leader_aa) <= SP_LENGTH_HARD else "too_long"
+    if shape == "ok" and kozak_score < KOZAK_ADEQUATE:
+        return "weak_kozak_start"
+    return shape
 
 
 # Kozak context scoring (Kozak 1987/1991). The optimal context is gccRccATGG
@@ -2105,9 +2140,23 @@ def _kozak_correct_leader(
       weak upstream AUGs. If no such start exists the over-capture is kept (the
       caller flags it ``too_long``); we never fabricate a worse leader.
 
+    - **No adequate-Kozak start, but a structurally-valid nested SP exists**
+      (over-capture only): fall back to a *best-available STRUCTURAL trim* —
+      among in-range nested Mets whose leader carries a hydrophobic h-region
+      (the SP's defining feature), take the best-available Kozak (even if weak),
+      tie-broken toward the most DOWNSTREAM (shortest, "SP at the end"). This
+      catches a real SP whose start is genuinely weak-Kozak — e.g. the TRAV1
+      family leader ``MWG.FLLYVSMKMGGT.`` nested at the tail of a 28-34 aa
+      over-capture. Flagged ``contig_hregion_trimmed`` so the weaker basis is
+      visible. If no such nested SP exists (e.g. a genuinely long ~29 aa leader
+      with no shorter Met, like TRBV13), the ORF start is kept and the caller
+      bands it by length — ``long_leader`` (26-30 aa, accepted) or ``too_long``
+      (> SP_LENGTH_HARD); we never fabricate one.
+
     Returns ``(leader_aa, leader_nt, kozak_score_of_chosen_start, source)`` where
-    ``source`` is ``"contig"`` (ORF start kept) or ``"contig_kozak_reselected"``
-    (over-capture auto-shortened to an in-range adequate start).
+    ``source`` is ``"contig"`` (ORF start kept), ``"contig_kozak_reselected"``
+    (over-capture → in-range adequate-Kozak start), or
+    ``"contig_hregion_trimmed"`` (over-capture → in-range h-region SP, weak Kozak).
     """
     orig_len = len(orig_leader)
     # In-frame Met starts (aa offsets into the ORF); nt position is offset+3*k.
@@ -2115,9 +2164,9 @@ def _kozak_correct_leader(
 
     chosen_k, source = 0, "contig"
     if orig_len > SP_LENGTH_MAX:
-        # Leaky-scan for the first (most upstream) adequate Met whose leader
-        # lands in-range. atgs ascend in k, so the resulting length descends;
-        # once it drops below the floor, no later Met can qualify → stop.
+        # 1. Leaky-scan for the first (most upstream) adequate Met whose leader
+        #    lands in-range. atgs ascend in k, so the resulting length descends;
+        #    once it drops below the floor, no later Met can qualify → stop.
         for k in atgs:
             if k == 0:
                 continue  # can't shorten the over-capture to itself
@@ -2129,6 +2178,24 @@ def _kozak_correct_leader(
             ):
                 chosen_k, source = k, "contig_kozak_reselected"
                 break
+        # 2. No adequate-Kozak start → best-available STRUCTURAL trim: an
+        #    in-range nested Met WITH a hydrophobic h-region (a real SP whose
+        #    start is weak-Kozak). Best-available Kozak, tie-break most
+        #    downstream (the SP sits at the tail of the over-capture).
+        if source == "contig":
+            h_cands = [
+                k
+                for k in atgs
+                if k != 0
+                and SP_LENGTH_MIN <= orig_len - k <= SP_LENGTH_MAX
+                and _has_h_region(orig_leader[k:])
+            ]
+            if h_cands:
+                chosen_k = max(
+                    h_cands,
+                    key=lambda k: (_kozak_score(contig_seq, offset + 3 * k), k),
+                )
+                source = "contig_hregion_trimmed"
 
     leader_aa = orig_leader[chosen_k:]
     leader_nt = contig_seq[offset + 3 * chosen_k : offset + orig_len * 3]
@@ -2204,16 +2271,7 @@ def _extract_leader_from_contigs_single(
     result[f"{chain}_leader_len"] = len(leader_aa)
     result[f"{chain}_leader_kozak_score"] = score
     result[f"{chain}_leader_source"] = source
-    # QC verdict on the FINAL leader. Shape problems (length/Met/h-region) take
-    # precedence; a well-shaped, in-range leader that we KEPT despite a
-    # weak-Kozak start is surfaced as ``weak_kozak_start`` (leaky-scan-for-QC:
-    # informative, not a defect we acted on). A reselected leader is judged
-    # purely on shape (its start is adequate by construction).
-    shape = leader_qc(leader_aa)
-    if source == "contig" and shape == "ok" and score < KOZAK_ADEQUATE:
-        result[f"{chain}_leader_qc"] = "weak_kozak_start"
-    else:
-        result[f"{chain}_leader_qc"] = shape
+    result[f"{chain}_leader_qc"] = _classify_leader(leader_aa, score, source)
     result[f"{chain}_leader_support"] = f"{support}/{n_total}"
 
 
