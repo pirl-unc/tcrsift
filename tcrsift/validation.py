@@ -635,15 +635,24 @@ def _normalize_colname(name: object) -> str:
     return "".join(ch for ch in str(name).lower() if ch.isalnum())
 
 
-def canonicalize_clonotype_columns(df: pd.DataFrame) -> pd.DataFrame:
+def canonicalize_clonotype_columns(
+    df: pd.DataFrame, *, build_paired_id: bool = True,
+) -> pd.DataFrame:
     """Rename common CDR3 column-name synonyms to tcrsift's canonical names.
 
     Maps e.g. ``CDR3a`` → ``CDR3_alpha``, ``CDR3b`` → ``CDR3_beta`` (case- and
     separator-insensitive; see :data:`_CDR3_COLUMN_ALIASES`). A canonical column
     already present is never overwritten, and each canonical target is filled
-    from at most one synonym. Returns a renamed copy (or the input unchanged
-    when there is nothing to rename). Does NOT build ``CDR3ab`` from separate
-    alpha/beta — that pairing is :func:`tcrsift.aggregate_clonotypes`' job.
+    from at most one synonym.
+
+    When ``build_paired_id`` (default), also synthesize the paired ``CDR3ab`` id
+    as ``CDR3_alpha + "_" + CDR3_beta`` when both are present but ``CDR3ab`` is
+    absent — the same convention as :func:`tcrsift.aggregate_clonotypes`, so a
+    table that carries separate α/β columns can be used directly. Only fires
+    when both chains exist; beta-only input is left to validation / aggregation.
+
+    Returns a renamed/augmented copy, or the input unchanged when there is
+    nothing to do (never mutates the caller's frame in place).
     """
     canonical = {"CDR3_alpha", "CDR3_beta", "CDR3ab"}
     used_targets = {c for c in canonical if c in df.columns}
@@ -655,7 +664,19 @@ def canonicalize_clonotype_columns(df: pd.DataFrame) -> pd.DataFrame:
         if target and target not in used_targets:
             rename[col] = target
             used_targets.add(target)
-    return df.rename(columns=rename) if rename else df
+    out = df.rename(columns=rename) if rename else df
+    if (
+        build_paired_id
+        and "CDR3ab" not in out.columns
+        and "CDR3_alpha" in out.columns
+        and "CDR3_beta" in out.columns
+    ):
+        if out is df:  # don't mutate the caller's frame
+            out = df.copy()
+        out["CDR3ab"] = (
+            out["CDR3_alpha"].fillna("") + "_" + out["CDR3_beta"].fillna("")
+        )
+    return out
 
 
 def validate_clonotype_df(

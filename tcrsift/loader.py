@@ -42,6 +42,30 @@ from .validation import (
 logger = logging.getLogger(__name__)
 
 
+def _add_obs_columns(adata: ad.AnnData, new_cols: dict) -> None:
+    """Add/overwrite multiple ``adata.obs`` columns in a single concat.
+
+    Assigning columns one at a time in a loop (``adata.obs[c] = …``) triggers
+    pandas' "DataFrame is highly fragmented" PerformanceWarning once obs grows
+    past ~100 columns. Building one frame and concatenating it in one shot
+    avoids the repeated inserts (and the warnings). Scalar values broadcast to
+    ``n_obs``; existing same-named columns are overwritten.
+    """
+    if not new_cols:
+        return
+    built: dict = {}
+    for key, val in new_cols.items():
+        if np.isscalar(val) or val is None:
+            built[key] = [val] * adata.n_obs
+        else:
+            built[key] = val
+    new_df = pd.DataFrame(built, index=adata.obs.index)
+    overlap = [c for c in new_df.columns if c in adata.obs.columns]
+    if overlap:
+        adata.obs = adata.obs.drop(columns=overlap)
+    adata.obs = pd.concat([adata.obs, new_df], axis=1)
+
+
 # VDJ segment columns for full sequence assembly
 VDJ_SEGMENT_COLS = ["fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4"]
 VDJ_SEGMENT_NT_COLS = [c + "_nt" for c in VDJ_SEGMENT_COLS]
@@ -496,8 +520,11 @@ def combine_gex_and_vdj(
                 else:
                     barcode_to_vdj[bc] = candidates[0]
 
-        # Add VDJ columns to adata.obs using the mapping
+        # Add VDJ columns to adata.obs using the mapping. Build all columns,
+        # then assign in one concat to avoid the fragmentation PerformanceWarning
+        # from ~91 single-column inserts per donor.
         mapped_barcodes = [barcode_to_vdj.get(bc) for bc in adata.obs_names]
+        new_cols: dict = {}
         for col in vdj_pivoted.columns:
             src = vdj_pivoted[col]
             reindexed = src.reindex(mapped_barcodes)
@@ -510,7 +537,8 @@ def combine_gex_and_vdj(
                 values = np.where(missing, False, values).astype(bool)
             elif pd.api.types.is_integer_dtype(src.dtype):
                 values = np.where(missing, 0, values).astype(src.dtype)
-            adata.obs[col] = values
+            new_cols[col] = values
+        _add_obs_columns(adata, new_cols)
 
     return adata
 
@@ -659,9 +687,9 @@ def load_sample(
             ("tissue", sample.tissue),
             ("expected_tcell_type", sample.get_expected_tcell_type()),
         ]
-        for col, val in metadata:
-            if val is not None:
-                adata.obs[col] = val
+        _add_obs_columns(
+            adata, {col: val for col, val in metadata if val is not None}
+        )
 
     return adata
 

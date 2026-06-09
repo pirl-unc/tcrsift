@@ -2106,14 +2106,26 @@ def plot_set_overlap(
         sets = {pretty[name]: sets[name] for name in ordered_names}
 
     try:
-        import upsetplot
+        import warnings
 
-        data = upsetplot.from_contents(sets)
-        fig = plt.figure(figsize=(max(7, 0.6 * len(sets) + 5), 5))
-        upsetplot.plot(
-            data, fig=fig, sort_by="cardinality", show_counts=True,
-            min_subset_size=min_subset_size,
-        )
+        import upsetplot
+        from pandas.errors import PerformanceWarning
+
+        # upsetplot ≤0.9 uses deprecated pandas idioms internally (chained
+        # ``fillna(..., inplace=True)``, object-dtype downcasting, fragmenting
+        # inserts), emitting FutureWarning / PerformanceWarning we can't fix at
+        # the source. Scope-suppress around the library calls only, so a run's
+        # plotting step isn't flooded with third-party noise. Our own code does
+        # not run inside this block.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            warnings.simplefilter("ignore", PerformanceWarning)
+            data = upsetplot.from_contents(sets)
+            fig = plt.figure(figsize=(max(7, 0.6 * len(sets) + 5), 5))
+            upsetplot.plot(
+                data, fig=fig, sort_by="cardinality", show_counts=True,
+                min_subset_size=min_subset_size,
+            )
         fig.suptitle(title)
         save_figure(fig, output_path, dpi=150)
         return

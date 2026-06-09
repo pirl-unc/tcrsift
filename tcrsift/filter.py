@@ -925,7 +925,11 @@ def bucket_by_donor_sharing(
     if "n_donors" not in clonotypes.columns:
         return {}
 
-    n_donors = clonotypes["n_donors"].fillna(1).astype(int)
+    # to_numeric first so an object-dtype column doesn't trigger the
+    # fillna object-downcast FutureWarning; coerce non-numeric -> NaN -> 1.
+    n_donors = (
+        pd.to_numeric(clonotypes["n_donors"], errors="coerce").fillna(1).astype(int)
+    )
     buckets = {
         "private_to_donor": clonotypes[n_donors <= 1].copy(),
         "public_across_donors": clonotypes[n_donors >= 2].copy(),

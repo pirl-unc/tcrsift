@@ -17,6 +17,8 @@ Each test pins a concrete bug fixed in this batch; most fail on the prior code.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -223,10 +225,85 @@ class TestCanonicalizeClonotypeColumns:
         out = validate_clonotype_df(df, for_filtering=True)
         assert "CDR3_beta" in out.columns
 
-    def test_canonical_only_input_is_unchanged(self):
+    def test_no_synonyms_means_no_rename(self):
+        # build_paired_id=False isolates the rename behavior: canonical-only
+        # input has nothing to rename and is returned unchanged.
         df = pd.DataFrame({"CDR3_alpha": ["a"], "CDR3_beta": ["b"]})
-        out = canonicalize_clonotype_columns(df)
+        out = canonicalize_clonotype_columns(df, build_paired_id=False)
         assert list(out.columns) == ["CDR3_alpha", "CDR3_beta"]
+
+
+class TestAddObsColumnsNoFragmentation:
+    def test_adds_many_columns_without_performance_warning(self):
+        import anndata as ad
+        from pandas.errors import PerformanceWarning
+
+        from tcrsift.loader import _add_obs_columns
+
+        adata = ad.AnnData(np.zeros((4, 2), dtype="float32"))
+        new_cols = {f"c{i}": np.arange(4) for i in range(150)}
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", PerformanceWarning)
+            _add_obs_columns(adata, new_cols)
+        assert "c149" in adata.obs.columns
+        assert adata.obs.shape[1] >= 150
+
+    def test_overwrites_existing_and_broadcasts_scalars(self):
+        import anndata as ad
+
+        from tcrsift.loader import _add_obs_columns
+
+        adata = ad.AnnData(np.zeros((3, 2), dtype="float32"))
+        adata.obs["x"] = [1, 2, 3]
+        # Mix: array overwrite, scalar broadcast, and a None scalar.
+        _add_obs_columns(adata, {"x": [9, 9, 9], "label": "donorA", "miss": None})
+        assert adata.obs["x"].tolist() == [9, 9, 9]
+        assert adata.obs["label"].tolist() == ["donorA"] * 3
+        assert adata.obs["miss"].isna().all()
+
+    def test_empty_dict_is_noop(self):
+        import anndata as ad
+
+        from tcrsift.loader import _add_obs_columns
+
+        adata = ad.AnnData(np.zeros((2, 2), dtype="float32"))
+        before = list(adata.obs.columns)
+        _add_obs_columns(adata, {})
+        assert list(adata.obs.columns) == before
+
+
+class TestCanonicalBuildsPairedId:
+    def test_builds_cdr3ab_from_alpha_beta_when_absent(self):
+        df = pd.DataFrame({"CDR3_alpha": ["CAA", "CAB"], "CDR3_beta": ["CASA", "CASB"]})
+        out = canonicalize_clonotype_columns(df)
+        assert out["CDR3ab"].tolist() == ["CAA_CASA", "CAB_CASB"]
+
+    def test_builds_from_synonyms(self):
+        df = pd.DataFrame({"CDR3a": ["CAA"], "CDR3b": ["CASB"]})
+        out = canonicalize_clonotype_columns(df)
+        assert out["CDR3ab"].tolist() == ["CAA_CASB"]
+
+    def test_does_not_clobber_existing_cdr3ab(self):
+        df = pd.DataFrame({
+            "CDR3_alpha": ["CAA"], "CDR3_beta": ["CASB"], "CDR3ab": ["existing"],
+        })
+        out = canonicalize_clonotype_columns(df)
+        assert out["CDR3ab"].tolist() == ["existing"]
+
+    def test_beta_only_not_paired(self):
+        df = pd.DataFrame({"CDR3_beta": ["CASB"]})
+        out = canonicalize_clonotype_columns(df)
+        assert "CDR3ab" not in out.columns
+
+    def test_opt_out(self):
+        df = pd.DataFrame({"CDR3_alpha": ["a"], "CDR3_beta": ["b"]})
+        out = canonicalize_clonotype_columns(df, build_paired_id=False)
+        assert "CDR3ab" not in out.columns
+
+    def test_does_not_mutate_caller(self):
+        df = pd.DataFrame({"CDR3_alpha": ["a"], "CDR3_beta": ["b"]})
+        canonicalize_clonotype_columns(df)
+        assert "CDR3ab" not in df.columns
 
 
 class TestFormatSelectionItem:

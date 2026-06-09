@@ -294,21 +294,23 @@ def add_phenotype_confidence(
     til_cd8_mask = pd.Series(False, index=df.index)
     til_cd4_mask = pd.Series(False, index=df.index)
 
+    # ``df[col].eq(True)`` is NaN -> False, matching the old ``fillna(False)``
+    # but without the object-dtype downcasting FutureWarning on object columns.
     if til_evidence_cols:
         for col in til_evidence_cols:
             if col in df.columns:
                 if "CD8" in col:
-                    til_cd8_mask |= df[col].fillna(False)
+                    til_cd8_mask |= df[col].eq(True)
                 elif "CD4" in col:
-                    til_cd4_mask |= df[col].fillna(False)
+                    til_cd4_mask |= df[col].eq(True)
     else:
         # Auto-detect TIL columns
         for col in df.columns:
             if "occurs_in_TIL" in col:
                 if "CD8" in col:
-                    til_cd8_mask |= df[col].fillna(False)
+                    til_cd8_mask |= df[col].eq(True)
                 elif "CD4" in col:
-                    til_cd4_mask |= df[col].fillna(False)
+                    til_cd4_mask |= df[col].eq(True)
 
     # Likely classifications
     df["Likely_CD8"] = df["Confident_CD8"] | til_cd8_mask
