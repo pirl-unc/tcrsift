@@ -21,11 +21,14 @@ analysis that can't fold into a per-donor command.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pandas as pd
 
 from .clonotype import compute_sample_overlap_matrices
+
+logger = logging.getLogger(__name__)
 
 # Candidate locations within a donor output dir, in priority order.
 _CLONOTYPE_FILES = ("data/clonotypes.csv", "clonotypes.csv")
@@ -161,8 +164,13 @@ def run_cohort_analysis(
                 str(d): g for d, g in cohort_long.groupby("donor", observed=True)
             }
             plot_cross_donor_venn(by_donor, output_dir / "cross_donor_venn.png")
-        except Exception:  # pragma: no cover - plotting is best-effort
-            pass
+        except Exception as e:  # pragma: no cover - plotting is best-effort
+            # plot_cross_donor_venn already handles the EXPECTED soft failure
+            # (no matplotlib_venn → bar fallback) internally, so anything that
+            # reaches here is a genuine bug (bad column, empty frame, matplotlib
+            # error). Don't swallow it silently — the Venn is a requested
+            # deliverable, so a real failure must be visible (#254).
+            logger.warning("cross-donor Venn failed: %s", e, exc_info=True)
 
     return matrices
 

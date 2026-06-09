@@ -68,7 +68,7 @@ plt.rcParams["font.sans-serif"] = [
 ]
 
 
-VALID_PLOT_FORMATS = ("png", "pdf", "svg")
+VALID_PLOT_FORMATS = ("png", "pdf", "svg", "both")
 
 # Module-level output format for save_figure (#169). Default "png" keeps the
 # historical behavior byte-for-byte. cmd_run sets it from output.plot_format.
@@ -76,7 +76,11 @@ _PLOT_FORMAT = "png"
 
 
 def set_plot_format(fmt: str | None) -> None:
-    """Set the vector/raster format save_figure emits (#169): png/pdf/svg.
+    """Set the vector/raster format save_figure emits (#169): png/pdf/svg/both.
+
+    A PNG is ALWAYS written (it's what the raster-embedding PDF report consumes);
+    the format selects which vector copy is *also* emitted alongside it:
+    ``pdf``→+PDF, ``svg``→+SVG, ``both``→+PDF +SVG (#258), ``png``→nothing extra.
 
     Process-global (not thread-safe): it stays in effect until set again, so a
     library caller invoking ``plot_*`` after a pdf ``run`` inherits ``pdf``.
@@ -111,11 +115,12 @@ def set_polished_style(style: str = "clean-white") -> None:
 def save_figure(fig: plt.Figure, output_path: str | Path, dpi: int = 300):
     """Save figure with consistent settings.
 
-    Honors the configured plot format (#169). A PNG is always written — it's
-    the default and what the (raster-embedding) PDF report consumes — and a
-    vector copy (pdf/svg) is written alongside it when one is requested. With
-    the default ``png`` format only the PNG is written, unchanged. Returns the
-    primary output path (the vector file when one was requested, else the PNG).
+    Honors the configured plot format (#169, #258). A PNG is always written —
+    it's the default and what the (raster-embedding) PDF report consumes — and
+    a vector copy is written alongside it: ``pdf``→+PDF, ``svg``→+SVG,
+    ``both``→+PDF +SVG. With the default ``png`` format only the PNG is written,
+    unchanged. Returns the primary output path (the first vector file when one
+    was requested, else the PNG).
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,9 +130,12 @@ def save_figure(fig: plt.Figure, output_path: str | Path, dpi: int = 300):
         # suffixes a caller passes deliberately).
         targets = [output_path]
     else:
-        # Vector requested: emit the vector file plus a PNG (the latter keeps
-        # the raster-embedding PDF report working).
-        targets = [output_path.with_suffix(f".{_PLOT_FORMAT}"), output_path.with_suffix(".png")]
+        # Vector requested: emit the vector file(s) FIRST (so the returned
+        # primary path is the vector), then always the PNG (keeps the
+        # raster-embedding PDF report working). "both" → PDF + SVG.
+        vector_exts = ["pdf", "svg"] if _PLOT_FORMAT == "both" else [_PLOT_FORMAT]
+        targets = [output_path.with_suffix(f".{ext}") for ext in vector_exts]
+        targets.append(output_path.with_suffix(".png"))
     for target in targets:
         fig.savefig(target, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
@@ -2312,6 +2320,11 @@ def plot_freq_prism_scatter(
         ax.set_xscale("log")
         ax.set_xlabel("clone frequency (within condition)")
         ax.set_ylabel("PRISM score (lower = better)")
+        # Invert so better-PRISM clones rise to the TOP (#259): the tick labels
+        # still read "lower = better", but now both axes agree that up/right =
+        # stronger candidate, so the selected prism/both points cluster in one
+        # corner. invert_yaxis() is idempotent per-axis (one call each).
+        ax.invert_yaxis()
         ax.set_title(pretty_method(condition))
     for ax in flat_axes[len(conditions):]:
         ax.set_visible(False)
@@ -3095,6 +3108,11 @@ def create_pipeline_funnel(
         if ab_pair_denominator is not None
         else None
     )
+    # Emit the full cascade in all four complementary styles (#255): bars
+    # carries the αβ-pair denominator callout + section dividers; ribbon /
+    # lollipop / terrace are alternate views of the SAME stage counts (each
+    # exposes a different aspect — absolute counts vs. per-step retention vs.
+    # dynamic range), so a reader / figure-assembler can pick what reads best.
     plot_funnel(
         tier_stage_counts,
         output_dir,
@@ -3103,6 +3121,9 @@ def create_pipeline_funnel(
         ),
         section_starts=section_starts,
     )
+    plot_funnel_ribbon(tier_stage_counts, output_dir)
+    plot_funnel_lollipop(tier_stage_counts, output_dir)
+    plot_funnel_terrace(tier_stage_counts, output_dir)
 
     if emit_selected_variant and selected_count is not None:
         selected_stage_counts = dict(stage_counts)
@@ -3112,6 +3133,11 @@ def create_pipeline_funnel(
         if non_viral is not None:
             selected_stage_counts["Non-viral"] = non_viral
         selected_stage_counts["Selected"] = selected_count
+        # Selected-shortlist overlay variant in all four styles too (#255):
+        # collapses the tier cascade into a single "Selected" stage so the
+        # reader sees how many clones survived each gate AND where the final
+        # picks land.
+        sel_title = "TCR Selection Funnel (Selected shortlist)"
         plot_funnel(
             selected_stage_counts,
             output_dir,
@@ -3120,7 +3146,19 @@ def create_pipeline_funnel(
             ),
             section_starts=section_starts,
             filename="funnel_plot_selected.png",
-            title="TCR Selection Funnel (Selected shortlist)",
+            title=sel_title,
+        )
+        plot_funnel_ribbon(
+            selected_stage_counts, output_dir,
+            title=sel_title, filename="funnel_ribbon_selected.png",
+        )
+        plot_funnel_lollipop(
+            selected_stage_counts, output_dir,
+            title=sel_title, filename="funnel_lollipop_selected.png",
+        )
+        plot_funnel_terrace(
+            selected_stage_counts, output_dir,
+            title=sel_title, filename="funnel_terrace_selected.png",
         )
 
 

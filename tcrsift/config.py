@@ -260,8 +260,9 @@ class OutputConfig:
     # Method × method overlap matrix similarity metric (#27 chunk 3).
     # 'jaccard' / 'dice' / 'count'.
     method_overlap_similarity: str = "jaccard"
-    # Figure output format (#169): 'png' (default), 'pdf', or 'svg'. A vector
-    # choice emits the vector file alongside a PNG (the PDF report embeds raster).
+    # Figure output format (#169, #258): 'png' (default), 'pdf', 'svg', or
+    # 'both'. A vector choice emits the vector file(s) alongside a PNG (the PDF
+    # report embeds raster); 'both' emits PDF + SVG + PNG.
     plot_format: str = "png"
     # Baseline/exclusion markers pushed last in combined figure labels (#208):
     # e.g. ['CTY'] makes CTY⁻ read last in AIM⁺CTY⁻ and in overlap combinations.

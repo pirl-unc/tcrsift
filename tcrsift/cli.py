@@ -3876,9 +3876,10 @@ CONDITIONALLY REQUIRED:
     )
     out_group.add_argument(
         "--plot-format",
-        choices=["png", "pdf", "svg"],
-        help="Figure format (default: png); pdf/svg emit a vector file "
-        "alongside a PNG for publication figures (#169)",
+        choices=["png", "pdf", "svg", "both"],
+        help="Figure format (default: png); pdf/svg emit that vector file "
+        "alongside a PNG, 'both' emits PDF + SVG + PNG, for publication "
+        "figures (#169, #258)",
     )
     out_group.add_argument(
         "--emit-clone-sample-long",

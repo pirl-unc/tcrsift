@@ -118,6 +118,51 @@ class TestCreatePipelineFunnel:
         assert (tmp_path / "funnel_plot.png").exists()
         assert (tmp_path / "funnel_plot_selected.png").exists()
 
+    def test_emits_all_four_styles_for_cascade_and_selected(self, tmp_path):
+        # #255: the run should emit bars/ribbon/lollipop/terrace for BOTH the
+        # tier cascade and the selected-shortlist overlay variant.
+        create_pipeline_funnel(
+            raw_cells=10000,
+            with_vdj=8000,
+            phenotyped=7500,
+            clonotypes=2000,
+            filtered=1500,
+            tier_counts={"tier1": 50, "tier2": 100, "tier3": 300},
+            output_dir=tmp_path,
+            ab_pair_denominator=6000,
+            selected_count=159,
+            emit_selected_variant=True,
+        )
+        # Cascade: bars uses the legacy funnel_plot.png name; the three
+        # siblings use their own stems.
+        for f in (
+            "funnel_plot.png", "funnel_ribbon.png",
+            "funnel_lollipop.png", "funnel_terrace.png",
+        ):
+            assert (tmp_path / f).exists(), f"missing cascade funnel: {f}"
+        # Selected overlay: all four styles with the _selected suffix.
+        for f in (
+            "funnel_plot_selected.png", "funnel_ribbon_selected.png",
+            "funnel_lollipop_selected.png", "funnel_terrace_selected.png",
+        ):
+            assert (tmp_path / f).exists(), f"missing selected funnel: {f}"
+
+    def test_selected_styles_absent_when_variant_off(self, tmp_path):
+        # The selected siblings must not appear unless the variant is requested.
+        create_pipeline_funnel(
+            raw_cells=10, with_vdj=8, phenotyped=7,
+            clonotypes=5, filtered=3,
+            output_dir=tmp_path,
+            selected_count=2,
+        )
+        for f in (
+            "funnel_ribbon_selected.png", "funnel_lollipop_selected.png",
+            "funnel_terrace_selected.png",
+        ):
+            assert not (tmp_path / f).exists(), f"unexpected selected funnel: {f}"
+        # But the cascade siblings are always emitted.
+        assert (tmp_path / "funnel_ribbon.png").exists()
+
     def test_selected_variant_off_by_default(self, tmp_path):
         create_pipeline_funnel(
             raw_cells=10, with_vdj=8, phenotyped=7,
