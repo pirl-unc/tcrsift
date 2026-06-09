@@ -90,17 +90,20 @@ class TestRealDualAlphaContigs:
         assert r["alpha_junction_residue_source"] == "contig"
         assert r["alpha_junction_residue"] == "Y"
 
-    def test_the_bug_wrong_alpha_contig_falls_back(self, tmp_path):
-        # The exact failure: the α1 variant pointed at α2's contig (the merged
-        # clone's dominant-α list). α1's VDJ isn't in α2's contig → no_contig →
-        # canonical fallback (blanket N). This is what the wiring fix prevents.
+    def test_wrong_alpha_contig_falls_back_to_j_inferred(self, tmp_path):
+        # The pre-#247 failure scenario: the α1 variant pointed at α2's contig,
+        # so α1's VDJ isn't found → no contig read. With #247 it points at its
+        # own contig (covered above); but even when the contig is wrong, #242's
+        # per-TRAJ map gives the CORRECT germline residue (TRAJ57 → Y), not a
+        # wrong blanket N. Still not contig-verified (it's an inference).
         r = _assemble(
             tmp_path,
             _alpha_row(A1_CDR3, A1_VDJ_AA, A1_VDJ_NT, A1_J, A2_CONTIG_ID),
             [(A2_CONTIG_ID, A2_CONTIG)],  # only the WRONG (α2) contig present
         )
-        assert r["alpha_junction_residue_source"] == "canonical_fallback"
-        assert r["alpha_junction_residue"] == "N"
+        assert A1_J == "TRAJ57"  # germline junction Y
+        assert r["alpha_junction_residue_source"] == "j_inferred"
+        assert r["alpha_junction_residue"] == "Y"
 
     def test_case_insensitive_lowercase_vdj_nt(self, tmp_path):
         # Loader writes lowercase vdj_nt; contig is uppercase (#235 secondary).

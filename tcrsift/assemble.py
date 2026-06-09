@@ -283,6 +283,36 @@ del _canonical
 # overrides it per-clone when C-region NT is present.
 _FALLBACK_JUNCTION_RESIDUE: dict[str, str] = {"alpha": "N", "beta": "E"}
 
+# Per-TRAJ α J→C junction residue (#242). The α junction is J-gene-determined (a
+# splice product, NOT present in the germline J protein), so when no contig
+# covers the seam we infer it from the J gene rather than a blanket "N" (wrong
+# for ~30% of α — the Y/D/H J-genes). Derived from the contig-READ junctions of
+# the B1 cohort (B1-2/B1-3/B1-4): the residue is consistent across all observed
+# clones per gene, so this table generalizes. Covers the 52 TRAJ with productive
+# usage; a J-gene absent here falls back to "N" flagged low-confidence. Keys are
+# allele-stripped, upper-cased TRAJ names.
+TRAJ_JUNCTION_RESIDUES: dict[str, str] = {
+    "TRAJ3": "N", "TRAJ4": "Y", "TRAJ5": "N", "TRAJ6": "Y", "TRAJ7": "N", "TRAJ8": "N",
+    "TRAJ9": "N", "TRAJ10": "N", "TRAJ11": "D", "TRAJ12": "D", "TRAJ13": "N", "TRAJ15": "N",
+    "TRAJ16": "N", "TRAJ17": "N", "TRAJ18": "D", "TRAJ20": "N", "TRAJ21": "N", "TRAJ22": "D",
+    "TRAJ23": "N", "TRAJ24": "D", "TRAJ25": "N", "TRAJ26": "Y", "TRAJ27": "N", "TRAJ28": "N",
+    "TRAJ29": "N", "TRAJ30": "N", "TRAJ31": "N", "TRAJ32": "N", "TRAJ33": "D", "TRAJ34": "N",
+    "TRAJ35": "H", "TRAJ36": "Y", "TRAJ37": "D", "TRAJ38": "N", "TRAJ39": "H", "TRAJ40": "N",
+    "TRAJ41": "H", "TRAJ42": "N", "TRAJ43": "N", "TRAJ44": "D", "TRAJ45": "Y", "TRAJ46": "N",
+    "TRAJ47": "Y", "TRAJ48": "N", "TRAJ49": "N", "TRAJ50": "N", "TRAJ52": "N", "TRAJ53": "N",
+    "TRAJ54": "N", "TRAJ56": "D", "TRAJ57": "Y", "TRAJ58": "D",
+}
+
+
+def _traj_junction_residue(j_gene: object) -> str | None:
+    """Look up the α J→C junction residue for a TRAJ gene (allele-insensitive),
+    or None when the gene is unknown/unmapped."""
+    if j_gene is None or (isinstance(j_gene, float) and pd.isna(j_gene)):
+        return None
+    key = str(j_gene).strip().upper().split("*", 1)[0]
+    return TRAJ_JUNCTION_RESIDUES.get(key)
+
+
 # Biologically valid J→C junction residues per chain (the residue spelled by the
 # J segment's terminal nt + the C exon's start). β is invariantly E across the
 # B1 audit; α is J-dependent N/Y/D/H. Used by validate_sequences to GUARD that
@@ -294,9 +324,22 @@ _VALID_JUNCTION_RESIDUES: dict[str, frozenset] = {
 }
 
 
-def _fallback_junction_residue(chain: str) -> str:
-    """The canonical J→C junction residue to use when the contig can't supply it."""
-    return _FALLBACK_JUNCTION_RESIDUE.get(chain, "")
+def _fallback_junction_residue(chain: str, j_gene: object = None) -> tuple[str, str]:
+    """J→C junction residue + provenance when no contig covers the seam (#242).
+
+    Returns ``(residue, source)``:
+    - β → ``("E", "canonical_fallback")`` — invariant, always correct.
+    - α with a J-gene in :data:`TRAJ_JUNCTION_RESIDUES` →
+      ``("<r>", "j_inferred")`` — the germline residue for that J gene.
+    - α otherwise → ``("N", "canonical_fallback")`` — most-common, flagged
+      low-confidence (the J gene couldn't be inferred).
+    """
+    if chain == "alpha":
+        r = _traj_junction_residue(j_gene)
+        if r:
+            return r, "j_inferred"
+        return "N", "canonical_fallback"
+    return _FALLBACK_JUNCTION_RESIDUE.get(chain, ""), "canonical_fallback"
 
 
 def _apply_cohort_alpha_junctions(df: pd.DataFrame) -> pd.DataFrame:
@@ -2214,6 +2257,7 @@ def _add_constant_regions(
         # (#105/#235)
         junction_residue: str | None = None
         junction_from_contig = False
+        fallback_source = "canonical_fallback"
         fallback_reason: str | None = None
         if contig_nt_past_vdj and len(contig_nt_past_vdj) >= 3:
             junction_codon = contig_nt_past_vdj[:3]
@@ -2231,14 +2275,25 @@ def _add_constant_regions(
             # (the #235 secondary: 10x C-region coverage / extraction).
             fallback_reason = "no contig C-region coverage past VDJ"
         if junction_residue is None:
-            junction_residue = _fallback_junction_residue(chain) or None
+            # No contig residue → infer from the J gene (#242). For α this is the
+            # per-TRAJ germline residue when the J gene is mapped (j_inferred),
+            # else most-common N (canonical_fallback, low-confidence); β is E.
+            junction_residue, fallback_source = _fallback_junction_residue(
+                chain, result.get(f"{chain}_j_gene"),
+            )
+            junction_residue = junction_residue or None
             if junction_residue is not None and fallback_reason is not None:
+                if fallback_source == "j_inferred":
+                    note = (f" — inferred from {result.get(f'{chain}_j_gene')!r} "
+                            "(germline per-TRAJ residue)")
+                elif chain == "alpha":
+                    note = (" — α J gene unmapped; used most-common N "
+                            "(low-confidence)")
+                else:
+                    note = " — β junction is invariantly E"
                 result.setdefault("qc_warnings", []).append(
-                    f"{chain}: J→C junction residue from canonical fallback "
-                    f"({junction_residue!r}; {fallback_reason})"
-                    + (" — α junction is J-dependent (N is the most common)"
-                       if chain == "alpha" else " — β junction is invariantly E")
-                    + "."
+                    f"{chain}: J→C junction residue {junction_residue!r} from "
+                    f"{fallback_source} ({fallback_reason}){note}."
                 )
         if junction_residue:
             canonical_aa = junction_residue + canonical_aa
@@ -2252,7 +2307,7 @@ def _add_constant_regions(
             )
         result[f"{chain}_junction_residue"] = junction_residue
         result[f"{chain}_junction_residue_source"] = (
-            "contig" if junction_from_contig else "canonical_fallback"
+            "contig" if junction_from_contig else fallback_source
         )
 
         # Record the allele-picker audit (#113, expanded #118/#120).
@@ -3172,6 +3227,18 @@ def validate_sequences(
                         f"{const[:9]!r} (expected a valid junction residue "
                         f"{sorted(_VALID_JUNCTION_RESIDUES.get(chain, ()))} "
                         f"+ canonical {bare8!r})")
+                # α J-gene cross-check (#242/#236): the seam residue must match
+                # the J gene's germline residue. Catches a wrongly-defaulted N
+                # (or a contig misread) that the syntactic {N,Y,D,H} check above
+                # can't — a defaulted N for a Y/D/H J gene is ~30% of α.
+                elif chain == "alpha":
+                    expected = _traj_junction_residue(row.get("alpha_j_gene"))
+                    if expected and const[0] != expected:
+                        _lb(idx,
+                            f"alpha J→C junction {const[0]!r} disagrees with the "
+                            f"germline residue {expected!r} for "
+                            f"{str(row.get('alpha_j_gene'))!r} — likely a "
+                            f"defaulted/misread junction (#242)")
 
             # Byte-for-byte: full == leader + vdj + constant when all
             # parts are available. Catches dropped/added residues
