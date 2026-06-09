@@ -7,13 +7,23 @@ Fixtures use realistic data patterns based on CellRanger VDJ output:
 - UMI/read counts reflect typical single-cell sequencing ranges
 """
 
-import tempfile
-from pathlib import Path
+# Force the non-interactive Agg backend BEFORE anything imports matplotlib.pyplot
+# (tcrsift.plots does so at module load, which locks the backend). On a dev
+# machine the default is a GUI backend ("macosx"/"qt") whose figure creation is
+# much slower headless — Agg roughly halves the plot-heavy test runtime and
+# avoids spawning windows. conftest is imported before any test module, so this
+# wins the race.
+import matplotlib  # noqa: E402
 
-import anndata as ad
-import numpy as np
-import pandas as pd
-import pytest
+matplotlib.use("Agg")
+
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import anndata as ad  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
 
 # Realistic VDJ segment sequences from IMGT reference
 # These are truncated examples based on typical TCR sequences
@@ -36,6 +46,30 @@ REALISTIC_TRB_FWR4 = "FGPGTRLLVL"
 # Nucleotide sequences (simplified - actual sequences are longer)
 REALISTIC_TRA_CDR3_NT = "TGTGCTGTGTCAGATGGAGGAAGCCAGGGAAATCTCATCTTT"
 REALISTIC_TRB_CDR3_NT = "TGTGCCAGCAGTTTGGGACAGGCTTACGAGCAGTACTTC"
+
+
+@pytest.fixture(autouse=True)
+def _fast_savefig():
+    """Cap figure save DPI for the whole test session.
+
+    Plot code saves at dpi=300; raster cost scales with dpi², so 300→60 cuts
+    the heavy savefig step ~25× while the tests only ever assert that a non-empty
+    file was written (never its resolution). Patches Figure.savefig globally so
+    every plotting path — including third-party (upsetplot, seaborn) — benefits.
+    """
+    import matplotlib.figure as mfig
+
+    original = mfig.Figure.savefig
+
+    def _capped(self, *args, **kwargs):
+        kwargs["dpi"] = min(kwargs.get("dpi", 60) or 60, 60)
+        return original(self, *args, **kwargs)
+
+    mfig.Figure.savefig = _capped
+    try:
+        yield
+    finally:
+        mfig.Figure.savefig = original
 
 
 @pytest.fixture(autouse=True)
