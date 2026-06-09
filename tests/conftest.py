@@ -49,7 +49,7 @@ REALISTIC_TRB_CDR3_NT = "TGTGCCAGCAGTTTGGGACAGGCTTACGAGCAGTACTTC"
 
 
 @pytest.fixture(autouse=True)
-def _fast_savefig():
+def _fast_savefig(monkeypatch):
     """Cap figure save DPI for the whole test session.
 
     Plot code saves at dpi=300; raster cost scales with dpi², so 300→60 cuts
@@ -62,14 +62,14 @@ def _fast_savefig():
     original = mfig.Figure.savefig
 
     def _capped(self, *args, **kwargs):
-        kwargs["dpi"] = min(kwargs.get("dpi", 60) or 60, 60)
+        # Cap numeric dpi at 60; for absent dpi or a non-numeric value
+        # (matplotlib also accepts dpi="figure", which a third-party caller
+        # could pass) just use 60 — avoids a TypeError from min(str, int).
+        dpi = kwargs.get("dpi")
+        kwargs["dpi"] = min(dpi, 60) if isinstance(dpi, (int, float)) else 60
         return original(self, *args, **kwargs)
 
-    mfig.Figure.savefig = _capped
-    try:
-        yield
-    finally:
-        mfig.Figure.savefig = original
+    monkeypatch.setattr(mfig.Figure, "savefig", _capped)
 
 
 @pytest.fixture(autouse=True)
