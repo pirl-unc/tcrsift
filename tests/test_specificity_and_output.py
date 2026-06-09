@@ -133,6 +133,21 @@ class TestPlotFormat:
         assert (tmp_path / "x.png").exists()
         assert out.suffix == ".pdf"
 
+    def test_both_emits_pdf_svg_and_png(self, tmp_path):
+        # #258: 'both' writes BOTH vector formats (PDF + SVG) plus the PNG.
+        from tcrsift.plots import save_figure, set_plot_format
+
+        set_plot_format("both")
+        try:
+            out = save_figure(self._fig(), tmp_path / "x.png")
+        finally:
+            set_plot_format("png")
+        assert (tmp_path / "x.pdf").exists()
+        assert (tmp_path / "x.svg").exists()
+        assert (tmp_path / "x.png").exists()
+        # Primary return is a vector file (PDF first).
+        assert out.suffix == ".pdf"
+
     def test_invalid_format_rejected(self):
         from tcrsift.plots import set_plot_format
 

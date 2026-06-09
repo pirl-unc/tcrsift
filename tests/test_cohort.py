@@ -118,6 +118,40 @@ class TestRunCohortAnalysis:
         assert (out / "cohort_jaccard.pdf").exists()
         assert (out / "cohort_jaccard.pdf").stat().st_size > 0
 
+    def test_cross_donor_venn_failure_is_logged_not_swallowed(self, tmp_path, caplog):
+        # #254: a genuine Venn failure (not the expected matplotlib_venn-missing
+        # soft fallback, which the plot handles internally) must surface as a
+        # warning rather than vanish silently.
+        import logging
+
+        pytest.importorskip("matplotlib")
+        _write_donor(tmp_path, "B1-2", ["A_X", "B_Y", "C_Z"], [10, 5, 2])
+        _write_donor(tmp_path, "B1-3", ["A_X", "D_W"], [8, 3])
+        out = tmp_path / "cohort"
+
+        import tcrsift.plots as plots_mod
+
+        def _boom(*a, **k):
+            raise RuntimeError("synthetic venn bug")
+
+        orig = plots_mod.plot_cross_donor_venn
+        plots_mod.plot_cross_donor_venn = _boom
+        try:
+            with caplog.at_level(logging.WARNING, logger="tcrsift.cohort"):
+                cohort.run_cohort_analysis(
+                    {"B1-2": tmp_path / "B1-2", "B1-3": tmp_path / "B1-3"}, out,
+                    emit_plots=True,
+                )
+        finally:
+            plots_mod.plot_cross_donor_venn = orig
+        # The analysis still completes (best-effort plotting) AND the failure
+        # is now visible in the log with the original error message.
+        assert any(
+            "cross-donor Venn failed" in r.getMessage()
+            and "synthetic venn bug" in r.getMessage()
+            for r in caplog.records
+        )
+
     def test_no_tables_skips_csv(self, tmp_path):
         _write_donor(tmp_path, "B1-2", ["A_X"], [10])
         _write_donor(tmp_path, "B1-3", ["A_X"], [8])
