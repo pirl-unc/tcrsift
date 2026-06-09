@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -155,7 +157,15 @@ class TestSampleIntegrityQC:
             },
             index=["BC1-1", "BC2-1", "BC1-1", "BC3-1"],  # BC1-1 in both A and B
         )
-        out = gex_vdj_overlap(_adata(obs)).set_index("sample")
+        # Duplicate obs_names are the POINT of this test (we exercise the
+        # positional-masking path), so anndata's "not unique" notice is expected.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="Observation names are not unique",
+                category=UserWarning,
+            )
+            adata = _adata(obs)
+        out = gex_vdj_overlap(adata).set_index("sample")
         assert out.loc["A", "n_cells"] == 2
         assert out.loc["A", "n_with_vdj"] == 1  # only A's own row, not B's BC1-1
         assert out.loc["A", "gex_vdj_overlap_fraction"] == pytest.approx(0.5)

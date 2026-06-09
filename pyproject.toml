@@ -107,12 +107,14 @@ python_functions = ["test_*"]
 addopts = "--tb=short"
 # Silence third-party deprecation/notice noise we can't fix at the source, so
 # the test log stays signal-clean (our own code is warning-clean). Matched by
-# message prefix. The matplotlib "ndim>0 to scalar" warning is also suppressed
-# in-code around the upsetplot draw (plot_set_overlap) for production runs.
+# message prefix. NOTE: the two anndata notices are handled at the SOURCE, not
+# here — the int-index one was a fixture bug (now a str index) and the
+# non-unique-obs_names one is intentional (scope-suppressed in loader.py where
+# we knowingly keep duplicate barcodes). The matplotlib "ndim>0 to scalar"
+# warning is unfixable from our inputs (it's upsetplot's own count-label text
+# placement); it's also suppressed in-code around the draw for production runs.
 filterwarnings = [
-    "ignore:Conversion of an array with ndim > 0 to a scalar",  # matplotlib via upsetplot
-    "ignore:Observation names are not unique",                  # anndata (dup-barcode fixtures)
-    "ignore:Transforming to str index",                         # anndata (int obs_names fixtures)
+    "ignore:Conversion of an array with ndim > 0 to a scalar",  # matplotlib via upsetplot draw
     "ignore:ast.NameConstant is deprecated",                    # reportlab on import
 ]
 

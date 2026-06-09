@@ -104,7 +104,8 @@ class TestAttachPerSampleTiers:
                     "sample": [r[0] for r in rows],
                     "CDR3_alpha": [r[1] for r in rows],
                     "CDR3_beta": [r[2] for r in rows],
-                }
+                },
+                index=[f"cell_{i}" for i in range(n)],
             ),
         )
         long_df = selection.build_clone_sample_long(adata)
