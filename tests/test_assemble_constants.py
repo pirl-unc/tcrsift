@@ -1944,5 +1944,61 @@ class TestContigFidelityGate:
         )
         assert out["alpha_count"].tolist() == [1, 2]
         assert out["dual_alpha"].tolist() == [False, True]
+        # Explicit second-α identity (#237): None for single-α, partner for dual.
+        assert out["CDR3_alpha_2"].iloc[0] is None
+        assert out["CDR3_alpha_2"].iloc[1] == "CAAA"
         # No contig provided → constructs are not contig-verified.
         assert (~out["construct_contig_verified"]).all()
+
+
+class TestCohortAlphaJunction:
+    """#242: correct the blanket-N α junction fallback using a per-J consensus
+    read from the donor's own contig-verified clones."""
+
+    def test_consensus_corrects_no_contig_alpha(self):
+        from tcrsift.assemble import (
+            HUMAN_TRAC_AA,
+            _apply_cohort_alpha_junctions,
+            back_translate,
+        )
+
+        Y = back_translate("Y")
+        N = back_translate("N")
+        df = pd.DataFrame([
+            {  # contig-verified Y for TRAJ20
+                "alpha_j_gene": "TRAJ20", "alpha_junction_residue": "Y",
+                "alpha_junction_residue_source": "contig",
+                "alpha_constant_aa": "Y" + HUMAN_TRAC_AA,
+                "full_alpha_aa": "MX" + "Y" + HUMAN_TRAC_AA,
+                "alpha_constant_nt": Y + "GCT" * 30,
+                "full_alpha_nt": "ATG" + Y + "GCT" * 30,
+            },
+            {  # no-contig N for TRAJ20 -> should be corrected to Y
+                "alpha_j_gene": "TRAJ20", "alpha_junction_residue": "N",
+                "alpha_junction_residue_source": "canonical_fallback",
+                "alpha_constant_aa": "N" + HUMAN_TRAC_AA,
+                "full_alpha_aa": "MZ" + "N" + HUMAN_TRAC_AA,
+                "alpha_constant_nt": N + "GCT" * 30,
+                "full_alpha_nt": "ATG" + N + "GCT" * 30,
+            },
+            {  # no-contig N for a J gene with NO contig evidence -> stays N
+                "alpha_j_gene": "TRAJ99", "alpha_junction_residue": "N",
+                "alpha_junction_residue_source": "canonical_fallback",
+                "alpha_constant_aa": "N" + HUMAN_TRAC_AA,
+                "full_alpha_aa": "MZ" + "N" + HUMAN_TRAC_AA,
+                "alpha_constant_nt": N + "GCT" * 30,
+                "full_alpha_nt": "ATG" + N + "GCT" * 30,
+            },
+        ])
+        out = _apply_cohort_alpha_junctions(df)
+        corrected = out.iloc[1]
+        assert corrected["alpha_junction_residue"] == "Y"
+        assert corrected["alpha_junction_residue_source"] == "cohort_j_consensus"
+        assert corrected["alpha_constant_aa"] == "Y" + HUMAN_TRAC_AA
+        assert corrected["full_alpha_aa"].endswith("Y" + HUMAN_TRAC_AA)
+        assert corrected["alpha_constant_nt"].startswith(Y)
+        assert corrected["full_alpha_nt"].startswith("ATG" + Y)
+        # No-evidence J gene is left as the flagged N.
+        stayed = out.iloc[2]
+        assert stayed["alpha_junction_residue"] == "N"
+        assert stayed["alpha_junction_residue_source"] == "canonical_fallback"

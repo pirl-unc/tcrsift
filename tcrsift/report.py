@@ -481,6 +481,16 @@ def build_selected_report(
     synth_text = synthesis_qc_report(assembled)
     if synth_text:
         qc_text = f"{qc_text}\n\n{synth_text}"
+    # Dual-α rollup (#237): make the clone→construct expansion explicit so it's
+    # impossible to overlook that some clones carry two α and become 2 constructs.
+    n_dual = len(set(variant_of.values())) if variant_of else 0
+    if n_dual:
+        dual_line = (
+            f"Dual-α clones: {n_dual} (each carries two α → 2 single-chain "
+            f"constructs; {n_variants} dual-α construct rows total)."
+        )
+        logger.info(dual_line)
+        qc_text = f"{dual_line}\n\n{qc_text}"
     (out_dir / "selected_clones_qc.txt").write_text(qc_text + "\n")
 
     # Per-clone provenance lines for the sequence PDF.
