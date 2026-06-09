@@ -218,6 +218,13 @@ class UnifyConfig:
 class AssembleConfig:
     """Configuration for the assemble step."""
 
+    # Whether `run` assembles full-length sequences for the whole filtered
+    # repertoire. Set False (CLI: --no-assemble) for a select-then-assemble
+    # flow — analysis over all clones, but synthesis sequences built only for
+    # the selected basket via `select` + `report selected` (#246). Skips the
+    # ~15–40× wasted assembly and keeps the fail-closed gate (#243) on the
+    # shipped basket rather than aborting on non-selected clones.
+    enabled: bool = True
     alpha_leader: str | None = "CD28"  # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
     beta_leader: str | None = "CD8A"  # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
     include_constant: bool = True

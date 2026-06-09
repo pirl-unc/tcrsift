@@ -1578,7 +1578,17 @@ def cmd_run(args):
     has_leaders = (
         config.assemble.alpha_leader is not None or config.assemble.beta_leader is not None
     )
-    if config.assemble.single_chain or has_leaders or config.assemble.include_constant:
+    # Select-then-assemble (#246): --no-assemble (or assemble.enabled=false) skips
+    # whole-repertoire assembly. Analysis (clonotypes + clone_sample_long + the
+    # phenotyped h5ad) is still written; synthesis sequences are built only for
+    # the selected basket via `select` + `report selected`. Avoids ~15–40× wasted
+    # assembly and keeps the fail-closed gate (#243) on the shipped basket.
+    assemble_enabled = getattr(config.assemble, "enabled", True) and not getattr(
+        args, "no_assemble", False
+    )
+    if assemble_enabled and (
+        config.assemble.single_chain or has_leaders or config.assemble.include_constant
+    ):
         print("\n[7/7] Assembling full-length sequences...")
         # Contig sample-name policy (#124). For "sheet" mode, hand the
         # loaded sample sheet to the assembler as a (sample, vdj_dir) frame.
@@ -1805,7 +1815,14 @@ def cmd_run(args):
             export_fasta(assembled, fasta_path, sequence_col=seq_col)
             print(f"  Exported FASTA: {fasta_path}")
     else:
-        print("\n[7/7] Skipping assembly")
+        if not assemble_enabled:
+            print(
+                "\n[7/7] Skipping whole-repertoire assembly (--no-assemble). "
+                "Analysis outputs written; assemble the selected basket with "
+                "`tcrsift select` + `tcrsift report selected`."
+            )
+        else:
+            print("\n[7/7] Skipping assembly")
         if config.output.output_airr or config.output.output_fasta:
             print("  Skipping AIRR/FASTA export because assembly was skipped")
 
@@ -3887,6 +3904,14 @@ CONDITIONALLY REQUIRED:
         help="Permit constructs assembled from canonical/reference constants when "
         "no contig verifies the donor's junction/allele (fail-closed otherwise) "
         "(#243).",
+    )
+    out_group.add_argument(
+        "--no-assemble", action="store_true",
+        help="Skip whole-repertoire assembly (select-then-assemble): write the "
+        "analysis outputs (clonotypes, clone_sample_long, phenotyped h5ad) but "
+        "build synthesis sequences only for the selected basket via `select` + "
+        "`report selected`. ~15–40× less assembly; the fail-closed gate (#243) "
+        "then applies to the basket, not non-selected clones (#246).",
     )
 
     p_run.set_defaults(func=cmd_run)
