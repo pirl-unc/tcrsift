@@ -40,3 +40,20 @@ synthetic CDR3s per chain (OLGA default human T α/β models). OLGA (GPL-3.0) is
 used **offline at generation time only** — never imported at runtime — so the
 shipped package stays Apache-2.0. The fitted numpy tables are committed; the
 synthetic sequences are not bundled.
+
+## Germline V-gene signal peptides (leaders) — IMGT/GENE-DB (#267)
+
+`vgene_leaders.csv.gz` is the per-allele TRAV/TRBV signal-peptide (leader)
+reference used to germline-anchor `from_contig` leader selection. It's built
+from the vendored IMGT/GENE-DB **L-PART1+L-PART2** FASTA under
+`imgt_vgene_leaders/` (`TRAV_L-PART.fasta`, `TRBV_L-PART.fasta`) by
+`scripts/build_vgene_leaders.py`, which translates each allele and keeps clean,
+ATG-started, stop-free leaders (270 alleles / 123 genes).
+
+Source: IMGT/GENE-DB (https://www.imgt.org/genedb/), *Homo sapiens*, query
+`8.1 TRAV` / `8.1 TRBV`, IMGTlabel `L-PART1+L-PART2`. IMGT® is under the
+CC BY-NC-ND 4.0 terms; cite Lefranc et al., *Nucleic Acids Res.* The reference
+is used only as an **alignment anchor** (start/length selection) — the shipped
+leader stays the donor's native contig sequence, so allelic variants are
+preserved. To re-fetch, run `scripts/build_vgene_leaders.py` (URLs documented in
+the script header).

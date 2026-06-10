@@ -26,6 +26,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm.auto import tqdm
 
+from .leaders import germline_anchor_leader
 from .validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
@@ -255,6 +256,9 @@ def _classify_leader(leader_aa: str, kozak_score: int, source: str) -> str:
 
     Applies the length banding on top of :func:`leader_qc`:
 
+    - A germline-anchored leader (``source == "contig_germline_anchored"``) is
+      ``ok`` — the germline alignment validates its start AND length, so a
+      genuinely long one (TRBV13's 29 aa) is NOT flagged ``too_long`` (#267).
     - An h-region structural trim → ``hregion_trimmed`` (usable for synthesis,
       resolved on the weaker h-region basis, kept visible for review).
     - A Kozak-reselected leader → judged purely on shape (in-range by
@@ -265,6 +269,8 @@ def _classify_leader(leader_aa: str, kozak_score: int, source: str) -> str:
       ``too_long`` (override-able). A well-shaped in-range leader whose start has
       weak Kozak context is ``weak_kozak_start`` (leaky-scan informs, doesn't act).
     """
+    if source == "contig_germline_anchored":
+        return "ok"
     shape = leader_qc(leader_aa)  # ok/too_short/too_long/no_met/no_h_region/…
     if source == "contig_hregion_trimmed":
         return "hregion_trimmed"
@@ -2233,11 +2239,11 @@ def _extract_leader_from_contigs_single(
 
     contig_ids = str(row[contig_col]).split(";")
     vdj_aa = result.get(f"vdj_{chain}_aa", "")
+    v_gene = row.get(f"{chain}_v_gene")
 
     leader_counter = Counter()
-    # leader_aa -> (leader_nt, kozak_score, source). The metadata is consistent
-    # across contigs voting the same leader_aa (same translation + same
-    # reselection decision yield the same aa), so first sighting is fine.
+    # leader_aa -> (leader_nt, kozak_score, source, gmeta). Metadata is consistent
+    # across contigs voting the same leader_aa, so first sighting is fine.
     leader_meta: dict = {}
     n_total = 0
 
@@ -2254,18 +2260,35 @@ def _extract_leader_from_contigs_single(
 
             if vdj_aa and vdj_aa in translated and offset is not None:
                 orig_leader = translated.split(vdj_aa)[0]
+                orig_len = len(orig_leader)
                 n_total += 1
-                leader_aa, leader_nt, score, source = _kozak_correct_leader(
-                    contig_seq, offset, orig_leader
-                )
+                # Layer 1: germline anchor (#267) — keep the donor's native
+                # suffix whose length/start match the germline V-leader. Falls
+                # back (returns None) when the gene/allele is absent or the
+                # contig is too divergent → Kozak + h-region heuristic (#263).
+                anchored = germline_anchor_leader(orig_leader, v_gene)
+                if anchored is not None:
+                    leader_aa, g_allele, g_aa, identity, diff = anchored
+                    start_k = orig_len - len(leader_aa)
+                    leader_nt = contig_seq[
+                        offset + 3 * start_k : offset + orig_len * 3
+                    ]
+                    score = _kozak_score(contig_seq, offset + 3 * start_k)
+                    source = "contig_germline_anchored"
+                    gmeta = (g_allele, g_aa, identity, diff)
+                else:
+                    leader_aa, leader_nt, score, source = _kozak_correct_leader(
+                        contig_seq, offset, orig_leader
+                    )
+                    gmeta = None
                 leader_counter[leader_aa] += 1
-                leader_meta.setdefault(leader_aa, (leader_nt, score, source))
+                leader_meta.setdefault(leader_aa, (leader_nt, score, source, gmeta))
 
     if not leader_counter:
         return  # no contig covered the VDJ — leader simply absent
 
     leader_aa, support = leader_counter.most_common(1)[0]
-    leader_nt, score, source = leader_meta[leader_aa]
+    leader_nt, score, source, gmeta = leader_meta[leader_aa]
     result[f"{chain}_leader_aa"] = leader_aa
     result[f"{chain}_leader_nt"] = leader_nt
     result[f"{chain}_leader_len"] = len(leader_aa)
@@ -2273,6 +2296,13 @@ def _extract_leader_from_contigs_single(
     result[f"{chain}_leader_source"] = source
     result[f"{chain}_leader_qc"] = _classify_leader(leader_aa, score, source)
     result[f"{chain}_leader_support"] = f"{support}/{n_total}"
+    if gmeta is not None:
+        g_allele, g_aa, identity, diff = gmeta
+        gene = str(v_gene).split("*")[0].split()[0]
+        result[f"{chain}_germline_allele"] = f"{gene}*{g_allele}"
+        result[f"{chain}_germline_leader_aa"] = g_aa
+        result[f"{chain}_germline_identity"] = round(identity, 3)
+        result[f"{chain}_leader_vs_germline"] = diff or "identical"
 
 
 def _add_constant_regions(
