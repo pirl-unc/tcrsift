@@ -330,69 +330,95 @@ class TestDivergenceCharacterization:
         assert characterize_divergence("MWGVYLLYVSMKMGGTT", "MWGVFLLYVSMKMGGTT") == "F5Y"
 
 
-class TestPutativeIndelVariants:
-    """expand_putative_indel_variants: germline-reference twin for consistent,
-    SP-sound, length-divergent leaders (likely germline indel vs artifact)."""
+class TestLeaderPolicy:
+    """apply_leader_policy: keep SP-sound+consistent contig leaders; switch
+    bad/inconsistent ones to germline; force / secondary-construct options (#270)."""
 
     def _germline(self):
         g_aa = dict((a, aa) for a, _f, aa in germline_vgene_leaders("TRBV20-1"))["01"]
         return g_aa, germline_leader_nt("TRBV20-1", "01")
 
-    def _df(self, beta_leaders):
-        g_aa, g_nt = self._germline()
+    def _df(self, beta_leaders, *, sp_ok=True):
+        # beta: TRBV20-1, divergent contig leaders; alpha: matches germline.
+        from tcrsift.assemble import signal_peptide_features
+        g_aa, _g_nt = self._germline()
         rows = []
         for i, lead in enumerate(beta_leaders):
-            lead_nt = "ATG" + "CTC" * (len(lead) - 1)  # M-start, len*3 nt
+            lead_nt = "ATG" + "CTC" * (len(lead) - 1)
             body_aa, body_nt = "CASSF" + "G" * 30, "TGC" * 35
             rows.append({
                 "CDR3ab": f"CAA_{i}_CASSF",
                 "alpha_v_gene": "TRAV1-2", "beta_v_gene": "TRBV20-1",
-                "alpha_leader_aa": "MWGVFLLYVSMKMGGTT",
+                "alpha_leader_aa": "MWGVFLLYVSMKMGGTT", "alpha_leader_source": "contig",
                 "alpha_germline_leader_aa": "MWGVFLLYVSMKMGGTT",
-                "alpha_germline_allele": "TRAV1-2*01", "alpha_leader_qc": "ok",
+                "alpha_germline_allele": "TRAV1-2*01", "alpha_germline_identity": 1.0,
+                "alpha_leader_qc": "ok", "alpha_sp_features_ok": True,
                 "full_alpha_aa": "MWGVFLLYVSMKMGGTT" + "CAVF" + "G" * 20,
                 "beta_leader_aa": lead, "beta_leader_nt": lead_nt,
+                "beta_leader_source": "contig", "beta_leader_qc": "ok",
+                "beta_sp_features_ok": sp_ok if sp_ok is not True
+                else signal_peptide_features(lead)["features_ok"],
                 "beta_germline_leader_aa": g_aa, "beta_germline_allele": "TRBV20-1*01",
-                "beta_leader_qc": "ok",
+                "beta_germline_identity": 0.5,  # divergent from germline
                 "full_beta_aa": lead + body_aa, "full_beta_nt": lead_nt + body_nt,
             })
         return pd.DataFrame(rows)
 
-    def test_emits_germline_reference_twin(self):
-        from tcrsift.assemble import expand_putative_indel_variants
+    def test_default_keeps_consistent_sound_divergent(self):
+        # SP-sound + consistent-divergent (likely germline indel) → KEPT by default.
+        from tcrsift.assemble import apply_leader_policy
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPGSGL"])
+        out = apply_leader_policy(df, "T2A")
+        assert len(out) == 2  # no twins, no switch
+        assert (out["beta_leader_aa"] == "MLLLLLLLGPGSGL").all()
 
-        g_aa, g_nt = self._germline()
-        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPGSGL"])  # 2 clones, same 14-aa
-        out = expand_putative_indel_variants(df, "T2A")
-        assert len(out) == 4  # 2 donor + 2 twins
-        donors = out[out["leader_variant"] == "putative_germline_indel"]
-        twins = out[out["leader_variant"] == "germline_reference"]
-        assert len(donors) == 2 and len(twins) == 2
-        for _, t in twins.iterrows():
-            assert t["beta_leader_aa"] == g_aa                 # canonical germline
-            assert t["full_beta_aa"].startswith(g_aa)          # prefix swapped
-            assert t["full_beta_aa"].endswith("G" * 30)        # donor body kept
-            assert t["beta_leader_source"] == "germline_reference_leader"
-            assert t["full_beta_nt"].startswith(g_nt)          # NT swapped too
-            assert g_aa in t["single_chain_aa"]                # single-chain rebuilt
-        # donor rows keep the divergent contig leader
-        for _, d in donors.iterrows():
-            assert d["beta_leader_aa"] == "MLLLLLLLGPGSGL"
-
-    def test_no_twin_when_inconsistent_across_gene(self):
-        from tcrsift.assemble import expand_putative_indel_variants
-
-        # two DIFFERENT divergent leaders for the same gene → not consistent →
-        # no twin (a one-off oddity, not a putative germline indel).
-        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPAAAGSGL"])
-        out = expand_putative_indel_variants(df, "T2A")
-        assert len(out) == 2  # unchanged, no twins
-
-    def test_no_twin_when_leader_matches_germline(self):
-        from tcrsift.assemble import expand_putative_indel_variants
-
-        # leader == germline (not divergent) → nothing to twin.
+    def test_switches_inconsistent_divergent_to_germline(self):
+        # divergent but NOT consistent across the gene → switch to germline.
+        from tcrsift.assemble import apply_leader_policy
         g_aa, _ = self._germline()
-        df = self._df([g_aa, g_aa])
-        out = expand_putative_indel_variants(df, "T2A")
-        assert len(out) == 2
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPAAAAGSGL"])  # 2 different
+        out = apply_leader_policy(df, "T2A")
+        assert (out["beta_leader_aa"] == g_aa).all()  # both switched to germline
+        assert (out["beta_leader_source"] == "germline_reference_leader").all()
+        assert out["full_beta_aa"].iloc[0].startswith(g_aa)
+
+    def test_switches_bad_sp_to_germline(self):
+        # bad SP (features_ok False), even if consistent → switch to germline.
+        from tcrsift.assemble import apply_leader_policy
+        g_aa, _ = self._germline()
+        df = self._df(["MKKKKEEDDKKEE", "MKKKKEEDDKKEE"], sp_ok=False)  # no h-core
+        out = apply_leader_policy(df, "T2A")
+        assert (out["beta_leader_aa"] == g_aa).all()
+
+    def test_secondary_germline_emits_twin(self):
+        # --leader-secondary germline: keep primary, ALSO emit a germline twin.
+        from tcrsift.assemble import apply_leader_policy
+        g_aa, g_nt = self._germline()
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPGSGL"])
+        out = apply_leader_policy(df, "T2A", secondary_beta="germline")
+        assert len(out) == 4
+        prim = out[out["leader_variant"] == "primary"]
+        sec = out[out["leader_variant"] == "secondary:germline"]
+        assert len(prim) == 2 and len(sec) == 2
+        assert (prim["beta_leader_aa"] == "MLLLLLLLGPGSGL").all()  # primary kept
+        for _, s in sec.iterrows():
+            assert s["beta_leader_aa"] == g_aa
+            assert s["full_beta_aa"].startswith(g_aa)
+            assert g_aa in s["single_chain_aa"]
+
+    def test_force_beta_leader(self):
+        from tcrsift.assemble import apply_leader_policy
+        g_aa, _ = self._germline()
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPGSGL"])
+        out = apply_leader_policy(df, "T2A", force_beta="germline")
+        assert (out["beta_leader_aa"] == g_aa).all()
+        assert out["beta_leader_source"].iloc[0].startswith("forced_")
+        # alpha untouched by a beta-only force
+        assert (out["alpha_leader_aa"] == "MWGVFLLYVSMKMGGTT").all()
+
+    def test_force_curated_all_chains(self):
+        from tcrsift.assemble import DEFAULT_LEADERS, apply_leader_policy
+        df = self._df(["MLLLLLLLGPGSGL"])
+        out = apply_leader_policy(df, "T2A", force_alpha="CD8A", force_beta="CD8A")
+        assert (out["beta_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]).all()
+        assert (out["alpha_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]).all()

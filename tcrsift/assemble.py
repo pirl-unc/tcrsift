@@ -32,6 +32,7 @@ from .leaders import (
     germline_leader_nt,
     normalize_vgene,
 )
+from .sigpep import signal_peptide_features, sp_features_summary
 from .validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
@@ -339,6 +340,12 @@ def _record_leader(
     result[f"{chain}_germline_leader_aa"] = g_aa
     result[f"{chain}_germline_identity"] = identity
     result[f"{chain}_leader_vs_germline"] = diff
+    # Signal-peptide feature panel (von Heijne tripartite, #270): does the leader
+    # have everything expected of an SP? Drives the keep-vs-switch policy.
+    feats = signal_peptide_features(leader_aa)
+    result[f"{chain}_sp_features_ok"] = feats["features_ok"]
+    result[f"{chain}_sp_score"] = feats["score"]
+    result[f"{chain}_sp_features"] = sp_features_summary(feats)
 
 
 # Kozak context scoring (Kozak 1987/1991). The optimal context is gccRccATGG
@@ -1652,8 +1659,11 @@ def assemble_full_sequences(
     sample_name_from: str = "parent",
     cellranger_dir: str | Path | None = None,
     sample_sheet: pd.DataFrame | None = None,
-    leader_fallback: str | None = None,
-    emit_putative_indel_variants: bool = False,
+    leader_fallback: str = "germline",
+    force_alpha_leader: str | None = None,
+    force_beta_leader: str | None = None,
+    secondary_alpha_leader: str | None = None,
+    secondary_beta_leader: str | None = None,
 ) -> pd.DataFrame:
     """
     Assemble full-length TCR sequences.
@@ -1947,7 +1957,6 @@ def assemble_full_sequences(
             constant_source,
             allele_overrides=allele_overrides,
             stops_nt=stops_nt,
-            leader_fallback=leader_fallback,
         )
         assembly_results.append(result)
 
@@ -1962,13 +1971,17 @@ def assemble_full_sequences(
             logger.info(f"  Creating single-chain constructs with {linker} linker...")
         df = _add_single_chain(df, linker)
 
-    # Optional putative-germline-indel twin constructs (#270): for clones whose
-    # contig leader diverges from germline by length yet is still a sound SP and
-    # is consistent across that gene's clones (a likely germline indel we're not
-    # certain of vs an assembly artifact), emit a SECOND construct using the
-    # canonical germline V-leader so both can be tested.
-    if emit_putative_indel_variants:
-        df = expand_putative_indel_variants(df, linker, verbose=verbose)
+    # Leader policy (#270): keep an SP-sound, consistent contig leader; warn +
+    # switch a bad/inconsistent one to the germline (or configured) leader;
+    # honor per-chain force / secondary-construct directives. The default runs
+    # on every from_contig assembly (no-op when nothing needs changing).
+    df = apply_leader_policy(
+        df, linker,
+        leader_fallback=leader_fallback or "germline",
+        force_alpha=force_alpha_leader, force_beta=force_beta_leader,
+        secondary_alpha=secondary_alpha_leader, secondary_beta=secondary_beta_leader,
+        verbose=verbose,
+    )
 
     # Summary
     if verbose:
@@ -2102,7 +2115,6 @@ def _assemble_clone(
     constant_source: str,
     allele_overrides: dict[str, str] | None = None,
     stops_nt: str = "TAATGA",
-    leader_fallback: str | None = None,
 ) -> dict:
     """Assemble full sequence for a single clone."""
     result = {}
@@ -2144,24 +2156,10 @@ def _assemble_clone(
         if chain_leader is None:
             continue
         elif chain_leader == "from_contig":
-            # Extract + QC native leader from contigs (Kozak leaky-scan).
+            # Extract + QC native leader from contigs (Kozak leaky-scan). The
+            # keep-vs-switch / force / secondary decisions are applied later by
+            # apply_leader_policy (it needs cross-clone consistency).
             _extract_leader_from_contigs_single(row, sample_contigs, result, chain)
-            # Optional curated substitution (#263): when the extracted leader is
-            # implausible (weak_kozak over-capture, out-of-window length, no Met,
-            # no h-region) AND a fallback SP is configured, swap in the curated
-            # one. Default (no fallback) keeps the extracted leader but leaves
-            # the {chain}_leader_qc flag set so the issue stays visible — never
-            # silent.
-            if (
-                leader_fallback
-                and result.get(f"{chain}_leader_qc") in _IMPLAUSIBLE_LEADER_QC
-            ):
-                fb = DEFAULT_LEADERS[leader_fallback]
-                _record_leader(
-                    result, chain, fb["aa"], fb["dna"],
-                    f"curated_fallback:{leader_fallback}",
-                    v_gene=row.get(f"{chain}_v_gene"),
-                )
         elif isinstance(chain_leader, dict):
             # Curated default leader (CD28/CD8A/…) — routed through the same
             # central recorder + QC as every other path (#267 review). The
@@ -3277,65 +3275,67 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     return df
 
 
-# Leader QC verdicts that still read as a usable signal peptide (M-start, sane
-# length, h-region present) — eligible for a putative-indel twin when they
-# diverge from germline by length AND are consistent across the gene's clones.
-_SP_USABLE_QC = frozenset({"ok", "weak_kozak_start", "long_leader", "hregion_trimmed"})
+# from_contig leader sources (the policy keeps/switches these; curated leaders
+# the user chose explicitly are left alone except by an explicit force/secondary).
+_FROM_CONTIG_SOURCES = frozenset(
+    {"contig", "contig_kozak_reselected", "contig_hregion_trimmed", "contig_germline_anchored"}
+)
 
 
-def _swap_leader_to_germline(twin: dict, orig, chain: str) -> None:
-    """In ``twin`` (a copy of ``orig``), replace ``chain``'s leader with its
-    canonical germline V-leader and re-stitch the affected full-sequence columns.
+def _resolve_named_leader(name: str, row, chain: str) -> tuple[str, str | None, str] | None:
+    """Resolve a leader directive → ``(aa, nt, source_tag)`` for ``chain``.
 
-    The leader is a pure prefix of ``full_{chain}_*`` (leader + VDJ + constant),
-    so swapping it is a prefix substitution — donor VDJ/constant bytes are kept
-    verbatim. ``single_chain`` is rebuilt by the caller via ``_add_single_chain``.
+    ``"germline"`` → the gene's germline V-leader (None if the gene isn't in the
+    reference); a curated key (CD8A/CD28/IgK/TRAC/TRBC) → that bundled leader.
     """
-    g_aa = orig[f"{chain}_germline_leader_aa"]
-    gene, _, allele = str(orig[f"{chain}_germline_allele"]).partition("*")
-    g_nt = germline_leader_nt(gene, allele) or ""
+    if name == "germline":
+        g_aa = row.get(f"{chain}_germline_leader_aa")
+        g_allele = row.get(f"{chain}_germline_allele")
+        if not isinstance(g_aa, str) or not isinstance(g_allele, str):
+            return None
+        gene, _, allele = g_allele.partition("*")
+        return g_aa, germline_leader_nt(gene, allele), "germline_reference_leader"
+    key = name.upper()
+    if key in DEFAULT_LEADERS:
+        return DEFAULT_LEADERS[key]["aa"], DEFAULT_LEADERS[key]["dna"], f"curated:{key}"
+    return None
+
+
+def _substitute_chain_leader(
+    target: dict, orig, chain: str, new_aa: str, new_nt: str | None, source: str
+) -> None:
+    """In ``target`` (a row dict), replace ``chain``'s leader with ``new_aa`` and
+    re-stitch the affected full-sequence columns (the leader is a pure prefix of
+    ``full_{chain}_*``, so donor VDJ/constant bytes are kept). ``single_chain`` is
+    rebuilt by the caller via ``_add_single_chain``.
+    """
     donor_aa = orig.get(f"{chain}_leader_aa") or ""
     donor_nt = orig.get(f"{chain}_leader_nt") or ""
+    target[f"{chain}_leader_aa"] = new_aa
+    target[f"{chain}_leader_nt"] = new_nt
+    target[f"{chain}_leader_len"] = len(new_aa)
+    target[f"{chain}_leader_source"] = source
+    target[f"{chain}_leader_qc"] = "substituted"
+    feats = signal_peptide_features(new_aa)
+    target[f"{chain}_sp_features_ok"] = feats["features_ok"]
+    target[f"{chain}_sp_score"] = feats["score"]
+    target[f"{chain}_sp_features"] = sp_features_summary(feats)
 
-    twin[f"{chain}_leader_aa"] = g_aa
-    twin[f"{chain}_leader_nt"] = g_nt or None
-    twin[f"{chain}_leader_len"] = len(g_aa)
-    twin[f"{chain}_leader_source"] = "germline_reference_leader"
-    twin[f"{chain}_leader_qc"] = "germline_reference"
-    twin[f"{chain}_leader_vs_germline"] = "germline_substituted"
-    twin[f"{chain}_germline_identity"] = 1.0
-
-    # AA: swap the leader prefix (only when the leader is actually a prefix).
     fa = orig.get(f"full_{chain}_aa")
     if isinstance(fa, str) and donor_aa and fa.startswith(donor_aa):
-        twin[f"full_{chain}_aa"] = g_aa + fa[len(donor_aa):]
-    # NT views: same prefix swap; if we lack a germline leader NT, invalidate the
-    # NT view rather than leave a leader/body mismatch.
+        target[f"full_{chain}_aa"] = new_aa + fa[len(donor_aa):]
     for nt_col in (
         f"full_{chain}_nt", f"full_{chain}_nt_optimized", f"full_{chain}_nt_contig",
     ):
         fn = orig.get(nt_col)
         if isinstance(fn, str) and donor_nt and fn.startswith(donor_nt):
-            twin[nt_col] = (g_nt + fn[len(donor_nt):]) if g_nt else None
+            target[nt_col] = (new_nt + fn[len(donor_nt):]) if new_nt else None
 
 
-def expand_putative_indel_variants(
-    df: pd.DataFrame, linker: str | None, *, verbose: bool = False
-) -> pd.DataFrame:
-    """Emit a germline-reference twin for putative-germline-indel leaders (#270).
-
-    For each clone whose contig leader (either chain) is a usable signal peptide
-    that diverges from the germline V-leader **by length**, where that divergent
-    leader is **consistent across all of that V gene's clones** in the dataset —
-    i.e. a likely germline indel we're not certain of vs an assembly artifact —
-    append a duplicate construct using the canonical germline V-leader so both
-    can be tested. The original (divergent contig leader) is tagged
-    ``leader_variant='putative_germline_indel'`` and the twin
-    ``'germline_reference'``; clones with no twin keep ``leader_variant`` NaN.
-    No-op unless some clone qualifies.
-    """
-    # 1. Per chain, find genes whose present leader is unanimous AND length-divergent.
-    consistent_divergent: set[tuple[str, str]] = set()
+def _unanimous_divergent_genes(df: pd.DataFrame) -> set[tuple[str, str]]:
+    """``(chain, gene)`` whose from_contig leader is unanimous across the gene's
+    clones AND diverges (by length) from germline — the consistent-divergent case."""
+    out: set[tuple[str, str]] = set()
     for chain in ("alpha", "beta"):
         v_col, aa_col, g_col = (
             f"{chain}_v_gene", f"{chain}_leader_aa", f"{chain}_germline_leader_aa"
@@ -3349,49 +3349,132 @@ def expand_putative_indel_variants(
             if len(leaders) == 1 and len(germs) == 1:
                 leader, germ = next(iter(leaders)), next(iter(germs))
                 if leader != germ and len(leader) != len(germ):
-                    consistent_divergent.add((chain, str(gene)))
-    if not consistent_divergent:
-        return df
+                    out.add((chain, str(gene)))
+    return out
 
-    # 2. Build twins for qualifying clones (SP-usable leader on a consistent-
-    #    divergent gene, with a germline leader available to swap in).
-    twins, orig_idx = [], []
-    for idx, row in df.iterrows():
-        swap = []
-        for chain in ("alpha", "beta"):
-            gene = row.get(f"{chain}_v_gene")
-            if pd.isna(gene) or (chain, str(gene)) not in consistent_divergent:
-                continue
-            if row.get(f"{chain}_leader_qc") not in _SP_USABLE_QC:
-                continue
-            if not isinstance(row.get(f"{chain}_germline_leader_aa"), str):
-                continue
-            if not isinstance(row.get(f"{chain}_germline_allele"), str):
-                continue
-            swap.append(chain)
-        if not swap:
-            continue
-        twin = row.to_dict()
-        for chain in swap:
-            _swap_leader_to_germline(twin, row, chain)
-        twin["leader_variant"] = "germline_reference"
-        twins.append(twin)
-        orig_idx.append(idx)
 
-    if not twins:
-        return df
+def apply_leader_policy(
+    df: pd.DataFrame,
+    linker: str | None,
+    *,
+    leader_fallback: str = "germline",
+    force_alpha: str | None = None,
+    force_beta: str | None = None,
+    secondary_alpha: str | None = None,
+    secondary_beta: str | None = None,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """Decide the shipped signal peptide for every clone (von Heijne policy, #270).
 
+    Per chain, for from_contig leaders:
+
+    1. ``force_{chain}`` set → use that leader (germline / curated), skip the contig.
+    2. else KEEP the contig leader when it matches germline, OR it's SP-sound
+       (:func:`signal_peptide_features` ``features_ok``) AND its divergence is
+       consistent across that gene's clones (a likely germline indel).
+    3. else (bad SP, or divergent + inconsistent) → WARN and switch to
+       ``leader_fallback`` (default the germline V-leader; a curated key
+       otherwise). When the target is germline but the gene isn't in the
+       reference, keep the contig leader + flag (nothing to switch to).
+
+    ``secondary_{chain}`` additionally emits a SECOND construct row with that
+    leader (germline/curated) even for kept good calls; twins are tagged
+    ``leader_variant`` (``primary`` / ``secondary:<leader>``).
+    """
+    consistent = _unanimous_divergent_genes(df)
+    force = {"alpha": force_alpha, "beta": force_beta}
+    secondary = {"alpha": secondary_alpha, "beta": secondary_beta}
     df = df.copy()
-    if "leader_variant" not in df.columns:
-        df["leader_variant"] = pd.NA
-    df.loc[orig_idx, "leader_variant"] = "putative_germline_indel"
-    df = pd.concat([df, pd.DataFrame(twins)], ignore_index=True)
-    # Rebuild single_chain so the twins' β-linker-α reflects the swapped leader
-    # (idempotent for the unchanged originals).
-    if linker and "full_beta_aa" in df.columns and "full_alpha_aa" in df.columns:
+    n_forced = n_switched = 0
+
+    # --- Pass 1: in-place force / keep-or-switch on each clone ----------------
+    # Accumulate both chains' changes into one working dict per row and write it
+    # back once — writing per-chain would clobber the other chain's edit.
+    for idx, row in df.iterrows():
+        work = row.to_dict()
+        changed = False
+        for chain in ("alpha", "beta"):
+            aa = work.get(f"{chain}_leader_aa")
+            if not isinstance(aa, str) or not aa:
+                continue
+            # 1. Force overrides everything (applies to any source).
+            if force[chain]:
+                res = _resolve_named_leader(force[chain], work, chain)
+                if res is not None:
+                    new_aa, new_nt, src = res
+                    _substitute_chain_leader(work, work, chain, new_aa, new_nt, f"forced_{src}")
+                    changed = True
+                    n_forced += 1
+                continue
+            # Keep/switch policy only governs from_contig leaders.
+            if work.get(f"{chain}_leader_source") not in _FROM_CONTIG_SOURCES:
+                continue
+            germ_aa = work.get(f"{chain}_germline_leader_aa")
+            ident = work.get(f"{chain}_germline_identity")
+            sp_ok = bool(work.get(f"{chain}_sp_features_ok"))
+            matches_germline = (
+                isinstance(germ_aa, str) and isinstance(ident, (int, float))
+                and ident >= 0.999
+            )
+            divergent = isinstance(germ_aa, str) and not matches_germline
+            gene = work.get(f"{chain}_v_gene")
+            is_consistent = (chain, str(gene)) in consistent
+            keep = matches_germline or (sp_ok and (not divergent or is_consistent))
+            if keep:
+                continue
+            # Reject → switch to the fallback leader.
+            res = _resolve_named_leader(leader_fallback, work, chain)
+            if res is None:
+                continue  # nothing to switch to (e.g. germline absent) → keep + flag
+            new_aa, new_nt, src = res
+            _substitute_chain_leader(work, work, chain, new_aa, new_nt, src)
+            changed = True
+            n_switched += 1
+            if verbose:
+                logger.warning(
+                    "  %s leader rejected (sp_ok=%s, divergent=%s, consistent=%s) → "
+                    "switched to %s", chain, sp_ok, divergent, is_consistent, src,
+                )
+        if changed:
+            for k, v in work.items():
+                df.at[idx, k] = v
+
+    # --- Pass 2: optional secondary constructs --------------------------------
+    twins, orig_idx = [], []
+    if any(secondary.values()):
+        for idx, row in df.iterrows():
+            sec = []
+            for chain in ("alpha", "beta"):
+                if not secondary[chain]:
+                    continue
+                if not isinstance(row.get(f"{chain}_leader_aa"), str):
+                    continue
+                res = _resolve_named_leader(secondary[chain], row, chain)
+                if res is not None:
+                    sec.append((chain, secondary[chain], res))
+            if not sec:
+                continue
+            twin = row.to_dict()
+            for chain, name, (new_aa, new_nt, src) in sec:
+                _substitute_chain_leader(twin, row, chain, new_aa, new_nt, f"secondary_{src}")
+            twin["leader_variant"] = "secondary:" + "+".join(s[1] for s in sec)
+            twins.append(twin)
+            orig_idx.append(idx)
+
+    if twins:
+        if "leader_variant" not in df.columns:
+            df["leader_variant"] = pd.NA
+        df.loc[orig_idx, "leader_variant"] = "primary"
+        df = pd.concat([df, pd.DataFrame(twins)], ignore_index=True)
+
+    # Rebuild single_chain wherever leaders changed (idempotent for unchanged).
+    if (n_forced or n_switched or twins) and linker and {"full_beta_aa", "full_alpha_aa"} <= set(df.columns):
         df = _add_single_chain(df, linker)
-    if verbose:
-        logger.info(f"  Putative-germline-indel twin constructs emitted: {len(twins)}")
+    if verbose and (n_forced or n_switched or twins):
+        logger.info(
+            "  Leader policy: %d forced, %d switched to fallback, %d secondary constructs",
+            n_forced, n_switched, len(twins),
+        )
     return df
 
 
