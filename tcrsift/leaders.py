@@ -162,3 +162,37 @@ def germline_anchor_leader(
         return None
     identity, allele, g_aa, cand = best
     return cand, allele, g_aa, identity, _diff_vs_germline(cand, g_aa)
+
+
+def germline_compare_leader(leader_aa: str | None, v_gene: str | None):
+    """Compare a FINAL (shipped) leader to the closest germline allele (#267).
+
+    Independent of anchoring: works for *any* leader — germline-anchored,
+    Kozak/h-region heuristic, or curated default — so we always report which
+    germline allele the V gene maps to and how divergent the leader we're
+    shipping is from it. (A curated CD28/CD8A leader vs the native germline reads
+    as a large divergence, which is exactly the useful signal.)
+
+    Leaders are right-aligned (they share the C-terminal cleavage region; any
+    over-capture / N-terminal variation differs). Identity is over the LONGER of
+    the two, so a length mismatch lowers it. Returns
+    ``(allele, germline_aa, identity, diff)`` — ``diff`` is the per-position
+    substitution string when lengths match, else a ``length_mismatch`` marker —
+    or ``None`` when the gene isn't in the reference.
+    """
+    candidates = germline_vgene_leaders(v_gene)
+    if not candidates or not isinstance(leader_aa, str) or not leader_aa:
+        return None
+    best = None  # (identity, allele, germline_aa)
+    for allele, _func, g_aa in candidates:
+        n = min(len(leader_aa), len(g_aa))
+        matches = sum(a == b for a, b in zip(leader_aa[-n:], g_aa[-n:]))
+        identity = matches / max(len(leader_aa), len(g_aa))
+        if best is None or identity > best[0]:
+            best = (identity, allele, g_aa)
+    identity, allele, g_aa = best
+    if len(leader_aa) == len(g_aa):
+        diff = _diff_vs_germline(leader_aa, g_aa) or "identical"
+    else:
+        diff = f"length_mismatch ({len(leader_aa)} vs {len(g_aa)})"
+    return allele, g_aa, round(identity, 3), diff

@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm.auto import tqdm
 
-from .leaders import germline_anchor_leader, normalize_vgene
+from .leaders import germline_anchor_leader, germline_compare_leader, normalize_vgene
 from .validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
@@ -297,18 +297,22 @@ def _record_leader(
     leader_nt: str | None,
     source: str,
     *,
+    v_gene: str | None = None,
     kozak_score: int | None = None,
     support: str | None = None,
-    germline: tuple | None = None,
 ) -> None:
     """Central sink for EVERY signal-peptide derivation path (#263/#267).
 
     All four routes — germline anchor, Kozak/h-region heuristic, curated default
     leader, and curated fallback — write the leader through here, so the
     ``{chain}_leader_*`` columns and the shared :func:`_classify_leader` QC
-    verdict are recorded identically regardless of how the SP was chosen. Optional
-    fields are emitted only when the route supplies them (Kozak score / contig
-    support for from_contig; the germline tuple for an anchored leader).
+    verdict are recorded identically regardless of how the SP was chosen.
+
+    The germline columns are ALWAYS emitted (NaN when the V gene isn't in the
+    reference) from a universal comparison of the shipped leader to the closest
+    germline allele — so even a heuristic- or curated-derived leader is QC'd for
+    divergence from the native germline, not only the anchored ones. Kozak score
+    / contig support are emitted only for the from_contig routes that supply them.
     """
     result[f"{chain}_leader_aa"] = leader_aa
     if leader_nt is not None:
@@ -320,12 +324,16 @@ def _record_leader(
         result[f"{chain}_leader_kozak_score"] = kozak_score
     if support is not None:
         result[f"{chain}_leader_support"] = support
-    if germline is not None:
-        g_allele, g_aa, identity, diff, gene = germline
-        result[f"{chain}_germline_allele"] = f"{gene}*{g_allele}"
-        result[f"{chain}_germline_leader_aa"] = g_aa
-        result[f"{chain}_germline_identity"] = round(identity, 3)
-        result[f"{chain}_leader_vs_germline"] = diff or "identical"
+    # Universal germline comparison (always present; NaN when gene absent).
+    cmp = germline_compare_leader(leader_aa, v_gene)
+    g_allele = g_aa = identity = diff = None
+    if cmp is not None:
+        allele, g_aa, identity, diff = cmp
+        g_allele = f"{normalize_vgene(v_gene)}*{allele}"
+    result[f"{chain}_germline_allele"] = g_allele
+    result[f"{chain}_germline_leader_aa"] = g_aa
+    result[f"{chain}_germline_identity"] = identity
+    result[f"{chain}_leader_vs_germline"] = diff
 
 
 # Kozak context scoring (Kozak 1987/1991). The optimal context is gccRccATGG
@@ -2138,13 +2146,16 @@ def _assemble_clone(
                 _record_leader(
                     result, chain, fb["aa"], fb["dna"],
                     f"curated_fallback:{leader_fallback}",
+                    v_gene=row.get(f"{chain}_v_gene"),
                 )
         elif isinstance(chain_leader, dict):
             # Curated default leader (CD28/CD8A/…) — routed through the same
-            # central recorder + QC as every other path (#267 review).
+            # central recorder + QC as every other path (#267 review). The
+            # germline comparison shows how the (synthetic) default diverges from
+            # the chain's native V-leader.
             _record_leader(
                 result, chain, chain_leader["aa"], chain_leader["dna"],
-                "curated_default",
+                "curated_default", v_gene=row.get(f"{chain}_v_gene"),
             )
 
     # Add constant regions
@@ -2288,8 +2299,9 @@ def _extract_leader_from_contigs_single(
     v_gene = row.get(f"{chain}_v_gene")
 
     leader_counter = Counter()
-    # leader_aa -> (leader_nt, kozak_score, source, gmeta). Metadata is consistent
-    # across contigs voting the same leader_aa, so first sighting is fine.
+    # leader_aa -> (leader_nt, kozak_score, source). Metadata is consistent across
+    # contigs voting the same leader_aa, so first sighting is fine. The germline
+    # columns are added later by _record_leader's universal comparison.
     leader_meta: dict = {}
     n_total = 0
 
@@ -2308,40 +2320,32 @@ def _extract_leader_from_contigs_single(
                 orig_leader = translated.split(vdj_aa)[0]
                 orig_len = len(orig_leader)
                 n_total += 1
-                # Layer 1: germline anchor (#267) — keep the donor's native
-                # suffix whose length/start match the germline V-leader. Falls
-                # back (returns None) when the gene/allele is absent or the
-                # contig is too divergent → Kozak + h-region heuristic (#263).
+                # Layer 1: germline anchor (#267) decides the START — keep the
+                # donor's native suffix whose length/start match the germline
+                # V-leader. Falls back (None) when the gene/allele is absent or
+                # the contig is too divergent → Kozak + h-region heuristic (#263).
                 anchored = germline_anchor_leader(orig_leader, v_gene)
                 if anchored is not None:
-                    leader_aa, g_allele, g_aa, identity, diff = anchored
+                    leader_aa = anchored[0]
                     start_k = orig_len - len(leader_aa)
-                    leader_nt = contig_seq[
-                        offset + 3 * start_k : offset + orig_len * 3
-                    ]
+                    leader_nt = contig_seq[offset + 3 * start_k : offset + orig_len * 3]
                     score = _kozak_score(contig_seq, offset + 3 * start_k)
                     source = "contig_germline_anchored"
-                    gmeta = (g_allele, g_aa, identity, diff)
                 else:
                     leader_aa, leader_nt, score, source = _kozak_correct_leader(
                         contig_seq, offset, orig_leader
                     )
-                    gmeta = None
                 leader_counter[leader_aa] += 1
-                leader_meta.setdefault(leader_aa, (leader_nt, score, source, gmeta))
+                leader_meta.setdefault(leader_aa, (leader_nt, score, source))
 
     if not leader_counter:
         return  # no contig covered the VDJ — leader simply absent
 
     leader_aa, support = leader_counter.most_common(1)[0]
-    leader_nt, score, source, gmeta = leader_meta[leader_aa]
-    germline = None
-    if gmeta is not None:
-        g_allele, g_aa, identity, diff = gmeta
-        germline = (g_allele, g_aa, identity, diff, normalize_vgene(v_gene))
+    leader_nt, score, source = leader_meta[leader_aa]
     _record_leader(
         result, chain, leader_aa, leader_nt, source,
-        kozak_score=score, support=f"{support}/{n_total}", germline=germline,
+        v_gene=v_gene, kozak_score=score, support=f"{support}/{n_total}",
     )
 
 
