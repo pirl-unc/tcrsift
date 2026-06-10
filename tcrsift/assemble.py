@@ -3486,6 +3486,49 @@ def apply_leader_policy(
     return df
 
 
+def collect_germline_variants(
+    df: pd.DataFrame, *, chains=("alpha", "beta")
+) -> pd.DataFrame:
+    """Collect donor-vs-germline leader divergences from assembled output (#270).
+
+    Scans ``{chain}_leader_vs_germline`` for any non-``identical`` divergence
+    (substitution ``H18R;V27G`` / ``internal_deletion:Δn@p(...)`` / ``insertion``)
+    and returns one row per DISTINCT variant with the closest allele, the donor
+    and germline leader sequences, the identity, the leader provenance, and
+    ``n_constructs`` (how many constructs carry it). Empty frame when there are no
+    germline-comparable leaders. Sorted by ``n_constructs`` descending.
+    """
+    cols = [
+        "chain", "v_gene", "germline_allele", "donor_leader", "germline_leader",
+        "variant", "germline_identity", "leader_source",
+    ]
+    rows = []
+    for ch in chains:
+        vs = f"{ch}_leader_vs_germline"
+        if vs not in df.columns:
+            continue
+        d = df[df[vs].notna() & ~df[vs].astype(str).isin(["identical"])]
+        for _, r in d.iterrows():
+            rows.append({
+                "chain": ch,
+                "v_gene": r.get(f"{ch}_v_gene"),
+                "germline_allele": r.get(f"{ch}_germline_allele"),
+                "donor_leader": r.get(f"{ch}_leader_aa"),
+                "germline_leader": r.get(f"{ch}_germline_leader_aa"),
+                "variant": r.get(vs),
+                "germline_identity": r.get(f"{ch}_germline_identity"),
+                "leader_source": r.get(f"{ch}_leader_source"),
+            })
+    if not rows:
+        return pd.DataFrame(columns=[*cols, "n_constructs"])
+    out = pd.DataFrame(rows)
+    grouped = (
+        out.groupby(cols, dropna=False).size().reset_index(name="n_constructs")
+        .sort_values("n_constructs", ascending=False, ignore_index=True)
+    )
+    return grouped
+
+
 class ValidationMessage(str):
     """A validation/autocorrect message tagged with its clone index
     and severity.

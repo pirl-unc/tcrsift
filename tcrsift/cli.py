@@ -1669,6 +1669,15 @@ def cmd_run(args):
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
 
+        # Distinct donor-vs-germline leader variants (substitution alleles /
+        # internal deletions kept as donor-native) — easy to scan (#262/#270).
+        from .assemble import collect_germline_variants
+
+        _gv = collect_germline_variants(assembled)
+        if not _gv.empty:
+            _gv.to_csv(data_dir / "germline_variants.csv", index=False)
+            print(f"  Germline leader variants: {len(_gv)} distinct → germline_variants.csv")
+
         # Fail closed on unverified (canonical-fallback) constructs unless
         # explicitly allowed (#243/#244). The CSV is written first so the
         # provenance is inspectable even when the gate refuses.
@@ -1865,6 +1874,14 @@ def cmd_run(args):
             plot_vgene_usage_by_method(
                 long_df, clonotypes, plots_dir / "vgene_usage_by_method.png",
             )
+
+        # Signal-peptide (leader) frequency + α/β length distribution (#262).
+        if assembled is not None and any(
+            f"{c}_leader_aa" in getattr(assembled, "columns", []) for c in ("alpha", "beta")
+        ):
+            from .plots import plot_leader_summary
+
+            plot_leader_summary(assembled, plots_dir / "leader_summary.png")
 
     # Generate report
     if config.output.generate_report:

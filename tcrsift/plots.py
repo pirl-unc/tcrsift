@@ -2549,6 +2549,77 @@ def plot_vgene_usage_by_method(
     return save_figure(fig, output_path)
 
 
+def plot_leader_summary(
+    df: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    chains=("alpha", "beta"),
+    top_n: int = 20,
+    typical_range: tuple[int, int] = (15, 25),
+    title: str = "Signal-peptide (leader) summary",
+) -> Path | None:
+    """Leader-sequence frequency + α/β leader length distribution (#262).
+
+    Two views per chain that make ``from_contig`` signal peptides legible: the
+    top-``top_n`` distinct leader peptides by construct count (dominant SPs vs the
+    one-off tail that's often a mis-extraction), and the leader length histogram
+    with the typical signal-peptide window (~15-25 aa) shaded so over-long /
+    too-short outliers pop. ``df`` is ``full_sequences`` / ``selected_clones``
+    (needs ``{chain}_leader_aa``). When a ``{chain}_leader_qc`` column is present
+    the length bars are split SP-sound (``ok``-like) vs flagged, so QC problems
+    read off the length axis. Returns the saved path, or None if no leader data.
+    """
+    output_path = Path(output_path)
+    present = [c for c in chains if f"{c}_leader_aa" in getattr(df, "columns", [])]
+    present = [c for c in present if df[f"{c}_leader_aa"].notna().any()]
+    if df is None or df.empty or not present:
+        return None
+
+    # ok-like QC verdicts (sound SPs); anything else is a flagged leader.
+    _ok = {"ok", "weak_kozak_start", "long_leader", "hregion_trimmed",
+           "germline_reference", "substituted"}
+    fig, axes = plt.subplots(2, len(present), figsize=(5.5 * len(present), 7), squeeze=False)
+    for j, ch in enumerate(present):
+        s = df[f"{ch}_leader_aa"].dropna().astype(str)
+        # Row 0: top-N distinct leaders by count.
+        vc = s.value_counts().head(top_n)
+        ax = axes[0][j]
+        ax.barh(range(len(vc)), vc.values, color="#4c78a8")
+        ax.set_yticks(range(len(vc)))
+        ax.set_yticklabels(
+            [f"{x[:18]}{'…' if len(x) > 18 else ''} (len {len(x)})" for x in vc.index],
+            fontsize=7,
+        )
+        ax.invert_yaxis()
+        ax.set_title(f"{ch} leader frequency (top {min(top_n, len(vc))})")
+        ax.set_xlabel("constructs")
+
+        # Row 1: length histogram, split by QC when available.
+        ax = axes[1][j]
+        lengths = s.str.len()
+        bins = range(0, max(40, int(lengths.max()) + 4), 2)
+        qc_col = f"{ch}_leader_qc"
+        if qc_col in df.columns:
+            ok_mask = df[qc_col].isin(_ok)
+            ok_len = df.loc[ok_mask, f"{ch}_leader_aa"].dropna().astype(str).str.len()
+            bad_len = df.loc[~ok_mask, f"{ch}_leader_aa"].dropna().astype(str).str.len()
+            ax.hist([ok_len, bad_len], bins=bins, stacked=True,
+                    color=["#54a24b", "#e45756"], label=["SP-sound", "flagged"])
+            ax.legend(fontsize=7, frameon=False)
+        else:
+            ax.hist(lengths, bins=bins, color="#4c78a8")
+        ax.axvspan(*typical_range, color="green", alpha=0.10)
+        ax.set_title(f"{ch} leader length")
+        ax.set_xlabel("aa")
+        ax.set_ylabel("constructs")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    fig.suptitle(title)
+    fig.tight_layout()
+    return save_figure(fig, output_path)
+
+
 def plot_method_recovery(
     recovery: pd.DataFrame,
     output_path: str | Path,
