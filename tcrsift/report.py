@@ -638,8 +638,72 @@ def build_selected_report(
             writer.write(fh)
 
     assembled.to_csv(out_dir / "selected_clones.csv", index=False)
+
+    # Independent QC battery (#279). Re-derives every construct fact from first
+    # principles and cross-checks the assembled frame against the source
+    # clonotypes and the raw cellranger contigs — NOT trusting tcrsift's own QC
+    # columns. Writes a PASS/FAIL/SKIP `qc-summary.md` so every deliverable
+    # self-validates. Checks whose inputs are absent (no contig dir) report SKIP.
+    try:
+        _emit_qc_summary(
+            assembled,
+            out_dir,
+            clonotypes=clonotypes,
+            assemble_kwargs=assemble_kwargs,
+            cohort_name=title,
+        )
+    except Exception as e:  # the battery is a gate, not a hard failure of the build
+        logger.warning("qc-summary battery failed: %s", e, exc_info=True)
+
     logger.info(
         "Selected-clones report: %d constructs (%d dual-alpha variants) → %s",
         len(assembled), n_variants, out_dir,
     )
     return assembled
+
+
+def _emit_qc_summary(
+    assembled,
+    out_dir: Path,
+    *,
+    clonotypes=None,
+    assemble_kwargs: dict | None = None,
+    cohort_name: str = "deliverable",
+) -> bool:
+    """Run the #279 QC battery on an assembled frame and write ``qc-summary.md``.
+
+    Returns ``True`` when every check passed (SKIP does not fail). Logs a loud
+    warning when any check FAILed so a real integrity regression isn't silent.
+    """
+    from .qc_battery import contig_cdr3_map, qc_summary_markdown, run_qc_battery
+
+    ak = assemble_kwargs or {}
+    cmap = contig_cdr3_map(
+        contig_dir=ak.get("contigs_dir"),
+        cellranger_dir=ak.get("cellranger_dir"),
+    )
+    # Prefer the resolved donor/dir name as the cohort header (consistent with
+    # the rest of the reporting); fall back to the passed title.
+    try:
+        cohort_name = resolve_report_name(
+            out_dir, clones_df=assembled, default=cohort_name
+        )
+    except Exception:
+        pass
+    results = run_qc_battery(assembled, clonotypes=clonotypes, contig_map=cmap)
+    markdown, all_ok = qc_summary_markdown(
+        {cohort_name: results}, deliverable=str(out_dir)
+    )
+    (out_dir / "qc-summary.md").write_text(markdown)
+    failed = [r.name for r in results if r.status == "FAIL"]
+    if failed:
+        logger.warning(
+            "  QC battery FAILED %d/%d checks (%s) → see qc-summary.md",
+            len(failed), len(results), ", ".join(failed),
+        )
+    else:
+        logger.info(
+            "  QC battery: %d/%d checks pass → qc-summary.md",
+            sum(1 for r in results if r.status == "PASS"), len(results),
+        )
+    return all_ok
