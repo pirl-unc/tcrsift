@@ -353,4 +353,63 @@ class TestCoverAndCombine:
         combine_selected_pdfs(donor_pdfs, out, labels=["B1-2", "B1-3"])
         pages = PdfReader(str(out)).pages
         # cover + legend + (title + 2 pages) x 2 = 2 + 6 = 8.
+        # (these donor PDFs are blank figures, not legend covers, so nothing is
+        # stripped — matches the no-cover path.)
         assert len(pages) == 8
+
+    def test_combine_strips_redundant_donor_legend(self, tmp_path):
+        # #combined-pdf: a donor PDF built WITH its own legend cover must not have
+        # that cover repeated once the cohort legend is shown up front.
+        from pypdf import PdfReader
+
+        from tcrsift.report import combine_selected_pdfs
+
+        a = "CASS" + "A" * 40 + "VLF"
+        b = "CASS" + "G" * 40 + "VEF"
+        donor_pdfs = []
+        for name in ("B1-2", "B1-3"):
+            d = tmp_path / name
+            clonotypes = pd.DataFrame([_assembleable_clone("c1", a, b)])
+            selected = pd.DataFrame([{"CDR3ab": "c1", "selection_rule": "shared"}])
+            build_selected_report(
+                selected, clonotypes, d, provenance_cols=["selection_rule"],
+                cover=True, allow_canonical_fallback=True,
+            )
+            donor_pdfs.append(d / "selected_clones_sequences.pdf")
+        # each donor PDF = legend cover + 1 construct page (2 pages).
+        assert all(len(PdfReader(str(p)).pages) == 2 for p in donor_pdfs)
+        out = tmp_path / "cohort.pdf"
+        combine_selected_pdfs(donor_pdfs, out, labels=["B1-2", "B1-3"])
+        pages = PdfReader(str(out)).pages
+        # cover + legend + per donor [title + 1 construct] x2 = 2 + 4 = 6
+        # (each donor's embedded legend cover stripped, not 8).
+        assert len(pages) == 6
+        # only ONE legend in the whole file (the cohort one).
+        n_legend = sum(
+            1 for p in pages if "ribosomal" in (p.extract_text() or "")
+        )
+        assert n_legend == 1
+
+    def test_combine_keeps_legend_when_no_cohort_legend(self, tmp_path):
+        # With include_legend=False the donor covers are the only legends and must
+        # be kept (don't strip what isn't duplicated).
+        from pypdf import PdfReader
+
+        from tcrsift.report import combine_selected_pdfs
+
+        a = "CASS" + "A" * 40 + "VLF"
+        b = "CASS" + "G" * 40 + "VEF"
+        d = tmp_path / "B1-2"
+        clonotypes = pd.DataFrame([_assembleable_clone("c1", a, b)])
+        selected = pd.DataFrame([{"CDR3ab": "c1", "selection_rule": "shared"}])
+        build_selected_report(
+            selected, clonotypes, d, provenance_cols=["selection_rule"],
+            cover=True, allow_canonical_fallback=True,
+        )
+        p = d / "selected_clones_sequences.pdf"
+        out = tmp_path / "cohort.pdf"
+        combine_selected_pdfs([p], out, labels=["B1-2"], include_legend=False)
+        pages = PdfReader(str(out)).pages
+        # cohort title + donor title + [legend cover + construct] = 4 (cover kept)
+        assert len(pages) == 4
+        assert any("ribosomal" in (pg.extract_text() or "") for pg in pages)

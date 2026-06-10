@@ -74,17 +74,39 @@ def _pretty(stem: str) -> str:
     return Path(stem).stem.replace("_", " ")
 
 
+def _fit_font_size(
+    text: str, font: str, start: float, floor: float, max_width: float
+) -> float:
+    """Largest size in ``[floor, start]`` whose ``text`` fits ``max_width`` (#combined-pdf).
+
+    ``drawCentredString`` doesn't wrap, so a long title at a fixed size runs off
+    both margins and clips. Shrink to fit instead, bottoming out at ``floor``.
+    """
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    size = start
+    while size > floor and stringWidth(text, font, size) > max_width:
+        size -= 1
+    return size
+
+
 def _title_reader(title: str, subtitle: str = ""):
     from pypdf import PdfReader
     from reportlab.pdfgen import canvas
 
+    from .format import pdf_safe
+
     w, h = _LETTER
+    max_w = w - 2 * 54  # 54pt margins
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=_LETTER)
-    c.setFont("Helvetica-Bold", 30)
+
+    title = pdf_safe(title)
+    c.setFont("Helvetica-Bold", _fit_font_size(title, "Helvetica-Bold", 30, 10, max_w))
     c.drawCentredString(w / 2, h / 2 + 10, title)
     if subtitle:
-        c.setFont("Helvetica", 14)
+        subtitle = pdf_safe(subtitle)
+        c.setFont("Helvetica", _fit_font_size(subtitle, "Helvetica", 14, 8, max_w))
         c.setFillGray(0.35)
         c.drawCentredString(w / 2, h / 2 - 25, subtitle)
     c.showPage()
@@ -430,6 +452,20 @@ def _legend_reader(title: str, entries: list):
     return PdfReader(buf)
 
 
+def _is_legend_page(page) -> bool:
+    """True when a PDF page is a construct-legend cover (#combined-pdf).
+
+    Detected by prose unique to the legend body (``ribosomal``-skip etc.) that
+    never appears on a construct sequence page — so a cover=False donor PDF or a
+    real construct page is never mistaken for the legend and stripped.
+    """
+    try:
+        text = page.extract_text() or ""
+    except Exception:
+        return False
+    return "ribosomal" in text and "T2A" in text
+
+
 def combine_selected_pdfs(
     pdfs: list[str | Path],
     out_path: str | Path,
@@ -465,7 +501,16 @@ def combine_selected_pdfs(
             logger.warning("  selected-combine: missing %s — skipping", pdf)
             continue
         _add(_title_reader(label))
-        _add(PdfReader(str(pdf)))
+        reader = PdfReader(str(pdf))
+        pages = list(reader.pages)
+        # Each donor's selected_clones_sequences.pdf already begins with its own
+        # construct-legend cover. When the cohort legend is shown once up front,
+        # that per-donor cover is redundant — drop it so it doesn't repeat before
+        # every section (#combined-pdf).
+        if include_legend and pages and _is_legend_page(pages[0]):
+            pages = pages[1:]
+        for page in pages:
+            writer.add_page(page)
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
