@@ -377,7 +377,7 @@ class TestLeaderPolicy:
         # TRBV13*03-style) is consistent-divergent too, so SP-sound + unanimous → KEPT,
         # not switched. Regression for the length-only consistency gap that used to
         # switch real substitution alleles to germline while keeping indels.
-        from tcrsift.assemble import apply_leader_policy, _unanimous_divergent_genes
+        from tcrsift.assemble import _unanimous_divergent_genes, apply_leader_policy
         g_aa, _ = self._germline()
         sub = g_aa[:-1] + ("V" if g_aa[-1] != "V" else "I")  # 1 substitution, same length
         assert len(sub) == len(g_aa) and sub != g_aa
