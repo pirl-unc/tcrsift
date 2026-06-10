@@ -113,6 +113,21 @@ class TestAnchor:
         # A 10-aa leader can't suffix-anchor a 29-aa germline.
         assert germline_anchor_leader("M" + "L" * 9, "TRBV13") is None
 
+    def test_germline_insertion_falls_back_not_truncated(self):
+        # A donor germline 1-aa INSERTION lengthens the SP past every reference
+        # allele (TRAV1-2's alleles are all 17 aa). The length-matched suffix of
+        # the 18-aa donor drops the start Met, so the M-start guard rejects every
+        # allele -> returns None, and the caller falls back to the Kozak/h-region
+        # heuristic which keeps the donor's longer SP. Guards against silently
+        # truncating a real insertion by mis-anchoring it to a shorter allele.
+        donor = "MAWGVFLLYVSMKMGGTT"  # TRAV1-2*01 (MWGVFLLYVSMKMGGTT) + 'A' after the start Met
+        assert len(donor) == 18
+        assert germline_anchor_leader(donor, "TRAV1-2") is None
+        # Residual edge (documented, not yet caught): a 1-aa insertion whose
+        # residue-2 is itself Met makes the dropped-Met suffix still start with M
+        # and match the shorter allele -> would mis-anchor. Requires a duplicated
+        # start Met AND high suffix identity, which is biologically rare.
+
     def test_in_range_leader_anchored_unchanged(self):
         # A leader already at the germline length (no over-capture) anchors and
         # is returned unchanged — the anchor isn't only for over-captures.
@@ -198,12 +213,16 @@ class TestEndToEndAssembly:
         assert r["alpha_leader_source"] == "contig_germline_anchored"
         assert r["alpha_leader_qc"] == "ok"
 
-    def test_wrong_gene_divergent_falls_back(self, tmp_path):
-        # Right contig, WRONG V gene (TRBV13): the 29-aa suffix doesn't align /
-        # start with M → no anchor → heuristic, no germline columns.
+    def test_wrong_gene_divergent_falls_back_but_flags_divergence(self, tmp_path):
+        # Right contig, WRONG V gene (TRBV13): germline ANCHOR fails (29-aa suffix
+        # doesn't start with M) → heuristic picks the start. But the universal
+        # germline COMPARISON still runs and flags the divergence — the shipped
+        # 17-aa leader vs TRBV13's 29-aa germline → length_mismatch, low identity.
         r = self._assemble(tmp_path, self.TRAV1_2_CONTIG, "TRBV13")
         assert r["alpha_leader_source"] != "contig_germline_anchored"
-        assert "alpha_germline_allele" not in r or pd.isna(r.get("alpha_germline_allele"))
+        assert str(r["alpha_germline_allele"]).startswith("TRBV13*")
+        assert "length_mismatch" in r["alpha_leader_vs_germline"]
+        assert r["alpha_germline_identity"] < 0.8
 
 
 class TestCentralRecorder:
@@ -232,3 +251,55 @@ class TestCentralRecorder:
         assert out["alpha_leader_aa"] == DEFAULT_LEADERS["CD28"]["aa"]
         assert out["alpha_leader_source"] == "curated_default"
         assert out["alpha_leader_qc"] == "ok"
+
+    def test_curated_default_compared_to_native_germline(self, tmp_path):
+        # The universal comparison runs for a curated default too: with a known V
+        # gene, the (synthetic) CD28 leader is compared to the native germline so
+        # its divergence is visible — exactly the "look it up + check difference"
+        # signal, not only for germline-anchored leaders.
+        from tcrsift.assemble import assemble_full_sequences
+
+        row = pd.DataFrame([{
+            "CDR3ab": "EFEFE_CASS",
+            "CDR3_alpha": "EFEFE", "CDR3_beta": "CASS",
+            "VDJ_alpha_aa": "EFEFE", "VDJ_alpha_nt": "GAATTCGAATTCGAA",
+            "VDJ_beta_aa": "CASS" + "G" * 40 + "VETA",
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "alpha_j_gene": "TRAJ45", "beta_j_gene": "TRBJ1-1",
+            "alpha_v_gene": "TRAV1-2",
+            "samples": "S1",
+        }])
+        out = assemble_full_sequences(
+            row, alpha_leader="CD28", beta_leader=None, include_constant=False,
+            verbose=False, show_progress=False,
+        ).iloc[0]
+        # Native germline surfaced; CD28 (18 aa) differs from the 17-aa native SP.
+        assert out["alpha_germline_allele"] == "TRAV1-2*01"
+        assert out["alpha_germline_leader_aa"] == "MWGVFLLYVSMKMGGTT"
+        assert "length_mismatch" in out["alpha_leader_vs_germline"]
+        assert out["alpha_germline_identity"] < 0.5
+
+    def test_germline_columns_always_present(self, tmp_path):
+        # Off-reference gene → germline columns exist but are NaN (uniform schema).
+        from tcrsift.assemble import assemble_full_sequences
+
+        row = pd.DataFrame([{
+            "CDR3ab": "EFEFE_CASS",
+            "CDR3_alpha": "EFEFE", "CDR3_beta": "CASS",
+            "VDJ_alpha_aa": "EFEFE", "VDJ_alpha_nt": "GAATTCGAATTCGAA",
+            "VDJ_beta_aa": "CASS" + "G" * 40 + "VETA",
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "alpha_j_gene": "TRAJ45", "beta_j_gene": "TRBJ1-1",
+            "alpha_v_gene": "TRBVZZ-9",  # not in reference
+            "samples": "S1",
+        }])
+        out = assemble_full_sequences(
+            row, alpha_leader="CD28", beta_leader=None, include_constant=False,
+            verbose=False, show_progress=False,
+        ).iloc[0]
+        for col in (
+            "alpha_germline_allele", "alpha_germline_leader_aa",
+            "alpha_germline_identity", "alpha_leader_vs_germline",
+        ):
+            assert col in out.index  # column present
+            assert pd.isna(out[col])  # but NaN (no reference match)
