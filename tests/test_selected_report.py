@@ -242,6 +242,35 @@ class TestBuildSelectedReport:
         assert "selection_rule" in written.columns
         assert "single_chain_aa" in out.columns
 
+    def test_emits_qc_summary(self, tmp_path):
+        # #279: the independent QC battery writes qc-summary.md on every
+        # selected-report build. With no contig dir, check E SKIPs; A/B/C/D run
+        # on the assembled frame. This synthetic fixture has no contigs, so the
+        # construct is a canonical fallback and check D correctly flags it as
+        # not contig-verified — exactly the integrity signal the battery is for.
+        a = "CASS" + "A" * 40 + "VLF"
+        b = "CASS" + "G" * 40 + "VEF"
+        clonotypes = pd.DataFrame([_assembleable_clone("c1", a, b)])
+        selected = pd.DataFrame([{"CDR3ab": "c1", "selection_rule": "shared"}])
+        out_dir = tmp_path / "B1-2"  # donor-named dir → cohort header
+        build_selected_report(
+            selected, clonotypes, out_dir,
+            provenance_cols=["selection_rule"],
+            allow_canonical_fallback=True,
+        )
+        summary = out_dir / "qc-summary.md"
+        assert summary.exists()
+        text = summary.read_text()
+        assert "QC summary" in text
+        assert "B1-2" in text
+        assert "A. Assembly integrity" in text
+        # Assembly integrity (A) must hold even for a canonical-fallback build.
+        assert "A. Assembly integrity | PASS" in text
+        # No contigs → E SKIPs (not a failure).
+        assert "E. Raw cellranger contigs | SKIP" in text
+        # Edge-case allow-list note is always present.
+        assert "TRAJ35" in text
+
     def test_dual_alpha_emits_two_constructs(self, tmp_path):
         a1 = "CASS" + "A" * 40 + "VLF"
         a2 = "CASS" + "C" * 40 + "VLF"
