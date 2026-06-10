@@ -153,6 +153,48 @@ def test_synth_fails_on_duplicate_single_chain():
     assert check_synth(d).status == "FAIL"
 
 
+def test_synth_no_crash_without_synth_columns():
+    # #283: a frame lacking the synth_* columns must not crash check D.
+    d = _good_df().drop(columns=["synth_duplicate_construct", "synth_alpha_beta_swap"])
+    res = check_synth(d)
+    assert res.status == "PASS"  # construct_contig_verified present; no dups
+    assert "dup=0 swap=0" in res.detail
+
+
+def test_synth_no_crash_without_contig_verified_column():
+    d = _good_df().drop(columns=["construct_contig_verified"])
+    res = check_synth(d)  # absent gate → fail closed, but no crash
+    assert res.status == "FAIL"
+    # honest message: "not recorded", not a misleading "0/n" (verified-false)
+    assert "contig_verified not recorded" in res.detail
+    assert "0/" not in res.detail
+
+
+def test_synth_counts_dual_alpha_and_secondary_separately():
+    # #283: one clone → 4 rows (2 dual-α × primary/secondary-SP). The detail must
+    # report 1 dual-α and 2 secondary-SP, not lump 3 under "dual-alpha".
+    rows = []
+    for cdr, lv, dav in [
+        ("a1_b", "primary", None),
+        ("a2_b", "primary", "cloneX"),
+        ("a1_b", "secondary:germline", None),
+        ("a2_b", "secondary:germline", "cloneX"),
+    ]:
+        r = _good_row()
+        r["selected_clone"] = "cloneX"
+        r["CDR3ab"] = cdr + lv  # keep single_chain distinct per row
+        r["single_chain_aa"] = _good_row()["single_chain_aa"] + cdr + lv
+        r["leader_variant"] = lv
+        r["dual_alpha_variant"] = dav
+        rows.append(r)
+    d = pd.DataFrame(rows)
+    res = check_synth(d)
+    # Clean partition: 2 primary + 2 secondary = 4 constructs; 1 dual-α clone.
+    assert "1 clones->4 constructs" in res.detail
+    assert "2 primary + 2 secondary-SP" in res.detail
+    assert "1 dual-α" in res.detail
+
+
 def test_contigs_skip_without_map():
     assert check_contigs(_good_df(), None).status == "SKIP"
     assert check_contigs(_good_df(), {}).status == "SKIP"

@@ -103,6 +103,19 @@ def _missing(d: pd.DataFrame, cols) -> list[str]:
     return [c for c in cols if c not in d.columns]
 
 
+def _count_true(d: pd.DataFrame, col: str) -> int:
+    """Count ``True`` in a boolean column, 0 when the column is absent (#283).
+
+    ``DataFrame.get(col)`` returns ``None`` for a missing column, and
+    ``None == True`` is a scalar ``False`` — so the previous
+    ``(d.get(col) == True).sum()`` raised ``AttributeError`` whenever the
+    ``synth_*`` columns weren't present. Guard on membership instead.
+    """
+    if col not in d.columns:
+        return 0
+    return int((d[col] == True).sum())  # noqa: E712
+
+
 # Columns each check indexes directly (r[col]); absence → SKIP, not a crash. A
 # real assembled deliverable carries all of them — this only spares degenerate
 # / partial frames an unhandled KeyError while keeping the verdict honest.
@@ -259,16 +272,38 @@ def check_synth(d: pd.DataFrame) -> QCResult:
     nclone = (
         d["selected_clone"].nunique() if "selected_clone" in d else d["CDR3ab"].nunique()
     )
-    cv = int((d.get("construct_contig_verified") == True).sum())  # noqa: E712
-    dup = int((d.get("synth_duplicate_construct") == True).sum())  # noqa: E712
-    swap = int((d.get("synth_alpha_beta_swap") == True).sum())  # noqa: E712
+    # construct_contig_verified is the load-bearing gate. Fail CLOSED when it's
+    # absent (can't certify what wasn't recorded), but say so honestly rather
+    # than printing "0/n" — which reads as "verified false" not "not recorded".
+    cv_present = "construct_contig_verified" in d.columns
+    cv = _count_true(d, "construct_contig_verified")
+    dup = _count_true(d, "synth_duplicate_construct")
+    swap = _count_true(d, "synth_alpha_beta_swap")
     dupsc = n - d["single_chain_aa"].nunique()
-    ok = cv == n and dup == 0 and swap == 0 and dupsc == 0
+    ok = cv_present and cv == n and dup == 0 and swap == 0 and dupsc == 0
+    cv_str = f"{cv}/{n}" if cv_present else "not recorded"
+    # A clone expands on two INDEPENDENT axes (#283), so a single "+N dual-alpha"
+    # is wrong once `--leader-secondary` is used: a row can be both a 2nd-α variant
+    # AND a secondary-SP twin. Report the clean partition (primary + secondary = n)
+    # plus dual-α as a clone-level count, instead of an additive surplus that
+    # double-counts the overlap.
+    clone_col = "selected_clone" if "selected_clone" in d else "CDR3ab"
+    n_secondary = (
+        int(d["leader_variant"].astype(str).str.startswith("secondary").sum())
+        if "leader_variant" in d else 0
+    )
+    n_primary = n - n_secondary
+    n_dual_clones = (
+        int(d.loc[d["dual_alpha_variant"].notna(), clone_col].nunique())
+        if "dual_alpha_variant" in d else 0
+    )
+    sp_split = f"{n_primary} primary" + (f" + {n_secondary} secondary-SP" if n_secondary else "")
     return QCResult(
         "D. Synthesis / dual-alpha",
         "PASS" if ok else "FAIL",
-        f"contig_verified {cv}/{n}; {nclone} clones->{n} constructs "
-        f"(+{n - nclone} dual-alpha); dup={dup} swap={swap} dup_single_chain={dupsc}",
+        f"contig_verified {cv_str}; {nclone} clones->{n} constructs "
+        f"({sp_split}; {n_dual_clones} dual-α); "
+        f"dup={dup} swap={swap} dup_single_chain={dupsc}",
     )
 
 
