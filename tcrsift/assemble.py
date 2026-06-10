@@ -1323,6 +1323,26 @@ def _trbc_override_mask(df: pd.DataFrame) -> pd.Series:
     return (raw_base != "") & (canon_base != "") & (raw_base != canon_base)
 
 
+def _ensure_qc_warnings_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Guarantee a ``qc_warnings`` column exists with a list per row (#278).
+
+    The assembler stashes ``qc_warnings`` only on the clones that raise one, so
+    the column is absent entirely on a clean cohort — leaving the assembled
+    schema donor-dependent (144 vs 145 columns) and breaking naive
+    ``df["qc_warnings"]`` access and cross-cohort ``concat``. This fills in an
+    empty list for every row that has no warning (NaN where the column was added
+    late, or simply absent), so downstream code can always read the column and
+    every cell is a list.
+    """
+    if "qc_warnings" not in df.columns:
+        df["qc_warnings"] = [[] for _ in range(len(df))]
+        return df
+    df["qc_warnings"] = [
+        v if isinstance(v, list) else [] for v in df["qc_warnings"]
+    ]
+    return df
+
+
 def _count_trbc_overrides(df: pd.DataFrame) -> int:
     """Count rows where :func:`pick_canonical_constant` overrode
     CellRanger's TRBC call. Thin wrapper over
@@ -2093,6 +2113,15 @@ def assemble_full_sequences(
                 "synth_* columns and synthesis_qc_report() for details.",
                 n_hazard,
             )
+
+    # Schema stability (#278). `qc_warnings` is stashed per-clone only when a
+    # warning fires, so the column is absent on a clean cohort and present on a
+    # noisy one — 144 vs 145 columns across donors, which breaks naive
+    # `df["qc_warnings"]` consumers and cross-cohort concats. Always emit it,
+    # with an empty list per row where no warning was raised (a list, not NaN,
+    # so the surfacing loop's `isinstance(qcs, list)` and callers' `... or []`
+    # both stay correct).
+    df = _ensure_qc_warnings_column(df)
 
     return df
 
