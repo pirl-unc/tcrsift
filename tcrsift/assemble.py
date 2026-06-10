@@ -26,7 +26,12 @@ from pathlib import Path
 import pandas as pd
 from tqdm.auto import tqdm
 
-from .leaders import germline_anchor_leader, germline_compare_leader, normalize_vgene
+from .leaders import (
+    germline_anchor_leader,
+    germline_compare_leader,
+    germline_leader_nt,
+    normalize_vgene,
+)
 from .validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
@@ -1648,6 +1653,7 @@ def assemble_full_sequences(
     cellranger_dir: str | Path | None = None,
     sample_sheet: pd.DataFrame | None = None,
     leader_fallback: str | None = None,
+    emit_putative_indel_variants: bool = False,
 ) -> pd.DataFrame:
     """
     Assemble full-length TCR sequences.
@@ -1955,6 +1961,14 @@ def assemble_full_sequences(
         if verbose:
             logger.info(f"  Creating single-chain constructs with {linker} linker...")
         df = _add_single_chain(df, linker)
+
+    # Optional putative-germline-indel twin constructs (#270): for clones whose
+    # contig leader diverges from germline by length yet is still a sound SP and
+    # is consistent across that gene's clones (a likely germline indel we're not
+    # certain of vs an assembly artifact), emit a SECOND construct using the
+    # canonical germline V-leader so both can be tested.
+    if emit_putative_indel_variants:
+        df = expand_putative_indel_variants(df, linker, verbose=verbose)
 
     # Summary
     if verbose:
@@ -3260,6 +3274,124 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
 
     df["linker"] = linker_aa
 
+    return df
+
+
+# Leader QC verdicts that still read as a usable signal peptide (M-start, sane
+# length, h-region present) — eligible for a putative-indel twin when they
+# diverge from germline by length AND are consistent across the gene's clones.
+_SP_USABLE_QC = frozenset({"ok", "weak_kozak_start", "long_leader", "hregion_trimmed"})
+
+
+def _swap_leader_to_germline(twin: dict, orig, chain: str) -> None:
+    """In ``twin`` (a copy of ``orig``), replace ``chain``'s leader with its
+    canonical germline V-leader and re-stitch the affected full-sequence columns.
+
+    The leader is a pure prefix of ``full_{chain}_*`` (leader + VDJ + constant),
+    so swapping it is a prefix substitution — donor VDJ/constant bytes are kept
+    verbatim. ``single_chain`` is rebuilt by the caller via ``_add_single_chain``.
+    """
+    g_aa = orig[f"{chain}_germline_leader_aa"]
+    gene, _, allele = str(orig[f"{chain}_germline_allele"]).partition("*")
+    g_nt = germline_leader_nt(gene, allele) or ""
+    donor_aa = orig.get(f"{chain}_leader_aa") or ""
+    donor_nt = orig.get(f"{chain}_leader_nt") or ""
+
+    twin[f"{chain}_leader_aa"] = g_aa
+    twin[f"{chain}_leader_nt"] = g_nt or None
+    twin[f"{chain}_leader_len"] = len(g_aa)
+    twin[f"{chain}_leader_source"] = "germline_reference_leader"
+    twin[f"{chain}_leader_qc"] = "germline_reference"
+    twin[f"{chain}_leader_vs_germline"] = "germline_substituted"
+    twin[f"{chain}_germline_identity"] = 1.0
+
+    # AA: swap the leader prefix (only when the leader is actually a prefix).
+    fa = orig.get(f"full_{chain}_aa")
+    if isinstance(fa, str) and donor_aa and fa.startswith(donor_aa):
+        twin[f"full_{chain}_aa"] = g_aa + fa[len(donor_aa):]
+    # NT views: same prefix swap; if we lack a germline leader NT, invalidate the
+    # NT view rather than leave a leader/body mismatch.
+    for nt_col in (
+        f"full_{chain}_nt", f"full_{chain}_nt_optimized", f"full_{chain}_nt_contig",
+    ):
+        fn = orig.get(nt_col)
+        if isinstance(fn, str) and donor_nt and fn.startswith(donor_nt):
+            twin[nt_col] = (g_nt + fn[len(donor_nt):]) if g_nt else None
+
+
+def expand_putative_indel_variants(
+    df: pd.DataFrame, linker: str | None, *, verbose: bool = False
+) -> pd.DataFrame:
+    """Emit a germline-reference twin for putative-germline-indel leaders (#270).
+
+    For each clone whose contig leader (either chain) is a usable signal peptide
+    that diverges from the germline V-leader **by length**, where that divergent
+    leader is **consistent across all of that V gene's clones** in the dataset —
+    i.e. a likely germline indel we're not certain of vs an assembly artifact —
+    append a duplicate construct using the canonical germline V-leader so both
+    can be tested. The original (divergent contig leader) is tagged
+    ``leader_variant='putative_germline_indel'`` and the twin
+    ``'germline_reference'``; clones with no twin keep ``leader_variant`` NaN.
+    No-op unless some clone qualifies.
+    """
+    # 1. Per chain, find genes whose present leader is unanimous AND length-divergent.
+    consistent_divergent: set[tuple[str, str]] = set()
+    for chain in ("alpha", "beta"):
+        v_col, aa_col, g_col = (
+            f"{chain}_v_gene", f"{chain}_leader_aa", f"{chain}_germline_leader_aa"
+        )
+        if not {v_col, aa_col, g_col} <= set(df.columns):
+            continue
+        sub = df[df[aa_col].notna() & df[v_col].notna()]
+        for gene, grp in sub.groupby(v_col):
+            leaders = set(grp[aa_col].astype(str))
+            germs = set(grp[g_col].dropna().astype(str))
+            if len(leaders) == 1 and len(germs) == 1:
+                leader, germ = next(iter(leaders)), next(iter(germs))
+                if leader != germ and len(leader) != len(germ):
+                    consistent_divergent.add((chain, str(gene)))
+    if not consistent_divergent:
+        return df
+
+    # 2. Build twins for qualifying clones (SP-usable leader on a consistent-
+    #    divergent gene, with a germline leader available to swap in).
+    twins, orig_idx = [], []
+    for idx, row in df.iterrows():
+        swap = []
+        for chain in ("alpha", "beta"):
+            gene = row.get(f"{chain}_v_gene")
+            if pd.isna(gene) or (chain, str(gene)) not in consistent_divergent:
+                continue
+            if row.get(f"{chain}_leader_qc") not in _SP_USABLE_QC:
+                continue
+            if not isinstance(row.get(f"{chain}_germline_leader_aa"), str):
+                continue
+            if not isinstance(row.get(f"{chain}_germline_allele"), str):
+                continue
+            swap.append(chain)
+        if not swap:
+            continue
+        twin = row.to_dict()
+        for chain in swap:
+            _swap_leader_to_germline(twin, row, chain)
+        twin["leader_variant"] = "germline_reference"
+        twins.append(twin)
+        orig_idx.append(idx)
+
+    if not twins:
+        return df
+
+    df = df.copy()
+    if "leader_variant" not in df.columns:
+        df["leader_variant"] = pd.NA
+    df.loc[orig_idx, "leader_variant"] = "putative_germline_indel"
+    df = pd.concat([df, pd.DataFrame(twins)], ignore_index=True)
+    # Rebuild single_chain so the twins' β-linker-α reflects the swapped leader
+    # (idempotent for the unchanged originals).
+    if linker and "full_beta_aa" in df.columns and "full_alpha_aa" in df.columns:
+        df = _add_single_chain(df, linker)
+    if verbose:
+        logger.info(f"  Putative-germline-indel twin constructs emitted: {len(twins)}")
     return df
 
 

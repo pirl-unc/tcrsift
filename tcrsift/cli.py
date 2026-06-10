@@ -617,6 +617,7 @@ def cmd_assemble(args):
         trbc2_allele=args.trbc2_allele,
         stop_codons=stop_codons,
         leader_fallback=getattr(args, "leader_fallback", None),
+        emit_putative_indel_variants=bool(getattr(args, "leader_indel_variants", None)),
     )
 
     # Fail closed on unverified (canonical-fallback) constructs unless the
@@ -1653,6 +1654,9 @@ def cmd_run(args):
                 getattr(config.assemble, "stop_codons", ("TAA", "TGA"))
             ),
             leader_fallback=getattr(config.assemble, "leader_fallback", None),
+            emit_putative_indel_variants=getattr(
+                config.assemble, "emit_putative_indel_variants", False
+            ),
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -3390,6 +3394,17 @@ CONDITIONALLY REQUIRED:
         "peptide is implausible (weak-Kozak over-capture, out-of-range length, "
         "no Met/h-region), substitute this curated leader instead of keeping "
         "the flagged extraction (#263). Default: keep + flag.",
+    )
+    asm_leaders.add_argument(
+        "--leader-indel-variants",
+        action="store_true",
+        default=None,
+        help="With --*-leader=from_contig: for a clone whose contig leader is a "
+        "usable SP that diverges from the germline V-leader by length and is "
+        "consistent across that gene's clones (a likely germline indel we're not "
+        "certain of vs an assembly artifact), emit BOTH constructs — the donor "
+        "contig leader and the canonical germline leader — as twin rows tagged "
+        "leader_variant=putative_germline_indel/germline_reference (#270).",
     )
     asm_leaders.add_argument(
         "--leaders-from-contigs",

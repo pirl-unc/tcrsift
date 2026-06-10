@@ -231,6 +231,12 @@ class AssembleConfig:
     # None (default) keeps the contig-extracted leader + its {chain}_leader_qc
     # flag; a key (CD8A/CD28/IgK/TRAC/TRBC) swaps in that curated signal peptide.
     leader_fallback: str | None = None
+    # Emit a putative-germline-indel twin construct (#270) for clones whose
+    # contig leader is a usable SP that diverges from the germline V-leader by
+    # length and is consistent across that gene's clones (a likely germline indel
+    # we're not certain of vs an assembly artifact — ship both to test). Off by
+    # default. Tags rows leader_variant=putative_germline_indel / germline_reference.
+    emit_putative_indel_variants: bool = False
     include_constant: bool = True
     constant_source: str = "ensembl"
     linker: str = "T2A"
@@ -437,6 +443,7 @@ class TCRsiftConfig:
             "alpha_leader": ("assemble", "alpha_leader"),
             "beta_leader": ("assemble", "beta_leader"),
             "leader_fallback": ("assemble", "leader_fallback"),
+            "leader_indel_variants": ("assemble", "emit_putative_indel_variants"),
             "include_constant": ("assemble", "include_constant"),
             "constant_source": ("assemble", "constant_source"),
             "linker": ("assemble", "linker"),

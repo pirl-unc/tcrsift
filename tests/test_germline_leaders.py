@@ -18,7 +18,9 @@ import pandas as pd
 
 from tcrsift.leaders import (
     _diff_vs_germline,
+    characterize_divergence,
     germline_anchor_leader,
+    germline_leader_nt,
     germline_vgene_leaders,
 )
 
@@ -273,10 +275,12 @@ class TestCentralRecorder:
             row, alpha_leader="CD28", beta_leader=None, include_constant=False,
             verbose=False, show_progress=False,
         ).iloc[0]
-        # Native germline surfaced; CD28 (18 aa) differs from the 17-aa native SP.
+        # Native germline surfaced; CD28 (18 aa) differs from the 17-aa native SP
+        # — flagged as a length divergence (insertion relative to germline), low id.
         assert out["alpha_germline_allele"] == "TRAV1-2*01"
         assert out["alpha_germline_leader_aa"] == "MWGVFLLYVSMKMGGTT"
-        assert "length_mismatch" in out["alpha_leader_vs_germline"]
+        assert out["alpha_leader_vs_germline"] != "identical"
+        assert "insertion" in out["alpha_leader_vs_germline"]
         assert out["alpha_germline_identity"] < 0.5
 
     def test_germline_columns_always_present(self, tmp_path):
@@ -303,3 +307,92 @@ class TestCentralRecorder:
         ):
             assert col in out.index  # column present
             assert pd.isna(out[col])  # but NaN (no reference match)
+
+
+class TestDivergenceCharacterization:
+    def test_internal_deletion(self):
+        germ = "MLLLLLLLGPGISLLLPGSLAGSGL"  # TRBV20-1*01, 25 aa
+        donor = "MLLLLLLLGPGSGL"            # shared N+C, internal gap
+        d = characterize_divergence(donor, germ)
+        assert d.startswith("internal_deletion:")
+        assert "ISLLLPGSLA" in d  # the missing chunk is reported
+
+    def test_5p_truncation(self):
+        germ = "MABCDEFGHIJKLMNP"
+        donor = germ[-8:]  # clean C-terminal suffix
+        assert characterize_divergence(donor, germ).startswith("5p_truncation")
+
+    def test_insertion(self):
+        assert characterize_divergence("M" + "A" * 20, "M" + "A" * 17).startswith("insertion")
+
+    def test_same_length_substitution(self):
+        # equal length → position diff, not a length descriptor
+        assert characterize_divergence("MWGVYLLYVSMKMGGTT", "MWGVFLLYVSMKMGGTT") == "F5Y"
+
+
+class TestPutativeIndelVariants:
+    """expand_putative_indel_variants: germline-reference twin for consistent,
+    SP-sound, length-divergent leaders (likely germline indel vs artifact)."""
+
+    def _germline(self):
+        g_aa = dict((a, aa) for a, _f, aa in germline_vgene_leaders("TRBV20-1"))["01"]
+        return g_aa, germline_leader_nt("TRBV20-1", "01")
+
+    def _df(self, beta_leaders):
+        g_aa, g_nt = self._germline()
+        rows = []
+        for i, lead in enumerate(beta_leaders):
+            lead_nt = "ATG" + "CTC" * (len(lead) - 1)  # M-start, len*3 nt
+            body_aa, body_nt = "CASSF" + "G" * 30, "TGC" * 35
+            rows.append({
+                "CDR3ab": f"CAA_{i}_CASSF",
+                "alpha_v_gene": "TRAV1-2", "beta_v_gene": "TRBV20-1",
+                "alpha_leader_aa": "MWGVFLLYVSMKMGGTT",
+                "alpha_germline_leader_aa": "MWGVFLLYVSMKMGGTT",
+                "alpha_germline_allele": "TRAV1-2*01", "alpha_leader_qc": "ok",
+                "full_alpha_aa": "MWGVFLLYVSMKMGGTT" + "CAVF" + "G" * 20,
+                "beta_leader_aa": lead, "beta_leader_nt": lead_nt,
+                "beta_germline_leader_aa": g_aa, "beta_germline_allele": "TRBV20-1*01",
+                "beta_leader_qc": "ok",
+                "full_beta_aa": lead + body_aa, "full_beta_nt": lead_nt + body_nt,
+            })
+        return pd.DataFrame(rows)
+
+    def test_emits_germline_reference_twin(self):
+        from tcrsift.assemble import expand_putative_indel_variants
+
+        g_aa, g_nt = self._germline()
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPGSGL"])  # 2 clones, same 14-aa
+        out = expand_putative_indel_variants(df, "T2A")
+        assert len(out) == 4  # 2 donor + 2 twins
+        donors = out[out["leader_variant"] == "putative_germline_indel"]
+        twins = out[out["leader_variant"] == "germline_reference"]
+        assert len(donors) == 2 and len(twins) == 2
+        for _, t in twins.iterrows():
+            assert t["beta_leader_aa"] == g_aa                 # canonical germline
+            assert t["full_beta_aa"].startswith(g_aa)          # prefix swapped
+            assert t["full_beta_aa"].endswith("G" * 30)        # donor body kept
+            assert t["beta_leader_source"] == "germline_reference_leader"
+            assert t["full_beta_nt"].startswith(g_nt)          # NT swapped too
+            assert g_aa in t["single_chain_aa"]                # single-chain rebuilt
+        # donor rows keep the divergent contig leader
+        for _, d in donors.iterrows():
+            assert d["beta_leader_aa"] == "MLLLLLLLGPGSGL"
+
+    def test_no_twin_when_inconsistent_across_gene(self):
+        from tcrsift.assemble import expand_putative_indel_variants
+
+        # two DIFFERENT divergent leaders for the same gene → not consistent →
+        # no twin (a one-off oddity, not a putative germline indel).
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPAAAGSGL"])
+        out = expand_putative_indel_variants(df, "T2A")
+        assert len(out) == 2  # unchanged, no twins
+
+    def test_no_twin_when_leader_matches_germline(self):
+        from tcrsift.assemble import expand_putative_indel_variants
+
+        # leader == germline (not divergent) → nothing to twin.
+        g_aa, _ = self._germline()
+        df = self._df([g_aa, g_aa])
+        out = expand_putative_indel_variants(df, "T2A")
+        assert len(out) == 2
