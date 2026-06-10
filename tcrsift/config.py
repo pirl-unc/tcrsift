@@ -227,10 +227,20 @@ class AssembleConfig:
     enabled: bool = True
     alpha_leader: str | None = "CD28"  # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
     beta_leader: str | None = "CD8A"  # None, "from_contig", or key: CD8A, CD28, IgK, TRAC, TRBC
-    # Curated SP to substitute when a from_contig leader is implausible (#263).
-    # None (default) keeps the contig-extracted leader + its {chain}_leader_qc
-    # flag; a key (CD8A/CD28/IgK/TRAC/TRBC) swaps in that curated signal peptide.
-    leader_fallback: str | None = None
+    # Leader policy (#270). leader_fallback = what a REJECTED from_contig leader
+    # (bad SP, or divergent-from-germline + inconsistent across the gene's clones)
+    # switches to: "germline" (default — the gene's germline V-leader; if the gene
+    # isn't in the reference, keep + flag) or a curated key (CD8A/CD28/IgK/TRAC/
+    # TRBC). An SP-sound, consistent contig leader is kept.
+    leader_fallback: str = "germline"
+    # Force a specific leader (germline / CD8A / …) for every construct on a
+    # chain, ignoring the contig. None = normal policy.
+    force_alpha_leader: str | None = None
+    force_beta_leader: str | None = None
+    # Also emit a SECONDARY construct using this leader (germline / CD8A / …) per
+    # chain, even for kept good calls. None = no secondary construct.
+    secondary_alpha_leader: str | None = None
+    secondary_beta_leader: str | None = None
     include_constant: bool = True
     constant_source: str = "ensembl"
     linker: str = "T2A"
@@ -437,6 +447,10 @@ class TCRsiftConfig:
             "alpha_leader": ("assemble", "alpha_leader"),
             "beta_leader": ("assemble", "beta_leader"),
             "leader_fallback": ("assemble", "leader_fallback"),
+            "force_alpha_leader": ("assemble", "force_alpha_leader"),
+            "force_beta_leader": ("assemble", "force_beta_leader"),
+            "secondary_alpha_leader": ("assemble", "secondary_alpha_leader"),
+            "secondary_beta_leader": ("assemble", "secondary_beta_leader"),
             "include_constant": ("assemble", "include_constant"),
             "constant_source": ("assemble", "constant_source"),
             "linker": ("assemble", "linker"),

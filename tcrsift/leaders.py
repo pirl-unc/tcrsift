@@ -83,6 +83,30 @@ def _load_reference() -> dict[str, list[tuple[str, str, str]]]:
     return by_gene
 
 
+@functools.lru_cache(maxsize=1)
+def _leader_nt_index() -> dict[tuple[str, str], str]:
+    """``{(gene, allele): leader_nt}`` from the bundled reference (for emitting
+    the germline-SP twin construct's nucleotides). Empty if not bundled."""
+    try:
+        path = _pkg_files("tcrsift.refseqs").joinpath("vgene_leaders.csv.gz")
+        raw = path.read_bytes()
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        return {}
+    out: dict[tuple[str, str], str] = {}
+    for line in gzip.decompress(raw).decode().splitlines()[1:]:
+        gene, allele, _func, _leader_aa, leader_nt = line.split(",")
+        out[(gene, allele)] = leader_nt
+    return out
+
+
+def germline_leader_nt(v_gene: str | None, allele: str) -> str | None:
+    """Germline leader nucleotides for a (gene, allele), or None if absent."""
+    gene = normalize_vgene(v_gene)
+    if gene is None:
+        return None
+    return _leader_nt_index().get((gene, allele))
+
+
 def normalize_vgene(v_gene: str | None) -> str | None:
     """Strip allele/suffix noise from a V-gene call → bare IMGT gene name.
 
@@ -105,6 +129,34 @@ def germline_vgene_leaders(v_gene: str | None) -> list[tuple[str, str, str]]:
     if gene is None:
         return []
     return _load_reference().get(gene, [])
+
+
+def characterize_divergence(donor: str, germline: str) -> str:
+    """Describe how a (length-mismatched) leader diverges from germline (#270).
+
+    Detects the common single internal deletion (donor = germline's prefix +
+    suffix, missing a contiguous middle — the CellRanger repeat-collapse / rare-
+    germline-indel signature) as ``internal_deletion:Δ{n}@{pos}({chunk})``; a
+    pure C-terminal shortfall as ``5p_truncation`` only when the donor is a clean
+    suffix of germline; an insertion when longer; else a generic length note.
+    """
+    if len(donor) == len(germline):
+        return _diff_vs_germline(donor, germline) or "identical"
+    if len(donor) > len(germline):
+        return f"insertion ({len(donor)} vs {len(germline)} aa)"
+    # donor shorter: maximal shared prefix + suffix
+    p = 0
+    while p < len(donor) and donor[p] == germline[p]:
+        p += 1
+    s = 0
+    while s < len(donor) - p and donor[-1 - s] == germline[-1 - s]:
+        s += 1
+    if p + s == len(donor) and p > 0 and s > 0:
+        missing = germline[p:len(germline) - s]
+        return f"internal_deletion:Δ{len(missing)}@{p + 1}({missing})"
+    if donor == germline[-len(donor):]:
+        return f"5p_truncation:Δ{len(germline) - len(donor)}(N-term)"
+    return f"length_mismatch ({len(donor)} vs {len(germline)} aa)"
 
 
 def _diff_vs_germline(donor: str, germline: str) -> str:
@@ -191,8 +243,5 @@ def germline_compare_leader(leader_aa: str | None, v_gene: str | None):
         if best is None or identity > best[0]:
             best = (identity, allele, g_aa)
     identity, allele, g_aa = best
-    if len(leader_aa) == len(g_aa):
-        diff = _diff_vs_germline(leader_aa, g_aa) or "identical"
-    else:
-        diff = f"length_mismatch ({len(leader_aa)} vs {len(g_aa)})"
+    diff = characterize_divergence(leader_aa, g_aa)
     return allele, g_aa, round(identity, 3), diff

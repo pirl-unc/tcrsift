@@ -616,7 +616,15 @@ def cmd_assemble(args):
         trbc1_allele=args.trbc1_allele,
         trbc2_allele=args.trbc2_allele,
         stop_codons=stop_codons,
-        leader_fallback=getattr(args, "leader_fallback", None),
+        leader_fallback=getattr(args, "leader_fallback", None) or "germline",
+        force_alpha_leader=getattr(args, "force_alpha_leader", None)
+        or getattr(args, "force_leader", None),
+        force_beta_leader=getattr(args, "force_beta_leader", None)
+        or getattr(args, "force_leader", None),
+        secondary_alpha_leader=getattr(args, "secondary_alpha_leader", None)
+        or getattr(args, "leader_secondary", None),
+        secondary_beta_leader=getattr(args, "secondary_beta_leader", None)
+        or getattr(args, "leader_secondary", None),
     )
 
     # Fail closed on unverified (canonical-fallback) constructs unless the
@@ -1652,7 +1660,11 @@ def cmd_run(args):
             stop_codons=tuple(
                 getattr(config.assemble, "stop_codons", ("TAA", "TGA"))
             ),
-            leader_fallback=getattr(config.assemble, "leader_fallback", None),
+            leader_fallback=getattr(config.assemble, "leader_fallback", None) or "germline",
+            force_alpha_leader=getattr(config.assemble, "force_alpha_leader", None),
+            force_beta_leader=getattr(config.assemble, "force_beta_leader", None),
+            secondary_alpha_leader=getattr(config.assemble, "secondary_alpha_leader", None),
+            secondary_beta_leader=getattr(config.assemble, "secondary_beta_leader", None),
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -3383,14 +3395,38 @@ CONDITIONALLY REQUIRED:
     )
     asm_leaders.add_argument(
         "--leader-fallback",
-        choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC"],
+        choices=["germline", "keep", "CD8A", "CD28", "IgK", "TRAC", "TRBC"],
         default=None,
-        metavar="NAME",
-        help="With --*-leader=from_contig: when a contig-extracted signal "
-        "peptide is implausible (weak-Kozak over-capture, out-of-range length, "
-        "no Met/h-region), substitute this curated leader instead of keeping "
-        "the flagged extraction (#263). Default: keep + flag.",
+        metavar="TARGET",
+        help="With --*-leader=from_contig: what a REJECTED leader (bad SP, or "
+        "diverges from germline AND inconsistent across the gene's clones) "
+        "switches to — 'germline' (default: the gene's germline V-leader), a "
+        "curated key (CD8A/…), or 'keep' to never switch (just flag) (#263/#270). "
+        "An SP-sound, consistent contig leader is always kept.",
     )
+    asm_leaders.add_argument(
+        "--force-leader", metavar="TARGET",
+        choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"],
+        default=None,
+        help="Force this leader (germline/curated) on BOTH chains, ignoring the "
+        "contig. Per-chain: --force-alpha-leader / --force-beta-leader (#270).",
+    )
+    asm_leaders.add_argument("--force-alpha-leader", metavar="TARGET",
+                             choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
+    asm_leaders.add_argument("--force-beta-leader", metavar="TARGET",
+                             choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
+    asm_leaders.add_argument(
+        "--leader-secondary", metavar="TARGET",
+        choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"],
+        default=None,
+        help="Also emit a SECONDARY construct (twin row, leader_variant="
+        "secondary:<leader>) using this leader on BOTH chains, even for good "
+        "calls. Per-chain: --secondary-alpha-leader / --secondary-beta-leader (#270).",
+    )
+    asm_leaders.add_argument("--secondary-alpha-leader", metavar="TARGET",
+                             choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
+    asm_leaders.add_argument("--secondary-beta-leader", metavar="TARGET",
+                             choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
     asm_leaders.add_argument(
         "--leaders-from-contigs",
         action="store_true",

@@ -328,13 +328,13 @@ class TestFromContigIntegration:
     def test_leader_fallback_substitutes_only_implausible(self, tmp_path):
         from tcrsift.assemble import DEFAULT_LEADERS
 
-        # too_long is implausible → curated substitution applies.
+        # too_long is a bad SP → rejected → switched to the configured fallback.
         r = self._assemble(
             tmp_path, [("c4", self.OVERCAPTURE_UNFIXABLE)], leader_fallback="CD8A"
         )
         assert r["alpha_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]
-        assert r["alpha_leader_qc"] == "curated_fallback"
-        assert r["alpha_leader_source"] == "curated_fallback:CD8A"
+        assert r["alpha_leader_qc"] == "substituted"
+        assert r["alpha_leader_source"] == "curated:CD8A"
 
     def test_leader_fallback_does_not_touch_weak_kozak_start(self, tmp_path):
         # weak_kozak_start is plausible (in-range, well-shaped) → NOT substituted

@@ -18,7 +18,9 @@ import pandas as pd
 
 from tcrsift.leaders import (
     _diff_vs_germline,
+    characterize_divergence,
     germline_anchor_leader,
+    germline_leader_nt,
     germline_vgene_leaders,
 )
 
@@ -273,10 +275,12 @@ class TestCentralRecorder:
             row, alpha_leader="CD28", beta_leader=None, include_constant=False,
             verbose=False, show_progress=False,
         ).iloc[0]
-        # Native germline surfaced; CD28 (18 aa) differs from the 17-aa native SP.
+        # Native germline surfaced; CD28 (18 aa) differs from the 17-aa native SP
+        # — flagged as a length divergence (insertion relative to germline), low id.
         assert out["alpha_germline_allele"] == "TRAV1-2*01"
         assert out["alpha_germline_leader_aa"] == "MWGVFLLYVSMKMGGTT"
-        assert "length_mismatch" in out["alpha_leader_vs_germline"]
+        assert out["alpha_leader_vs_germline"] != "identical"
+        assert "insertion" in out["alpha_leader_vs_germline"]
         assert out["alpha_germline_identity"] < 0.5
 
     def test_germline_columns_always_present(self, tmp_path):
@@ -303,3 +307,122 @@ class TestCentralRecorder:
         ):
             assert col in out.index  # column present
             assert pd.isna(out[col])  # but NaN (no reference match)
+
+
+class TestDivergenceCharacterization:
+    def test_internal_deletion(self):
+        germ = "MLLLLLLLGPGISLLLPGSLAGSGL"  # TRBV20-1*01, 25 aa
+        donor = "MLLLLLLLGPGSGL"            # shared N+C, internal gap
+        d = characterize_divergence(donor, germ)
+        assert d.startswith("internal_deletion:")
+        assert "ISLLLPGSLA" in d  # the missing chunk is reported
+
+    def test_5p_truncation(self):
+        germ = "MABCDEFGHIJKLMNP"
+        donor = germ[-8:]  # clean C-terminal suffix
+        assert characterize_divergence(donor, germ).startswith("5p_truncation")
+
+    def test_insertion(self):
+        assert characterize_divergence("M" + "A" * 20, "M" + "A" * 17).startswith("insertion")
+
+    def test_same_length_substitution(self):
+        # equal length → position diff, not a length descriptor
+        assert characterize_divergence("MWGVYLLYVSMKMGGTT", "MWGVFLLYVSMKMGGTT") == "F5Y"
+
+
+class TestLeaderPolicy:
+    """apply_leader_policy: keep SP-sound+consistent contig leaders; switch
+    bad/inconsistent ones to germline; force / secondary-construct options (#270)."""
+
+    def _germline(self):
+        g_aa = dict((a, aa) for a, _f, aa in germline_vgene_leaders("TRBV20-1"))["01"]
+        return g_aa, germline_leader_nt("TRBV20-1", "01")
+
+    def _df(self, beta_leaders, *, sp_ok=True):
+        # beta: TRBV20-1, divergent contig leaders; alpha: matches germline.
+        from tcrsift.assemble import signal_peptide_features
+        g_aa, _g_nt = self._germline()
+        rows = []
+        for i, lead in enumerate(beta_leaders):
+            lead_nt = "ATG" + "CTC" * (len(lead) - 1)
+            body_aa, body_nt = "CASSF" + "G" * 30, "TGC" * 35
+            rows.append({
+                "CDR3ab": f"CAA_{i}_CASSF",
+                "alpha_v_gene": "TRAV1-2", "beta_v_gene": "TRBV20-1",
+                "alpha_leader_aa": "MWGVFLLYVSMKMGGTT", "alpha_leader_source": "contig",
+                "alpha_germline_leader_aa": "MWGVFLLYVSMKMGGTT",
+                "alpha_germline_allele": "TRAV1-2*01", "alpha_germline_identity": 1.0,
+                "alpha_leader_qc": "ok", "alpha_sp_features_ok": True,
+                "full_alpha_aa": "MWGVFLLYVSMKMGGTT" + "CAVF" + "G" * 20,
+                "beta_leader_aa": lead, "beta_leader_nt": lead_nt,
+                "beta_leader_source": "contig", "beta_leader_qc": "ok",
+                "beta_sp_features_ok": sp_ok if sp_ok is not True
+                else signal_peptide_features(lead)["features_ok"],
+                "beta_germline_leader_aa": g_aa, "beta_germline_allele": "TRBV20-1*01",
+                "beta_germline_identity": 0.5,  # divergent from germline
+                "full_beta_aa": lead + body_aa, "full_beta_nt": lead_nt + body_nt,
+            })
+        return pd.DataFrame(rows)
+
+    def test_default_keeps_consistent_sound_divergent(self):
+        # SP-sound + consistent-divergent (likely germline indel) → KEPT by default.
+        from tcrsift.assemble import apply_leader_policy
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPGSGL"])
+        out = apply_leader_policy(df, "T2A")
+        assert len(out) == 2  # no twins, no switch
+        assert (out["beta_leader_aa"] == "MLLLLLLLGPGSGL").all()
+
+    def test_switches_inconsistent_divergent_to_germline(self):
+        # divergent but NOT consistent across the gene → switch to germline.
+        from tcrsift.assemble import apply_leader_policy
+        g_aa, _ = self._germline()
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPAAAAGSGL"])  # 2 different
+        out = apply_leader_policy(df, "T2A")
+        assert (out["beta_leader_aa"] == g_aa).all()  # both switched to germline
+        assert (out["beta_leader_source"] == "germline_reference_leader").all()
+        assert out["full_beta_aa"].iloc[0].startswith(g_aa)
+        # review #1: germline columns refreshed to describe the SHIPPED leader
+        # (now germline) — not the discarded contig leader.
+        assert (out["beta_germline_identity"] == 1.0).all()
+        assert (out["beta_leader_vs_germline"] == "identical").all()
+
+    def test_switches_bad_sp_to_germline(self):
+        # bad SP (features_ok False), even if consistent → switch to germline.
+        from tcrsift.assemble import apply_leader_policy
+        g_aa, _ = self._germline()
+        df = self._df(["MKKKKEEDDKKEE", "MKKKKEEDDKKEE"], sp_ok=False)  # no h-core
+        out = apply_leader_policy(df, "T2A")
+        assert (out["beta_leader_aa"] == g_aa).all()
+
+    def test_secondary_germline_emits_twin(self):
+        # --leader-secondary germline: keep primary, ALSO emit a germline twin.
+        from tcrsift.assemble import apply_leader_policy
+        g_aa, g_nt = self._germline()
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPGSGL"])
+        out = apply_leader_policy(df, "T2A", secondary_beta="germline")
+        assert len(out) == 4
+        prim = out[out["leader_variant"] == "primary"]
+        sec = out[out["leader_variant"] == "secondary:germline"]
+        assert len(prim) == 2 and len(sec) == 2
+        assert (prim["beta_leader_aa"] == "MLLLLLLLGPGSGL").all()  # primary kept
+        for _, s in sec.iterrows():
+            assert s["beta_leader_aa"] == g_aa
+            assert s["full_beta_aa"].startswith(g_aa)
+            assert g_aa in s["single_chain_aa"]
+
+    def test_force_beta_leader(self):
+        from tcrsift.assemble import apply_leader_policy
+        g_aa, _ = self._germline()
+        df = self._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPGSGL"])
+        out = apply_leader_policy(df, "T2A", force_beta="germline")
+        assert (out["beta_leader_aa"] == g_aa).all()
+        assert out["beta_leader_source"].iloc[0].startswith("forced_")
+        # alpha untouched by a beta-only force
+        assert (out["alpha_leader_aa"] == "MWGVFLLYVSMKMGGTT").all()
+
+    def test_force_curated_all_chains(self):
+        from tcrsift.assemble import DEFAULT_LEADERS, apply_leader_policy
+        df = self._df(["MLLLLLLLGPGSGL"])
+        out = apply_leader_policy(df, "T2A", force_alpha="CD8A", force_beta="CD8A")
+        assert (out["beta_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]).all()
+        assert (out["alpha_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]).all()
