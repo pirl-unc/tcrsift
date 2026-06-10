@@ -45,6 +45,19 @@ class TestReference:
         # A V call carrying an allele still resolves to the gene's leaders.
         assert germline_vgene_leaders("TRAV1-2*01") == germline_vgene_leaders("TRAV1-2")
 
+    def test_dv_gene_resolves_both_forms(self):
+        # IMGT keys dual α/δ genes with a slash; a bare-prefix call must also
+        # resolve (review finding — else the germline layer silently skips them).
+        slashed = germline_vgene_leaders("TRAV14/DV4")
+        assert slashed
+        assert germline_vgene_leaders("TRAV14") == slashed
+        assert germline_vgene_leaders("TRAV14/DV4*02") == slashed
+
+    def test_multi_length_alleles_present(self):
+        # TRBV8-2 has both 18-aa (*01) and 19-aa (*02/*03) leaders.
+        lens = {len(aa) for _a, _f, aa in germline_vgene_leaders("TRBV8-2")}
+        assert {18, 19} <= lens
+
 
 class TestDiff:
     def test_substitutions_formatted(self):
@@ -100,6 +113,24 @@ class TestAnchor:
         # A 10-aa leader can't suffix-anchor a 29-aa germline.
         assert germline_anchor_leader("M" + "L" * 9, "TRBV13") is None
 
+    def test_in_range_leader_anchored_unchanged(self):
+        # A leader already at the germline length (no over-capture) anchors and
+        # is returned unchanged — the anchor isn't only for over-captures.
+        out = germline_anchor_leader("MWGVFLLYVSMKMGGTT", "TRAV1-2")
+        assert out is not None
+        leader_aa, allele, _g, identity, diff = out
+        assert leader_aa == "MWGVFLLYVSMKMGGTT" and identity == 1.0 and diff == ""
+
+    def test_multi_length_allele_picks_matching_length(self):
+        # Donor matching the 18-aa TRBV8-2*01 anchors to that allele/length, not
+        # a 19-aa allele — the best-identity suffix wins.
+        a01 = dict((a, aa) for a, _f, aa in germline_vgene_leaders("TRBV8-2"))["01"]
+        assert len(a01) == 18
+        out = germline_anchor_leader("MM" + a01, "TRBV8-2")  # 2-aa over-capture
+        assert out is not None
+        leader_aa, allele, _g, identity, _d = out
+        assert leader_aa == a01 and allele == "01" and identity == 1.0
+
 
 class TestEndToEndAssembly:
     """from_contig assembly emits germline columns + falls back when off-reference."""
@@ -153,3 +184,51 @@ class TestEndToEndAssembly:
         assert r["alpha_leader_source"] != "contig_germline_anchored"
         assert r["alpha_leader_aa"] == "MWGVFLLYVSMKMGGTT"  # heuristic recovers it too
         assert "alpha_germline_allele" not in r or pd.isna(r.get("alpha_germline_allele"))
+
+    # In-range leader at exactly the germline length (no over-capture).
+    TRAV1_2_INRANGE = (
+        "GCAGCA"
+        + "ATGTGGGGCGTGTTCCTGCTGTACGTGAGCATGAAGATGGGCGGCACCACC"
+        + "GAATTCGAATTCGAA"
+    )
+
+    def test_in_range_leader_germline_anchored(self, tmp_path):
+        r = self._assemble(tmp_path, self.TRAV1_2_INRANGE, "TRAV1-2")
+        assert r["alpha_leader_aa"] == "MWGVFLLYVSMKMGGTT"
+        assert r["alpha_leader_source"] == "contig_germline_anchored"
+        assert r["alpha_leader_qc"] == "ok"
+
+    def test_wrong_gene_divergent_falls_back(self, tmp_path):
+        # Right contig, WRONG V gene (TRBV13): the 29-aa suffix doesn't align /
+        # start with M → no anchor → heuristic, no germline columns.
+        r = self._assemble(tmp_path, self.TRAV1_2_CONTIG, "TRBV13")
+        assert r["alpha_leader_source"] != "contig_germline_anchored"
+        assert "alpha_germline_allele" not in r or pd.isna(r.get("alpha_germline_allele"))
+
+
+class TestCentralRecorder:
+    """Every SP path flows through _record_leader + shared QC (review ask)."""
+
+    def test_curated_default_leader_is_qcd(self, tmp_path):
+        # A non-from_contig default leader (CD28) now carries source + QC, routed
+        # through the same recorder as the contig/germline paths.
+        from tcrsift.assemble import assemble_full_sequences
+
+        row = pd.DataFrame([{
+            "CDR3ab": "EFEFE_CASS",
+            "CDR3_alpha": "EFEFE", "CDR3_beta": "CASS",
+            "VDJ_alpha_aa": "EFEFE", "VDJ_alpha_nt": "GAATTCGAATTCGAA",
+            "VDJ_beta_aa": "CASS" + "G" * 40 + "VETA",
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "alpha_j_gene": "TRAJ45", "beta_j_gene": "TRBJ1-1",
+            "samples": "S1",
+        }])
+        out = assemble_full_sequences(
+            row, alpha_leader="CD28", beta_leader=None, include_constant=False,
+            verbose=False, show_progress=False,
+        ).iloc[0]
+        from tcrsift.assemble import DEFAULT_LEADERS
+
+        assert out["alpha_leader_aa"] == DEFAULT_LEADERS["CD28"]["aa"]
+        assert out["alpha_leader_source"] == "curated_default"
+        assert out["alpha_leader_qc"] == "ok"

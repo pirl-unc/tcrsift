@@ -38,12 +38,25 @@ from importlib.resources import files as _pkg_files
 GERMLINE_MIN_IDENTITY = 0.80
 
 
+def _is_productive(functionality: str) -> bool:
+    """True for a functional/ORF allele, tolerating IMGT bracket forms.
+
+    IMGT marks inferred functionality with brackets/parens (``[F]``, ``(ORF)``);
+    strip them before the F/ORF test so those alleles still sort as productive.
+    """
+    return functionality.strip("[]()") in ("F", "ORF")
+
+
 @functools.lru_cache(maxsize=1)
 def _load_reference() -> dict[str, list[tuple[str, str, str]]]:
     """Load the bundled reference → ``{gene: [(allele, functionality, aa), …]}``.
 
     Functional/ORF alleles are listed before pseudogenes so the anchor prefers a
-    productive germline. Returns an empty dict if the reference isn't bundled.
+    productive germline. Dual α/δ and orphon genes carry an IMGT slash name
+    (``TRAV14/DV4``, ``TRBV20/OR9-2``); each is ALSO aliased under its bare
+    prefix (``TRAV14``) when that prefix is unambiguous and not already a
+    distinct gene, so a V call that drops the ``/DV`` suffix still resolves.
+    Returns an empty dict if the reference isn't bundled.
     """
     try:
         path = _pkg_files("tcrsift.refseqs").joinpath("vgene_leaders.csv.gz")
@@ -57,15 +70,24 @@ def _load_reference() -> dict[str, list[tuple[str, str, str]]]:
         by_gene.setdefault(gene, []).append((allele, func, leader_aa))
     # Productive (F/ORF) alleles first within each gene.
     for recs in by_gene.values():
-        recs.sort(key=lambda r: (0 if r[1] in ("F", "ORF") else 1, r[0]))
+        recs.sort(key=lambda r: (0 if _is_productive(r[1]) else 1, r[0]))
+    # Alias slash-named genes under their bare prefix, but only when the prefix
+    # maps to a single full gene and isn't itself a real gene (avoid collisions).
+    prefix_targets: dict[str, set[str]] = {}
+    for gene in by_gene:
+        if "/" in gene:
+            prefix_targets.setdefault(gene.split("/")[0], set()).add(gene)
+    for prefix, fulls in prefix_targets.items():
+        if len(fulls) == 1 and prefix not in by_gene:
+            by_gene[prefix] = by_gene[next(iter(fulls))]
     return by_gene
 
 
-def _normalize_gene(v_gene: str | None) -> str | None:
+def normalize_vgene(v_gene: str | None) -> str | None:
     """Strip allele/suffix noise from a V-gene call → bare IMGT gene name.
 
-    ``TRBV13*01`` / ``TRBV13 (gene)`` / ``TRBV13`` → ``TRBV13``. Returns None for
-    empty/non-string input.
+    ``TRBV13*01`` / ``TRBV13 (gene)`` / ``TRBV13`` → ``TRBV13``;
+    ``TRAV14/DV4*01`` → ``TRAV14/DV4``. Returns None for empty/non-string input.
     """
     if not isinstance(v_gene, str) or not v_gene.strip():
         return None
@@ -75,9 +97,11 @@ def _normalize_gene(v_gene: str | None) -> str | None:
 def germline_vgene_leaders(v_gene: str | None) -> list[tuple[str, str, str]]:
     """Reference leaders for a V gene → ``[(allele, functionality, aa), …]``.
 
-    Empty when the gene isn't in the bundled reference (caller falls back).
+    Resolves both the IMGT slash name (``TRAV14/DV4``) and a bare-prefix call
+    (``TRAV14``). Empty when the gene isn't in the bundled reference (caller
+    falls back to the heuristic).
     """
-    gene = _normalize_gene(v_gene)
+    gene = normalize_vgene(v_gene)
     if gene is None:
         return []
     return _load_reference().get(gene, [])
@@ -112,6 +136,11 @@ def germline_anchor_leader(
     ``leader_aa`` is the DONOR suffix (native residues kept) — or ``None`` when
     no allele anchors confidently (gene absent / weird allele / too divergent /
     contig too short), so the caller uses the Kozak + h-region heuristic.
+
+    Assumes substitution-level allelic variation (the donor leader is the same
+    LENGTH as some germline allele). A genuine indel shifts the suffix frame,
+    drops identity below ``min_identity``, and falls back to the heuristic — so
+    an indel leader is never silently mis-anchored, just not germline-resolved.
     """
     candidates = germline_vgene_leaders(v_gene)
     if not candidates or not orig_leader:

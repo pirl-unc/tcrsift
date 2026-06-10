@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm.auto import tqdm
 
-from .leaders import germline_anchor_leader
+from .leaders import germline_anchor_leader, normalize_vgene
 from .validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
@@ -271,7 +271,13 @@ def _classify_leader(leader_aa: str, kozak_score: int, source: str) -> str:
     """
     if source == "contig_germline_anchored":
         return "ok"
+    if source.startswith("curated_fallback"):
+        return "curated_fallback"  # substituted for an implausible from_contig SP
     shape = leader_qc(leader_aa)  # ok/too_short/too_long/no_met/no_h_region/…
+    if source == "curated_default":
+        # A hand-verified default leader (CD28/CD8A/…) or a user-supplied one —
+        # still QC'd for shape so a broken custom leader is flagged, not trusted.
+        return shape
     if source == "contig_hregion_trimmed":
         return "hregion_trimmed"
     if source == "contig_kozak_reselected":
@@ -282,6 +288,44 @@ def _classify_leader(leader_aa: str, kozak_score: int, source: str) -> str:
     if shape == "ok" and kozak_score < KOZAK_ADEQUATE:
         return "weak_kozak_start"
     return shape
+
+
+def _record_leader(
+    result: dict,
+    chain: str,
+    leader_aa: str,
+    leader_nt: str | None,
+    source: str,
+    *,
+    kozak_score: int | None = None,
+    support: str | None = None,
+    germline: tuple | None = None,
+) -> None:
+    """Central sink for EVERY signal-peptide derivation path (#263/#267).
+
+    All four routes — germline anchor, Kozak/h-region heuristic, curated default
+    leader, and curated fallback — write the leader through here, so the
+    ``{chain}_leader_*`` columns and the shared :func:`_classify_leader` QC
+    verdict are recorded identically regardless of how the SP was chosen. Optional
+    fields are emitted only when the route supplies them (Kozak score / contig
+    support for from_contig; the germline tuple for an anchored leader).
+    """
+    result[f"{chain}_leader_aa"] = leader_aa
+    if leader_nt is not None:
+        result[f"{chain}_leader_nt"] = leader_nt
+    result[f"{chain}_leader_len"] = len(leader_aa) if isinstance(leader_aa, str) else None
+    result[f"{chain}_leader_source"] = source
+    result[f"{chain}_leader_qc"] = _classify_leader(leader_aa, kozak_score or 0, source)
+    if kozak_score is not None:
+        result[f"{chain}_leader_kozak_score"] = kozak_score
+    if support is not None:
+        result[f"{chain}_leader_support"] = support
+    if germline is not None:
+        g_allele, g_aa, identity, diff, gene = germline
+        result[f"{chain}_germline_allele"] = f"{gene}*{g_allele}"
+        result[f"{chain}_germline_leader_aa"] = g_aa
+        result[f"{chain}_germline_identity"] = round(identity, 3)
+        result[f"{chain}_leader_vs_germline"] = diff or "identical"
 
 
 # Kozak context scoring (Kozak 1987/1991). The optimal context is gccRccATGG
@@ -2091,15 +2135,17 @@ def _assemble_clone(
                 and result.get(f"{chain}_leader_qc") in _IMPLAUSIBLE_LEADER_QC
             ):
                 fb = DEFAULT_LEADERS[leader_fallback]
-                result[f"{chain}_leader_aa"] = fb["aa"]
-                result[f"{chain}_leader_nt"] = fb["dna"]
-                result[f"{chain}_leader_len"] = len(fb["aa"])
-                result[f"{chain}_leader_qc"] = "curated_fallback"
-                result[f"{chain}_leader_source"] = f"curated_fallback:{leader_fallback}"
+                _record_leader(
+                    result, chain, fb["aa"], fb["dna"],
+                    f"curated_fallback:{leader_fallback}",
+                )
         elif isinstance(chain_leader, dict):
-            # Use specified default leader
-            result[f"{chain}_leader_aa"] = chain_leader["aa"]
-            result[f"{chain}_leader_nt"] = chain_leader["dna"]
+            # Curated default leader (CD28/CD8A/…) — routed through the same
+            # central recorder + QC as every other path (#267 review).
+            _record_leader(
+                result, chain, chain_leader["aa"], chain_leader["dna"],
+                "curated_default",
+            )
 
     # Add constant regions
     if include_constant:
@@ -2289,20 +2335,14 @@ def _extract_leader_from_contigs_single(
 
     leader_aa, support = leader_counter.most_common(1)[0]
     leader_nt, score, source, gmeta = leader_meta[leader_aa]
-    result[f"{chain}_leader_aa"] = leader_aa
-    result[f"{chain}_leader_nt"] = leader_nt
-    result[f"{chain}_leader_len"] = len(leader_aa)
-    result[f"{chain}_leader_kozak_score"] = score
-    result[f"{chain}_leader_source"] = source
-    result[f"{chain}_leader_qc"] = _classify_leader(leader_aa, score, source)
-    result[f"{chain}_leader_support"] = f"{support}/{n_total}"
+    germline = None
     if gmeta is not None:
         g_allele, g_aa, identity, diff = gmeta
-        gene = str(v_gene).split("*")[0].split()[0]
-        result[f"{chain}_germline_allele"] = f"{gene}*{g_allele}"
-        result[f"{chain}_germline_leader_aa"] = g_aa
-        result[f"{chain}_germline_identity"] = round(identity, 3)
-        result[f"{chain}_leader_vs_germline"] = diff or "identical"
+        germline = (g_allele, g_aa, identity, diff, normalize_vgene(v_gene))
+    _record_leader(
+        result, chain, leader_aa, leader_nt, source,
+        kozak_score=score, support=f"{support}/{n_total}", germline=germline,
+    )
 
 
 def _add_constant_regions(
