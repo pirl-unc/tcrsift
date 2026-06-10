@@ -492,6 +492,23 @@ class TestLeaderPolicy:
         # the single divergent clone is switched to germline
         assert (out["beta_leader_aa"] == g_aa).all()
 
+    def test_dual_alpha_rows_do_not_inflate_support(self):
+        # Support is counted by distinct CLONE, not construct row. A single dual-α
+        # clone whose β leader is divergent expands to 2 rows sharing one
+        # selected_clone — that is NOT multi-clone support, so the β leader is
+        # still switched (artifact guard holds despite the row duplication).
+        from tcrsift.assemble import _protected_divergent_leaders, apply_leader_policy
+        g_aa, _ = self._germline()
+        df = self._het_df("MLLLLLLLGPGSGL", n_divergent=2, n_germline=3)
+        # mark the two divergent rows as dual-α twins of ONE clone
+        div_mask = df["beta_leader_aa"] == "MLLLLLLLGPGSGL"
+        df["selected_clone"] = [f"clone{i}" for i in range(len(df))]
+        df.loc[div_mask, "selected_clone"] = "dualA_clone"  # both twins, same clone
+        prot = _protected_divergent_leaders(df)
+        assert ("beta", "TRBV20-1", "MLLLLLLLGPGSGL") not in prot  # 1 clone, not 2
+        out = apply_leader_policy(df, "T2A")
+        assert (out["beta_leader_aa"] == g_aa).all()  # switched, not falsely kept
+
 
 class TestCollectGermlineVariants:
     def test_collects_distinct_variants_with_counts(self):

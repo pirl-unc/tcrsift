@@ -3442,6 +3442,14 @@ def _protected_divergent_leaders(
     supported allele is protected, not every leader the gene carries.
     """
     out: set[tuple[str, str, str]] = set()
+    # Count support by distinct CLONE, not construct row: dual-α expansion
+    # duplicates the β row (same β leader, two α variants), so a row-count would
+    # promote a single dual-α clone's β leader to "multi-clone support" and keep
+    # an artifact. `selected_clone` is shared across a clone's dual-α twins; fall
+    # back to CDR3ab, then the row index, when it's absent.
+    clone_col = next(
+        (c for c in ("selected_clone", "CDR3ab") if c in df.columns), None
+    )
     for chain in ("alpha", "beta"):
         v_col, aa_col, g_col = (
             f"{chain}_v_gene", f"{chain}_leader_aa", f"{chain}_germline_leader_aa"
@@ -3450,14 +3458,17 @@ def _protected_divergent_leaders(
             continue
         sub = df[df[aa_col].notna() & df[v_col].notna()]
         for gene, grp in sub.groupby(v_col):
-            counts = grp[aa_col].astype(str).value_counts()
-            whole_gene_unanimous = len(counts) == 1
+            leaders = grp[aa_col].astype(str)
+            keys = grp[clone_col].astype(str) if clone_col else grp.index.to_series()
+            # distinct clones carrying each leader (de-duped over dual-α rows)
+            support = keys.groupby(leaders).nunique()
+            whole_gene_unanimous = leaders.nunique() == 1
             for _, r in grp.iterrows():
                 leader = str(r[aa_col])
                 germ = r[g_col]
                 if not isinstance(germ, str) or leader == germ:
                     continue  # not germline-comparable, or matches germline (not divergent)
-                if whole_gene_unanimous or counts[leader] >= min_support:
+                if whole_gene_unanimous or support.get(leader, 0) >= min_support:
                     out.add((chain, str(gene), leader))
     return out
 
