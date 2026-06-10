@@ -3335,7 +3335,14 @@ def _substitute_chain_leader(
 
 def _unanimous_divergent_genes(df: pd.DataFrame) -> set[tuple[str, str]]:
     """``(chain, gene)`` whose from_contig leader is unanimous across the gene's
-    clones AND diverges (by length) from germline — the consistent-divergent case."""
+    clones AND diverges from germline — the consistent-divergent case.
+
+    Divergence is ANY mismatch (substitution OR indel), not length only: a
+    unanimous single-residue variant (e.g. a TRBV13*03-style donor SNP that the
+    270-allele reference subset lacks) is the donor's likely real allele just as
+    much as a unanimous indel is, so it must be protected from the keep/switch
+    policy too. The SP-soundness gate in :func:`apply_leader_policy` still decides
+    whether such a leader is actually kept."""
     out: set[tuple[str, str]] = set()
     for chain in ("alpha", "beta"):
         v_col, aa_col, g_col = (
@@ -3349,7 +3356,7 @@ def _unanimous_divergent_genes(df: pd.DataFrame) -> set[tuple[str, str]]:
             germs = set(grp[g_col].dropna().astype(str))
             if len(leaders) == 1 and len(germs) == 1:
                 leader, germ = next(iter(leaders)), next(iter(germs))
-                if leader != germ and len(leader) != len(germ):
+                if leader != germ:  # any unanimous divergence (substitution or indel)
                     out.add((chain, str(gene)))
     return out
 
