@@ -163,9 +163,11 @@ def test_synth_no_crash_without_synth_columns():
 
 def test_synth_no_crash_without_contig_verified_column():
     d = _good_df().drop(columns=["construct_contig_verified"])
-    res = check_synth(d)  # cv counts 0 → not all verified → FAIL, but no crash
+    res = check_synth(d)  # absent gate → fail closed, but no crash
     assert res.status == "FAIL"
-    assert "contig_verified 0/" in res.detail
+    # honest message: "not recorded", not a misleading "0/n" (verified-false)
+    assert "contig_verified not recorded" in res.detail
+    assert "0/" not in res.detail
 
 
 def test_synth_counts_dual_alpha_and_secondary_separately():

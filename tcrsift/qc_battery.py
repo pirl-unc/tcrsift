@@ -272,11 +272,16 @@ def check_synth(d: pd.DataFrame) -> QCResult:
     nclone = (
         d["selected_clone"].nunique() if "selected_clone" in d else d["CDR3ab"].nunique()
     )
+    # construct_contig_verified is the load-bearing gate. Fail CLOSED when it's
+    # absent (can't certify what wasn't recorded), but say so honestly rather
+    # than printing "0/n" — which reads as "verified false" not "not recorded".
+    cv_present = "construct_contig_verified" in d.columns
     cv = _count_true(d, "construct_contig_verified")
     dup = _count_true(d, "synth_duplicate_construct")
     swap = _count_true(d, "synth_alpha_beta_swap")
     dupsc = n - d["single_chain_aa"].nunique()
-    ok = cv == n and dup == 0 and swap == 0 and dupsc == 0
+    ok = cv_present and cv == n and dup == 0 and swap == 0 and dupsc == 0
+    cv_str = f"{cv}/{n}" if cv_present else "not recorded"
     # A clone expands on two INDEPENDENT axes (#283), so a single "+N dual-alpha"
     # is wrong once `--leader-secondary` is used: a row can be both a 2nd-α variant
     # AND a secondary-SP twin. Report the clean partition (primary + secondary = n)
@@ -296,7 +301,7 @@ def check_synth(d: pd.DataFrame) -> QCResult:
     return QCResult(
         "D. Synthesis / dual-alpha",
         "PASS" if ok else "FAIL",
-        f"contig_verified {cv}/{n}; {nclone} clones->{n} constructs "
+        f"contig_verified {cv_str}; {nclone} clones->{n} constructs "
         f"({sp_split}; {n_dual_clones} dual-α); "
         f"dup={dup} swap={swap} dup_single_chain={dupsc}",
     )
