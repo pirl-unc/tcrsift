@@ -203,15 +203,6 @@ SP_LENGTH_HARD = 30
 # h-region check — a signal peptide's defining feature is a hydrophobic core.
 _HYDROPHOBIC_AA = frozenset("AILMFWVC")
 
-# Leader QC verdicts that mark an implausible signal peptide — the ones a
-# configured curated fallback (leader_fallback) substitutes away (#263).
-# NOTE: ``weak_kozak_start`` is deliberately NOT here — it's an in-range,
-# well-shaped leader we kept on purpose (weak start is a flag, not a defect to
-# overwrite); only genuine shape failures are eligible for substitution.
-_IMPLAUSIBLE_LEADER_QC = frozenset(
-    {"too_long", "too_short", "no_met", "no_h_region", "internal_stop", "missing"}
-)
-
 
 def _has_h_region(leader: str, *, window: int = 6, min_hydrophobic: int = 4) -> bool:
     """True if the leader contains a hydrophobic h-region.
@@ -3320,6 +3311,16 @@ def _substitute_chain_leader(
     target[f"{chain}_sp_features_ok"] = feats["features_ok"]
     target[f"{chain}_sp_score"] = feats["score"]
     target[f"{chain}_sp_features"] = sp_features_summary(feats)
+    # Refresh the germline comparison to describe the SHIPPED (substituted)
+    # leader, not the discarded contig one — else a row switched TO germline
+    # would still read germline_identity≈0.5 / internal_deletion (review #1).
+    cmp = germline_compare_leader(new_aa, orig.get(f"{chain}_v_gene"))
+    if cmp is not None:
+        allele, g_aa, identity, diff = cmp
+        target[f"{chain}_germline_allele"] = f"{normalize_vgene(orig.get(f'{chain}_v_gene'))}*{allele}"
+        target[f"{chain}_germline_leader_aa"] = g_aa
+        target[f"{chain}_germline_identity"] = identity
+        target[f"{chain}_leader_vs_germline"] = diff
 
     fa = orig.get(f"full_{chain}_aa")
     if isinstance(fa, str) and donor_aa and fa.startswith(donor_aa):

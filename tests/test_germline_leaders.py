@@ -381,6 +381,10 @@ class TestLeaderPolicy:
         assert (out["beta_leader_aa"] == g_aa).all()  # both switched to germline
         assert (out["beta_leader_source"] == "germline_reference_leader").all()
         assert out["full_beta_aa"].iloc[0].startswith(g_aa)
+        # review #1: germline columns refreshed to describe the SHIPPED leader
+        # (now germline) — not the discarded contig leader.
+        assert (out["beta_germline_identity"] == 1.0).all()
+        assert (out["beta_leader_vs_germline"] == "identical").all()
 
     def test_switches_bad_sp_to_germline(self):
         # bad SP (features_ok False), even if consistent → switch to germline.
