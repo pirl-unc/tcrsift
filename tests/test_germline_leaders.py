@@ -442,6 +442,56 @@ class TestLeaderPolicy:
         assert (out["beta_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]).all()
         assert (out["alpha_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]).all()
 
+    def _het_df(self, divergent_leader, *, n_divergent, n_germline):
+        # A heterozygous TRBV20-1: some clones carry the germline leader, others
+        # an SP-sound divergent allele. The gene is NOT whole-gene-unanimous.
+        from tcrsift.assemble import signal_peptide_features
+        g_aa, _ = self._germline()
+        rows = []
+        specs = (
+            [(g_aa, 1.0)] * n_germline + [(divergent_leader, 0.5)] * n_divergent
+        )
+        for i, (lead, ident) in enumerate(specs):
+            lead_nt = "ATG" + "CTC" * (len(lead) - 1)
+            rows.append({
+                "CDR3ab": f"CAA_{i}_CASSF",
+                "alpha_v_gene": "TRAV1-2", "beta_v_gene": "TRBV20-1",
+                "alpha_leader_aa": "MWGVFLLYVSMKMGGTT", "alpha_leader_source": "contig",
+                "alpha_germline_leader_aa": "MWGVFLLYVSMKMGGTT",
+                "alpha_germline_allele": "TRAV1-2*01", "alpha_germline_identity": 1.0,
+                "alpha_leader_qc": "ok", "alpha_sp_features_ok": True,
+                "full_alpha_aa": "MWGVFLLYVSMKMGGTT" + "CAVF" + "G" * 20,
+                "beta_leader_aa": lead, "beta_leader_nt": lead_nt,
+                "beta_leader_source": "contig", "beta_leader_qc": "ok",
+                "beta_sp_features_ok": signal_peptide_features(lead)["features_ok"],
+                "beta_germline_leader_aa": g_aa, "beta_germline_allele": "TRBV20-1*01",
+                "beta_germline_identity": ident,
+                "beta_leader_vs_germline": "identical" if lead == g_aa else "divergent",
+                "full_beta_aa": lead + "CASSF" + "G" * 30,
+                "full_beta_nt": lead_nt + "TGC" * 35,
+            })
+        return pd.DataFrame(rows)
+
+    def test_het_aware_keeps_supported_minority_allele(self):
+        # #274: a het gene's divergent-but-SP-sound minority allele with multi-
+        # clone support is KEPT, even though the gene isn't whole-gene-unanimous.
+        from tcrsift.assemble import apply_leader_policy
+        df = self._het_df("MLLLLLLLGPGSGL", n_divergent=2, n_germline=3)
+        out = apply_leader_policy(df, "T2A")
+        div = out[out["beta_leader_aa"] == "MLLLLLLLGPGSGL"]
+        assert len(div) == 2  # not switched away
+        assert (div["beta_leader_source"] == "contig").all()
+
+    def test_het_singleton_divergent_still_switched(self):
+        # A lone divergent leader in a non-unanimous gene (likely artifact) has no
+        # multi-clone support → still switched to germline.
+        from tcrsift.assemble import apply_leader_policy
+        g_aa, _ = self._germline()
+        df = self._het_df("MLLLLLLLGPGSGL", n_divergent=1, n_germline=3)
+        out = apply_leader_policy(df, "T2A")
+        # the single divergent clone is switched to germline
+        assert (out["beta_leader_aa"] == g_aa).all()
+
 
 class TestCollectGermlineVariants:
     def test_collects_distinct_variants_with_counts(self):
@@ -477,6 +527,55 @@ class TestCollectGermlineVariants:
         from tcrsift.assemble import collect_germline_variants
         df = pd.DataFrame([{"CDR3ab": "X"}])  # no *_leader_vs_germline columns
         assert collect_germline_variants(df).empty
+
+    def test_kept_variants_tagged_shipped_kept(self):
+        from tcrsift.assemble import collect_germline_variants
+        df = pd.DataFrame([
+            {"beta_v_gene": "TRBV13", "beta_germline_allele": "TRBV13*01",
+             "beta_leader_aa": "MX", "beta_germline_leader_aa": "MY",
+             "beta_leader_vs_germline": "H18R", "beta_germline_identity": 0.95,
+             "beta_leader_source": "contig"},
+        ])
+        out = collect_germline_variants(df)
+        assert list(out["shipped"]) == ["kept"]
+
+    def test_switched_variant_captured_from_preswitch(self):
+        # #276: a switched-away donor variant is still reported, tagged 'switched',
+        # from the _stash_preswitch columns (the live vs_germline is 'identical').
+        from tcrsift.assemble import collect_germline_variants
+        df = pd.DataFrame([
+            {"beta_v_gene": "TRBV20-1",
+             # shipped leader is now germline → live comparison is identical
+             "beta_leader_vs_germline": "identical", "beta_germline_identity": 1.0,
+             # the discarded donor variant, preserved pre-switch
+             "beta_preswitch_variant": "internal_deletion:Δ3@9(LLL)",
+             "beta_preswitch_donor_aa": "MLLLLLLLGPGSGL",
+             "beta_preswitch_germline_aa": "MLLLLLLLLLGPGISLLLPGSLAGSGL",
+             "beta_preswitch_germline_allele": "TRBV20-1*01",
+             "beta_preswitch_germline_identity": 0.5,
+             "beta_preswitch_leader_source": "contig"},
+        ])
+        out = collect_germline_variants(df)
+        assert len(out) == 1
+        r = out.iloc[0]
+        assert r["shipped"] == "switched"
+        assert r["variant"] == "internal_deletion:Δ3@9(LLL)"
+        assert r["donor_leader"] == "MLLLLLLLGPGSGL"
+
+    def test_switched_variant_survives_end_to_end(self):
+        # Through apply_leader_policy: an inconsistent divergent leader is switched
+        # to germline, yet collect_germline_variants still records it as 'switched'.
+        from tcrsift.assemble import apply_leader_policy, collect_germline_variants
+        # reuse the TestLeaderPolicy fixture shape via a minimal inline build
+        policy = TestLeaderPolicy()
+        g_aa, _ = policy._germline()
+        df = policy._df(["MLLLLLLLGPGSGL", "MLLLLLLLGPAAAAGSGL"])  # 2 different → switched
+        out = apply_leader_policy(df, "T2A")
+        assert (out["beta_leader_aa"] == g_aa).all()  # both switched
+        variants = collect_germline_variants(out)
+        switched = variants[variants["shipped"] == "switched"]
+        assert len(switched) >= 1
+        assert (switched["chain"] == "beta").all()
 
 
 class TestLeaderSummaryPlot:

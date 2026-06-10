@@ -27,6 +27,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from .leaders import (
+    characterize_divergence,
     germline_anchor_leader,
     germline_compare_leader,
     germline_leader_nt,
@@ -3321,6 +3322,34 @@ def _resolve_named_leader(name: str, row, chain: str) -> tuple[str, str | None, 
     return None
 
 
+def _stash_preswitch(work: dict, chain: str) -> None:
+    """Record a clone's donor leader variant BEFORE it's replaced (#276).
+
+    When the policy switches (or a force overrides) a divergent contig leader,
+    :func:`_substitute_chain_leader` refreshes ``{chain}_leader_vs_germline`` to
+    describe the SHIPPED (germline/curated) leader — so the discarded donor
+    variant would otherwise vanish from :func:`collect_germline_variants`. Stash
+    it under ``{chain}_preswitch_*`` so the variant is still reported, tagged
+    ``shipped="switched"``. No-op when the pre-switch leader already matched
+    germline (nothing divergent to preserve).
+    """
+    diff = work.get(f"{chain}_leader_vs_germline")
+    donor_aa = work.get(f"{chain}_leader_aa")
+    germ_aa = work.get(f"{chain}_germline_leader_aa")
+    # Prefer the recorded comparison; if it's absent (some paths don't stamp it)
+    # but we have both sequences, derive it so the variant isn't lost on switch.
+    if (not isinstance(diff, str) or not diff) and isinstance(donor_aa, str) and isinstance(germ_aa, str):
+        diff = "identical" if donor_aa == germ_aa else characterize_divergence(donor_aa, germ_aa)
+    if not isinstance(diff, str) or diff == "identical":
+        return
+    work[f"{chain}_preswitch_variant"] = diff
+    work[f"{chain}_preswitch_donor_aa"] = work.get(f"{chain}_leader_aa")
+    work[f"{chain}_preswitch_germline_aa"] = work.get(f"{chain}_germline_leader_aa")
+    work[f"{chain}_preswitch_germline_allele"] = work.get(f"{chain}_germline_allele")
+    work[f"{chain}_preswitch_germline_identity"] = work.get(f"{chain}_germline_identity")
+    work[f"{chain}_preswitch_leader_source"] = work.get(f"{chain}_leader_source")
+
+
 def _substitute_chain_leader(
     target: dict, orig, chain: str, new_aa: str, new_nt: str | None, source: str
 ) -> None:
@@ -3390,6 +3419,49 @@ def _unanimous_divergent_genes(df: pd.DataFrame) -> set[tuple[str, str]]:
     return out
 
 
+def _protected_divergent_leaders(
+    df: pd.DataFrame, *, min_support: int = 2
+) -> set[tuple[str, str, str]]:
+    """``(chain, gene, leader_aa)`` for divergent leaders that look like a real
+    donor allele rather than a one-off artifact — eligible to KEEP (the SP gate
+    in :func:`apply_leader_policy` still decides the actual keep).
+
+    A divergent leader qualifies when EITHER:
+
+    * it is the gene's **unanimous** leader (whole-gene consistent — the original
+      #270 case; covers single-clone genes), OR
+    * it is carried by ``>= min_support`` clones of that gene (**het-aware**, #274):
+      a heterozygous gene's minority allele has independent multi-clone support,
+      so a TRBV6-2 G9A-style second allele is the donor's real allele even though
+      the gene as a whole isn't unanimous. Only a singleton divergent leader in a
+      non-unanimous gene (likely a sequencing artifact) is left unprotected.
+
+    Divergence is judged per row (leader vs *that clone's* closest germline allele),
+    so a het gene whose alleles resolve to different germline leaders is handled
+    correctly. Returns ``leader_aa``-keyed tuples (not just gene) so only the
+    supported allele is protected, not every leader the gene carries.
+    """
+    out: set[tuple[str, str, str]] = set()
+    for chain in ("alpha", "beta"):
+        v_col, aa_col, g_col = (
+            f"{chain}_v_gene", f"{chain}_leader_aa", f"{chain}_germline_leader_aa"
+        )
+        if not {v_col, aa_col, g_col} <= set(df.columns):
+            continue
+        sub = df[df[aa_col].notna() & df[v_col].notna()]
+        for gene, grp in sub.groupby(v_col):
+            counts = grp[aa_col].astype(str).value_counts()
+            whole_gene_unanimous = len(counts) == 1
+            for _, r in grp.iterrows():
+                leader = str(r[aa_col])
+                germ = r[g_col]
+                if not isinstance(germ, str) or leader == germ:
+                    continue  # not germline-comparable, or matches germline (not divergent)
+                if whole_gene_unanimous or counts[leader] >= min_support:
+                    out.add((chain, str(gene), leader))
+    return out
+
+
 def apply_leader_policy(
     df: pd.DataFrame,
     linker: str | None,
@@ -3408,17 +3480,21 @@ def apply_leader_policy(
     1. ``force_{chain}`` set → use that leader (germline / curated), skip the contig.
     2. else KEEP the contig leader when it matches germline, OR it's SP-sound
        (:func:`signal_peptide_features` ``features_ok``) AND its divergence is
-       consistent across that gene's clones (a likely germline indel).
-    3. else (bad SP, or divergent + inconsistent) → WARN and switch to
+       supported — either unanimous for the gene OR carried by ≥2 clones
+       (:func:`_protected_divergent_leaders`; het-aware, #274), a likely real
+       donor allele (germline indel/SNP) rather than a one-off artifact.
+    3. else (bad SP, or divergent + unsupported) → WARN and switch to
        ``leader_fallback`` (default the germline V-leader; a curated key
        otherwise). When the target is germline but the gene isn't in the
-       reference, keep the contig leader + flag (nothing to switch to).
+       reference, keep the contig leader + flag (nothing to switch to). The
+       discarded donor variant is preserved via :func:`_stash_preswitch` so it
+       still surfaces in :func:`collect_germline_variants` (tagged ``switched``).
 
     ``secondary_{chain}`` additionally emits a SECOND construct row with that
     leader (germline/curated) even for kept good calls; twins are tagged
     ``leader_variant`` (``primary`` / ``secondary:<leader>``).
     """
-    consistent = _unanimous_divergent_genes(df)
+    protected = _protected_divergent_leaders(df)
     force = {"alpha": force_alpha, "beta": force_beta}
     secondary = {"alpha": secondary_alpha, "beta": secondary_beta}
     df = df.copy()
@@ -3439,6 +3515,7 @@ def apply_leader_policy(
                 res = _resolve_named_leader(force[chain], work, chain)
                 if res is not None:
                     new_aa, new_nt, src = res
+                    _stash_preswitch(work, chain)
                     _substitute_chain_leader(work, work, chain, new_aa, new_nt, f"forced_{src}")
                     changed = True
                     n_forced += 1
@@ -3455,7 +3532,11 @@ def apply_leader_policy(
             )
             divergent = isinstance(germ_aa, str) and not matches_germline
             gene = work.get(f"{chain}_v_gene")
-            is_consistent = (chain, str(gene)) in consistent
+            leader_now = str(work.get(f"{chain}_leader_aa"))
+            # Het-aware (#274): protect this clone's specific divergent leader when
+            # it's unanimous for the gene OR has multi-clone support, not requiring
+            # whole-gene unanimity.
+            is_consistent = (chain, str(gene), leader_now) in protected
             keep = matches_germline or (sp_ok and (not divergent or is_consistent))
             if keep:
                 continue
@@ -3464,6 +3545,7 @@ def apply_leader_policy(
             if res is None:
                 continue  # nothing to switch to (e.g. germline absent) → keep + flag
             new_aa, new_nt, src = res
+            _stash_preswitch(work, chain)  # capture the discarded donor variant (#276)
             _substitute_chain_leader(work, work, chain, new_aa, new_nt, src)
             changed = True
             n_switched += 1
@@ -3524,30 +3606,53 @@ def collect_germline_variants(
     (substitution ``H18R;V27G`` / ``internal_deletion:Δn@p(...)`` / ``insertion``)
     and returns one row per DISTINCT variant with the closest allele, the donor
     and germline leader sequences, the identity, the leader provenance, and
-    ``n_constructs`` (how many constructs carry it). Empty frame when there are no
-    germline-comparable leaders. Sorted by ``n_constructs`` descending.
+    ``n_constructs`` (how many constructs carry it). Sorted by ``n_constructs``
+    descending. Empty frame when there are no germline-comparable leaders.
+
+    A ``shipped`` column distinguishes (#276):
+
+    * ``kept`` — the donor variant IS the shipped leader (SP-sound + supported).
+    * ``switched`` — the policy replaced this donor variant with the germline
+      (or curated) leader; captured from the ``{chain}_preswitch_*`` stash so a
+      switched variant is still recorded rather than vanishing.
     """
     cols = [
         "chain", "v_gene", "germline_allele", "donor_leader", "germline_leader",
-        "variant", "germline_identity", "leader_source",
+        "variant", "germline_identity", "leader_source", "shipped",
     ]
     rows = []
     for ch in chains:
         vs = f"{ch}_leader_vs_germline"
-        if vs not in df.columns:
-            continue
-        d = df[df[vs].notna() & ~df[vs].astype(str).isin(["identical"])]
-        for _, r in d.iterrows():
-            rows.append({
-                "chain": ch,
-                "v_gene": r.get(f"{ch}_v_gene"),
-                "germline_allele": r.get(f"{ch}_germline_allele"),
-                "donor_leader": r.get(f"{ch}_leader_aa"),
-                "germline_leader": r.get(f"{ch}_germline_leader_aa"),
-                "variant": r.get(vs),
-                "germline_identity": r.get(f"{ch}_germline_identity"),
-                "leader_source": r.get(f"{ch}_leader_source"),
-            })
+        if vs in df.columns:
+            d = df[df[vs].notna() & ~df[vs].astype(str).isin(["identical"])]
+            for _, r in d.iterrows():
+                rows.append({
+                    "chain": ch,
+                    "v_gene": r.get(f"{ch}_v_gene"),
+                    "germline_allele": r.get(f"{ch}_germline_allele"),
+                    "donor_leader": r.get(f"{ch}_leader_aa"),
+                    "germline_leader": r.get(f"{ch}_germline_leader_aa"),
+                    "variant": r.get(vs),
+                    "germline_identity": r.get(f"{ch}_germline_identity"),
+                    "leader_source": r.get(f"{ch}_leader_source"),
+                    "shipped": "kept",
+                })
+        # Switched-away donor variants preserved by _stash_preswitch (#276).
+        pv = f"{ch}_preswitch_variant"
+        if pv in df.columns:
+            d = df[df[pv].notna() & ~df[pv].astype(str).isin(["identical"])]
+            for _, r in d.iterrows():
+                rows.append({
+                    "chain": ch,
+                    "v_gene": r.get(f"{ch}_v_gene"),
+                    "germline_allele": r.get(f"{ch}_preswitch_germline_allele"),
+                    "donor_leader": r.get(f"{ch}_preswitch_donor_aa"),
+                    "germline_leader": r.get(f"{ch}_preswitch_germline_aa"),
+                    "variant": r.get(pv),
+                    "germline_identity": r.get(f"{ch}_preswitch_germline_identity"),
+                    "leader_source": r.get(f"{ch}_preswitch_leader_source"),
+                    "shipped": "switched",
+                })
     if not rows:
         return pd.DataFrame(columns=[*cols, "n_constructs"])
     out = pd.DataFrame(rows)
