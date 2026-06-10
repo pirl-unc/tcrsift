@@ -441,3 +441,56 @@ class TestLeaderPolicy:
         out = apply_leader_policy(df, "T2A", force_alpha="CD8A", force_beta="CD8A")
         assert (out["beta_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]).all()
         assert (out["alpha_leader_aa"] == DEFAULT_LEADERS["CD8A"]["aa"]).all()
+
+
+class TestCollectGermlineVariants:
+    def test_collects_distinct_variants_with_counts(self):
+        from tcrsift.assemble import collect_germline_variants
+        df = pd.DataFrame([
+            # two constructs share the same beta substitution variant
+            {"beta_v_gene": "TRBV13", "beta_germline_allele": "TRBV13*01",
+             "beta_leader_aa": "MX", "beta_germline_leader_aa": "MY",
+             "beta_leader_vs_germline": "H18R;V27G", "beta_germline_identity": 0.93,
+             "beta_leader_source": "contig",
+             "alpha_leader_vs_germline": "identical"},
+            {"beta_v_gene": "TRBV13", "beta_germline_allele": "TRBV13*01",
+             "beta_leader_aa": "MX", "beta_germline_leader_aa": "MY",
+             "beta_leader_vs_germline": "H18R;V27G", "beta_germline_identity": 0.93,
+             "beta_leader_source": "contig",
+             "alpha_leader_vs_germline": "identical"},
+            # an alpha internal deletion, single construct
+            {"alpha_v_gene": "TRAV1-2", "alpha_germline_allele": "TRAV1-2*01",
+             "alpha_leader_aa": "MZ", "alpha_germline_leader_aa": "MZZ",
+             "alpha_leader_vs_germline": "internal_deletion:Δ1@2(Z)",
+             "alpha_germline_identity": 0.66, "alpha_leader_source": "contig",
+             "beta_leader_vs_germline": "identical"},
+        ])
+        out = collect_germline_variants(df)
+        assert len(out) == 2  # two DISTINCT variants
+        beta = out[out["variant"] == "H18R;V27G"].iloc[0]
+        assert beta["n_constructs"] == 2 and beta["v_gene"] == "TRBV13"
+        assert (out["variant"] == "internal_deletion:Δ1@2(Z)").any()
+        # 'identical' rows are excluded
+        assert not (out["variant"] == "identical").any()
+
+    def test_empty_when_no_germline_comparison(self):
+        from tcrsift.assemble import collect_germline_variants
+        df = pd.DataFrame([{"CDR3ab": "X"}])  # no *_leader_vs_germline columns
+        assert collect_germline_variants(df).empty
+
+
+class TestLeaderSummaryPlot:
+    def test_renders(self, tmp_path):
+        from tcrsift.plots import plot_leader_summary
+        df = pd.DataFrame({
+            "alpha_leader_aa": ["MWGVFLLYVSMKMGGTT", "MWGVFLLYVSMKMGGTT", "M" + "A" * 40],
+            "alpha_leader_qc": ["ok", "ok", "too_long"],
+            "beta_leader_aa": ["MLLLLLLLGPGISLLLPGSLAGSGL", "MLLLLLLLGPGSGL", None],
+            "beta_leader_qc": ["ok", "hregion_trimmed", None],
+        })
+        out = plot_leader_summary(df, tmp_path / "leader_summary.png")
+        assert out is not None and out.exists() and out.stat().st_size > 0
+
+    def test_none_when_no_leader_columns(self, tmp_path):
+        from tcrsift.plots import plot_leader_summary
+        assert plot_leader_summary(pd.DataFrame({"x": [1]}), tmp_path / "x.png") is None
