@@ -372,6 +372,21 @@ class TestLeaderPolicy:
         assert len(out) == 2  # no twins, no switch
         assert (out["beta_leader_aa"] == "MLLLLLLLGPGSGL").all()
 
+    def test_keeps_consistent_substitution_allele(self):
+        # A unanimous SAME-LENGTH substitution (a likely donor SNP allele, e.g.
+        # TRBV13*03-style) is consistent-divergent too, so SP-sound + unanimous → KEPT,
+        # not switched. Regression for the length-only consistency gap that used to
+        # switch real substitution alleles to germline while keeping indels.
+        from tcrsift.assemble import _unanimous_divergent_genes, apply_leader_policy
+        g_aa, _ = self._germline()
+        sub = g_aa[:-1] + ("V" if g_aa[-1] != "V" else "I")  # 1 substitution, same length
+        assert len(sub) == len(g_aa) and sub != g_aa
+        df = self._df([sub, sub])
+        assert ("beta", "TRBV20-1") in _unanimous_divergent_genes(df)  # now recognized
+        out = apply_leader_policy(df, "T2A")
+        assert (out["beta_leader_aa"] == sub).all()           # kept donor-native
+        assert (out["beta_leader_source"] == "contig").all()  # not switched to germline
+
     def test_switches_inconsistent_divergent_to_germline(self):
         # divergent but NOT consistent across the gene → switch to germline.
         from tcrsift.assemble import apply_leader_policy
