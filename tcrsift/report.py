@@ -43,7 +43,12 @@ CATEGORY_ORDER: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 # Per-run PDFs that aren't figures (the report itself, the sequence sheet).
-_EXCLUDE_STEMS = {"tcrsift_report", "tcr_sequences", "selected_clones_sequences"}
+# Combined per-run bundles + sequence sheets: never embed these into the cohort
+# figure bundle (they'd double-include every figure). "tcrsift_report" kept for
+# back-compat with pre-2.78 runs; "all-figures" is the current per-donor bundle.
+_EXCLUDE_STEMS = {
+    "all-figures", "tcrsift_report", "tcr_sequences", "selected_clones_sequences",
+}
 
 _LETTER = (612.0, 792.0)  # reportlab letter, in points
 
@@ -113,6 +118,41 @@ def _find_plots_dir(run_dir: Path) -> Path:
     a plots dir passed directly too."""
     plots = run_dir / "plots"
     return plots if plots.is_dir() else run_dir
+
+
+# Output dir names that don't identify a donor — skip up to the grandparent.
+_GENERIC_DIR_NAMES = frozenset({"data", "plots", "output", "out", "results", "."})
+_DONOR_COLUMNS = ("donor", "patient_id", "patient", "subject")
+
+
+def resolve_report_name(
+    output_dir: str | Path,
+    *,
+    clones_df=None,
+    cli_name: str | None = None,
+    default: str | None = None,
+) -> str:
+    """Resolve a donor/run label for a report cover + filename (#262 follow-up).
+
+    Cascade: explicit ``cli_name`` → a unanimous donor/patient field in
+    ``clones_df`` → the output dir name (parent, or grandparent when the parent
+    is a generic name like ``data``/``plots``) → ``default`` → the literal
+    ``"run"``. So per-donor runs get their donor name automatically while an
+    explicit ``--report-name`` always wins.
+    """
+    if cli_name and str(cli_name).strip():
+        return str(cli_name).strip()
+    if clones_df is not None and len(getattr(clones_df, "columns", [])):
+        for col in _DONOR_COLUMNS:
+            if col in clones_df.columns:
+                vals = clones_df[col].dropna().astype(str).unique()
+                if len(vals) == 1 and vals[0].strip():
+                    return vals[0].strip()
+    p = Path(output_dir).resolve()
+    for cand in (p, p.parent):
+        if cand.name and cand.name not in _GENERIC_DIR_NAMES:
+            return cand.name
+    return (default or "run").strip() or "run"
 
 
 def bundle_figure_pdf(
@@ -525,6 +565,22 @@ def build_selected_report(
         logger.info(dual_line)
         qc_text = f"{dual_line}\n\n{qc_text}"
     (out_dir / "selected_clones_qc.txt").write_text(qc_text + "\n")
+
+    # Leader QC outputs (#275): emit from the select-then-assemble path too, not
+    # only the monolithic `run` assembly — the assembled shortlist carries the
+    # leader/germline columns these need.
+    from .assemble import collect_germline_variants
+
+    _gv = collect_germline_variants(assembled)
+    if not _gv.empty:
+        _gv.to_csv(out_dir / "germline_variants.csv", index=False)
+        logger.info("  Germline leader variants: %d distinct → germline_variants.csv", len(_gv))
+    try:
+        from .plots import plot_leader_summary
+
+        plot_leader_summary(assembled, out_dir / "leader_summary.png")
+    except Exception as e:  # plotting is best-effort; don't fail the report
+        logger.warning("leader_summary plot failed: %s", e, exc_info=True)
 
     # Per-clone provenance lines for the sequence PDF.
     annotations = None

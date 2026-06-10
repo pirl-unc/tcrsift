@@ -108,3 +108,56 @@ def test_cli_report_bundle(tmp_path):
 
 def test_category_order_is_nonempty():
     assert CATEGORY_ORDER and all(isinstance(c[0], str) for c in CATEGORY_ORDER)
+
+
+# --- report-name resolution + all-figures.pdf (#262 follow-up) ---------------
+import pandas as pd  # noqa: E402
+
+from tcrsift.report import resolve_report_name  # noqa: E402
+
+
+def test_resolve_report_name_cli_wins(tmp_path):
+    df = pd.DataFrame({"donor": ["B1-2", "B1-2"]})
+    assert resolve_report_name(tmp_path / "B1-3", clones_df=df, cli_name="Forced") == "Forced"
+
+
+def test_resolve_report_name_unanimous_donor_field(tmp_path):
+    df = pd.DataFrame({"donor": ["B1-2", "B1-2", "B1-2"]})
+    assert resolve_report_name(tmp_path / "out" / "data", clones_df=df) == "B1-2"
+
+
+def test_resolve_report_name_mixed_donor_falls_to_dir(tmp_path):
+    # heterozygous/mixed donor field is not unanimous → use the dir name
+    df = pd.DataFrame({"donor": ["B1-2", "B1-3"]})
+    d = tmp_path / "B1-cohort"
+    assert resolve_report_name(d, clones_df=df) == "B1-cohort"
+
+
+def test_resolve_report_name_skips_generic_parent(tmp_path):
+    # output dir is a generic 'data' → use the grandparent (the donor dir)
+    d = tmp_path / "B1-4" / "data"
+    d.mkdir(parents=True)
+    assert resolve_report_name(d) == "B1-4"
+
+
+def test_generate_report_writes_named_all_figures(tmp_path):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from tcrsift.plots import generate_report
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    fig.savefig(tmp_path / "demo.png")
+    plt.close(fig)
+    generate_report(tmp_path, format="pdf", report_name="B1-2")
+    assert (tmp_path / "all-figures.pdf").exists()
+    assert (tmp_path / "all-figures.pdf").stat().st_size > 0
+
+
+def test_cohort_figures_excluded_from_bundle(tmp_path):
+    # an all-figures.pdf in a run's plots dir must NOT be embedded into the
+    # cross-donor bundle (it would double-include every figure).
+    from tcrsift.report import _EXCLUDE_STEMS
+    assert "all-figures" in _EXCLUDE_STEMS

@@ -1886,12 +1886,18 @@ def cmd_run(args):
     # Generate report
     if config.output.generate_report:
         print("\nGenerating report...")
+        from .report import resolve_report_name
+
+        report_name = resolve_report_name(
+            output_dir, clones_df=clonotypes,
+            cli_name=getattr(args, "report_name", None),
+        )
         report_format = str(config.output.report_format).lower()
         if report_format == "both":
-            generate_report(plots_dir, format="html")
-            generate_report(plots_dir, format="pdf")
+            generate_report(plots_dir, format="html", report_name=report_name)
+            generate_report(plots_dir, format="pdf", report_name=report_name)
         elif report_format in {"html", "pdf"}:
-            generate_report(plots_dir, format=report_format)
+            generate_report(plots_dir, format=report_format, report_name=report_name)
         else:
             raise TCRsiftValidationError(
                 f"Invalid report format: '{config.output.report_format}'",
@@ -2343,6 +2349,20 @@ def cmd_report_bundle(args):
     print(f"Wrote figure bundle: {out}")
 
 
+def cmd_report_cohort_figures(args):
+    """Cross-donor all-figures bundle with one section per donor (#262 follow-up)."""
+    from .report import bundle_figure_pdf, resolve_report_name
+
+    setup_logging(args.verbose)
+    labels = [resolve_report_name(d) for d in args.run_dirs]
+    out = bundle_figure_pdf(
+        args.run_dirs, args.output, labels=labels,
+        title="TCRsift — cross-donor figures",
+        subtitle=f"{len(args.run_dirs)} donors",
+    )
+    print(f"Wrote cross-donor figure bundle: {out}")
+
+
 def cmd_report_selected(args):
     """Assemble a selected clone set into a synthesis-ready PDF + CSV (#188)."""
     import anndata as ad
@@ -2777,6 +2797,22 @@ def create_parser():
     pb.add_argument("--subtitle", default="", help="Cover-page subtitle")
     pb.add_argument("--verbose", action="store_true", help="Verbose output")
     pb.set_defaults(func=cmd_report_bundle)
+
+    pcf = p_report_sub.add_parser(
+        "cohort-figures",
+        help="Cross-donor figure bundle → all-figures-cross-donor.pdf (one section "
+        "per donor, donor name resolved from each run dir)",
+    )
+    pcf.add_argument(
+        "run_dirs", nargs="+",
+        help="Per-donor run output dirs (each with a plots/ subdir)",
+    )
+    pcf.add_argument(
+        "--output", "-o", default="all-figures-cross-donor.pdf",
+        help="Output PDF (default: all-figures-cross-donor.pdf)",
+    )
+    pcf.add_argument("--verbose", action="store_true", help="Verbose output")
+    pcf.set_defaults(func=cmd_report_cohort_figures)
 
     ps = p_report_sub.add_parser(
         "selected",
@@ -3951,6 +3987,11 @@ CONDITIONALLY REQUIRED:
         choices=["auto", "always", "never"],
         help="Emit data/clone_sample_long.csv: 'auto' (default) writes it "
         "when the sheet has >=2 samples; 'always' / 'never' force.",
+    )
+    out_group.add_argument(
+        "--report-name", metavar="NAME",
+        help="Donor/run label for the report cover (all-figures.pdf). Overrides "
+        "the auto-detected name (sample-sheet donor field, else output dir name).",
     )
     out_group.add_argument(
         "--per-method-top-n",

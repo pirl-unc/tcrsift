@@ -3616,6 +3616,8 @@ def create_tcr_sequence_pdf(
 def generate_report(
     output_dir: str | Path,
     format: str = "pdf",
+    *,
+    report_name: str | None = None,
 ):
     """
     Generate combined report from all plots in output directory.
@@ -3635,13 +3637,18 @@ def generate_report(
             from reportlab.lib.utils import ImageReader
             from reportlab.pdfgen import canvas
 
-            pdf_path = output_dir / "tcrsift_report.pdf"
+            # all-figures.pdf carries the donor/run name on the cover so a
+            # per-donor bundle is identifiable on its own (#262 follow-up).
+            pdf_path = output_dir / "all-figures.pdf"
             c = canvas.Canvas(str(pdf_path), pagesize=letter)
             width, height = letter
 
             # Title page
             c.setFont("Helvetica-Bold", 24)
-            c.drawCentredString(width / 2, height - 100, "TCRsift Analysis Report")
+            c.drawCentredString(width / 2, height - 100, "TCRsift — all figures")
+            if report_name:
+                c.setFont("Helvetica", 16)
+                c.drawCentredString(width / 2, height - 140, str(report_name))
             c.showPage()
 
             # Add each plot
@@ -3673,10 +3680,11 @@ def generate_report(
             logger.warning("reportlab not installed, cannot generate PDF report")
 
     elif format == "html":
-        html_path = output_dir / "tcrsift_report.html"
+        html_path = output_dir / "all-figures.html"
 
-        html_content = ["<html><head><title>TCRsift Report</title></head><body>"]
-        html_content.append("<h1>TCRsift Analysis Report</h1>")
+        name = f" — {report_name}" if report_name else ""
+        html_content = [f"<html><head><title>TCRsift figures{name}</title></head><body>"]
+        html_content.append(f"<h1>TCRsift — all figures{name}</h1>")
 
         for png_file in sorted(output_dir.glob("*.png")):
             title = png_file.stem.replace("_", " ").title()
