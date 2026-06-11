@@ -877,23 +877,15 @@ def cmd_data_list(args):
 
 
 def cmd_data_clear(args):
-    """Remove cached files for one or more managed databases."""
-    from .datacache import clear_cache
+    """Remove cached files for one or more managed databases / groups."""
+    from .datacache import clear_cache, resolve_db_selection
 
-    # `args.db` is None (clear all) or a list[str] of names. Deduplicate
-    # while preserving order so the user's first mention determines
-    # report order.
-    targets: list[str] | None = None
-    if args.db:
-        seen: set[str] = set()
-        targets = [n for n in args.db if not (n in seen or seen.add(n))]
-
+    # Expand --db names + --group aliases (default = all). Order preserved so
+    # the user's first mention determines report order.
+    targets = resolve_db_selection(args.db, getattr(args, "group", None))
     removed_total: list = []
-    if targets is None:
-        removed_total = clear_cache(db=None, data_dir=args.cache_dir)
-    else:
-        for name in targets:
-            removed_total.extend(clear_cache(db=name, data_dir=args.cache_dir))
+    for name in targets:
+        removed_total.extend(clear_cache(db=name, data_dir=args.cache_dir))
 
     if not removed_total:
         print("Nothing to remove.")
@@ -903,20 +895,16 @@ def cmd_data_clear(args):
 
 
 def cmd_data_download(args):
-    """Download one or more supported reference databases into the cache."""
-    from .datacache import DATABASES, DownloadError, download_database
+    """Download one or more supported reference databases / groups into the cache."""
+    from .datacache import DownloadError, download_database, resolve_db_selection
 
     setup_logging(verbose=True)
-    # `args.db` is None (download all) or a list[str]. Deduplicate while
-    # preserving order — argparse with action=extend doesn't dedupe, and
-    # repeating a name shouldn't trigger a second download.
-    if args.db:
-        seen: set[str] = set()
-        targets = [n for n in args.db if not (n in seen or seen.add(n))]
-    else:
-        targets = [
-            name for name, spec in DATABASES.items() if spec.download_url is not None
-        ]
+    # Expand --db names + --group aliases. Default (neither) = all auto-
+    # downloadable DBs; group/default expansions skip manual-only DBs (CEDAR),
+    # while an explicit `--db cedar` is kept so its manual instruction surfaces.
+    targets = resolve_db_selection(
+        args.db, getattr(args, "group", None), downloadable_only=True
+    )
     failures: list[tuple[str, str]] = []
     for db in targets:
         try:
@@ -2954,7 +2942,7 @@ def create_parser():
     # -------------------------------------------------------------------------
     # Data command (reference-database cache management)
     # -------------------------------------------------------------------------
-    from .datacache import DATABASES
+    from .datacache import DATABASES, GROUPS
 
     p_data = subparsers.add_parser(
         "data",
@@ -2985,6 +2973,13 @@ def create_parser():
         ),
     )
     p_data_clear.add_argument(
+        "--group",
+        choices=sorted(GROUPS),
+        action="extend",
+        nargs="+",
+        help="Clear a whole workflow group (germline / annotation / all).",
+    )
+    p_data_clear.add_argument(
         "--cache-dir", help="Override the default cache directory"
     )
     p_data_clear.set_defaults(func=cmd_data_clear)
@@ -3002,6 +2997,17 @@ def create_parser():
             "Database(s) to download (default: all DBs with a download URL). "
             "Repeatable and/or space-separated: "
             "`--db vdjdb iedb` and `--db vdjdb --db iedb` both work."
+        ),
+    )
+    p_data_download.add_argument(
+        "--group",
+        choices=sorted(GROUPS),
+        action="extend",
+        nargs="+",
+        help=(
+            "Download a whole workflow group: `germline` (IMGT V-REGION), "
+            "`annotation` (VDJdb/IEDB), or `all`. Manual-only DBs (CEDAR) are "
+            "skipped. Combines with --db."
         ),
     )
     p_data_download.add_argument(

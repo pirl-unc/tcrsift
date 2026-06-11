@@ -22,6 +22,7 @@ import pytest
 
 from tcrsift.datacache import (
     DATABASES,
+    GROUPS,
     DownloadError,
     cached_path,
     clear_cache,
@@ -29,7 +30,45 @@ from tcrsift.datacache import (
     inspect_cache,
     read_metadata,
     resolve_cache_dir,
+    resolve_db_selection,
 )
+
+
+class TestResolveDbSelection:
+    """`resolve_db_selection` expands --db names + --group aliases."""
+
+    def test_default_is_all(self):
+        assert resolve_db_selection(None, None) == list(DATABASES)
+
+    def test_germline_group(self):
+        assert resolve_db_selection(None, ["germline"]) == [
+            "imgt_trav_vregion", "imgt_trbv_vregion"
+        ]
+
+    def test_downloadable_only_drops_manual_in_group(self):
+        # CEDAR has no download_url → dropped from a group expansion...
+        sel = resolve_db_selection(None, ["annotation"], downloadable_only=True)
+        assert "cedar" not in sel and "vdjdb" in sel
+
+    def test_explicit_db_keeps_manual(self):
+        # ...but an explicit --db cedar is kept (so its manual note surfaces).
+        assert resolve_db_selection(["cedar"], None, downloadable_only=True) == ["cedar"]
+
+    def test_db_and_group_union_dedup(self):
+        sel = resolve_db_selection(["vdjdb"], ["germline"])
+        assert sel == ["vdjdb", "imgt_trav_vregion", "imgt_trbv_vregion"]
+
+    def test_unknown_group_raises(self):
+        with pytest.raises(ValueError):
+            resolve_db_selection(None, ["nope"])
+
+    def test_unknown_db_raises(self):
+        with pytest.raises(ValueError):
+            resolve_db_selection(["nope"], None)
+
+    def test_groups_reference_real_dbs(self):
+        for members in GROUPS.values():
+            assert all(m in DATABASES for m in members)
 
 
 class TestResolveCacheDir:

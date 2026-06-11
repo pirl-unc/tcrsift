@@ -164,6 +164,35 @@ class TestDataDownloadParser:
         with pytest.raises(SystemExit):
             parser.parse_args(["data", "download", "--db", "bogus_db"])
 
+    def test_data_download_group_flag(self):
+        parser = create_parser()
+        args = parser.parse_args(["data", "download", "--group", "germline"])
+        assert args.group == ["germline"]
+
+    def test_data_download_unknown_group_rejected(self):
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["data", "download", "--group", "bogus"])
+
+    def test_data_clear_group_flag(self):
+        parser = create_parser()
+        args = parser.parse_args(["data", "clear", "--group", "annotation", "all"])
+        assert args.group == ["annotation", "all"]
+
+    def test_data_download_group_expands_to_germline_dbs(self, monkeypatch, tmp_path):
+        from tcrsift.cli import cmd_data_download
+
+        called: list[str] = []
+        monkeypatch.setattr(
+            "tcrsift.datacache.download_database",
+            lambda name, data_dir=None, force=False: called.append(name) or (tmp_path / name),
+        )
+        args = argparse.Namespace(
+            db=None, group=["germline"], cache_dir=str(tmp_path), force=False
+        )
+        cmd_data_download(args)
+        assert called == ["imgt_trav_vregion", "imgt_trbv_vregion"]
+
 
 class TestDataDownloadCommand:
     """Tests for the cmd_data_download handler behavior (#44)."""
