@@ -60,17 +60,27 @@ def sample_clonotype_df():
 class TestCountAtThreshold:
     """Tests for count_at_threshold function."""
 
-    def test_basic_count(self, sample_clonotype_df):
-        """Test basic counting at threshold."""
-        count = count_at_threshold(sample_clonotype_df, 0.5)
+    def test_basic_count(self):
+        """Counts Single-culture clones at/above the threshold.
 
-        # Should count Single-culture clones above threshold
-        expected = (
-            (sample_clonotype_df["specificity_description"] == "Single-culture")
-            & (sample_clonotype_df["max_freq"] >= 0.5)
-        ).sum()
-
-        assert count == expected
+        Uses an explicit hand-counted fixture (not the function's own masking
+        logic recomputed as the expectation), so a regression in
+        count_at_threshold can actually fail this test.
+        """
+        df = pd.DataFrame({
+            "max_freq": [0.6, 0.4, 0.7, 0.9, 0.55, 0.5],
+            "specificity_description": [
+                "Single-culture",  # 0.6 ≥ 0.5 ✓
+                "Single-culture",  # 0.4 < 0.5 ✗
+                "Viral",           # 0.7 but not Single-culture ✗
+                "Single-culture",  # 0.9 ≥ 0.5 ✓
+                "Multi-culture",   # 0.55 but not Single-culture ✗
+                "Single-culture",  # 0.5 exactly — boundary, ≥ is inclusive ✓
+            ],
+        })
+        # 0.6, 0.9, and the 0.5 boundary row → 3. The boundary row makes this
+        # sensitive to >= vs > (a > would drop it and give 2).
+        assert count_at_threshold(df, 0.5) == 3
 
     def test_zero_threshold(self, sample_clonotype_df):
         """Test with zero threshold (count all)."""
@@ -174,58 +184,60 @@ class TestCalcThresholdsAndCounts:
         assert len(threshold_to_count) > 0
         assert model is not None
 
-    def test_default_threshold_on_messy_data(self):
-        """Test fallback to default threshold when data is messy."""
-        # Create messy data where model would fail
-        messy_df = pd.DataFrame(
-            {
-                "max_freq": np.random.uniform(0, 1, 50),
-                "specificity_description": np.random.choice(
-                    ["Single-culture", "Viral", "Multi-culture"], 50
-                ),
-            }
+    def test_default_threshold_when_weight_nonpositive(self):
+        """Fallback branch: when frequency is ANTI-correlated with the target
+        (so the logistic weight is ≤ 0), every FDR maps to default_freq_threshold.
+
+        Previously this passed random data and only asserted ``0.1 in dict`` —
+        which is true by construction and never exercised the fallback. Here the
+        target deterministically decreases with max_freq, forcing the weight≤0
+        branch, and we assert the actual default value is returned.
+        """
+        mf = np.linspace(0.05, 0.9, 40)
+        # high frequency → Viral (non-target) → negative logistic weight
+        spec = ["Viral" if f > 0.4 else "Single-culture" for f in mf]
+        df = pd.DataFrame({"max_freq": mf, "specificity_description": spec})
+
+        fdr_to_threshold, _counts, _model = calc_thresholds_and_counts(
+            df, fdrs=[0.1, 0.01], default_freq_threshold=0.5, only_avoid_viral=False,
         )
+        assert fdr_to_threshold[0.1] == 0.5
+        assert fdr_to_threshold[0.01] == 0.5  # all FDRs fall back to the default
 
-        fdr_to_threshold, threshold_to_count, model = calc_thresholds_and_counts(
-            messy_df,
-            fdrs=[0.1],
-            default_freq_threshold=0.5,
+    def test_mode_flag_changes_the_threshold(self, sample_clonotype_df):
+        """only_avoid_viral=True vs False must actually change the result.
+
+        The two modes build a different positive target (non-Viral vs strictly
+        Single-culture), which changes the fit and the derived threshold. The old
+        pair of tests asserted only ``0.1 in dict`` for each mode, so a no-op
+        flag would have passed. Here we assert the modes disagree and both
+        respect the min-frequency floor.
+        """
+        floor = 0.09
+        avoid_viral, _c1, _m1 = calc_thresholds_and_counts(
+            sample_clonotype_df, fdrs=[0.1], only_avoid_viral=True,
+            min_freq_threshold=floor,
         )
-
-        # Should return some threshold
-        assert 0.1 in fdr_to_threshold
-
-    def test_only_avoid_viral_mode(self, sample_clonotype_df):
-        """Test only_avoid_viral mode."""
-        fdr_to_threshold, threshold_to_count, model = calc_thresholds_and_counts(
-            sample_clonotype_df,
-            fdrs=[0.1],
-            only_avoid_viral=True,
+        strict, _c2, _m2 = calc_thresholds_and_counts(
+            sample_clonotype_df, fdrs=[0.1], only_avoid_viral=False,
+            min_freq_threshold=floor,
         )
+        assert avoid_viral[0.1] != strict[0.1]          # the flag has an effect
+        assert avoid_viral[0.1] >= floor and strict[0.1] >= floor
 
-        assert 0.1 in fdr_to_threshold
-
-    def test_strict_single_culture_mode(self, sample_clonotype_df):
-        """Test strict single-culture mode."""
-        fdr_to_threshold, threshold_to_count, model = calc_thresholds_and_counts(
-            sample_clonotype_df,
-            fdrs=[0.1],
-            only_avoid_viral=False,
-        )
-
-        assert 0.1 in fdr_to_threshold
-
-    def test_multiple_fdrs(self, sample_clonotype_df):
-        """Test multiple FDR levels."""
+    def test_lower_fdr_gives_higher_or_equal_threshold(self, sample_clonotype_df):
+        """Across multiple FDRs, the threshold is monotonic non-increasing as the
+        FDR increases (a stricter FDR demands a higher frequency cutoff). The old
+        test only asserted each requested FDR was a key — guaranteed by
+        construction — and never checked this ordering property.
+        """
         fdrs = [0.15, 0.1, 0.01, 0.001]
-
-        fdr_to_threshold, threshold_to_count, model = calc_thresholds_and_counts(
-            sample_clonotype_df,
-            fdrs=fdrs,
+        fdr_to_threshold, _counts, _model = calc_thresholds_and_counts(
+            sample_clonotype_df, fdrs=fdrs,
         )
-
-        for fdr in fdrs:
-            assert fdr in fdr_to_threshold
+        thresholds = [fdr_to_threshold[f] for f in fdrs]  # by increasing strictness
+        # increasing strictness (decreasing fdr) → non-decreasing threshold
+        assert thresholds == sorted(thresholds), thresholds
 
     def test_min_freq_threshold_respected(self, sample_clonotype_df):
         """Test minimum frequency threshold is respected."""
