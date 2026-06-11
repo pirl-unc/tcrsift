@@ -156,6 +156,22 @@ def test_generate_report_writes_named_all_figures(tmp_path):
     assert (tmp_path / "all-figures.pdf").stat().st_size > 0
 
 
+def test_fit_font_size_shrinks_long_title():
+    # #combined-pdf: a long centred title must shrink to fit the page width so it
+    # isn't clipped at both margins.
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    from tcrsift.report import _fit_font_size
+
+    max_w = 612 - 2 * 54
+    short = _fit_font_size("B1-2", "Helvetica-Bold", 30, 10, max_w)
+    assert short == 30  # short title keeps the full size
+    long_title = "Selected clones — a very long cohort donor batch name here"
+    size = _fit_font_size(long_title, "Helvetica-Bold", 30, 10, max_w)
+    assert size < 30  # shrunk
+    assert stringWidth(long_title, "Helvetica-Bold", size) <= max_w  # actually fits
+
+
 def test_cohort_figures_excluded_from_bundle(tmp_path):
     # an all-figures.pdf in a run's plots dir must NOT be embedded into the
     # cross-donor bundle (it would double-include every figure).
