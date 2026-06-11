@@ -520,6 +520,18 @@ def combine_selected_pdfs(
     return out_path
 
 
+# Per-condition selection breakdown columns (#selection-cols) — emitted into
+# selected_clones.csv but kept OUT of the sequence PDF, where they'd just
+# duplicate the formatted ``selection_detail`` block and clutter the page.
+_SELECTION_BREAKDOWN_COLS = frozenset({
+    "selection_conditions",
+    "frequency_per_condition",
+    "prism_per_condition",
+    "freq_rank_per_condition",
+    "prism_rank_per_condition",
+})
+
+
 def _format_selection_item(item: str) -> str:
     """Format one compact selection token for the sequence-PDF footer.
 
@@ -646,14 +658,20 @@ def build_selected_report(
             for c in prov_cols:
                 if not pd.notna(r.get(c)):
                     continue
-                if c.lower() == "selection":
-                    # One condition per indented line, reformatted; no
-                    # "selection:" sub-label (the bold "Selection:" header
-                    # already titles the block).
+                cl = c.lower()
+                if cl in ("selection", "selection_detail"):
+                    # One condition per indented line, reformatted; no sub-label
+                    # (the bold "Selection:" header already titles the block).
+                    # ``selection`` is the pre-2.90 name; ``selection_detail`` the
+                    # current one — accept both.
                     for item in str(r[c]).split(";"):
                         formatted = _format_selection_item(item)
                         if formatted:
                             lines.append(f"    {formatted}")
+                elif cl in _SELECTION_BREAKDOWN_COLS:
+                    # Per-condition freq/PRISM/rank breakdowns are CSV-only — they
+                    # duplicate selection_detail and would clutter the page.
+                    continue
                 else:
                     lines.append(f"{c}: {r[c]}")
             if r.get("dual_alpha_variant"):

@@ -383,3 +383,66 @@ class TestPrismCandidates:
         out = prism_candidates(pd.DataFrame(), condition_col="condition")
         assert out.empty
         assert "selection_route" in out.columns
+
+
+class TestPerRouteRanksAndSummary:
+    """Independent freq/PRISM ranks + per-clone folding (#selection-cols)."""
+
+    def test_emits_independent_freq_and_prism_ranks(self):
+        # A clone in BOTH top-freq and top-prism gets both ranks; freq-only /
+        # prism-only clones get just the one they placed in.
+        feat = pd.DataFrame([
+            {"CDR3ab": "A", "condition": "AIMpos", "frequency": 0.9, "score": 0.1},
+            {"CDR3ab": "B", "condition": "AIMpos", "frequency": 0.5, "score": 0.9},
+            {"CDR3ab": "C", "condition": "AIMpos", "frequency": 0.1, "score": 0.2},
+        ])
+        out = select_freq_prism_per_condition(
+            feat, condition_col="condition", freq_col="frequency",
+            score_terms=[{"col": "score", "direction": "low", "weight": 1.0}],
+            gate=0.0, top_freq=2, top_prism=2, tie_break=[],
+        )
+        by = out.set_index("CDR3ab")
+        # A: freq#1 (0.9) AND prism#1 (lowest score 0.1) → both ranks present
+        assert by.loc["A", "selection_route"] == "both"
+        assert by.loc["A", "freq_rank"] == 1 and by.loc["A", "prism_rank"] == 1
+        # B: freq#2 only (prism rank 3 > top_prism=2)
+        assert by.loc["B", "selection_route"] == "freq"
+        assert by.loc["B", "freq_rank"] == 2 and pd.isna(by.loc["B", "prism_rank"])
+        # C: prism#2 only (freq rank 3 > top_freq=2)
+        assert by.loc["C", "selection_route"] == "prism"
+        assert pd.isna(by.loc["C", "freq_rank"]) and by.loc["C", "prism_rank"] == 2
+
+    def test_summarize_selection_per_clone_columns(self):
+        from tcrsift.selection import (
+            SELECTION_SUMMARY_COLS,
+            summarize_selection_per_clone,
+        )
+        # One clone selected in two conditions: AIMpos (freq#1), CTYneg (prism#2).
+        per_cond = pd.DataFrame([
+            {"CDR3ab": "X", "method": "AIMpos", "selection_route": "freq",
+             "rank_within_route": 1, "freq_rank": 1, "prism_rank": None,
+             "prism_score": 0.42, "frequency": 0.009, "rescued": False},
+            {"CDR3ab": "X", "method": "CTYneg", "selection_route": "prism",
+             "rank_within_route": 2, "freq_rank": None, "prism_rank": 2,
+             "prism_score": 0.18, "frequency": 0.0034, "rescued": False},
+        ])
+        out = summarize_selection_per_clone(per_cond)
+        assert list(out.columns) == ["CDR3ab", *SELECTION_SUMMARY_COLS]
+        r = out.iloc[0]
+        assert r["selection_conditions"] == "AIM⁺;CTY⁻"
+        assert r["selection_detail"] == "AIM⁺=freq#1(0.90%);CTY⁻=prism#2(0.34%)"
+        assert r["frequency_per_condition"] == "AIM⁺=0.90%;CTY⁻=0.34%"
+        assert r["prism_per_condition"] == "AIM⁺=0.420;CTY⁻=0.180"
+        assert r["freq_rank_per_condition"] == "AIM⁺=1"   # only AIMpos freq-placed
+        assert r["prism_rank_per_condition"] == "CTY⁻=2"  # only CTYneg prism-placed
+        # tcrsift convention: plain ';' separator, no surrounding spaces
+        assert " ; " not in r["selection_detail"]
+
+    def test_summarize_empty(self):
+        from tcrsift.selection import (
+            SELECTION_SUMMARY_COLS,
+            summarize_selection_per_clone,
+        )
+        out = summarize_selection_per_clone(pd.DataFrame())
+        assert out.empty
+        assert list(out.columns) == ["CDR3ab", *SELECTION_SUMMARY_COLS]
