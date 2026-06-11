@@ -1139,35 +1139,49 @@ def _apply_iedb_epitope_overrides(
 
 def load_cedar(path: str | Path) -> pd.DataFrame:
     """
-    Load CEDAR TCR database.
+    Load the CEDAR TCR database.
+
+    Handles two on-disk shapes, sniffed from the file's first line (not the
+    extension):
+
+    1. The **bulk** receptor export (``doc/receptor_full_v3.zip`` →
+       ``tcr_full_v3.csv``, cached by ``tcrsift data download --db cedar``):
+       comma-separated with the same v3 two-row hierarchical header as IEDB, so
+       it is parsed by the shared :func:`_load_iedb_v3`.
+    2. A **manual web-UI export** ``cedar.tsv`` — tab-separated, flat header with
+       fields like ``cdr3_b_aa`` / ``epitope_sequence`` (the original supported
+       shape; kept for back-compat).
 
     Parameters
     ----------
     path : str or Path
-        Path to CEDAR file
+        Path to a CEDAR receptor file (bulk v3 CSV or manual flat TSV).
 
     Returns
     -------
     pd.DataFrame
-        CEDAR entries with standardized columns
+        CEDAR entries with standardized columns (``cdr3_alpha``, ``cdr3_beta``,
+        ``epitope``, ``antigen_gene``, ``species``, ``is_viral``, ``database``).
     """
     path = Path(path)
     logger.info(f"Loading CEDAR from {path}")
 
-    df = pd.read_csv(path, sep="\t", low_memory=False)
-
-    # Standardize columns
-    column_mapping = {
-        "cdr3_b_aa": "cdr3_beta",
-        "cdr3_a_aa": "cdr3_alpha",
-        "epitope_sequence": "epitope",
-        "antigen_name": "antigen_gene",
-        "organism": "species",
-    }
-
-    for old, new in column_mapping.items():
-        if old in df.columns:
-            df[new] = df[old]
+    if _looks_like_iedb_v3(path):
+        # CEDAR's bulk export IS the IEDB v3 receptor schema (cancer-scoped).
+        df = _load_iedb_v3(path)
+    else:
+        df = pd.read_csv(path, sep="\t", low_memory=False)
+        # Standardize the manual web-export columns.
+        column_mapping = {
+            "cdr3_b_aa": "cdr3_beta",
+            "cdr3_a_aa": "cdr3_alpha",
+            "epitope_sequence": "epitope",
+            "antigen_name": "antigen_gene",
+            "organism": "species",
+        }
+        for old, new in column_mapping.items():
+            if old in df.columns:
+                df[new] = df[old]
 
     df["database"] = "CEDAR"
     df["is_viral"] = _flag_viral(df)

@@ -129,13 +129,20 @@ DATABASES: dict[str, DatabaseSpec] = {
         archive_format="zip",
         archive_member="epitope_full_v3.csv",
     ),
+    # CEDAR (cancer-scoped IEDB receptors). Its bulk export mirrors IEDB's:
+    # ``doc/receptor_full_v3.zip`` contains ``tcr_full_v3.csv`` in the same v3
+    # two-row-header schema, so it auto-downloads and ``load_cedar`` reuses the
+    # IEDB v3 parser. (A legacy manual web-export ``cedar.tsv`` is still honored
+    # — see ``cached_path`` and ``load_cedar``'s format sniff.)
     "cedar": DatabaseSpec(
         name="cedar",
-        filename="cedar.tsv",
+        filename="tcr_full_v3.csv",
         source="https://cedar.iedb.org/",
-        # CEDAR has no stable single-file download endpoint; users must
-        # populate this DB manually.
-        download_url=None,
+        download_url=(
+            "https://cedar.iedb.org/downloader.php?file_name=doc/receptor_full_v3.zip"
+        ),
+        archive_format="zip",
+        archive_member="tcr_full_v3.csv",
     ),
     # IMGT/GENE-DB V-REGION germline reference (one HTML per locus). Backs the
     # framework (FR1–FR3) germline comparison in tcrsift.vregion — large and
@@ -186,11 +193,12 @@ def resolve_db_selection(
 
     When both are empty the selection defaults to every database (the historical
     no-argument behaviour). With ``downloadable_only=True`` (the download path),
-    databases without an automated endpoint (e.g. CEDAR) are dropped from a
-    *group/default* expansion — a user asking for a whole category shouldn't fail
-    on its manual-only member — while an explicit ``--db cedar`` is left in so the
-    command still reports the manual instruction. Raises ``ValueError`` on an
-    unknown name or group.
+    any database without an automated endpoint is dropped from a *group/default*
+    expansion — a user asking for a whole category shouldn't fail on a manual-only
+    member — while an explicit ``--db <name>`` is left in so the command still
+    reports that DB's manual instruction. (Every DB is auto-downloadable today,
+    so this only matters if a manual-only DB is added later.) Raises
+    ``ValueError`` on an unknown name or group.
     """
     selected: list[str] = []
     explicit: set[str] = set()
@@ -260,6 +268,13 @@ def cached_path(db: str, data_dir: str | Path | None = None) -> Path | None:
         matches = list(base.glob("vdjdb*.txt")) + list(base.glob("vdjdb*.tsv"))
         if matches:
             return base
+    # CEDAR back-compat: the canonical is now the bulk `tcr_full_v3.csv`, but a
+    # user who hand-exported the older `cedar.tsv` (or `.csv`) from the web UI
+    # should still be found. `load_cedar` sniffs the format either way.
+    if db == "cedar":
+        for legacy in ("cedar.tsv", "cedar.csv"):
+            if (base / legacy).exists():
+                return base / legacy
     return None
 
 
