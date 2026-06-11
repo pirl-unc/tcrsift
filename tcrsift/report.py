@@ -619,7 +619,7 @@ def build_selected_report(
     _gv = collect_germline_variants(assembled)
     if not _gv.empty:
         _gv.to_csv(out_dir / "germline_variants.csv", index=False)
-        logger.info("  Germline leader variants: %d distinct → germline_variants.csv", len(_gv))
+        logger.info("  Germline variants: %d distinct (by region) → germline_variants.csv", len(_gv))
     try:
         from .plots import plot_leader_summary
 

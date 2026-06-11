@@ -336,6 +336,39 @@ def check_contigs(d: pd.DataFrame, cmap: dict[str, str] | None) -> QCResult:
     )
 
 
+def check_germline(d: pd.DataFrame) -> QCResult:
+    """F. Donor-vs-germline divergence by region (leader / constant / framework).
+
+    Informational, not a gate — germline divergence is expected donor biology, so
+    this always PASSes (or SKIPs when nothing is germline-comparable); the point
+    is to *surface* what's otherwise buried in CSV columns. Folds the leader
+    keep/switch variants and the #187 constant-allele divergence (and the
+    V-REGION framework comparison, when present) into one human-readable line.
+    """
+    from .assemble import collect_germline_variants
+
+    try:
+        gv = collect_germline_variants(d)
+    except Exception as e:  # never let the surfacing check break the battery
+        return QCResult("F. Germline / allele divergence", "SKIP", f"unavailable: {e}")
+    if gv is None or gv.empty:
+        return QCResult(
+            "F. Germline / allele divergence", "SKIP",
+            "no germline-comparable columns (run with contigs + V-leader reference)",
+        )
+    parts = []
+    for region in ("leader", "constant", "framework"):
+        sub = gv[gv["region"] == region]
+        if sub.empty:
+            continue
+        n_variants = len(sub)
+        n_constructs = int(sub["n_constructs"].sum())
+        shipped = "/".join(sorted(sub["shipped"].astype(str).unique()))
+        parts.append(f"{region}: {n_variants} variant(s), {n_constructs} construct(s) [{shipped}]")
+    detail = "; ".join(parts) if parts else "none"
+    return QCResult("F. Germline / allele divergence", "PASS", detail)
+
+
 def contig_cdr3_map(
     contig_dir: str | Path | None = None,
     *,
@@ -369,13 +402,14 @@ def run_qc_battery(
     clonotypes: pd.DataFrame | None = None,
     contig_map: dict[str, str] | None = None,
 ) -> list[QCResult]:
-    """Run all five checks and return their results in A–E order."""
+    """Run all checks and return their results in A–F order."""
     return [
         check_assembly(assembled),
         check_cdr3_ref(assembled),
         check_source(assembled, clonotypes),
         check_synth(assembled),
         check_contigs(assembled, contig_map),
+        check_germline(assembled),
     ]
 
 
