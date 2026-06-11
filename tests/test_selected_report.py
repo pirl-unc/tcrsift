@@ -448,6 +448,36 @@ def test_attach_public_db_annotation():
     assert all(c in out2.columns for c in _PUBLIC_DB_COLS)
 
 
+def test_build_selected_report_annotations_reach_csv(tmp_path):
+    # #296 regression: the `annotations` DB frame must survive build_selected_report
+    # and populate selected_clones.csv. The 2.92.0 bug was a local PDF-provenance
+    # dict shadowing the parameter, so db_* came out all-empty. This goes
+    # end-to-end (with provenance_cols set, so the PDF-dict branch runs) — the
+    # unit test above bypasses the shadowing by calling the helper directly.
+    a = "CASS" + "A" * 40 + "VLF"
+    b = "CASS" + "G" * 40 + "VEF"
+    clonotypes = pd.DataFrame([_assembleable_clone("c1", a, b)])
+    selected = pd.DataFrame([{"CDR3ab": "c1", "selection_rule": "shared"}])
+    annotations = pd.DataFrame({
+        "CDR3ab": ["c1"],
+        "is_viral": [True],
+        "db_match": ["GLCTLVAML"],
+        "db_category": ["viral"],
+        "db_database": ["IEDB"],
+    })
+    build_selected_report(
+        selected, clonotypes, tmp_path,
+        provenance_cols=["selection_rule"],  # exercises the PDF-dict path (#296)
+        annotations=annotations,
+        allow_canonical_fallback=True,
+    )
+    written = pd.read_csv(tmp_path / "selected_clones.csv")
+    row = written.loc[written.CDR3ab == "c1"].iloc[0]
+    assert bool(row["is_viral"]) is True
+    assert row["db_match"] == "GLCTLVAML"
+    assert row["db_category"] == "viral"
+
+
 def test_emit_frequency_by_condition(tmp_path):
     from tcrsift.report import _emit_frequency_by_condition
     df = pd.DataFrame({

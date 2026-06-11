@@ -640,8 +640,10 @@ def build_selected_report(
     except Exception as e:  # plotting is best-effort; don't fail the report
         logger.warning("leader_summary plot failed: %s", e, exc_info=True)
 
-    # Per-clone provenance lines for the sequence PDF.
-    annotations = None
+    # Per-clone provenance lines for the sequence PDF. NB: keep this distinct
+    # from the ``annotations`` parameter (the public-DB frame) — they collided in
+    # 2.92.0 and silently emptied every db_* column (#296).
+    pdf_annotations = None
     if prov_cols:
         # Stable variant numbering: within each parent clone, number its
         # dual-alpha variants #1, #2, … by sorted variant id, so the PDF label
@@ -652,7 +654,7 @@ def build_selected_report(
             for _parent, grp in dav.groupby("selected_clone", sort=True):
                 for i, cdr in enumerate(sorted(grp["CDR3ab"].astype(str)), 1):
                     variant_rank[cdr] = i
-        annotations = {}
+        pdf_annotations = {}
         for _, r in expanded.iterrows():
             key = r["CDR3ab"]
             lines: list[str] = []
@@ -683,11 +685,11 @@ def build_selected_report(
                     else f"dual-alpha variant of {parent}"
                 )
             if lines:
-                annotations[key] = lines
+                pdf_annotations[key] = lines
 
     seq_pdf = out_dir / "selected_clones_sequences.pdf"
     create_tcr_sequence_pdf(
-        assembled, seq_pdf, strict=False, annotations=annotations,
+        assembled, seq_pdf, strict=False, annotations=pdf_annotations,
     )
     # Prepend a self-documenting construct cover/legend page (#202).
     if cover:
