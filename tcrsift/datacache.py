@@ -137,6 +137,30 @@ DATABASES: dict[str, DatabaseSpec] = {
         # populate this DB manually.
         download_url=None,
     ),
+    # IMGT/GENE-DB V-REGION germline reference (one HTML per locus). Backs the
+    # framework (FR1–FR3) germline comparison in tcrsift.vregion — large and
+    # rarely-changing, so cached rather than vendored. The raw GENElect HTML is
+    # stored as-is; tcrsift.vregion parses the <pre> FASTA and translates it.
+    "imgt_trav_vregion": DatabaseSpec(
+        name="imgt_trav_vregion",
+        filename="TRAV_V-REGION.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAV, IMGTlabel=V-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAV"
+            "&species=Homo+sapiens&IMGTlabel=V-REGION"
+        ),
+        archive_format="raw",
+    ),
+    "imgt_trbv_vregion": DatabaseSpec(
+        name="imgt_trbv_vregion",
+        filename="TRBV_V-REGION.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBV, IMGTlabel=V-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBV"
+            "&species=Homo+sapiens&IMGTlabel=V-REGION"
+        ),
+        archive_format="raw",
+    ),
 }
 
 

@@ -2957,7 +2957,8 @@ def create_parser():
     from .datacache import DATABASES
 
     p_data = subparsers.add_parser(
-        "data", help="Manage cached reference databases (VDJdb, IEDB, CEDAR)"
+        "data",
+        help="Manage cached reference databases (VDJdb, IEDB, CEDAR, IMGT V-REGION)",
     )
     p_data_sub = p_data.add_subparsers(dest="subcommand", required=True)
 

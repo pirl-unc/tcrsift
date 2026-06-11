@@ -2115,6 +2115,13 @@ def assemble_full_sequences(
                 n_hazard,
             )
 
+    # Framework (FR1–FR3) germline divergence (#286 follow-up). Compares each
+    # clone's V-domain framework to the IMGT V-REGION germline and records the
+    # divergence for the `framework` rows of collect_germline_variants. No-op
+    # (adds no columns) unless the V-REGION reference is cached
+    # (`tcrsift data download --db imgt_trav_vregion imgt_trbv_vregion`).
+    df = annotate_vregion_divergence(df)
+
     # Schema stability (#278). `qc_warnings` is stashed per-clone only when a
     # warning fires, so the column is absent on a clean cohort and present on a
     # noisy one — 144 vs 145 columns across donors, which breaks naive
@@ -2124,6 +2131,54 @@ def assemble_full_sequences(
     # both stay correct).
     df = _ensure_qc_warnings_column(df)
 
+    return df
+
+
+def annotate_vregion_divergence(df: pd.DataFrame) -> pd.DataFrame:
+    """Add ``{chain}_vregion_*`` framework-divergence columns (#286 follow-up).
+
+    For each clone+chain, compares the V-domain framework (FR1–FR3, the V(D)J
+    amino acids up to the CDR3) to the closest germline IMGT V-REGION and records
+    ``{chain}_vregion_allele / _germline_aa / _donor_aa / _identity /
+    _vs_germline``. CDR3 is excluded (junction, not germline-templated).
+
+    No-op when the V-REGION reference isn't cached — adds no columns, so the
+    framework comparison is simply inert until ``tcrsift data download --db
+    imgt_trav_vregion imgt_trbv_vregion`` is run. Only emits a row's columns when
+    the chain is comparable (gene in reference + CDR3 locatable + identity above
+    the floor); incomparable clones get NaN, identical ones get ``identical``.
+    """
+    from .vregion import germline_compare_vregion, reference_is_available
+
+    if not len(df) or not reference_is_available():
+        return df
+    for chain in ("alpha", "beta"):
+        vdj_col, cdr_col, v_col = (
+            f"VDJ_{chain}_aa", f"CDR3_{chain}", f"{chain}_v_gene"
+        )
+        if not {vdj_col, cdr_col, v_col} <= set(df.columns):
+            continue
+        alleles, germs, donors, idents, diffs = [], [], [], [], []
+        for _, r in df.iterrows():
+            res = germline_compare_vregion(r.get(vdj_col), r.get(cdr_col), r.get(v_col))
+            if res is None:
+                for col in (alleles, germs, donors, idents, diffs):
+                    col.append(None)
+                continue
+            allele, g_aa, identity, diff = res
+            gene = normalize_vgene(r.get(v_col))
+            alleles.append(f"{gene}*{allele}" if gene else allele)
+            germs.append(g_aa)
+            donor_fr = str(r.get(vdj_col))
+            cdr = str(r.get(cdr_col))
+            donors.append(donor_fr[: donor_fr.index(cdr)] if cdr in donor_fr else None)
+            idents.append(identity)
+            diffs.append(diff)
+        df[f"{chain}_vregion_allele"] = alleles
+        df[f"{chain}_vregion_germline_aa"] = germs
+        df[f"{chain}_vregion_donor_aa"] = donors
+        df[f"{chain}_vregion_identity"] = idents
+        df[f"{chain}_vregion_vs_germline"] = diffs
     return df
 
 
