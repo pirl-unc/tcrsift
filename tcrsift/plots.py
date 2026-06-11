@@ -2626,7 +2626,7 @@ def _render_frequency_heatmap_page(
     hx = left + _FREQ_CBAR_W + gap
     if has_strip:
         strip_ax = _ax(hx, y0, strip_w, heat_h)
-        rgb = np.array([to_rgb(c) for c in strip_colors]).reshape(n_rows, 1, 3)
+        rgb = np.array([to_rgb(c) for c in strip_colors]).reshape((n_rows, 1, 3))
         strip_ax.imshow(rgb, aspect="auto", origin="upper")
         strip_ax.set_xticks([])
         strip_ax.set_yticks([])
