@@ -625,6 +625,12 @@ def cmd_assemble(args):
         or getattr(args, "leader_secondary", None),
         secondary_beta_leader=getattr(args, "secondary_beta_leader", None)
         or getattr(args, "leader_secondary", None),
+        codon_optimization=getattr(args, "codon_optimization", None) or "focal",
+        max_codon_repeats=(
+            1 if getattr(args, "max_codon_repeats", None) is None
+            else args.max_codon_repeats
+        ),
+        avoid_enzymes=tuple(getattr(args, "avoid_enzymes", None) or ()),
     )
 
     # Fail closed on unverified (canonical-fallback) constructs unless the
@@ -1661,6 +1667,9 @@ def cmd_run(args):
             force_beta_leader=getattr(config.assemble, "force_beta_leader", None),
             secondary_alpha_leader=getattr(config.assemble, "secondary_alpha_leader", None),
             secondary_beta_leader=getattr(config.assemble, "secondary_beta_leader", None),
+            codon_optimization=getattr(config.assemble, "codon_optimization", "focal"),
+            max_codon_repeats=getattr(config.assemble, "max_codon_repeats", 1),
+            avoid_enzymes=tuple(getattr(config.assemble, "avoid_enzymes", []) or []),
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -2381,6 +2390,9 @@ def cmd_report_selected(args):
             include_constant=asm.include_constant, constant_source=asm.constant_source,
             linker=asm.linker, contigs_dir=asm.contigs_dir,
             sample_name_from=asm.sample_name_from, cellranger_dir=asm.cellranger_dir,
+            codon_optimization=getattr(asm, "codon_optimization", "focal"),
+            max_codon_repeats=getattr(asm, "max_codon_repeats", 1),
+            avoid_enzymes=tuple(getattr(asm, "avoid_enzymes", []) or []),
         )
     # Per-donor contig overrides (#196). The config's contigs path is per-donor
     # but the config is typically shared, so without these the selected report
@@ -3495,6 +3507,23 @@ CONDITIONALLY REQUIRED:
                              choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
     asm_leaders.add_argument("--secondary-beta-leader", metavar="TARGET",
                              choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
+    asm_leaders.add_argument(
+        "--codon-optimization", choices=["focal", "full"], default=None, metavar="MODE",
+        help="How full_*_nt_optimized is generated: 'focal' (default) keeps the "
+        "donor's native leader+VDJ codons and makes only the minimal synonymous "
+        "swaps to clear constraints; 'full' recodes the whole ORF (#293).",
+    )
+    asm_leaders.add_argument(
+        "--max-codon-repeats", type=int, default=None, metavar="N",
+        help="Focal recode: longest allowed run of identical consecutive codons "
+        "(default 1 = no immediate repeat — breaks native poly-codon runs like a "
+        "triple-Gly poly-G). 0 disables.",
+    )
+    asm_leaders.add_argument(
+        "--avoid-enzymes", action="extend", nargs="+", default=None, metavar="ENZYME",
+        help="Focal recode: restriction enzyme name(s) (e.g. BsaI EcoRI) or raw "
+        "ACGT site(s) to synonymously recode out of the construct (default none).",
+    )
     asm_leaders.add_argument(
         "--leaders-from-contigs",
         action="store_true",

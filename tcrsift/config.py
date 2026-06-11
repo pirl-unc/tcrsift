@@ -241,6 +241,14 @@ class AssembleConfig:
     # chain, even for kept good calls. None = no secondary construct.
     secondary_alpha_leader: str | None = None
     secondary_beta_leader: str | None = None
+    # Codon optimization of full_*_nt_optimized (#293). "focal" (default) keeps
+    # the donor's native leader+VDJ codons and makes only the minimal synonymous
+    # swaps that clear a constraint; "full" recodes the whole ORF. Constraints:
+    # max_codon_repeats (default 1 = no immediate identical-codon repeat) and
+    # avoid_enzymes (restriction enzyme names / ACGT sites; default none).
+    codon_optimization: str = "focal"
+    max_codon_repeats: int = 1
+    avoid_enzymes: list[str] = field(default_factory=list)
     include_constant: bool = True
     constant_source: str = "ensembl"
     linker: str = "T2A"
@@ -451,6 +459,9 @@ class TCRsiftConfig:
             "force_beta_leader": ("assemble", "force_beta_leader"),
             "secondary_alpha_leader": ("assemble", "secondary_alpha_leader"),
             "secondary_beta_leader": ("assemble", "secondary_beta_leader"),
+            "codon_optimization": ("assemble", "codon_optimization"),
+            "max_codon_repeats": ("assemble", "max_codon_repeats"),
+            "avoid_enzymes": ("assemble", "avoid_enzymes"),
             "include_constant": ("assemble", "include_constant"),
             "constant_source": ("assemble", "constant_source"),
             "linker": ("assemble", "linker"),
