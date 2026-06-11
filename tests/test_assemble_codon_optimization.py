@@ -892,3 +892,61 @@ class TestRecodeCodons:
         nt = "GGGGGGGGG"
         rec, changed = recode_codons(nt, max_codon_repeats=0)
         assert rec == nt and changed == []
+
+
+class TestRecodeProvenanceAndConsistency:
+    """Review #294 fixes: leader recodes recorded; constant stays consistent."""
+
+    def _clone(self, leader_nt=None, leader_aa=None):
+        a = "CASS" + "WT" + "VLF"
+        b = "CASS" + "WT" + "VEF"
+        row = {
+            "CDR3ab": "c1", "CDR3_alpha": a, "CDR3_beta": b,
+            "VDJ_alpha_aa": a, "VDJ_beta_aa": b,
+            "VDJ_alpha_nt": back_translate(a), "VDJ_beta_nt": back_translate(b),
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1", "samples": "S1",
+        }
+        if leader_nt is not None:
+            for ch in ("alpha", "beta"):
+                row[f"{ch}_leader_aa"] = leader_aa
+                row[f"{ch}_leader_nt"] = leader_nt
+        return pd.DataFrame([row])
+
+    def test_leader_recodes_are_recorded(self):
+        # An adjacent identical-codon repeat IN THE LEADER must be recorded in
+        # {chain}_leader_recoded_positions, not silently dropped.
+        leader_aa = "M" + "L" * 5 + "A" * 13
+        leader_nt = back_translate("M") + "CTG" * 5 + back_translate("A" * 13)
+        out = assemble_full_sequences(
+            self._clone(leader_nt=leader_nt, leader_aa=leader_aa),
+            verbose=False, show_progress=False,
+        )
+        r = out.iloc[0]
+        assert r["alpha_leader_recoded_positions"]          # non-empty
+        assert ">" in r["alpha_leader_recoded_positions"]   # "pos:OLD>NEW" form
+
+    def test_optimized_constant_matches_standalone_column_both_modes(self):
+        # full_*_nt_optimized's C region must equal the standalone
+        # {chain}_constant_nt_optimized in BOTH focal and full modes.
+        for mode in ("focal", "full"):
+            out = assemble_full_sequences(
+                self._clone(), alpha_leader=None, beta_leader=None,
+                codon_optimization=mode, verbose=False, show_progress=False,
+            )
+            r = out.iloc[0]
+            for ch in ("alpha", "beta"):
+                co = r[f"{ch}_constant_nt_optimized"]
+                assert r[f"full_{ch}_nt_optimized"].endswith(co), f"{mode}/{ch}"
+
+    def test_recoded_position_columns_always_present(self):
+        # Schema stability: both columns exist even with no recodes.
+        out = assemble_full_sequences(
+            self._clone(), alpha_leader=None, beta_leader=None,
+            max_codon_repeats=0,  # disable → no recodes
+            verbose=False, show_progress=False,
+        )
+        for ch in ("alpha", "beta"):
+            assert f"{ch}_vdj_recoded_positions" in out.columns
+            assert f"{ch}_leader_recoded_positions" in out.columns
+            assert out[f"{ch}_vdj_recoded_positions"].iloc[0] == ""

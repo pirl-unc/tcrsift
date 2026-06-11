@@ -3343,8 +3343,9 @@ def _build_full_sequences(
     * ``full_{chain}_nt`` (legacy / blend) — leader + VDJ +
       donor bytes where they agree with canonical AA, ``_optimized``
       for the rest.
-    * ``{chain}_vdj_recoded_positions`` — which VDJ codons the focal recode
-      synonymously changed (``""`` when none / in full mode).
+    * ``{chain}_vdj_recoded_positions`` / ``{chain}_leader_recoded_positions`` —
+      which VDJ / leader codons the focal recode synonymously changed
+      (``""`` when none / in full mode).
     """
     recode = recode or CodonOptimization()
     sites = recode.restriction_sites()
@@ -3359,6 +3360,7 @@ def _build_full_sequences(
         opt_vdj_nt = ""
         include_leader = include_leader_map[chain]
         result[f"{chain}_vdj_recoded_positions"] = ""
+        result[f"{chain}_leader_recoded_positions"] = ""
 
         if include_leader and f"{chain}_leader_aa" in result:
             parts_aa.append(result[f"{chain}_leader_aa"])
@@ -3398,17 +3400,22 @@ def _build_full_sequences(
             else:
                 result[f"full_{chain}_nt_contig"] = None
             if parts_aa:
+                # The constant is the canonical-optimized bytes (+stops) in BOTH
+                # modes — the same const_opt the standalone {chain}_constant_nt_
+                # optimized column carries, so full_*_nt_optimized's C region
+                # never diverges from it (review #294). Only the donor leader+VDJ
+                # is (focal) recoded or (full) re-optimized.
                 const_opt = result.get(f"{chain}_constant_nt_optimized") or ""
                 const_aa = result.get(f"{chain}_constant_aa") or ""
-                stops = const_opt[3 * len(const_aa):] if const_opt and const_aa else ""
+                full_aa = result[f"full_{chain}_aa"]
+                donor_aa = full_aa[: len(full_aa) - len(const_aa)] if const_aa else full_aa
                 if recode.mode == "full":
-                    # whole-ORF recode (preferred codons + motif/GC avoidance)
-                    result[f"full_{chain}_nt_optimized"] = (
-                        optimize_codons(result[f"full_{chain}_aa"]) + stops
-                    )
+                    # full recode of the donor leader+VDJ (preferred codons +
+                    # motif/GC avoidance); constant unchanged.
+                    result[f"full_{chain}_nt_optimized"] = optimize_codons(donor_aa) + const_opt
                 else:
                     # focal (default): keep native leader+VDJ, swap only the
-                    # codons that violate a constraint; constant stays optimized.
+                    # codons that violate a constraint.
                     native_prefix = opt_leader_nt + opt_vdj_nt
                     recoded_prefix, changed = recode_codons(
                         native_prefix,
@@ -3416,10 +3423,18 @@ def _build_full_sequences(
                         restriction_sites=sites,
                     )
                     result[f"full_{chain}_nt_optimized"] = recoded_prefix + const_opt
+                    # Record recodes by region — leader vs VDJ — so NONE are
+                    # silently dropped (review #294). Offsets are construct-relative.
                     vdj_start = len(opt_leader_nt)
+
+                    def _fmt(o, _np=native_prefix, _rp=recoded_prefix):
+                        return f"{o}:{_np[o:o + 3]}>{_rp[o:o + 3]}"
+
+                    result[f"{chain}_leader_recoded_positions"] = ";".join(
+                        _fmt(o) for o in changed if o < vdj_start
+                    )
                     result[f"{chain}_vdj_recoded_positions"] = ";".join(
-                        f"{o}:{native_prefix[o:o + 3]}>{recoded_prefix[o:o + 3]}"
-                        for o in changed if o >= vdj_start
+                        _fmt(o) for o in changed if o >= vdj_start
                     )
 
 
