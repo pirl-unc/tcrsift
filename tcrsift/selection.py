@@ -63,6 +63,8 @@ __all__ = [
     "pivot_per_sample_tiers",
     "percentile_rank_score",
     "select_freq_prism_per_condition",
+    "summarize_selection_per_clone",
+    "SELECTION_SUMMARY_COLS",
     "prism_candidates",
     "freq_prism_grid",
     "PRISM_TERMS",
@@ -848,16 +850,19 @@ def select_freq_prism_per_condition(
     determinism. Pass ``[]`` for CDR3ab-only.
 
     Returns one row per (clone, condition) with ``selection_route`` (``freq`` /
-    ``prism`` / ``both``), ``rank_within_route``, ``prism_score``, the
-    condition, the frequency, and ``rescued`` (True when the clone cleared no
-    gate and was added back by coverage rescue — a low-confidence pick). A
-    clone selected in multiple conditions appears once per condition.
+    ``prism`` / ``both``), ``rank_within_route`` (the rank in whichever route
+    claimed the clone), the independent ``freq_rank`` / ``prism_rank`` (each
+    ``None`` when the clone didn't place in that route's top-K), ``prism_score``,
+    the condition, the frequency, and ``rescued`` (True when the clone cleared no
+    gate and was added back by coverage rescue — a low-confidence pick). A clone
+    selected in multiple conditions appears once per condition.
     """
     terms = score_terms or PRISM_TERMS
     if feat.empty or condition_col not in feat.columns:
         return pd.DataFrame(
             columns=[clone_col, condition_col, "selection_route",
-                     "rank_within_route", "prism_score", freq_col, "rescued"]
+                     "rank_within_route", "freq_rank", "prism_rank",
+                     "prism_score", freq_col, "rescued"]
         )
     # Guard: PRISM requested but its score columns are unusable. With
     # require_complete scoring, an all-NaN or missing term means NO clone is
@@ -950,6 +955,12 @@ def select_freq_prism_per_condition(
                 condition_col: cond,
                 "selection_route": route,
                 "rank_within_route": f_rank.get(c) if in_f else p_rank.get(c),
+                # Both per-route ranks, emitted independently of which route
+                # claimed the clone (#selection-cols): a 'both' clone has both, a
+                # 'freq'/'prism'-only clone has the one it placed in (None for the
+                # other). rank_within_route stays for back-compat.
+                "freq_rank": f_rank.get(c),
+                "prism_rank": p_rank.get(c),
                 "prism_score": float(row["prism_score"]) if pd.notna(row["prism_score"]) else None,
                 freq_col: float(row[freq_col]) if pd.notna(row[freq_col]) else 0.0,
                 # True when this clone cleared no condition gate and was added
@@ -959,8 +970,90 @@ def select_freq_prism_per_condition(
     return pd.DataFrame(
         out_rows,
         columns=[clone_col, condition_col, "selection_route",
-                 "rank_within_route", "prism_score", freq_col, "rescued"],
+                 "rank_within_route", "freq_rank", "prism_rank",
+                 "prism_score", freq_col, "rescued"],
     )
+
+
+# Per-clone selection-summary column names (one row per clone), in emit order.
+SELECTION_SUMMARY_COLS = [
+    "selection_conditions",          # bare conditions: AIM⁺;CTY⁻;IFN⁺CTY⁻
+    "selection_detail",              # AIM⁺=freq#6(0.90%);CTY⁻=prism#1(0.24%)
+    "frequency_per_condition",       # AIM⁺=0.90%;CTY⁻=0.34%
+    "prism_per_condition",           # AIM⁺=0.465;CTY⁻=0.241  (PRISM percentile)
+    "freq_rank_per_condition",       # AIM⁺=6;CTY⁻=7          (rank by frequency)
+    "prism_rank_per_condition",      # CTY⁻=1;IFN⁺CTY⁻=3      (rank by PRISM)
+]
+
+
+def summarize_selection_per_clone(
+    per_condition: pd.DataFrame,
+    *,
+    clone_col: str = "CDR3ab",
+    condition_col: str = "method",
+    freq_col: str = "frequency",
+    pretty=None,
+) -> pd.DataFrame:
+    """Fold per-(clone, condition) selection into one row per clone (#selection-cols).
+
+    Consumes :func:`select_freq_prism_per_condition`'s output and emits, per
+    clone, the :data:`SELECTION_SUMMARY_COLS` — the bare conditions, the full
+    ``route#rank(freq%)`` detail, and the per-condition frequency / PRISM score /
+    freq-rank / PRISM-rank as ``condition=value`` lists. All lists are joined with
+    ``;`` (no spaces — the tcrsift convention) and ordered as the input rows are
+    (the deterministic freq-then-PRISM emission order).
+
+    ``pretty`` maps a raw condition value to its display label; defaults to
+    :func:`tcrsift.format.pretty_method` (``AIMpos`` → ``AIM⁺``). The rank columns
+    only list conditions where the clone placed in that route's top-K (so a
+    PRISM-only pick has no entry in ``freq_rank_per_condition``); the PRISM-score
+    column skips conditions where the clone was unscorable (NaN).
+
+    Returns a frame keyed by ``clone_col`` with the summary columns. Empty input
+    yields an empty frame with those columns.
+    """
+    if pretty is None:
+        from .format import pretty_method
+        pretty = pretty_method
+    cols = [clone_col, *SELECTION_SUMMARY_COLS]
+    if per_condition.empty or clone_col not in per_condition.columns:
+        return pd.DataFrame(columns=cols)
+
+    def _pct(v):
+        return f"{float(v) * 100:.2f}%" if pd.notna(v) else None
+
+    rows: list[dict] = []
+    for clone, grp in per_condition.groupby(clone_col, sort=False, observed=True):
+        conds, detail, freqs, prisms, f_ranks, p_ranks = [], [], [], [], [], []
+        for _, r in grp.iterrows():
+            label = pretty(r[condition_col])
+            conds.append(label)
+            route = r.get("selection_route")
+            rwr = r.get("rank_within_route")
+            pct = _pct(r.get(freq_col))
+            if pd.notna(route) and pd.notna(rwr) and pct is not None:
+                detail.append(f"{label}={route}#{int(rwr)}({pct})")
+            if pct is not None:
+                freqs.append(f"{label}={pct}")
+            ps = r.get("prism_score")
+            if pd.notna(ps):
+                prisms.append(f"{label}={float(ps):.3f}")
+            fr = r.get("freq_rank")
+            if pd.notna(fr):
+                f_ranks.append(f"{label}={int(fr)}")
+            pr = r.get("prism_rank")
+            if pd.notna(pr):
+                p_ranks.append(f"{label}={int(pr)}")
+        rows.append({
+            clone_col: clone,
+            "selection_conditions": ";".join(conds),
+            "selection_detail": ";".join(detail),
+            "frequency_per_condition": ";".join(freqs),
+            "prism_per_condition": ";".join(prisms),
+            "freq_rank_per_condition": ";".join(f_ranks),
+            "prism_rank_per_condition": ";".join(p_ranks),
+        })
+    return pd.DataFrame(rows, columns=cols)
 
 
 def prism_candidates(

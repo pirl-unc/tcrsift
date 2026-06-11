@@ -413,3 +413,13 @@ class TestCoverAndCombine:
         # cohort title + donor title + [legend cover + construct] = 4 (cover kept)
         assert len(pages) == 4
         assert any("ribosomal" in (pg.extract_text() or "") for pg in pages)
+
+
+def test_selection_breakdown_cols_match_helper():
+    # The PDF skip-set must stay in sync with the helper's emitted columns:
+    # every per-condition breakdown column except the formatted `selection_detail`
+    # is CSV-only (#selection-cols). Guards against drift when a column is added.
+    from tcrsift.report import _SELECTION_BREAKDOWN_COLS
+    from tcrsift.selection import SELECTION_SUMMARY_COLS
+
+    assert _SELECTION_BREAKDOWN_COLS == set(SELECTION_SUMMARY_COLS) - {"selection_detail"}
