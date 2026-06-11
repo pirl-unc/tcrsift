@@ -2552,15 +2552,39 @@ def plot_vgene_usage_by_method(
 _FREQ_HEATMAP_PAGE_ROWS = 60  # clones per page — keeps every y-label legible
 
 
+# Heatmap geometry (inches). Cells are deliberately large and the CDR3αβ label
+# font small — the prior clustermap squeezed the cells to a sliver while the long
+# labels and dendrogram gutters dominated. Laying axes out in absolute inches
+# (not clustermap's auto-sizing) is what keeps the cells big and the condition
+# labels from overlapping regardless of clone count.
+_FREQ_CELL_W = 0.62   # per condition column
+_FREQ_CELL_H = 0.24   # per clone row
+_FREQ_LABEL_W = 3.0   # right-hand gutter for CDR3αβ labels
+_FREQ_STRIP_W = 0.16  # public-DB colour strip
+_FREQ_CBAR_W = 0.18
+_FREQ_YFONT = 5.5     # CDR3αβ labels — small, they are long
+_FREQ_XFONT = 9
+
+
 def _render_frequency_heatmap_page(
     data, output_path, *, title, annotations, page, n_pages, vmin, vmax
 ):
-    """Render one page of the selected-frequency heatmap. Always shows y-labels."""
+    """Render one page of the selected-frequency heatmap (#selected-freq).
+
+    Explicit inch-based axes layout: a left colour-bar (log scale), an optional
+    public-DB colour strip, the heatmap with big cells, and CDR3αβ labels in a
+    right-hand gutter. Frequencies are log-scaled (LogNorm) so the low-frequency
+    bulk is distinguishable instead of washing out under a few dominant clones.
+    """
     import matplotlib.patches as mpatches
+    import numpy as np
+    from matplotlib.colors import LogNorm, to_rgb
 
     n_rows, n_cols = data.shape
 
-    row_colors = None
+    # Public-DB strip: only when a real match is present on this page (an all-grey
+    # "none" strip is just noise).
+    strip_colors = None
     legend_handles = None
     if annotations is not None:
         cats = annotations.reindex(data.index)
@@ -2568,41 +2592,89 @@ def _render_frequency_heatmap_page(
         seen: dict[str, str] = {}
         for v, c in zip(cats.fillna("none").astype(str), colors):
             seen.setdefault(v, c)
-        # Only draw the strip + legend when a real public-DB match is present on
-        # this page; an all-"none" strip is uninformative grey noise.
         if set(seen) - {"none"}:
-            row_colors = pd.Series(colors, index=data.index, name="public-DB")
+            strip_colors = colors
             legend_handles = [
                 mpatches.Patch(color=c, label=k)
                 for k, c in seen.items() if k != "none"
             ]
+    has_strip = strip_colors is not None
 
-    grid = sns.clustermap(
-        data, row_cluster=False, col_cluster=False, row_colors=row_colors,
-        cmap="rocket_r", linewidths=0.4, linecolor="white",
-        vmin=vmin, vmax=vmax,  # shared scale so colors are comparable across pages
-        cbar_kws={"label": "within-condition frequency (%)"},
-        figsize=(max(6, 1.8 + 0.8 * n_cols), max(4, 0.3 * n_rows + 1.5)),
-        xticklabels=True, yticklabels=True,  # never hide — pagination keeps it legible
+    # Absolute inch layout → fractions, so cells stay a fixed size no matter how
+    # many clones/conditions a page has. A minimum figure height keeps sparse
+    # pages from collapsing into a tiny figure where the (absolute-point) title /
+    # colourbar fonts look comically large; the heatmap block is centred in the
+    # slack rather than stretching the cells.
+    heat_w = n_cols * _FREQ_CELL_W
+    heat_h = n_rows * _FREQ_CELL_H
+    left = 0.55          # left margin → colourbar
+    gap = 0.7            # colourbar → strip/heatmap (room for the rotated label)
+    strip_w = _FREQ_STRIP_W if has_strip else 0.0
+    strip_gap = 0.06 if has_strip else 0.0
+    bottom = 1.25        # x-tick labels + xlabel
+    top = 0.7            # title
+    fig_w = left + _FREQ_CBAR_W + gap + strip_w + strip_gap + heat_w + _FREQ_LABEL_W
+    fig_h = max(4.5, bottom + heat_h + top)
+    y0 = bottom + (fig_h - bottom - top - heat_h) / 2  # centre the block
+
+    fig = plt.figure(figsize=(fig_w, fig_h))
+
+    def _ax(x, y, w, h):
+        return fig.add_axes([x / fig_w, y / fig_h, w / fig_w, h / fig_h])
+
+    cbar_ax = _ax(left, y0, _FREQ_CBAR_W, heat_h)
+    hx = left + _FREQ_CBAR_W + gap
+    if has_strip:
+        strip_ax = _ax(hx, y0, strip_w, heat_h)
+        rgb = np.array([to_rgb(c) for c in strip_colors]).reshape(n_rows, 1, 3)
+        strip_ax.imshow(rgb, aspect="auto", origin="upper")
+        strip_ax.set_xticks([])
+        strip_ax.set_yticks([])
+        strip_ax.set_title("DB", fontsize=7, pad=3)
+        hx += strip_w + strip_gap
+    heat_ax = _ax(hx, y0, heat_w, heat_h)
+
+    # Log colour scale: mask zeros (absent in a condition) so they read as blank
+    # rather than being forced to the floor of the log scale.
+    masked = data.mask(data <= 0)
+    norm = LogNorm(vmin=vmin, vmax=vmax) if vmin and vmax and vmax > vmin else None
+    sns.heatmap(
+        masked, ax=heat_ax, cbar_ax=cbar_ax, cmap="rocket_r", norm=norm,
+        vmin=None if norm else vmin, vmax=None if norm else vmax,
+        linewidths=0.5, linecolor="white",
+        cbar_kws={"label": "within-condition frequency (%, log)"},
     )
-    grid.ax_heatmap.set_xlabel("condition")
-    grid.ax_heatmap.set_ylabel("selected clone (CDR3αβ)")
-    plt.setp(grid.ax_heatmap.get_xticklabels(), rotation=45, ha="right")
+    cbar_ax.yaxis.label.set_size(8)
+    cbar_ax.tick_params(labelsize=7)
+    # CDR3αβ labels in the right gutter, small font.
+    heat_ax.yaxis.set_label_position("right")
+    heat_ax.yaxis.tick_right()
+    heat_ax.set_yticks(np.arange(n_rows) + 0.5)
+    heat_ax.set_yticklabels(
+        list(data.index), rotation=0, fontsize=_FREQ_YFONT, fontfamily="monospace",
+    )
+    heat_ax.set_ylabel("selected clone (CDR3αβ)", fontsize=9)
+    heat_ax.set_xticks(np.arange(n_cols) + 0.5)
+    heat_ax.set_xticklabels(
+        list(data.columns), rotation=45, ha="right", fontsize=_FREQ_XFONT,
+    )
+    heat_ax.set_xlabel("condition", fontsize=10)
+    heat_ax.tick_params(length=2)
+
+    # Left-align the title at the heatmap's left edge (right of the colourbar) so
+    # it never collides with the public-DB legend in the top-left corner.
     suffix = f" (page {page}/{n_pages})" if n_pages > 1 else ""
-    grid.figure.suptitle(
-        f"{title}: selected clones × condition frequency (%){suffix}",
-        y=1.02, fontsize=13,
+    fig.text(
+        hx / fig_w, 1 - 0.35 / fig_h, ha="left", va="top", fontsize=11,
+        s=f"{title} — selected-clone frequency by condition{suffix}",
     )
     if legend_handles:
-        # Figure-level legend at the top-left (over the dendrogram gutter, which
-        # clustermap leaves empty here) — robust placement that bbox_inches=tight
-        # always includes, vs an axes legend colliding with the clone labels.
-        grid.figure.legend(
+        fig.legend(
             handles=legend_handles, title="public-DB match",
-            loc="upper left", bbox_to_anchor=(0.0, 1.0),
-            fontsize=8, title_fontsize=9, frameon=True, framealpha=0.9,
+            loc="upper left", bbox_to_anchor=(0.01, 1 - 0.04 / fig_h),
+            fontsize=7, title_fontsize=8, frameon=True, framealpha=0.9,
         )
-    save_figure(grid.figure, output_path, dpi=150)
+    save_figure(fig, output_path, dpi=200)
     return output_path
 
 
@@ -2633,13 +2705,17 @@ def plot_selected_frequency_heatmap(
     data = data.loc[order]
 
     n_rows = data.shape[0]
-    page_rows = _FREQ_HEATMAP_PAGE_ROWS
-    n_pages = max(1, (n_rows + page_rows - 1) // page_rows)
-    # Shared color scale across all pages so a cell's shade means the same
+    # Balance pages evenly (62 clones → 31 + 31, never 60 + 2) so no page is a
+    # tiny stub with comically large relative fonts.
+    n_pages = max(1, (n_rows + _FREQ_HEATMAP_PAGE_ROWS - 1) // _FREQ_HEATMAP_PAGE_ROWS)
+    page_rows = (n_rows + n_pages - 1) // n_pages
+    # Shared LOG color scale across all pages so a cell's shade means the same
     # frequency everywhere (per-page autoscaling would make page 2's max look as
-    # hot as page 1's, which is misleading).
-    vmin = 0.0
-    vmax = float(data.to_numpy().max()) or None
+    # hot as page 1's). vmin = smallest positive frequency (log can't take 0).
+    flat = data.to_numpy().ravel()
+    positive = flat[flat > 0]
+    vmin = float(positive.min()) if positive.size else None
+    vmax = float(positive.max()) if positive.size else None
 
     paths = []
     for page in range(1, n_pages + 1):
