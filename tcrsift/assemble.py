@@ -3608,68 +3608,96 @@ def apply_leader_policy(
     return df
 
 
+_GERMLINE_VARIANT_COLS = [
+    "region", "chain", "gene", "germline_allele", "donor_seq", "germline_seq",
+    "variant", "identity", "source", "shipped",
+]
+
+
 def collect_germline_variants(
     df: pd.DataFrame, *, chains=("alpha", "beta")
 ) -> pd.DataFrame:
-    """Collect donor-vs-germline leader divergences from assembled output (#270).
+    """Collect donor-vs-germline divergences from assembled output, by region (#270/#276).
 
-    Scans ``{chain}_leader_vs_germline`` for any non-``identical`` divergence
-    (substitution ``H18R;V27G`` / ``internal_deletion:Δn@p(...)`` / ``insertion``)
-    and returns one row per DISTINCT variant with the closest allele, the donor
-    and germline leader sequences, the identity, the leader provenance, and
-    ``n_constructs`` (how many constructs carry it). Sorted by ``n_constructs``
-    descending. Empty frame when there are no germline-comparable leaders.
+    Returns one row per DISTINCT variant with a ``region`` tag and ``n_constructs``
+    (how many constructs carry it), sorted by ``n_constructs`` descending. Empty
+    frame when nothing is germline-comparable. Regions:
 
-    A ``shipped`` column distinguishes (#276):
+    * ``leader`` — signal-peptide divergence from the IMGT V-leader. ``shipped``
+      is ``kept`` (the donor variant IS the shipped leader) or ``switched`` (the
+      policy replaced it with germline/curated; recovered from the
+      ``{chain}_preswitch_*`` stash so it isn't lost, #276).
+    * ``constant`` — donor contig constant diverging from the canonical TRAC/TRBC
+      (the #187 ``{chain}_allele_divergence_positions``). ``shipped`` is
+      ``canonical`` — tcrsift ships the canonical constant for TCR-T, so the donor
+      variant is *detected and flagged but not shipped*.
+    * ``framework`` — donor V-domain (FR1–FR3) diverging from the germline
+      V-REGION, when ``{chain}_vregion_vs_germline`` is present (needs the bundled
+      IMGT V-REGION reference). Forward-compatible: picked up automatically once
+      that column exists.
 
-    * ``kept`` — the donor variant IS the shipped leader (SP-sound + supported).
-    * ``switched`` — the policy replaced this donor variant with the germline
-      (or curated) leader; captured from the ``{chain}_preswitch_*`` stash so a
-      switched variant is still recorded rather than vanishing.
+    Columns: ``region, chain, gene, germline_allele, donor_seq, germline_seq,
+    variant, identity, source, shipped, n_constructs``.
     """
-    cols = [
-        "chain", "v_gene", "germline_allele", "donor_leader", "germline_leader",
-        "variant", "germline_identity", "leader_source", "shipped",
-    ]
-    rows = []
+    rows: list[dict] = []
+
+    def _add(region, ch, *, gene, allele, donor, germ, variant, identity, source, shipped):
+        rows.append({
+            "region": region, "chain": ch, "gene": gene, "germline_allele": allele,
+            "donor_seq": donor, "germline_seq": germ, "variant": variant,
+            "identity": identity, "source": source, "shipped": shipped,
+        })
+
     for ch in chains:
+        # --- leader (kept) ---
         vs = f"{ch}_leader_vs_germline"
         if vs in df.columns:
             d = df[df[vs].notna() & ~df[vs].astype(str).isin(["identical"])]
             for _, r in d.iterrows():
-                rows.append({
-                    "chain": ch,
-                    "v_gene": r.get(f"{ch}_v_gene"),
-                    "germline_allele": r.get(f"{ch}_germline_allele"),
-                    "donor_leader": r.get(f"{ch}_leader_aa"),
-                    "germline_leader": r.get(f"{ch}_germline_leader_aa"),
-                    "variant": r.get(vs),
-                    "germline_identity": r.get(f"{ch}_germline_identity"),
-                    "leader_source": r.get(f"{ch}_leader_source"),
-                    "shipped": "kept",
-                })
-        # Switched-away donor variants preserved by _stash_preswitch (#276).
+                _add("leader", ch, gene=r.get(f"{ch}_v_gene"),
+                     allele=r.get(f"{ch}_germline_allele"), donor=r.get(f"{ch}_leader_aa"),
+                     germ=r.get(f"{ch}_germline_leader_aa"), variant=r.get(vs),
+                     identity=r.get(f"{ch}_germline_identity"),
+                     source=r.get(f"{ch}_leader_source"), shipped="kept")
+        # --- leader (switched-away, preserved pre-switch, #276) ---
         pv = f"{ch}_preswitch_variant"
         if pv in df.columns:
             d = df[df[pv].notna() & ~df[pv].astype(str).isin(["identical"])]
             for _, r in d.iterrows():
-                rows.append({
-                    "chain": ch,
-                    "v_gene": r.get(f"{ch}_v_gene"),
-                    "germline_allele": r.get(f"{ch}_preswitch_germline_allele"),
-                    "donor_leader": r.get(f"{ch}_preswitch_donor_aa"),
-                    "germline_leader": r.get(f"{ch}_preswitch_germline_aa"),
-                    "variant": r.get(pv),
-                    "germline_identity": r.get(f"{ch}_preswitch_germline_identity"),
-                    "leader_source": r.get(f"{ch}_preswitch_leader_source"),
-                    "shipped": "switched",
-                })
+                _add("leader", ch, gene=r.get(f"{ch}_v_gene"),
+                     allele=r.get(f"{ch}_preswitch_germline_allele"),
+                     donor=r.get(f"{ch}_preswitch_donor_aa"),
+                     germ=r.get(f"{ch}_preswitch_germline_aa"), variant=r.get(pv),
+                     identity=r.get(f"{ch}_preswitch_germline_identity"),
+                     source=r.get(f"{ch}_preswitch_leader_source"), shipped="switched")
+        # --- constant (detected donor-vs-canonical divergence, #187; canonical shipped) ---
+        cpos = f"{ch}_allele_divergence_positions"
+        if cpos in df.columns:
+            d = df[df[cpos].notna() & ~df[cpos].astype(str).isin(["", "nan", "None"])]
+            for _, r in d.iterrows():
+                _add("constant", ch, gene=_resolve_c_gene(r, ch),
+                     allele=_resolve_c_gene(r, ch), donor=None, germ=None,
+                     variant=r.get(cpos), identity=None, source="contig",
+                     shipped="canonical")
+        # --- framework / V-REGION (forward-compatible; needs the V-REGION ref) ---
+        fvs = f"{ch}_vregion_vs_germline"
+        if fvs in df.columns:
+            d = df[df[fvs].notna() & ~df[fvs].astype(str).isin(["identical"])]
+            for _, r in d.iterrows():
+                _add("framework", ch, gene=r.get(f"{ch}_v_gene"),
+                     allele=r.get(f"{ch}_vregion_allele"),
+                     donor=r.get(f"{ch}_vregion_donor_aa"),
+                     germ=r.get(f"{ch}_vregion_germline_aa"), variant=r.get(fvs),
+                     identity=r.get(f"{ch}_vregion_identity"),
+                     source=r.get(f"{ch}_leader_source"), shipped="shipped")
+
     if not rows:
-        return pd.DataFrame(columns=[*cols, "n_constructs"])
+        return pd.DataFrame(columns=[*_GERMLINE_VARIANT_COLS, "n_constructs"])
     out = pd.DataFrame(rows)
     grouped = (
-        out.groupby(cols, dropna=False).size().reset_index(name="n_constructs")
-        .sort_values("n_constructs", ascending=False, ignore_index=True)
+        out.groupby(_GERMLINE_VARIANT_COLS, dropna=False).size()
+        .reset_index(name="n_constructs")
+        .sort_values(["region", "n_constructs"], ascending=[True, False], ignore_index=True)
     )
     return grouped
 

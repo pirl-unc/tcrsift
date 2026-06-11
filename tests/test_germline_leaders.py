@@ -535,7 +535,8 @@ class TestCollectGermlineVariants:
         out = collect_germline_variants(df)
         assert len(out) == 2  # two DISTINCT variants
         beta = out[out["variant"] == "H18R;V27G"].iloc[0]
-        assert beta["n_constructs"] == 2 and beta["v_gene"] == "TRBV13"
+        assert beta["n_constructs"] == 2 and beta["gene"] == "TRBV13"
+        assert (beta["region"] == "leader")
         assert (out["variant"] == "internal_deletion:Δ1@2(Z)").any()
         # 'identical' rows are excluded
         assert not (out["variant"] == "identical").any()
@@ -575,9 +576,10 @@ class TestCollectGermlineVariants:
         out = collect_germline_variants(df)
         assert len(out) == 1
         r = out.iloc[0]
+        assert r["region"] == "leader"
         assert r["shipped"] == "switched"
         assert r["variant"] == "internal_deletion:Δ3@9(LLL)"
-        assert r["donor_leader"] == "MLLLLLLLGPGSGL"
+        assert r["donor_seq"] == "MLLLLLLLGPGSGL"
 
     def test_switched_variant_survives_end_to_end(self):
         # Through apply_leader_policy: an inconsistent divergent leader is switched
@@ -593,6 +595,39 @@ class TestCollectGermlineVariants:
         switched = variants[variants["shipped"] == "switched"]
         assert len(switched) >= 1
         assert (switched["chain"] == "beta").all()
+
+    def test_constant_divergence_reported_as_canonical(self):
+        # #187 donor-vs-canonical constant divergence surfaces as region=constant,
+        # shipped=canonical (detected but not shipped — TCR-T ships canonical).
+        from tcrsift.assemble import collect_germline_variants
+        df = pd.DataFrame([
+            {"alpha_c_gene": "TRAC", "alpha_allele_divergence_positions": "3:N->K"},
+            {"alpha_c_gene": "TRAC", "alpha_allele_divergence_positions": "3:N->K"},
+            {"alpha_c_gene": "TRAC", "alpha_allele_divergence_positions": ""},  # clean
+        ])
+        out = collect_germline_variants(df)
+        const = out[out["region"] == "constant"]
+        assert len(const) == 1
+        r = const.iloc[0]
+        assert r["chain"] == "alpha" and r["gene"] == "TRAC"
+        assert r["variant"] == "3:N->K"
+        assert r["shipped"] == "canonical"
+        assert r["n_constructs"] == 2  # the two divergent clones
+
+    def test_framework_region_forward_compatible(self):
+        # region=framework is picked up automatically once the V-REGION columns
+        # exist (the comparison itself needs the bundled IMGT V-REGION reference).
+        from tcrsift.assemble import collect_germline_variants
+        df = pd.DataFrame([
+            {"beta_v_gene": "TRBV20-1", "beta_vregion_vs_germline": "S12N",
+             "beta_vregion_allele": "TRBV20-1*01", "beta_vregion_donor_aa": "...N...",
+             "beta_vregion_germline_aa": "...S...", "beta_vregion_identity": 0.99,
+             "beta_leader_source": "contig"},
+        ])
+        out = collect_germline_variants(df)
+        fw = out[out["region"] == "framework"]
+        assert len(fw) == 1
+        assert fw.iloc[0]["variant"] == "S12N" and fw.iloc[0]["shipped"] == "shipped"
 
 
 class TestLeaderSummaryPlot:

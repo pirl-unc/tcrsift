@@ -1676,7 +1676,7 @@ def cmd_run(args):
         _gv = collect_germline_variants(assembled)
         if not _gv.empty:
             _gv.to_csv(data_dir / "germline_variants.csv", index=False)
-            print(f"  Germline leader variants: {len(_gv)} distinct → germline_variants.csv")
+            print(f"  Germline variants: {len(_gv)} distinct (by region) → germline_variants.csv")
 
         # Fail closed on unverified (canonical-fallback) constructs unless
         # explicitly allowed (#243/#244). The CSV is written first so the

@@ -21,6 +21,7 @@ from tcrsift.qc_battery import (
     check_assembly,
     check_cdr3_ref,
     check_contigs,
+    check_germline,
     check_source,
     check_synth,
     contig_cdr3_map,
@@ -86,7 +87,9 @@ def test_all_checks_pass_on_consistent_construct():
     ct = d[["CDR3ab", "alpha_v_gene", "alpha_j_gene", "beta_v_gene",
             "beta_j_gene", "CDR3_alpha", "CDR3_beta", "cell_count"]]
     results = run_qc_battery(d, clonotypes=ct, contig_map=cmap)
-    assert [r.status for r in results] == ["PASS"] * 5
+    # A–E PASS; F (germline) SKIPs here — the synthetic frame has no germline
+    # comparison columns. SKIP does not fail the battery.
+    assert [r.status for r in results] == ["PASS"] * 5 + ["SKIP"]
 
 
 def test_assembly_fails_on_recomposition_break():
@@ -193,6 +196,34 @@ def test_synth_counts_dual_alpha_and_secondary_separately():
     assert "1 clones->4 constructs" in res.detail
     assert "2 primary + 2 secondary-SP" in res.detail
     assert "1 dual-α" in res.detail
+
+
+def test_germline_skip_without_columns():
+    # No germline-comparable columns → SKIP, not crash.
+    assert check_germline(_good_df()).status == "SKIP"
+
+
+def test_germline_surfaces_constant_and_leader():
+    # F folds leader + constant divergence into one informational PASS line.
+    d = pd.DataFrame([
+        {"alpha_c_gene": "TRAC", "alpha_allele_divergence_positions": "3:N->K"},
+        {"alpha_c_gene": "TRAC", "alpha_allele_divergence_positions": "3:N->K"},
+        {"beta_v_gene": "TRBV20-1", "beta_leader_aa": "MX", "beta_germline_leader_aa": "MY",
+         "beta_leader_vs_germline": "H18R", "beta_germline_identity": 0.95,
+         "beta_germline_allele": "TRBV20-1*01", "beta_leader_source": "contig"},
+    ])
+    res = check_germline(d)
+    assert res.status == "PASS"
+    assert "constant:" in res.detail and "leader:" in res.detail
+    assert "canonical" in res.detail  # constant shipped canonical
+
+
+def test_battery_includes_check_f():
+    d = _good_df()
+    results = run_qc_battery(d)
+    names = [r.name for r in results]
+    assert any(n.startswith("F.") for n in names)
+    assert len(results) == 6  # A–F
 
 
 def test_contigs_skip_without_map():
