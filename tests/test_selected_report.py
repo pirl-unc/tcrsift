@@ -423,3 +423,47 @@ def test_selection_breakdown_cols_match_helper():
     from tcrsift.selection import SELECTION_SUMMARY_COLS
 
     assert _SELECTION_BREAKDOWN_COLS == set(SELECTION_SUMMARY_COLS) - {"selection_detail"}
+
+
+def test_attach_public_db_annotation():
+    # Curated public-DB columns are surfaced on the selected clones; a dual-α
+    # variant inherits its parent's annotation; absent annotations → empty cols.
+    from tcrsift.report import _PUBLIC_DB_COLS, _attach_public_db_annotation
+    assembled = pd.DataFrame({"CDR3ab": ["c1", "c2", "c1_variant"], "x": [1, 2, 3]})
+    anno = pd.DataFrame({
+        "CDR3ab": ["c1", "c2"],
+        "is_viral": [True, False],
+        "db_category": ["viral", "tumor"],
+        "db_epitope": ["GLCTLVAML", "ELAGIGILTV"],
+        "db_species": ["EBV", "human"],
+        "db_database": ["IEDB", "CEDAR"],
+    })
+    variant_of = {"c1_variant": "c1"}  # variant inherits c1's annotation
+    out = _attach_public_db_annotation(assembled.copy(), anno, variant_of)
+    assert out.loc[out.CDR3ab == "c1", "db_epitope"].iloc[0] == "GLCTLVAML"
+    assert out.loc[out.CDR3ab == "c1_variant", "db_category"].iloc[0] == "viral"  # inherited
+    assert out.loc[out.CDR3ab == "c2", "is_viral"].iloc[0] == False  # noqa: E712
+    # schema stability: all curated cols present even with no annotations
+    out2 = _attach_public_db_annotation(assembled.copy(), None, {})
+    assert all(c in out2.columns for c in _PUBLIC_DB_COLS)
+
+
+def test_emit_frequency_by_condition(tmp_path):
+    from tcrsift.report import _emit_frequency_by_condition
+    df = pd.DataFrame({
+        "CDR3ab": ["c1", "c2"],
+        "frequency_per_condition": ["AIM⁺=0.90%;CTY⁻=0.34%", "AIM⁺=0.50%"],
+    })
+    pivot = _emit_frequency_by_condition(df, tmp_path, name="B1-2")
+    assert pivot is not None
+    assert set(pivot.columns) == {"AIM⁺", "CTY⁻"}
+    assert pivot.loc["c1", "AIM⁺"] == 0.90 and pivot.loc["c1", "CTY⁻"] == 0.34
+    assert pd.isna(pivot.loc["c2", "CTY⁻"])  # c2 not in CTY⁻
+    assert (tmp_path / "selected_frequency_by_condition.csv").exists()
+    assert (tmp_path / "selected_frequency_heatmap.png").exists()
+
+
+def test_emit_frequency_by_condition_skips_without_column(tmp_path):
+    from tcrsift.report import _emit_frequency_by_condition
+    df = pd.DataFrame({"CDR3ab": ["c1"]})  # no frequency_per_condition
+    assert _emit_frequency_by_condition(df, tmp_path) is None

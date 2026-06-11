@@ -560,6 +560,7 @@ def build_selected_report(
     title: str = "Selected clones",
     cover: bool = True,
     allow_canonical_fallback: bool = False,
+    annotations=None,
 ):
     """Assemble a selected clone set into a synthesis-ready deliverable (#188).
 
@@ -700,6 +701,23 @@ def build_selected_report(
         with seq_pdf.open("wb") as fh:
             writer.write(fh)
 
+    # Public-DB (IEDB/CEDAR/VDJdb) match annotation onto the selected clones
+    # (#selected-anno). report selected joins to the un-annotated clonotypes, so
+    # without this the deliverable can't show which TCR-T candidates match a
+    # viral / public epitope. Curated columns only; dual-α variants inherit their
+    # parent clone's annotation. No-op (columns still emitted, empty) when no
+    # annotations frame is supplied.
+    assembled = _attach_public_db_annotation(assembled, annotations, variant_of)
+
+    # Per-donor selected-clones × conditions frequency table + heatmap
+    # (#selected-freq): rows = selected CDR3ab, columns = conditions, cells =
+    # within-condition frequency. Parsed from the frequency_per_condition
+    # provenance; skipped (with a note) when that column is absent.
+    try:
+        _emit_frequency_by_condition(assembled, out_dir, name=title)
+    except Exception as e:  # best-effort; never fail the build on the side table
+        logger.warning("selected frequency table/heatmap failed: %s", e, exc_info=True)
+
     assembled.to_csv(out_dir / "selected_clones.csv", index=False)
 
     # Independent QC battery (#279). Re-derives every construct fact from first
@@ -723,6 +741,110 @@ def build_selected_report(
         len(assembled), n_variants, out_dir,
     )
     return assembled
+
+
+# Curated public-DB (IEDB/CEDAR/VDJdb) annotation columns surfaced on the
+# selected clones so the deliverable shows which TCR-T candidates match a viral /
+# public epitope (#selected-anno).
+_PUBLIC_DB_COLS = [
+    "is_viral", "db_match", "db_match_strength", "db_category",
+    "db_epitope", "db_protein_canonical", "db_species", "db_database",
+]
+
+
+def _attach_public_db_annotation(assembled, annotations, variant_of):
+    """Merge curated public-DB match columns onto the assembled selected clones.
+
+    Keyed by ``CDR3ab``; a dual-α variant (whose CDR3ab differs from its parent)
+    inherits the parent clone's annotation via ``variant_of``. Always leaves the
+    curated columns present (NaN when no annotations / no match), so the schema is
+    stable whether or not an annotations frame was supplied.
+    """
+    import pandas as pd
+
+    have = (
+        annotations is not None
+        and not getattr(annotations, "empty", True)
+        and "CDR3ab" in getattr(annotations, "columns", [])
+    )
+    if have:
+        present = [c for c in _PUBLIC_DB_COLS if c in annotations.columns]
+        anno = (
+            annotations[["CDR3ab", *present]]
+            .drop_duplicates("CDR3ab")
+            .set_index("CDR3ab")
+        )
+
+        def _key(cdr):
+            if cdr in anno.index:
+                return cdr
+            parent = variant_of.get(cdr)
+            return parent if parent in anno.index else None
+
+        keys = [_key(str(c)) for c in assembled["CDR3ab"].astype(str)]
+        for c in present:
+            col_map = anno[c].to_dict()
+            assembled[c] = [col_map.get(k, pd.NA) for k in keys]
+    for c in _PUBLIC_DB_COLS:
+        if c not in assembled.columns:
+            assembled[c] = pd.NA
+    return assembled
+
+
+def _parse_freq_per_condition(s: str) -> dict:
+    """``"AIM⁺=0.90%;CTY⁻=0.34%"`` → ``{"AIM⁺": 0.90, "CTY⁻": 0.34}`` (percent)."""
+    out: dict = {}
+    for item in str(s).split(";"):
+        item = item.strip()
+        if "=" not in item:
+            continue
+        cond, _, val = item.rpartition("=")
+        val = val.strip().rstrip("%")
+        try:
+            out[cond.strip()] = float(val)
+        except ValueError:
+            pass
+    return out
+
+
+def _emit_frequency_by_condition(assembled, out_dir, *, name: str = "selected"):
+    """Write the per-donor selected-clones × conditions frequency table + heatmap.
+
+    Rows = selected CDR3ab, columns = conditions, cells = within-condition
+    frequency (%), parsed from the ``frequency_per_condition`` provenance. Skips
+    (returns None) when that column is absent or carries no parseable values.
+    """
+    import pandas as pd
+
+    if "frequency_per_condition" not in assembled.columns:
+        return None
+    rows: dict = {}
+    for _, r in assembled.iterrows():
+        cdr = r.get("CDR3ab")
+        fpc = r.get("frequency_per_condition")
+        if isinstance(fpc, str) and fpc:
+            parsed = _parse_freq_per_condition(fpc)
+            if parsed:
+                rows[cdr] = parsed
+    if not rows:
+        return None
+    pivot = pd.DataFrame.from_dict(rows, orient="index").sort_index(axis=1)
+    pivot.index.name = "CDR3ab"
+    pivot.to_csv(out_dir / "selected_frequency_by_condition.csv")
+    logger.info(
+        "  Selected freq × condition: %d clones × %d conditions → "
+        "selected_frequency_by_condition.csv",
+        pivot.shape[0], pivot.shape[1],
+    )
+    try:
+        from .plots import plot_selected_frequency_heatmap
+
+        plot_selected_frequency_heatmap(
+            pivot, out_dir / "selected_frequency_heatmap.png", title=name
+        )
+    except Exception as e:  # plot is best-effort
+        logger.warning("selected frequency heatmap failed: %s", e, exc_info=True)
+    return pivot
 
 
 def _emit_qc_summary(

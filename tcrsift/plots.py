@@ -2549,6 +2549,36 @@ def plot_vgene_usage_by_method(
     return save_figure(fig, output_path)
 
 
+def plot_selected_frequency_heatmap(pivot, output_path, *, title: str = "selected"):
+    """Heatmap of the selected clones × conditions frequency table (#selected-freq).
+
+    ``pivot`` is rows = CDR3ab, columns = conditions, cells = within-condition
+    frequency (%). Returns the output path, or None on empty input.
+    """
+    output_path = Path(output_path)
+    if pivot is None or getattr(pivot, "empty", True):
+        return None
+    data = pivot.fillna(0.0)
+    n_rows, n_cols = data.shape
+    fig, ax = plt.subplots(
+        figsize=(max(5, 1.2 + 0.8 * n_cols), max(3.5, 0.3 * n_rows + 1)),
+    )
+    sns.heatmap(
+        data, ax=ax, cmap="rocket_r", linewidths=0.4, linecolor="white",
+        cbar_kws={"label": "within-condition frequency (%)"},
+        xticklabels=True, yticklabels=(n_rows <= 80),  # hide row labels when dense
+    )
+    ax.set_xlabel("condition")
+    ax.set_ylabel("selected clone (CDR3αβ)")
+    ax.set_title(f"{title}: selected clones × condition frequency (%)")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    # bbox_inches="tight" handles the (sometimes long CDR3) label margins;
+    # an explicit tight_layout() just warns when they don't fit.
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 def plot_leader_summary(
     df: pd.DataFrame,
     output_path: str | Path,

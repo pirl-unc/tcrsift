@@ -2382,6 +2382,16 @@ def cmd_report_selected(args):
     obs = ad.read_h5ad(args.h5ad).obs if args.h5ad else None
     print(f"Selecting {selected['CDR3ab'].nunique()} clones from {args.clonotypes}")
 
+    # Public-DB (IEDB/CEDAR/VDJdb) match annotation to surface on the deliverable
+    # (#selected-anno): an explicit --annotations file, else the clonotypes frame
+    # itself when it already carries the db_* columns (e.g. annotated.csv passed
+    # as --clonotypes). None → the columns are emitted empty.
+    annotations = None
+    if getattr(args, "annotations", None):
+        annotations = pd.read_csv(args.annotations)
+    elif "is_viral" in clonotypes.columns or "db_database" in clonotypes.columns:
+        annotations = clonotypes
+
     assemble_kwargs = {}
     if args.config:
         asm = TCRsiftConfig.from_yaml(args.config).assemble
@@ -2411,6 +2421,7 @@ def cmd_report_selected(args):
         assemble_kwargs=assemble_kwargs, provenance_cols=prov_cols,
         cover=not getattr(args, "no_cover", False),
         allow_canonical_fallback=getattr(args, "allow_canonical_fallback", False),
+        annotations=annotations,
     )
     print(f"Wrote selected-clones report to {args.output_dir}")
 
@@ -2833,6 +2844,12 @@ def create_parser():
     ps.add_argument(
         "--clonotypes", required=True,
         help="clonotypes.csv (all clones, for VDJ/genes — incl. rescued/low-tier picks)",
+    )
+    ps.add_argument(
+        "--annotations",
+        help="annotated.csv (public-DB IEDB/CEDAR/VDJdb matches) to surface "
+        "is_viral / db_category / db_epitope / db_species on selected_clones.csv. "
+        "Optional — auto-used if --clonotypes already carries the db_* columns.",
     )
     ps.add_argument(
         "--h5ad",
