@@ -45,13 +45,22 @@ class TestResolveDbSelection:
             "imgt_trav_vregion", "imgt_trbv_vregion"
         ]
 
-    def test_downloadable_only_drops_manual_in_group(self):
-        # CEDAR has no download_url → dropped from a group expansion...
+    def test_annotation_group_includes_cedar_now_downloadable(self):
+        # CEDAR auto-downloads now, so the annotation group keeps it.
+        sel = resolve_db_selection(None, ["annotation"], downloadable_only=True)
+        assert "cedar" in sel and "vdjdb" in sel
+
+    def test_downloadable_only_drops_manual_in_group(self, monkeypatch):
+        # Mechanism check: a manual-only DB (no download_url) is dropped from a
+        # group/default expansion under downloadable_only...
+        import dataclasses
+
+        from tcrsift import datacache as dc
+        manual = dataclasses.replace(DATABASES["cedar"], download_url=None)
+        monkeypatch.setitem(dc.DATABASES, "cedar", manual)
         sel = resolve_db_selection(None, ["annotation"], downloadable_only=True)
         assert "cedar" not in sel and "vdjdb" in sel
-
-    def test_explicit_db_keeps_manual(self):
-        # ...but an explicit --db cedar is kept (so its manual note surfaces).
+        # ...but an explicit --db <name> is kept so its manual note still surfaces.
         assert resolve_db_selection(["cedar"], None, downloadable_only=True) == ["cedar"]
 
     def test_db_and_group_union_dedup(self):
@@ -331,7 +340,14 @@ class TestDownloadVDJdb:
 
 
 class TestDownloadErrors:
-    def test_cedar_has_no_download(self, tmp_path):
+    def test_manual_only_db_has_no_download(self, tmp_path, monkeypatch):
+        # A DB without a download_url raises with the manual instruction. (CEDAR
+        # is now auto-downloadable, so synthesize a manual spec to exercise it.)
+        import dataclasses
+
+        from tcrsift import datacache as dc
+        manual = dataclasses.replace(DATABASES["cedar"], download_url=None)
+        monkeypatch.setitem(dc.DATABASES, "cedar", manual)
         with pytest.raises(DownloadError, match="no automated download"):
             download_database("cedar", data_dir=tmp_path)
 

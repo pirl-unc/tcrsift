@@ -744,11 +744,29 @@ class TestLoadCedar:
         return cedar_path
 
     def test_load_cedar(self, mock_cedar_file):
-        """Load CEDAR file."""
+        """Load CEDAR from the legacy manual web-export TSV."""
         result = load_cedar(mock_cedar_file)
 
         assert len(result) == 1
         assert "cdr3_beta" in result.columns
+        assert result["database"].iloc[0] == "CEDAR"
+
+    def test_load_cedar_bulk_v3_csv(self, temp_dir):
+        """The bulk receptor export (IEDB v3 two-row-header CSV) is parsed via
+        the shared IEDB v3 loader and tagged CEDAR."""
+        p = temp_dir / "tcr_full_v3.csv"
+        p.write_text(
+            "Receptor,Receptor,Chain 1,Chain 2,Epitope,Epitope,Epitope\n"
+            "Type,CEDAR Receptor ID,CDR3 Curated,CDR3 Curated,Name,"
+            "Source Molecule,Source Organism\n"
+            "alphabeta,R1,CAVSDGGSQGNLIF,CASSLGQAYEQYF,NLVPMVATV,pp65,"
+            "Human betaherpesvirus 5\n"
+        )
+        result = load_cedar(p)
+        assert len(result) == 1
+        assert result["cdr3_alpha"].iloc[0] == "CAVSDGGSQGNLIF"
+        assert result["cdr3_beta"].iloc[0] == "CASSLGQAYEQYF"
+        assert result["epitope"].iloc[0] == "NLVPMVATV"
         assert result["database"].iloc[0] == "CEDAR"
 
 

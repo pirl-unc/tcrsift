@@ -868,11 +868,19 @@ def cmd_data_list(args):
     print("-" * 80)
     print(f"{'total':<10} {'':<8} {_format_size(total):>10}")
 
+    from .datacache import DATABASES
+
     missing = [e for e in entries if not e.present]
-    if missing:
+    auto = [e for e in missing if DATABASES[e.name].download_url is not None]
+    manual = [e for e in missing if DATABASES[e.name].download_url is None]
+    if auto:
         print()
-        print("Missing databases — download manually and place under the cache:")
-        for e in missing:
+        names = " ".join(e.name for e in auto)
+        print(f"Missing — fetch with: tcrsift data download --db {names}")
+    if manual:
+        print()
+        print("Missing (manual only) — download and place under the cache:")
+        for e in manual:
             print(f"  {e.name}: {e.source} → {e.path}")
 
 
