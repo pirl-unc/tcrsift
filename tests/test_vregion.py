@@ -111,6 +111,22 @@ def test_annotate_adds_columns_with_reference(synthetic_reference):
     assert out["beta_vregion_donor_aa"].iloc[1] == fr
 
 
+def test_truncated_allele_does_not_hijack_tiebreak(monkeypatch):
+    # #vregion-allele: a short partial allele must NOT win identity=1.0 over its
+    # overlap and silently drop a real SNP. Identity is normalized by the donor
+    # framework length, so the full-length allele wins and the SNP surfaces.
+    full = _GERM                       # 40 aa full allele
+    trunc = _GERM[:20]                 # a truncated partial of the same gene
+    ref = {"TRBV20-1": [("01", "F", full), ("04", "F", trunc)]}
+    monkeypatch.setattr(vr, "_REFERENCE", ref)
+    # donor framework = full allele with a single SNP at position 30 (past trunc)
+    fr = _GERM[:29] + ("N" if _GERM[29] != "N" else "A") + _GERM[30:]
+    allele, _g, identity, diff = vr.germline_compare_vregion(fr + "CF", "CF", "TRBV20-1")
+    assert allele == "01"             # full-length allele wins, not the partial
+    assert diff != "identical"        # the real SNP is surfaced, not dropped
+    assert identity < 1.0
+
+
 def test_annotate_then_collect_framework_rows(synthetic_reference):
     from tcrsift.assemble import collect_germline_variants
     fr = _GERM[:2] + "N" + _GERM[3:]
