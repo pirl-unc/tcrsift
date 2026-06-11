@@ -137,7 +137,85 @@ DATABASES: dict[str, DatabaseSpec] = {
         # populate this DB manually.
         download_url=None,
     ),
+    # IMGT/GENE-DB V-REGION germline reference (one HTML per locus). Backs the
+    # framework (FR1–FR3) germline comparison in tcrsift.vregion — large and
+    # rarely-changing, so cached rather than vendored. The raw GENElect HTML is
+    # stored as-is; tcrsift.vregion parses the <pre> FASTA and translates it.
+    "imgt_trav_vregion": DatabaseSpec(
+        name="imgt_trav_vregion",
+        filename="TRAV_V-REGION.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAV, IMGTlabel=V-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAV"
+            "&species=Homo+sapiens&IMGTlabel=V-REGION"
+        ),
+        archive_format="raw",
+    ),
+    "imgt_trbv_vregion": DatabaseSpec(
+        name="imgt_trbv_vregion",
+        filename="TRBV_V-REGION.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBV, IMGTlabel=V-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBV"
+            "&species=Homo+sapiens&IMGTlabel=V-REGION"
+        ),
+        archive_format="raw",
+    ),
 }
+
+
+# Logical groupings for bulk `data download` / `data clear` by workflow, so a
+# user can grab everything one pipeline needs without naming each DB.
+#   germline    → the IMGT V-REGION framework reference (assembly germline QC)
+#   annotation  → the epitope-annotation databases (the `annotate` command)
+#   all         → every registered database
+GROUPS: dict[str, list[str]] = {
+    "germline": ["imgt_trav_vregion", "imgt_trbv_vregion"],
+    "annotation": ["vdjdb", "iedb", "iedb_epitope", "cedar"],
+    "all": list(DATABASES),
+}
+
+
+def resolve_db_selection(
+    dbs: list[str] | None,
+    groups: list[str] | None,
+    *,
+    downloadable_only: bool = False,
+) -> list[str]:
+    """Expand ``--db`` names + ``--group`` aliases into a de-duplicated db list.
+
+    When both are empty the selection defaults to every database (the historical
+    no-argument behaviour). With ``downloadable_only=True`` (the download path),
+    databases without an automated endpoint (e.g. CEDAR) are dropped from a
+    *group/default* expansion — a user asking for a whole category shouldn't fail
+    on its manual-only member — while an explicit ``--db cedar`` is left in so the
+    command still reports the manual instruction. Raises ``ValueError`` on an
+    unknown name or group.
+    """
+    selected: list[str] = []
+    explicit: set[str] = set()
+    if dbs:
+        for name in dbs:
+            if name not in DATABASES:
+                raise ValueError(f"Unknown database {name!r}; known: {sorted(DATABASES)}")
+            selected.append(name)
+            explicit.add(name)
+    if groups:
+        for g in groups:
+            if g not in GROUPS:
+                raise ValueError(f"Unknown group {g!r}; known: {sorted(GROUPS)}")
+            selected.extend(GROUPS[g])
+    if not dbs and not groups:
+        selected = list(DATABASES)
+    # de-dupe, preserve order
+    seen: set[str] = set()
+    ordered = [n for n in selected if not (n in seen or seen.add(n))]
+    if downloadable_only:
+        ordered = [
+            n for n in ordered
+            if DATABASES[n].download_url is not None or n in explicit
+        ]
+    return ordered
 
 
 def resolve_cache_dir(data_dir: str | Path | None = None) -> Path:
