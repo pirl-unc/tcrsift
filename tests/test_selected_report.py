@@ -423,3 +423,80 @@ def test_selection_breakdown_cols_match_helper():
     from tcrsift.selection import SELECTION_SUMMARY_COLS
 
     assert _SELECTION_BREAKDOWN_COLS == set(SELECTION_SUMMARY_COLS) - {"selection_detail"}
+
+
+def test_attach_public_db_annotation():
+    # Curated public-DB columns are surfaced on the selected clones; a dual-α
+    # variant inherits its parent's annotation; absent annotations → empty cols.
+    from tcrsift.report import _PUBLIC_DB_COLS, _attach_public_db_annotation
+    assembled = pd.DataFrame({"CDR3ab": ["c1", "c2", "c1_variant"], "x": [1, 2, 3]})
+    anno = pd.DataFrame({
+        "CDR3ab": ["c1", "c2"],
+        "is_viral": [True, False],
+        "db_category": ["viral", "tumor"],
+        "db_epitope": ["GLCTLVAML", "ELAGIGILTV"],
+        "db_species": ["EBV", "human"],
+        "db_database": ["IEDB", "CEDAR"],
+    })
+    variant_of = {"c1_variant": "c1"}  # variant inherits c1's annotation
+    out = _attach_public_db_annotation(assembled.copy(), anno, variant_of)
+    assert out.loc[out.CDR3ab == "c1", "db_epitope"].iloc[0] == "GLCTLVAML"
+    assert out.loc[out.CDR3ab == "c1_variant", "db_category"].iloc[0] == "viral"  # inherited
+    assert out.loc[out.CDR3ab == "c2", "is_viral"].iloc[0] == False  # noqa: E712
+    # schema stability: all curated cols present even with no annotations
+    out2 = _attach_public_db_annotation(assembled.copy(), None, {})
+    assert all(c in out2.columns for c in _PUBLIC_DB_COLS)
+
+
+def test_emit_frequency_by_condition(tmp_path):
+    from tcrsift.report import _emit_frequency_by_condition
+    df = pd.DataFrame({
+        "CDR3ab": ["c1", "c2"],
+        "frequency_per_condition": ["AIM⁺=0.90%;CTY⁻=0.34%", "AIM⁺=0.50%"],
+    })
+    pivot = _emit_frequency_by_condition(df, tmp_path, name="B1-2")
+    assert pivot is not None
+    assert set(pivot.columns) == {"AIM⁺", "CTY⁻"}
+    assert pivot.loc["c1", "AIM⁺"] == 0.90 and pivot.loc["c1", "CTY⁻"] == 0.34
+    assert pd.isna(pivot.loc["c2", "CTY⁻"])  # c2 not in CTY⁻
+    assert (tmp_path / "selected_frequency_by_condition.csv").exists()
+    assert (tmp_path / "selected_frequency_heatmap.png").exists()
+
+
+def test_emit_frequency_by_condition_skips_without_column(tmp_path):
+    from tcrsift.report import _emit_frequency_by_condition
+    df = pd.DataFrame({"CDR3ab": ["c1"]})  # no frequency_per_condition
+    assert _emit_frequency_by_condition(df, tmp_path) is None
+
+
+def test_frequency_heatmap_carries_annotation_strip(tmp_path):
+    # #selected-anno: the freq heatmap's public-DB annotation strip is driven by
+    # db_category on the assembled frame.
+    from tcrsift.plots import plot_selected_frequency_heatmap
+    pivot = pd.DataFrame(
+        {"AIM⁺": [0.9, 0.5, 0.1], "CTY⁻": [0.3, None, 0.2]},
+        index=pd.Index(["c1", "c2", "c3"], name="CDR3ab"),
+    )
+    anno = pd.Series({"c1": "viral", "c2": None, "c3": "tumor_self"})
+    out = plot_selected_frequency_heatmap(
+        pivot, tmp_path / "hm.png", title="B1-2", annotations=anno,
+    )
+    assert out is not None and out.exists() and out.stat().st_size > 0
+    # also renders fine with no annotations
+    assert plot_selected_frequency_heatmap(pivot, tmp_path / "hm2.png").exists()
+
+
+def test_frequency_heatmap_paginates_many_clones(tmp_path):
+    # #selected-freq: many clones must stay identifiable — paginate at ~60/page
+    # rather than hiding y-labels, so every clone's row label is legible.
+    from tcrsift.plots import plot_selected_frequency_heatmap
+    n = 130  # -> 3 pages at 60/page
+    pivot = pd.DataFrame(
+        {"AIM⁺": [float(i) for i in range(n)], "CTY⁻": [0.1 * i for i in range(n)]},
+        index=pd.Index([f"c{i}" for i in range(n)], name="CDR3ab"),
+    )
+    out = plot_selected_frequency_heatmap(pivot, tmp_path / "hm.png", title="big")
+    assert out == tmp_path / "hm.png" and out.exists()
+    assert (tmp_path / "hm_p2.png").exists()
+    assert (tmp_path / "hm_p3.png").exists()
+    assert not (tmp_path / "hm_p4.png").exists()
