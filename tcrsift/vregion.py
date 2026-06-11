@@ -170,7 +170,14 @@ def germline_compare_vregion(
         if n == 0:
             continue
         matches = sum(a == b for a, b in zip(fr[:n], g[:n]))
-        identity = matches / n
+        # Normalize by the donor framework length, NOT the overlap: the IMGT
+        # V-REGION dump carries many partial alleles that are short prefixes of
+        # the full one. Over the overlap a truncated allele scores a spurious
+        # 1.0 and hijacks the tie-break — reporting the wrong allele AND silently
+        # dropping any donor SNP past its truncated end. Penalizing the residues
+        # it doesn't cover lets the full-length allele win and the real
+        # divergence surface (#vregion-allele).
+        identity = matches / len(fr)
         key = (identity, allele)
         if best is None or key > (best[0], best[1]):
             best = (identity, allele, g[: len(fr)])

@@ -627,7 +627,8 @@ class TestCollectGermlineVariants:
         out = collect_germline_variants(df)
         fw = out[out["region"] == "framework"]
         assert len(fw) == 1
-        assert fw.iloc[0]["variant"] == "S12N" and fw.iloc[0]["shipped"] == "shipped"
+        assert fw.iloc[0]["variant"] == "S12N" and fw.iloc[0]["shipped"] == "donor"
+        assert fw.iloc[0]["source"] == "contig"
 
 
 class TestLeaderSummaryPlot:

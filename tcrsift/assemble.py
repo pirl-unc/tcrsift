@@ -3744,7 +3744,10 @@ def collect_germline_variants(
                      donor=r.get(f"{ch}_vregion_donor_aa"),
                      germ=r.get(f"{ch}_vregion_germline_aa"), variant=r.get(fvs),
                      identity=r.get(f"{ch}_vregion_identity"),
-                     source=r.get(f"{ch}_leader_source"), shipped="shipped")
+                     # framework comes from the donor contig V(D)J and is shipped
+                     # as-is (no keep/switch policy): source is the contig, and
+                     # shipped="donor" (the donor variant IS in the construct).
+                     source="contig", shipped="donor")
 
     if not rows:
         return pd.DataFrame(columns=[*_GERMLINE_VARIANT_COLS, "n_constructs"])
