@@ -156,6 +156,23 @@ def test_synth_fails_on_duplicate_single_chain():
     assert check_synth(d).status == "FAIL"
 
 
+def test_synth_unpaired_nan_single_chain_not_a_duplicate():
+    # #check-synth-dupsc: a clone missing a chain has single_chain_aa = NA. Those
+    # must NOT be counted as duplicate single-chains (nunique() drops NA, so the
+    # naive n - nunique() would flag every unpaired clone). Two distinct paired
+    # constructs + one NaN → no dup, PASS.
+    a = _good_row()
+    a["single_chain_aa"] = "MAAA" + "G" * 20
+    b = _good_row()
+    b["single_chain_aa"] = "MBBB" + "G" * 20
+    c = _good_row()
+    c["single_chain_aa"] = pd.NA  # unpaired clone
+    d = pd.DataFrame([a, b, c])
+    res = check_synth(d)
+    assert "dup_single_chain=0" in res.detail
+    assert res.status == "PASS"
+
+
 def test_synth_no_crash_without_synth_columns():
     # #283: a frame lacking the synth_* columns must not crash check D.
     d = _good_df().drop(columns=["synth_duplicate_construct", "synth_alpha_beta_swap"])
