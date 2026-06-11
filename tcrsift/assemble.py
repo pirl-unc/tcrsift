@@ -4841,11 +4841,14 @@ def add_synthesis_qc(
     # (Internal stops are separately caught load-bearing by validate_sequences'
     # NT→AA roundtrip, so they don't need a column here.)
     out["synth_terminal_stops"] = seqs.map(lambda s: ";".join(_terminal_stops(s)))
-    out["synth_dual_stop_ok"] = out["synth_terminal_stops"].map(
-        lambda s: len(set(s.split(";"))) >= 2 if s else False
-    )
     lo, hi = gc_range
     nonempty = seqs.str.len() > 0
+    # Empty / missing constructs (e.g. an unpaired clone with no single_chain)
+    # have nothing to terminate-check — treat them as OK, matching synth_gc_ok's
+    # `| (~nonempty)` below so they don't inflate the "not ending in 2 stops" count.
+    out["synth_dual_stop_ok"] = out["synth_terminal_stops"].map(
+        lambda s: len(set(s.split(";"))) >= 2 if s else False
+    ) | (~nonempty)
     out["synth_gc_ok"] = ((out["synth_gc_fraction"] >= lo) & (out["synth_gc_fraction"] <= hi)) | (~nonempty)
     if "single_chain_aa" in out.columns:
         sc = out["single_chain_aa"].fillna("").astype(str)
