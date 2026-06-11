@@ -1237,6 +1237,124 @@ def optimize_codons(
     return "".join(nt_parts)
 
 
+def _revcomp(s: str) -> str:
+    return s.upper().translate(str.maketrans("ACGT", "TGCA"))[::-1]
+
+
+def recode_codons(
+    nt: str,
+    *,
+    max_codon_repeats: int = 1,
+    restriction_sites: tuple[str, ...] = (),
+) -> tuple[str, list[int]]:
+    """Minimal synonymous recoding of an in-frame coding NT (#293).
+
+    Keeps every original codon EXCEPT those that violate a constraint, swapping
+    only those to the synonymous alternative that clears the violation without
+    creating a new one. The protein is preserved exactly. Returns
+    ``(recoded_nt, changed_offsets)`` where ``changed_offsets`` lists the 0-based
+    NT offsets of the codons that were swapped (empty when nothing changed).
+
+    Constraints:
+
+    * ``max_codon_repeats`` — the longest allowed run of **identical consecutive
+      codons**. Default ``1`` = no codon may immediately repeat, so a native
+      triple ``GGG·GGG·GGG`` becomes e.g. ``GGG·GGA·GGG``, breaking the poly-G
+      that trips the homopolymer hazard. ``0``/``None`` disables it.
+    * ``restriction_sites`` — recognition sequences to keep out, checked on
+      **both strands** (the reverse complement is added automatically). Empty =
+      avoid none.
+
+    This is the surgical counterpart to :func:`optimize_codons` (a full recode):
+    it preserves the donor's native codons everywhere except the few that violate,
+    so the synthesis-ready construct is hazard-clean while staying byte-faithful
+    to the contig wherever it can.
+    """
+    if not isinstance(nt, str) or len(nt) < 3:
+        return nt or "", []
+    forbidden: set[str] = set()
+    for site in restriction_sites:
+        s = str(site).upper()
+        if s:
+            forbidden.add(s)
+            forbidden.add(_revcomp(s))
+    max_site = max((len(s) for s in forbidden), default=0)
+    repeat_active = bool(max_codon_repeats and max_codon_repeats >= 1)
+
+    out: list[str] = []
+    changed: list[int] = []
+    buf = ""  # trailing recoded nt, ≥ max_site-1 for boundary motif checks
+    n_codons = len(nt) // 3
+    for i in range(n_codons):
+        orig = nt[3 * i: 3 * i + 3]
+        aa = CODON_TABLE.get(orig)
+        alts = HUMAN_CODON_ALTERNATIVES.get(aa, [])
+        # Prefer the original codon; only consider synonyms if it violates.
+        candidates = [orig, *[c for c in alts if c != orig]]
+        chosen = None
+        for cand in candidates:
+            if repeat_active:
+                run = 1
+                for pc in reversed(out):
+                    if pc == cand:
+                        run += 1
+                    else:
+                        break
+                if run > max_codon_repeats:
+                    continue
+            if forbidden:
+                # A site is "created" by cand if it appears once cand is added
+                # but wasn't already present in the trailing buffer.
+                combined = buf + cand
+                if any(f in combined and f not in buf for f in forbidden):
+                    continue
+            chosen = cand
+            break
+        if chosen is None:
+            chosen = orig  # no constraint-satisfying synonym; keep original
+        if chosen != orig:
+            changed.append(3 * i)
+        out.append(chosen)
+        if max_site > 1:
+            buf = (buf + chosen)[-(max_site - 1):]
+    return "".join(out), changed
+
+
+@dataclass(frozen=True)
+class CodonOptimization:
+    """How ``full_{chain}_nt_optimized`` is generated (#293).
+
+    * ``mode="focal"`` (default) — keep the donor's native leader+VDJ codons and
+      make only the minimal synonymous swaps that clear a constraint
+      (:func:`recode_codons`); the canonical constant stays codon-optimized.
+      Conservative: the synthesis CDS stays byte-faithful to the contig wherever
+      it can.
+    * ``mode="full"`` — recode the entire ORF with :func:`optimize_codons`
+      (preferred codons + motif/GC avoidance), like the constant region.
+
+    Constraints (focal mode): ``max_codon_repeats`` (default 1 = no immediate
+    identical-codon repeat) and ``avoid_enzymes`` (restriction enzyme names from
+    :data:`SYNTHESIS_RESTRICTION_SITES`, or raw ACGT recognition sites; default
+    none).
+    """
+
+    mode: str = "focal"
+    max_codon_repeats: int = 1
+    avoid_enzymes: tuple[str, ...] = ()
+
+    def restriction_sites(self) -> tuple[str, ...]:
+        sites: list[str] = []
+        for e in self.avoid_enzymes:
+            s = str(e).strip()
+            if s in SYNTHESIS_RESTRICTION_SITES:
+                sites.append(SYNTHESIS_RESTRICTION_SITES[s])
+            elif s and set(s.upper()) <= set("ACGT"):
+                sites.append(s.upper())  # raw recognition site
+            elif s:
+                logger.warning("avoid_enzymes: %r is not a known enzyme or ACGT site; skipping", s)
+        return tuple(sites)
+
+
 def stop_codons_nt(stop_codons: tuple[str, ...]) -> str:
     """Validate and concatenate stop codons for appending to a CDS.
 
@@ -1676,6 +1794,9 @@ def assemble_full_sequences(
     force_beta_leader: str | None = None,
     secondary_alpha_leader: str | None = None,
     secondary_beta_leader: str | None = None,
+    codon_optimization: str = "focal",
+    max_codon_repeats: int = 1,
+    avoid_enzymes: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     """
     Assemble full-length TCR sequences.
@@ -1807,6 +1928,11 @@ def assemble_full_sequences(
     # Validate stop_codons early so users get the error before any
     # heavy lifting. Empty tuple is allowed (caller wants no stops).
     stops_nt = stop_codons_nt(stop_codons)
+    recode = CodonOptimization(
+        mode=codon_optimization,
+        max_codon_repeats=max_codon_repeats,
+        avoid_enzymes=tuple(avoid_enzymes or ()),
+    )
 
     valid_constant_sources = ["canonical", "ensembl", "from-data"]
     if constant_source not in valid_constant_sources:
@@ -1969,6 +2095,7 @@ def assemble_full_sequences(
             constant_source,
             allele_overrides=allele_overrides,
             stops_nt=stops_nt,
+            recode=recode,
         )
         assembly_results.append(result)
 
@@ -2191,6 +2318,7 @@ def _assemble_clone(
     constant_source: str,
     allele_overrides: dict[str, str] | None = None,
     stops_nt: str = "TAATGA",
+    recode: CodonOptimization | None = None,
 ) -> dict:
     """Assemble full sequence for a single clone."""
     result = {}
@@ -2266,7 +2394,9 @@ def _assemble_clone(
     include_beta_leader = leader_config.get("beta") is not None
 
     # Build full sequences
-    _build_full_sequences(result, include_alpha_leader, include_beta_leader, include_constant)
+    _build_full_sequences(
+        result, include_alpha_leader, include_beta_leader, include_constant, recode=recode,
+    )
 
     return result
 
@@ -3190,6 +3320,7 @@ def _build_full_sequences(
     include_alpha_leader: bool,
     include_beta_leader: bool,
     include_constant: bool,
+    recode: CodonOptimization | None = None,
 ):
     """Build complete sequences from parts.
 
@@ -3202,21 +3333,34 @@ def _build_full_sequences(
       not the full ~430-530 nt). ``None`` when no contig is
       available — there is no canonical fallback for this view by
       design.
-    * ``full_{chain}_nt_optimized`` — leader + VDJ + codon-optimized
-      canonical constant (+stops). Always present when constants
-      are included. Synthesis-ready.
+    * ``full_{chain}_nt_optimized`` — the synthesis-ready CDS. By default
+      (``recode.mode == "focal"``) the leader+VDJ keep the donor's native
+      codons with only minimal synonymous swaps to clear constraint violations
+      (#293, :func:`recode_codons`), plus the codon-optimized canonical constant
+      (+stops); ``mode == "full"`` recodes the whole ORF with
+      :func:`optimize_codons`. The donor's untouched bytes stay in
+      ``full_{chain}_nt_contig`` / ``full_{chain}_nt``.
     * ``full_{chain}_nt`` (legacy / blend) — leader + VDJ +
       donor bytes where they agree with canonical AA, ``_optimized``
       for the rest.
+    * ``{chain}_vdj_recoded_positions`` / ``{chain}_leader_recoded_positions`` —
+      which VDJ / leader codons the focal recode synonymously changed
+      (``""`` when none / in full mode).
     """
+    recode = recode or CodonOptimization()
+    sites = recode.restriction_sites()
     include_leader_map = {"alpha": include_alpha_leader, "beta": include_beta_leader}
 
     for chain in ["alpha", "beta"]:
         parts_aa: list[str] = []
         parts_nt_blend: list[str] = []
         parts_nt_contig: list[str | None] = []
-        parts_nt_optimized: list[str] = []
+        # native leader+VDJ bytes that feed the focal-recode prefix
+        opt_leader_nt = ""
+        opt_vdj_nt = ""
         include_leader = include_leader_map[chain]
+        result[f"{chain}_vdj_recoded_positions"] = ""
+        result[f"{chain}_leader_recoded_positions"] = ""
 
         if include_leader and f"{chain}_leader_aa" in result:
             parts_aa.append(result[f"{chain}_leader_aa"])
@@ -3224,7 +3368,7 @@ def _build_full_sequences(
             leader_nt = result[f"{chain}_leader_nt"]
             parts_nt_blend.append(leader_nt)
             parts_nt_contig.append(leader_nt)
-            parts_nt_optimized.append(leader_nt)
+            opt_leader_nt = leader_nt or ""
 
         if f"vdj_{chain}_aa" in result:
             parts_aa.append(result[f"vdj_{chain}_aa"])
@@ -3232,7 +3376,7 @@ def _build_full_sequences(
             vdj_nt = result[f"vdj_{chain}_nt"]
             parts_nt_blend.append(vdj_nt)
             parts_nt_contig.append(vdj_nt)
-            parts_nt_optimized.append(vdj_nt)
+            opt_vdj_nt = vdj_nt or ""
 
         if include_constant and f"{chain}_constant_aa" in result:
             parts_aa.append(result[f"{chain}_constant_aa"])
@@ -3242,9 +3386,6 @@ def _build_full_sequences(
             # propagate the None to full_{chain}_nt_contig so callers
             # can filter on it without parsing.
             parts_nt_contig.append(result.get(f"{chain}_constant_nt_contig"))
-            parts_nt_optimized.append(
-                result.get(f"{chain}_constant_nt_optimized", "")
-            )
 
         if parts_aa:
             result[f"full_{chain}_aa"] = "".join(parts_aa)
@@ -3258,8 +3399,43 @@ def _build_full_sequences(
                 result[f"full_{chain}_nt_contig"] = "".join(parts_nt_contig)
             else:
                 result[f"full_{chain}_nt_contig"] = None
-            if parts_nt_optimized:
-                result[f"full_{chain}_nt_optimized"] = "".join(parts_nt_optimized)
+            if parts_aa:
+                # The constant is the canonical-optimized bytes (+stops) in BOTH
+                # modes — the same const_opt the standalone {chain}_constant_nt_
+                # optimized column carries, so full_*_nt_optimized's C region
+                # never diverges from it (review #294). Only the donor leader+VDJ
+                # is (focal) recoded or (full) re-optimized.
+                const_opt = result.get(f"{chain}_constant_nt_optimized") or ""
+                const_aa = result.get(f"{chain}_constant_aa") or ""
+                full_aa = result[f"full_{chain}_aa"]
+                donor_aa = full_aa[: len(full_aa) - len(const_aa)] if const_aa else full_aa
+                if recode.mode == "full":
+                    # full recode of the donor leader+VDJ (preferred codons +
+                    # motif/GC avoidance); constant unchanged.
+                    result[f"full_{chain}_nt_optimized"] = optimize_codons(donor_aa) + const_opt
+                else:
+                    # focal (default): keep native leader+VDJ, swap only the
+                    # codons that violate a constraint.
+                    native_prefix = opt_leader_nt + opt_vdj_nt
+                    recoded_prefix, changed = recode_codons(
+                        native_prefix,
+                        max_codon_repeats=recode.max_codon_repeats,
+                        restriction_sites=sites,
+                    )
+                    result[f"full_{chain}_nt_optimized"] = recoded_prefix + const_opt
+                    # Record recodes by region — leader vs VDJ — so NONE are
+                    # silently dropped (review #294). Offsets are construct-relative.
+                    vdj_start = len(opt_leader_nt)
+
+                    def _fmt(o, _np=native_prefix, _rp=recoded_prefix):
+                        return f"{o}:{_np[o:o + 3]}>{_rp[o:o + 3]}"
+
+                    result[f"{chain}_leader_recoded_positions"] = ";".join(
+                        _fmt(o) for o in changed if o < vdj_start
+                    )
+                    result[f"{chain}_vdj_recoded_positions"] = ";".join(
+                        _fmt(o) for o in changed if o >= vdj_start
+                    )
 
 
 def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
@@ -4633,6 +4809,16 @@ def _restriction_hits(nt: str) -> str:
     )
 
 
+def _terminal_stops(nt: str) -> list[str]:
+    """Trailing stop codons of a CDS, outermost-last (e.g. ``["TAA", "TGA"]``)."""
+    s = str(nt).upper()
+    out: list[str] = []
+    while len(s) >= 3 and s[-3:] in ("TAA", "TAG", "TGA"):
+        out.insert(0, s[-3:])
+        s = s[:-3]
+    return out
+
+
 def add_synthesis_qc(
     df: pd.DataFrame,
     *,
@@ -4663,8 +4849,21 @@ def add_synthesis_qc(
     out["synth_max_homopolymer"] = seqs.map(_max_homopolymer)
     out["synth_max_repeat"] = seqs.map(_longest_repeat)
     out["synth_restriction_sites"] = seqs.map(_restriction_hits)
+    # Terminal stops (#293 follow-up): make the construct's terminator visible
+    # in the deliverable QC. The synthesis best-practice is two NON-REDUNDANT
+    # stops (TAA;TGA — different release factors). `synth_terminal_stops` lists
+    # them; `synth_dual_stop_ok` is True only with ≥2 distinct terminal stops.
+    # (Internal stops are separately caught load-bearing by validate_sequences'
+    # NT→AA roundtrip, so they don't need a column here.)
+    out["synth_terminal_stops"] = seqs.map(lambda s: ";".join(_terminal_stops(s)))
     lo, hi = gc_range
     nonempty = seqs.str.len() > 0
+    # Empty / missing constructs (e.g. an unpaired clone with no single_chain)
+    # have nothing to terminate-check — treat them as OK, matching synth_gc_ok's
+    # `| (~nonempty)` below so they don't inflate the "not ending in 2 stops" count.
+    out["synth_dual_stop_ok"] = out["synth_terminal_stops"].map(
+        lambda s: len(set(s.split(";"))) >= 2 if s else False
+    ) | (~nonempty)
     out["synth_gc_ok"] = ((out["synth_gc_fraction"] >= lo) & (out["synth_gc_fraction"] <= hi)) | (~nonempty)
     if "single_chain_aa" in out.columns:
         sc = out["single_chain_aa"].fillna("").astype(str)
@@ -4690,6 +4889,10 @@ def synthesis_qc_report(df: pd.DataFrame) -> str:
         lines.append(f"  repeat >=20 nt: {int((df['synth_max_repeat'] >= 20).sum())}/{n}")
     if "synth_restriction_sites" in df.columns:
         lines.append(f"  restriction site(s): {int((df['synth_restriction_sites'] != '').sum())}/{n}")
+    if "synth_dual_stop_ok" in df.columns:
+        lines.append(
+            f"  NOT ending in 2 distinct stops: {int((~df['synth_dual_stop_ok']).sum())}/{n}"
+        )
     if "synth_duplicate_construct" in df.columns:
         lines.append(f"  duplicate construct: {int(df['synth_duplicate_construct'].sum())}/{n}")
     if "synth_alpha_beta_swap" in df.columns:

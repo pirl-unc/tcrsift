@@ -640,25 +640,81 @@ class TestSingleChainTriad:
                 f"strip_stop_codon_dna missed a trailing stop"
             )
 
-    def test_optimized_differs_from_blend_at_constant_only(self):
-        # The blend uses canonical-optimized C-region bytes when no
-        # contig is provided, so the blend equals the optimized
-        # variant in this no-contig fixture. Verify the equivalence
-        # — it locks in the back-compat invariant.
+    def test_optimized_encodes_same_protein_as_blend(self):
+        # Since #293, the default focal recode breaks constraint violations in
+        # the VDJ (this fixture's 60-codon poly-A/poly-G runs are massive
+        # tandem/codon repeats), so the optimized NT no longer byte-matches the
+        # blend. The invariant that survives — and the one that matters — is that
+        # both encode the IDENTICAL protein (the recode is synonymous).
+        from tcrsift.assemble import CODON_TABLE
+
+        def tr(nt):
+            return "".join(
+                CODON_TABLE.get(nt[i:i + 3], "X") for i in range(0, len(nt) - len(nt) % 3, 3)
+            )
+
         out = assemble_full_sequences(
             self._df_no_contig(),
             alpha_leader=None, beta_leader=None,
             linker="T2A",
             verbose=False, show_progress=False,
         )
-        assert (
-            out["single_chain_nt"].iloc[0]
-            == out["single_chain_nt_optimized"].iloc[0]
-        ), (
-            "Without contigs the blend and the optimized cassette "
-            "must be byte-identical — both use the optimized canonical "
-            "for the C region."
+        blend = out["single_chain_nt"].iloc[0]
+        opt = out["single_chain_nt_optimized"].iloc[0]
+        assert tr(blend).rstrip("*") == tr(opt).rstrip("*")  # same protein
+
+    def test_full_mode_recodes_whole_orf(self):
+        # mode="full" recodes the entire ORF; still encodes the same protein.
+        from tcrsift.assemble import CODON_TABLE
+
+        def tr(nt):
+            return "".join(
+                CODON_TABLE.get(nt[i:i + 3], "X") for i in range(0, len(nt) - len(nt) % 3, 3)
+            )
+
+        out = assemble_full_sequences(
+            self._df_no_contig(),
+            alpha_leader=None, beta_leader=None, linker="T2A",
+            codon_optimization="full",
+            verbose=False, show_progress=False,
         )
+        focal = assemble_full_sequences(
+            self._df_no_contig(),
+            alpha_leader=None, beta_leader=None, linker="T2A",
+            verbose=False, show_progress=False,
+        )
+        full_opt = out["single_chain_nt_optimized"].iloc[0]
+        # encodes the same protein as the assembled single_chain_aa
+        assert tr(full_opt).rstrip("*") == str(out["single_chain_aa"].iloc[0]).rstrip("*")
+        # full and focal generally differ (full uses preferred codons throughout)
+        assert full_opt != focal["single_chain_nt_optimized"].iloc[0]
+
+    def test_optimized_ends_in_two_distinct_stops_no_internal(self):
+        # Stops where expected: every optimized construct must end in TWO
+        # DIFFERENT stop codons and carry NO internal stop — in both modes, and
+        # for the per-chain and single-chain columns (the recode must not disturb
+        # this). The roundtrip QC strips trailing stops, so assert it explicitly.
+        _STOP = {"TAA", "TAG", "TGA"}
+
+        def codons(nt):
+            return [nt[i:i + 3] for i in range(0, len(nt) - len(nt) % 3, 3)]
+
+        for mode in ("focal", "full"):
+            out = assemble_full_sequences(
+                self._df_no_contig(),
+                alpha_leader=None, beta_leader=None, linker="T2A",
+                codon_optimization=mode,
+                verbose=False, show_progress=False,
+            )
+            for col in (
+                "full_alpha_nt_optimized",
+                "full_beta_nt_optimized",
+                "single_chain_nt_optimized",
+            ):
+                cs = codons(out[col].iloc[0])
+                assert cs[-1] in _STOP and cs[-2] in _STOP, f"{mode}/{col}: no dual stop"
+                assert cs[-1] != cs[-2], f"{mode}/{col}: terminal stops not distinct {cs[-2:]}"
+                assert not any(c in _STOP for c in cs[:-2]), f"{mode}/{col}: internal stop"
 
     def test_assembly_emitted_when_both_chains_have_contig(self, tmp_path):
         # When BOTH α and β have contig bytes past the J→C junction,
@@ -793,3 +849,104 @@ class TestBackTranslateUnchanged:
                 f"{aa}: preferred {preferred} != first alternative "
                 f"{alternatives[0]}"
             )
+
+
+class TestRecodeCodons:
+    """Minimal synonymous recoding (#293)."""
+
+    @staticmethod
+    def _tr(nt):
+        from tcrsift.assemble import CODON_TABLE
+        return "".join(
+            CODON_TABLE.get(nt[i:i + 3], "X") for i in range(0, len(nt) - len(nt) % 3, 3)
+        )
+
+    def test_breaks_codon_repeat_preserves_protein(self):
+        from tcrsift.assemble import recode_codons
+        nt = "GGGGGGGGG"  # GGG·GGG·GGG (poly-Gly)
+        rec, changed = recode_codons(nt, max_codon_repeats=1)
+        assert self._tr(rec) == "GGG"          # protein unchanged (3 Gly)
+        assert len(changed) >= 1               # at least one swap
+        # no two ADJACENT identical codons
+        cs = [rec[i:i + 3] for i in range(0, len(rec), 3)]
+        assert all(cs[i] != cs[i - 1] for i in range(1, len(cs)))
+
+    def test_noop_when_already_clean(self):
+        from tcrsift.assemble import recode_codons
+        nt = "GGCGGAGGT"  # three distinct Gly codons — no repeat
+        rec, changed = recode_codons(nt, max_codon_repeats=1)
+        assert rec == nt and changed == []
+
+    def test_removes_restriction_site_both_strands(self):
+        from tcrsift.assemble import recode_codons
+        # GAATTC = EcoRI in-frame as GAA TTC (EF)
+        rec, changed = recode_codons("GAATTCAAA", max_codon_repeats=0, restriction_sites=("GAATTC",))
+        assert "GAATTC" not in rec and self._tr(rec) == "EFK"
+        assert changed  # something was swapped
+        # reverse-strand occurrence is also avoided (revcomp added internally)
+        rc_site = "GAATTC".translate(str.maketrans("ACGT", "TGCA"))[::-1]
+        assert rc_site not in rec
+
+    def test_disabled_repeats_makes_no_change(self):
+        from tcrsift.assemble import recode_codons
+        nt = "GGGGGGGGG"
+        rec, changed = recode_codons(nt, max_codon_repeats=0)
+        assert rec == nt and changed == []
+
+
+class TestRecodeProvenanceAndConsistency:
+    """Review #294 fixes: leader recodes recorded; constant stays consistent."""
+
+    def _clone(self, leader_nt=None, leader_aa=None):
+        a = "CASS" + "WT" + "VLF"
+        b = "CASS" + "WT" + "VEF"
+        row = {
+            "CDR3ab": "c1", "CDR3_alpha": a, "CDR3_beta": b,
+            "VDJ_alpha_aa": a, "VDJ_beta_aa": b,
+            "VDJ_alpha_nt": back_translate(a), "VDJ_beta_nt": back_translate(b),
+            "alpha_c_gene": "TRAC", "beta_c_gene": "TRBC1",
+            "beta_j_gene": "TRBJ1-1", "samples": "S1",
+        }
+        if leader_nt is not None:
+            for ch in ("alpha", "beta"):
+                row[f"{ch}_leader_aa"] = leader_aa
+                row[f"{ch}_leader_nt"] = leader_nt
+        return pd.DataFrame([row])
+
+    def test_leader_recodes_are_recorded(self):
+        # An adjacent identical-codon repeat IN THE LEADER must be recorded in
+        # {chain}_leader_recoded_positions, not silently dropped.
+        leader_aa = "M" + "L" * 5 + "A" * 13
+        leader_nt = back_translate("M") + "CTG" * 5 + back_translate("A" * 13)
+        out = assemble_full_sequences(
+            self._clone(leader_nt=leader_nt, leader_aa=leader_aa),
+            verbose=False, show_progress=False,
+        )
+        r = out.iloc[0]
+        assert r["alpha_leader_recoded_positions"]          # non-empty
+        assert ">" in r["alpha_leader_recoded_positions"]   # "pos:OLD>NEW" form
+
+    def test_optimized_constant_matches_standalone_column_both_modes(self):
+        # full_*_nt_optimized's C region must equal the standalone
+        # {chain}_constant_nt_optimized in BOTH focal and full modes.
+        for mode in ("focal", "full"):
+            out = assemble_full_sequences(
+                self._clone(), alpha_leader=None, beta_leader=None,
+                codon_optimization=mode, verbose=False, show_progress=False,
+            )
+            r = out.iloc[0]
+            for ch in ("alpha", "beta"):
+                co = r[f"{ch}_constant_nt_optimized"]
+                assert r[f"full_{ch}_nt_optimized"].endswith(co), f"{mode}/{ch}"
+
+    def test_recoded_position_columns_always_present(self):
+        # Schema stability: both columns exist even with no recodes.
+        out = assemble_full_sequences(
+            self._clone(), alpha_leader=None, beta_leader=None,
+            max_codon_repeats=0,  # disable → no recodes
+            verbose=False, show_progress=False,
+        )
+        for ch in ("alpha", "beta"):
+            assert f"{ch}_vdj_recoded_positions" in out.columns
+            assert f"{ch}_leader_recoded_positions" in out.columns
+            assert out[f"{ch}_vdj_recoded_positions"].iloc[0] == ""

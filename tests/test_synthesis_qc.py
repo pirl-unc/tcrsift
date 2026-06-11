@@ -167,3 +167,19 @@ class TestRestrictionSiteCatalog:
     def test_known_enzymes_present(self):
         assert SYNTHESIS_RESTRICTION_SITES["EcoRI"] == "GAATTC"
         assert "BsaI" in SYNTHESIS_RESTRICTION_SITES
+
+
+def test_dual_stop_ok_true_for_empty_construct():
+    # #294 review: an empty/missing construct (unpaired clone) has nothing to
+    # terminate-check and must NOT count as a dual-stop failure (matches
+    # synth_gc_ok's empty handling).
+    import pandas as pd
+
+    from tcrsift.assemble import add_synthesis_qc
+    df = pd.DataFrame([
+        {"single_chain_nt_optimized": "ATGGGGTAATGA", "single_chain_aa": "MG"},
+        {"single_chain_nt_optimized": pd.NA, "single_chain_aa": pd.NA},
+    ])
+    out = add_synthesis_qc(df)
+    assert out["synth_dual_stop_ok"].iloc[0]   # real construct: TAA;TGA → ok
+    assert out["synth_dual_stop_ok"].iloc[1]   # empty: ok (nothing to check)
