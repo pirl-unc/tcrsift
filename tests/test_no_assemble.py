@@ -26,11 +26,7 @@ class TestAssembleEnabledConfig:
         cfg = TCRsiftConfig.from_yaml(str(p))
         assert cfg.assemble.enabled is False
 
-    def test_gate_logic(self):
-        # The run gate: assemble only when enabled AND not --no-assemble.
-        def gate(enabled, no_assemble):
-            return enabled and not no_assemble
-        assert gate(True, False) is True       # default: assemble
-        assert gate(True, True) is False        # --no-assemble overrides
-        assert gate(False, False) is False      # config disabled
-        assert gate(False, True) is False
+    # (removed test_gate_logic: it asserted on a closure re-defining the
+    # `enabled and not no_assemble` gate *inside the test*, so it exercised no
+    # product code. The real gate lives in cli.cmd_run; its two inputs are
+    # already covered by test_flag_parses / test_default_enabled / the yaml test.)
