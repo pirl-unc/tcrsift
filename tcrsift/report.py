@@ -769,11 +769,19 @@ def _attach_public_db_annotation(assembled, annotations, variant_of):
     )
     if have:
         present = [c for c in _PUBLIC_DB_COLS if c in annotations.columns]
-        anno = (
-            annotations[["CDR3ab", *present]]
-            .drop_duplicates("CDR3ab")
-            .set_index("CDR3ab")
-        )
+        src = annotations[["CDR3ab", *present]].copy()
+        # Deterministic dedup: real annotation frames are one row per CDR3ab, but
+        # if a multi-match file is passed, keep the STRONGEST match per clone
+        # (a real db_match / viral flag over an empty row) reproducibly, rather
+        # than an arbitrary first row.
+        sort_keys = [c for c in ("db_match", "is_viral") if c in present]
+        if sort_keys:
+            src = src.sort_values(
+                ["CDR3ab", *sort_keys],
+                ascending=[True, *([False] * len(sort_keys))],
+                na_position="last", kind="stable",
+            )
+        anno = src.drop_duplicates("CDR3ab", keep="first").set_index("CDR3ab")
 
         def _key(cdr):
             if cdr in anno.index:

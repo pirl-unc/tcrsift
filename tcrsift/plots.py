@@ -2549,52 +2549,49 @@ def plot_vgene_usage_by_method(
     return save_figure(fig, output_path)
 
 
-def plot_selected_frequency_heatmap(
-    pivot, output_path, *, title: str = "selected", annotations=None
-):
-    """Heatmap of the selected clones × conditions frequency table (#selected-freq).
+_FREQ_HEATMAP_PAGE_ROWS = 60  # clones per page — keeps every y-label legible
 
-    ``pivot`` is rows = CDR3ab, columns = conditions, cells = within-condition
-    frequency (%). When ``annotations`` (a Series keyed by CDR3ab giving each
-    clone's public-DB ``db_category`` — ``viral`` / ``tumor_self`` / … / NaN) is
-    supplied, a left-side colour strip + legend marks the public-DB match so
-    viral/public TCR-T candidates are readable straight off the heatmap. Returns
-    the output path, or None on empty input.
-    """
+
+def _render_frequency_heatmap_page(
+    data, output_path, *, title, annotations, page, n_pages, vmin, vmax
+):
+    """Render one page of the selected-frequency heatmap. Always shows y-labels."""
     import matplotlib.patches as mpatches
 
-    output_path = Path(output_path)
-    if pivot is None or getattr(pivot, "empty", True):
-        return None
-    data = pivot.fillna(0.0)
     n_rows, n_cols = data.shape
-    yticklabels = n_rows <= 80  # hide dense row labels
 
     row_colors = None
     legend_handles = None
     if annotations is not None:
         cats = annotations.reindex(data.index)
         colors = _category_color_strip(cats)
-        row_colors = pd.Series(colors, index=data.index, name="public-DB")
         seen: dict[str, str] = {}
         for v, c in zip(cats.fillna("none").astype(str), colors):
             seen.setdefault(v, c)
-        # Only worth a legend when something actually matched.
+        # Only draw the strip + legend when a real public-DB match is present on
+        # this page; an all-"none" strip is uninformative grey noise.
         if set(seen) - {"none"}:
-            legend_handles = [mpatches.Patch(color=c, label=k) for k, c in seen.items()]
+            row_colors = pd.Series(colors, index=data.index, name="public-DB")
+            legend_handles = [
+                mpatches.Patch(color=c, label=k)
+                for k, c in seen.items() if k != "none"
+            ]
 
     grid = sns.clustermap(
         data, row_cluster=False, col_cluster=False, row_colors=row_colors,
         cmap="rocket_r", linewidths=0.4, linecolor="white",
+        vmin=vmin, vmax=vmax,  # shared scale so colors are comparable across pages
         cbar_kws={"label": "within-condition frequency (%)"},
         figsize=(max(6, 1.8 + 0.8 * n_cols), max(4, 0.3 * n_rows + 1.5)),
-        xticklabels=True, yticklabels=yticklabels,
+        xticklabels=True, yticklabels=True,  # never hide — pagination keeps it legible
     )
     grid.ax_heatmap.set_xlabel("condition")
     grid.ax_heatmap.set_ylabel("selected clone (CDR3αβ)")
     plt.setp(grid.ax_heatmap.get_xticklabels(), rotation=45, ha="right")
+    suffix = f" (page {page}/{n_pages})" if n_pages > 1 else ""
     grid.figure.suptitle(
-        f"{title}: selected clones × condition frequency (%)", y=1.02, fontsize=13,
+        f"{title}: selected clones × condition frequency (%){suffix}",
+        y=1.02, fontsize=13,
     )
     if legend_handles:
         # Figure-level legend at the top-left (over the dendrogram gutter, which
@@ -2607,6 +2604,59 @@ def plot_selected_frequency_heatmap(
         )
     save_figure(grid.figure, output_path, dpi=150)
     return output_path
+
+
+def plot_selected_frequency_heatmap(
+    pivot, output_path, *, title: str = "selected", annotations=None
+):
+    """Heatmap of the selected clones × conditions frequency table (#selected-freq).
+
+    ``pivot`` is rows = CDR3ab, columns = conditions, cells = within-condition
+    frequency (%). When ``annotations`` (a Series keyed by CDR3ab giving each
+    clone's public-DB ``db_category`` — ``viral`` / ``tumor_self`` / … / NaN) is
+    supplied, a left-side colour strip + legend marks the public-DB match so
+    viral/public TCR-T candidates are readable straight off the heatmap.
+
+    Rows are sorted by total frequency (descending) and **paginated** at
+    ~60 clones/page so every clone's y-label stays legible — no row is ever
+    label-less. The first page is written to ``output_path``; further pages get a
+    ``_p2`` / ``_p3`` … stem suffix. Returns the page-1 path (a list of all page
+    paths is available via the side effect of the written files), or None on
+    empty input.
+    """
+    output_path = Path(output_path)
+    if pivot is None or getattr(pivot, "empty", True):
+        return None
+    data = pivot.fillna(0.0)
+    # Sort by total frequency so the strongest clones lead page 1.
+    order = data.sum(axis=1).sort_values(ascending=False, kind="stable").index
+    data = data.loc[order]
+
+    n_rows = data.shape[0]
+    page_rows = _FREQ_HEATMAP_PAGE_ROWS
+    n_pages = max(1, (n_rows + page_rows - 1) // page_rows)
+    # Shared color scale across all pages so a cell's shade means the same
+    # frequency everywhere (per-page autoscaling would make page 2's max look as
+    # hot as page 1's, which is misleading).
+    vmin = 0.0
+    vmax = float(data.to_numpy().max()) or None
+
+    paths = []
+    for page in range(1, n_pages + 1):
+        chunk = data.iloc[(page - 1) * page_rows : page * page_rows]
+        if page == 1:
+            page_path = output_path
+        else:
+            page_path = output_path.with_name(
+                f"{output_path.stem}_p{page}{output_path.suffix}"
+            )
+        paths.append(
+            _render_frequency_heatmap_page(
+                chunk, page_path, title=title, annotations=annotations,
+                page=page, n_pages=n_pages, vmin=vmin, vmax=vmax,
+            )
+        )
+    return paths[0]
 
 
 def plot_leader_summary(

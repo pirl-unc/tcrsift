@@ -484,3 +484,19 @@ def test_frequency_heatmap_carries_annotation_strip(tmp_path):
     assert out is not None and out.exists() and out.stat().st_size > 0
     # also renders fine with no annotations
     assert plot_selected_frequency_heatmap(pivot, tmp_path / "hm2.png").exists()
+
+
+def test_frequency_heatmap_paginates_many_clones(tmp_path):
+    # #selected-freq: many clones must stay identifiable — paginate at ~60/page
+    # rather than hiding y-labels, so every clone's row label is legible.
+    from tcrsift.plots import plot_selected_frequency_heatmap
+    n = 130  # -> 3 pages at 60/page
+    pivot = pd.DataFrame(
+        {"AIM⁺": [float(i) for i in range(n)], "CTY⁻": [0.1 * i for i in range(n)]},
+        index=pd.Index([f"c{i}" for i in range(n)], name="CDR3ab"),
+    )
+    out = plot_selected_frequency_heatmap(pivot, tmp_path / "hm.png", title="big")
+    assert out == tmp_path / "hm.png" and out.exists()
+    assert (tmp_path / "hm_p2.png").exists()
+    assert (tmp_path / "hm_p3.png").exists()
+    assert not (tmp_path / "hm_p4.png").exists()
