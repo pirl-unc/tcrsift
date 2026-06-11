@@ -279,7 +279,13 @@ def check_synth(d: pd.DataFrame) -> QCResult:
     cv = _count_true(d, "construct_contig_verified")
     dup = _count_true(d, "synth_duplicate_construct")
     swap = _count_true(d, "synth_alpha_beta_swap")
-    dupsc = n - d["single_chain_aa"].nunique()
+    # Duplicate single-chains: count among NON-NULL only. `_add_single_chain`
+    # sets single_chain_aa = NA for any clone missing a chain, and `nunique()`
+    # excludes NA — so `n - nunique()` would count every unpaired clone as a
+    # "duplicate" and spuriously FAIL the check (#check-synth-dupsc). Dedupe over
+    # the populated constructs instead.
+    sc = d["single_chain_aa"].dropna()
+    dupsc = len(sc) - sc.nunique()
     ok = cv_present and cv == n and dup == 0 and swap == 0 and dupsc == 0
     cv_str = f"{cv}/{n}" if cv_present else "not recorded"
     # A clone expands on two INDEPENDENT axes (#283), so a single "+N dual-alpha"
