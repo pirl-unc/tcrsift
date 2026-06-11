@@ -2549,33 +2549,63 @@ def plot_vgene_usage_by_method(
     return save_figure(fig, output_path)
 
 
-def plot_selected_frequency_heatmap(pivot, output_path, *, title: str = "selected"):
+def plot_selected_frequency_heatmap(
+    pivot, output_path, *, title: str = "selected", annotations=None
+):
     """Heatmap of the selected clones × conditions frequency table (#selected-freq).
 
     ``pivot`` is rows = CDR3ab, columns = conditions, cells = within-condition
-    frequency (%). Returns the output path, or None on empty input.
+    frequency (%). When ``annotations`` (a Series keyed by CDR3ab giving each
+    clone's public-DB ``db_category`` — ``viral`` / ``tumor_self`` / … / NaN) is
+    supplied, a left-side colour strip + legend marks the public-DB match so
+    viral/public TCR-T candidates are readable straight off the heatmap. Returns
+    the output path, or None on empty input.
     """
+    import matplotlib.patches as mpatches
+
     output_path = Path(output_path)
     if pivot is None or getattr(pivot, "empty", True):
         return None
     data = pivot.fillna(0.0)
     n_rows, n_cols = data.shape
-    fig, ax = plt.subplots(
-        figsize=(max(5, 1.2 + 0.8 * n_cols), max(3.5, 0.3 * n_rows + 1)),
-    )
-    sns.heatmap(
-        data, ax=ax, cmap="rocket_r", linewidths=0.4, linecolor="white",
+    yticklabels = n_rows <= 80  # hide dense row labels
+
+    row_colors = None
+    legend_handles = None
+    if annotations is not None:
+        cats = annotations.reindex(data.index)
+        colors = _category_color_strip(cats)
+        row_colors = pd.Series(colors, index=data.index, name="public-DB")
+        seen: dict[str, str] = {}
+        for v, c in zip(cats.fillna("none").astype(str), colors):
+            seen.setdefault(v, c)
+        # Only worth a legend when something actually matched.
+        if set(seen) - {"none"}:
+            legend_handles = [mpatches.Patch(color=c, label=k) for k, c in seen.items()]
+
+    grid = sns.clustermap(
+        data, row_cluster=False, col_cluster=False, row_colors=row_colors,
+        cmap="rocket_r", linewidths=0.4, linecolor="white",
         cbar_kws={"label": "within-condition frequency (%)"},
-        xticklabels=True, yticklabels=(n_rows <= 80),  # hide row labels when dense
+        figsize=(max(6, 1.8 + 0.8 * n_cols), max(4, 0.3 * n_rows + 1.5)),
+        xticklabels=True, yticklabels=yticklabels,
     )
-    ax.set_xlabel("condition")
-    ax.set_ylabel("selected clone (CDR3αβ)")
-    ax.set_title(f"{title}: selected clones × condition frequency (%)")
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-    # bbox_inches="tight" handles the (sometimes long CDR3) label margins;
-    # an explicit tight_layout() just warns when they don't fit.
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    grid.ax_heatmap.set_xlabel("condition")
+    grid.ax_heatmap.set_ylabel("selected clone (CDR3αβ)")
+    plt.setp(grid.ax_heatmap.get_xticklabels(), rotation=45, ha="right")
+    grid.figure.suptitle(
+        f"{title}: selected clones × condition frequency (%)", y=1.02, fontsize=13,
+    )
+    if legend_handles:
+        # Figure-level legend at the top-left (over the dendrogram gutter, which
+        # clustermap leaves empty here) — robust placement that bbox_inches=tight
+        # always includes, vs an axes legend colliding with the clone labels.
+        grid.figure.legend(
+            handles=legend_handles, title="public-DB match",
+            loc="upper left", bbox_to_anchor=(0.0, 1.0),
+            fontsize=8, title_fontsize=9, frameon=True, framealpha=0.9,
+        )
+    save_figure(grid.figure, output_path, dpi=150)
     return output_path
 
 

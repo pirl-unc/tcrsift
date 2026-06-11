@@ -467,3 +467,20 @@ def test_emit_frequency_by_condition_skips_without_column(tmp_path):
     from tcrsift.report import _emit_frequency_by_condition
     df = pd.DataFrame({"CDR3ab": ["c1"]})  # no frequency_per_condition
     assert _emit_frequency_by_condition(df, tmp_path) is None
+
+
+def test_frequency_heatmap_carries_annotation_strip(tmp_path):
+    # #selected-anno: the freq heatmap's public-DB annotation strip is driven by
+    # db_category on the assembled frame.
+    from tcrsift.plots import plot_selected_frequency_heatmap
+    pivot = pd.DataFrame(
+        {"AIM⁺": [0.9, 0.5, 0.1], "CTY⁻": [0.3, None, 0.2]},
+        index=pd.Index(["c1", "c2", "c3"], name="CDR3ab"),
+    )
+    anno = pd.Series({"c1": "viral", "c2": None, "c3": "tumor_self"})
+    out = plot_selected_frequency_heatmap(
+        pivot, tmp_path / "hm.png", title="B1-2", annotations=anno,
+    )
+    assert out is not None and out.exists() and out.stat().st_size > 0
+    # also renders fine with no annotations
+    assert plot_selected_frequency_heatmap(pivot, tmp_path / "hm2.png").exists()

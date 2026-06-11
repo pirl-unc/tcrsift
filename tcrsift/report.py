@@ -836,11 +836,21 @@ def _emit_frequency_by_condition(assembled, out_dir, *, name: str = "selected"):
         "selected_frequency_by_condition.csv",
         pivot.shape[0], pivot.shape[1],
     )
+    # Public-DB category per clone for the heatmap's annotation strip (#selected-anno):
+    # so viral/public TCR-T candidates are readable off the frequency heatmap.
+    anno = None
+    if "db_category" in assembled.columns and "CDR3ab" in assembled.columns:
+        anno = (
+            assembled[["CDR3ab", "db_category"]]
+            .drop_duplicates("CDR3ab")
+            .set_index("CDR3ab")["db_category"]
+        )
     try:
         from .plots import plot_selected_frequency_heatmap
 
         plot_selected_frequency_heatmap(
-            pivot, out_dir / "selected_frequency_heatmap.png", title=name
+            pivot, out_dir / "selected_frequency_heatmap.png", title=name,
+            annotations=anno,
         )
     except Exception as e:  # plot is best-effort
         logger.warning("selected frequency heatmap failed: %s", e, exc_info=True)
