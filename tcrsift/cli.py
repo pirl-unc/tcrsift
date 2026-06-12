@@ -1028,6 +1028,11 @@ def cmd_run(args):
 
     # Save config for reproducibility
     config.to_yaml(output_dir / "config.yaml")
+    # Run provenance sidecar (tcrsift + dep versions) next to the config, so a
+    # run output records which build produced it (reproducibility).
+    from .provenance import write_provenance
+
+    write_provenance(output_dir)
 
     print("=" * 60)
     print("TCRsift Pipeline")

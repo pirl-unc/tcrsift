@@ -242,6 +242,31 @@ class TestBuildSelectedReport:
         assert "selection_rule" in written.columns
         assert "single_chain_aa" in out.columns
 
+    def test_stamps_run_provenance(self, tmp_path):
+        # #provenance: every deliverable records which tcrsift build produced it,
+        # in all four places — sidecar file, QC text, and selected_clones.csv.
+        from tcrsift.version import __version__
+        a = "CASS" + "A" * 40 + "VLF"
+        b = "CASS" + "G" * 40 + "VEF"
+        clonotypes = pd.DataFrame([_assembleable_clone("c1", a, b)])
+        selected = pd.DataFrame([{"CDR3ab": "c1", "selection_rule": "shared"}])
+        build_selected_report(
+            selected, clonotypes, tmp_path,
+            provenance_cols=["selection_rule"], allow_canonical_fallback=True,
+        )
+        # 1. sidecar files
+        assert (tmp_path / "provenance.json").exists()
+        assert (tmp_path / "provenance.txt").exists()
+        # 2. QC text block
+        qc = (tmp_path / "selected_clones_qc.txt").read_text()
+        assert "Provenance" in qc and __version__ in qc
+        # 3. CSV column
+        written = pd.read_csv(tmp_path / "selected_clones.csv")
+        assert (written["tcrsift_version"].astype(str) == __version__).all()
+        # 4. the PDF cover is rendered (footer content is embedded; existence is
+        # the testable signal — see test_provenance for footer text).
+        assert (tmp_path / "selected_clones_sequences.pdf").stat().st_size > 0
+
     def test_emits_qc_summary(self, tmp_path):
         # #279: the independent QC battery writes qc-summary.md on every
         # selected-report build. With no contig dir, check E SKIPs; A/B/C/D run

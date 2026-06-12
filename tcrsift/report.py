@@ -412,12 +412,13 @@ _CONSTRUCT_LEGEND = [
 ]
 
 
-def _legend_reader(title: str, entries: list):
+def _legend_reader(title: str, entries: list, *, footer: str | None = None):
     """A reportlab text page (PdfReader) — the construct cover (#202).
 
     ``entries`` is a list of ``(kind, text)`` tuples (see _CONSTRUCT_LEGEND) or
     plain strings (rendered as body lines). All text is routed through
-    ``pdf_safe`` so non-WinAnsi glyphs don't render as boxes (#202).
+    ``pdf_safe`` so non-WinAnsi glyphs don't render as boxes (#202). ``footer``,
+    when given, is drawn small and grey at the page bottom (run provenance).
     """
     from pypdf import PdfReader
     from reportlab.pdfgen import canvas
@@ -446,6 +447,11 @@ def _legend_reader(title: str, entries: list):
             c.setFont("Helvetica", 10.5)
             c.drawString(60, y, pdf_safe(text))
         y -= 15
+    if footer:
+        c.setFont("Helvetica", 7)
+        c.setFillGray(0.5)
+        c.drawString(54, 36, pdf_safe(footer))
+        c.setFillGray(0.0)
     c.showPage()
     c.save()
     buf.seek(0)
@@ -578,9 +584,21 @@ def build_selected_report(
         validate_sequences,
     )
     from .plots import create_tcr_sequence_pdf
+    from .provenance import (
+        collect_provenance,
+        provenance_oneline,
+        provenance_text,
+        write_provenance,
+    )
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Run provenance (tcrsift + dep versions) — written as a sidecar and also
+    # stamped onto the QC text, the PDF cover footer, and selected_clones.csv so
+    # the deliverable records which build produced it (reproducibility).
+    prov = collect_provenance()
+    write_provenance(out_dir, prov)
 
     prov_cols = [c for c in (provenance_cols or []) if c in selected.columns]
     keep = ["CDR3ab", *prov_cols]
@@ -622,6 +640,7 @@ def build_selected_report(
         )
         logger.info(dual_line)
         qc_text = f"{dual_line}\n\n{qc_text}"
+    qc_text = f"{qc_text}\n\n{provenance_text(prov)}"
     (out_dir / "selected_clones_qc.txt").write_text(qc_text + "\n")
 
     # Leader QC outputs (#275): emit from the select-then-assemble path too, not
@@ -696,7 +715,11 @@ def build_selected_report(
         from pypdf import PdfReader, PdfWriter
 
         writer = PdfWriter()
-        for page in _legend_reader(f"{title} — β-T2A-α constructs", _CONSTRUCT_LEGEND).pages:
+        cover_reader = _legend_reader(
+            f"{title} — β-T2A-α constructs", _CONSTRUCT_LEGEND,
+            footer=provenance_oneline(prov),
+        )
+        for page in cover_reader.pages:
             writer.add_page(page)
         for page in PdfReader(str(seq_pdf)).pages:
             writer.add_page(page)
@@ -720,6 +743,7 @@ def build_selected_report(
     except Exception as e:  # best-effort; never fail the build on the side table
         logger.warning("selected frequency table/heatmap failed: %s", e, exc_info=True)
 
+    assembled["tcrsift_version"] = prov["tcrsift_version"]
     assembled.to_csv(out_dir / "selected_clones.csv", index=False)
 
     # Independent QC battery (#279). Re-derives every construct fact from first
