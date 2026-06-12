@@ -2577,7 +2577,6 @@ def _render_frequency_heatmap_page(
     bulk is distinguishable instead of washing out under a few dominant clones.
     """
     import matplotlib.patches as mpatches
-    import numpy as np
     from matplotlib.colors import LogNorm, to_rgb
 
     n_rows, n_cols = data.shape

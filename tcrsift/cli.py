@@ -194,8 +194,6 @@ def cmd_clonotype(args):
 
 def cmd_filter(args):
     """Filter clonotypes with tiered confidence levels."""
-    import logging
-
     import pandas as pd
 
     from .filter import (
@@ -391,7 +389,7 @@ def cmd_match_til(args):
     from .plots import plot_til
     from .sample_sheet import load_sample_sheet
     from .til import get_til_summary, load_til_data, load_til_samples, load_til_specs, match_til
-    from .validation import TCRsiftValidationError, validate_match_til_args
+    from .validation import validate_match_til_args  # TCRsiftValidationError is module-level
 
     setup_logging(args.verbose)
     validate_match_til_args(args)
@@ -485,7 +483,7 @@ def cmd_til_clonotype(args):
     """Aggregate TIL-only data into clonotype counts across samples."""
     from .sample_sheet import load_sample_sheet
     from .til import load_til_data, load_til_samples, load_til_specs, summarize_til_clonotypes
-    from .validation import TCRsiftValidationError, validate_match_til_args
+    from .validation import validate_match_til_args  # TCRsiftValidationError is module-level
 
     setup_logging(args.verbose)
     validate_match_til_args(args)
@@ -957,8 +955,6 @@ def _common_contig_root(vdj_dirs):
 
 def cmd_run(args):
     """Run the complete TCRsift pipeline."""
-    from pathlib import Path
-
     import pandas as pd
 
     from .annotate import annotate_clonotypes
