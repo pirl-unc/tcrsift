@@ -94,8 +94,6 @@ def add_pgen_ppost(
     ``CDR3_<chain>``). Chains whose CDR3 column is absent are skipped.
     Returns a copy.
     """
-    import numpy as np
-
     from .pgen_models import ensure_model
 
     out = df.copy()

@@ -762,7 +762,6 @@ def _attach_public_db_annotation(assembled, annotations, variant_of):
     curated columns present (NaN when no annotations / no match), so the schema is
     stable whether or not an annotations frame was supplied.
     """
-    import pandas as pd
 
     have = (
         annotations is not None
@@ -824,7 +823,6 @@ def _emit_frequency_by_condition(assembled, out_dir, *, name: str = "selected"):
     frequency (%), parsed from the ``frequency_per_condition`` provenance. Skips
     (returns None) when that column is absent or carries no parseable values.
     """
-    import pandas as pd
 
     if "frequency_per_condition" not in assembled.columns:
         return None
