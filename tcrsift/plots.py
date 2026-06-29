@@ -2009,6 +2009,198 @@ def plot_clone_freq_vs_signature_per_sample(
     return out_path
 
 
+def _coerce_row_mask(
+    mask: pd.Series | np.ndarray | Sequence[bool] | None,
+    index: pd.Index,
+    default: bool,
+) -> np.ndarray:
+    """Coerce a row mask to a boolean array aligned to ``index``.
+
+    A :class:`pandas.Series` is reindexed (label-aligned, missing→False); an
+    array/sequence is taken positionally; ``None`` fills with ``default``.
+    """
+    if mask is None:
+        return np.full(len(index), default, dtype=bool)
+    if isinstance(mask, pd.Series):
+        return mask.reindex(index).fillna(False).to_numpy(dtype=bool)
+    arr = np.asarray(mask, dtype=bool)
+    if arr.shape[0] != len(index):
+        raise ValueError(
+            f"mask length {arr.shape[0]} != table length {len(index)}"
+        )
+    return arr
+
+
+def plot_signature_map(
+    table: pd.DataFrame,
+    x_score: str,
+    y_score: str,
+    *,
+    highlight_mask: pd.Series | np.ndarray | None = None,
+    label_by: str | None = None,
+    background_mask: pd.Series | np.ndarray | None = None,
+    ax: plt.Axes | None = None,
+    x_label: str | None = None,
+    y_label: str | None = None,
+    title: str | None = None,
+    highlight_color: str = "#d62728",
+    output_path: str | Path | None = None,
+) -> plt.Axes | Path:
+    """Two-score signature scatter with a highlighted subset (#302).
+
+    The standard antigen-response (e.g. ``TNFRSF9``/``MKI67``) × cytolytic
+    (``PRF1``/``GZMB``) signature map, generalized: plot any two per-clone
+    score columns against each other, emphasize a chosen subset, and
+    optionally color points by a category. Reused across the peptide-culture
+    and TIL figures so the layout doesn't drift per paper.
+
+    Three layers, drawn back-to-front:
+
+    1. **background** — rows in ``background_mask``, faint gray context.
+    2. **main, de-emphasized** — non-background rows not in
+       ``highlight_mask``: light gray, or their ``label_by`` color.
+    3. **main, highlighted** — non-background rows in ``highlight_mask``:
+       larger, edged, on top, in ``highlight_color`` (or their ``label_by``
+       color). ``highlight_mask=None`` emphasizes every main row, giving a
+       plain colored scatter.
+
+    This single primitive covers the issue's three views — *chosen vs
+    background* (pass ``background_mask``), *chosen vs all* (just
+    ``highlight_mask``), and *chosen + overlap pool* (``highlight_mask`` for
+    the picks plus ``label_by`` for specificity/viral category) — by varying
+    the masks, not the code. Pair it with
+    :func:`tcrsift.gex.annotate_chosen`, which produces ``highlight_mask``.
+
+    Parameters
+    ----------
+    table : pd.DataFrame
+        Per-clone table containing ``x_score``, ``y_score`` and, if used,
+        ``label_by``.
+    x_score, y_score : str
+        Numeric score columns for the x / y axes.
+    highlight_mask : pd.Series | np.ndarray | None
+        Rows to emphasize (e.g. from :func:`tcrsift.gex.annotate_chosen`). A
+        Series is label-aligned to ``table.index``; an array is positional.
+        ``None`` emphasizes all non-background rows.
+    label_by : str | None
+        Categorical column to color points by (legend rendered). When None,
+        highlighted points use ``highlight_color`` and the rest light gray.
+    background_mask : pd.Series | np.ndarray | None
+        Rows to draw as faint gray context beneath everything.
+    ax : matplotlib.axes.Axes | None
+        Axis to draw into (for composing into a multi-panel figure). When
+        None a new figure/axis is created.
+    x_label, y_label, title : str | None
+        Axis labels / title. Axis labels default to the column name with
+        underscores turned to spaces.
+    highlight_color : str
+        Accent color for highlighted points when ``label_by`` is None.
+    output_path : str | Path | None
+        When given *and* ``ax`` is None, save via :func:`save_figure` and
+        return the written path. Otherwise the Axes is returned.
+
+    Returns
+    -------
+    matplotlib.axes.Axes | Path
+        The Axes drawn into, or the saved path when ``output_path`` is given
+        and a figure was created here.
+    """
+    for col in (x_score, y_score):
+        if col not in table.columns:
+            raise ValueError(f"plot_signature_map: missing score column {col!r}")
+    if label_by is not None and label_by not in table.columns:
+        raise ValueError(f"plot_signature_map: missing label_by column {label_by!r}")
+
+    bg = _coerce_row_mask(background_mask, table.index, default=False)
+    hl = _coerce_row_mask(highlight_mask, table.index, default=True)
+    main = ~bg
+
+    created_fig = ax is None
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 6))
+    else:
+        fig = ax.figure
+
+    x = pd.to_numeric(table[x_score], errors="coerce").to_numpy()
+    y = pd.to_numeric(table[y_score], errors="coerce").to_numpy()
+
+    # Layer 1: background context.
+    if bg.any():
+        ax.scatter(
+            x[bg], y[bg], s=14, color="#dddddd", alpha=0.6,
+            linewidth=0, zorder=1, label="_nolegend_",
+        )
+
+    cat_color: dict[str, tuple] = {}
+    if label_by is not None:
+        cats = sorted(
+            table.loc[main, label_by].dropna().astype(str).unique()
+        )
+        palette = sns.color_palette("tab10", n_colors=max(len(cats), 1))
+        cat_color = {c: palette[i % len(palette)] for i, c in enumerate(cats)}
+        labels = table[label_by].astype(str)
+
+        def _colors_for(rows: np.ndarray) -> list:
+            return [cat_color.get(labels.iloc[i], "#bdbdbd")
+                    for i in np.flatnonzero(rows)]
+
+        main_dim = main & ~hl
+        if main_dim.any():
+            ax.scatter(
+                x[main_dim], y[main_dim], s=22, c=_colors_for(main_dim),
+                alpha=0.55, linewidth=0, zorder=2,
+            )
+        main_hi = main & hl
+        if main_hi.any():
+            ax.scatter(
+                x[main_hi], y[main_hi], s=90, c=_colors_for(main_hi),
+                alpha=0.95, edgecolor="black", linewidth=0.6, zorder=3,
+            )
+        # Category legend (proxy handles) + optional emphasis note.
+        handles = [
+            plt.Line2D([0], [0], marker="o", linestyle="", markersize=8,
+                       markerfacecolor=cat_color[c], markeredgecolor="none",
+                       label=c)
+            for c in cats
+        ]
+        if highlight_mask is not None and (main & hl).any():
+            handles.append(
+                plt.Line2D([0], [0], marker="o", linestyle="", markersize=9,
+                           markerfacecolor="white", markeredgecolor="black",
+                           markeredgewidth=0.9, label="highlighted")
+            )
+        if handles:
+            ax.legend(handles=handles, title=label_by, fontsize=8,
+                      title_fontsize=9, loc="best", framealpha=0.85)
+    else:
+        main_dim = main & ~hl
+        if main_dim.any():
+            ax.scatter(
+                x[main_dim], y[main_dim], s=20, color="#c7c7c7", alpha=0.6,
+                linewidth=0, zorder=2,
+                label="other" if (main & hl).any() else "_nolegend_",
+            )
+        main_hi = main & hl
+        if main_hi.any():
+            ax.scatter(
+                x[main_hi], y[main_hi], s=90, color=highlight_color, alpha=0.95,
+                edgecolor="white", linewidth=0.6, zorder=3,
+                label="highlighted" if (main & ~hl).any() else "_nolegend_",
+            )
+        if (main & hl).any() and (main & ~hl).any():
+            ax.legend(fontsize=8, loc="best", framealpha=0.85)
+
+    ax.set_xlabel(x_label if x_label is not None else x_score.replace("_", " "))
+    ax.set_ylabel(y_label if y_label is not None else y_score.replace("_", " "))
+    if title:
+        ax.set_title(title)
+    ax.grid(True, which="both", linewidth=0.3, alpha=0.4)
+
+    if output_path is not None and created_fig:
+        return save_figure(fig, output_path)
+    return ax
+
+
 # =============================================================================
 # TIL Plots
 # =============================================================================
