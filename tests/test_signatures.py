@@ -94,3 +94,33 @@ class TestSingleSourceOfTruth:
         from tcrsift.til_select import ANTIGEN_RESPONSE_GENES_DEFAULT
 
         assert ANTIGEN_RESPONSE_GENES_DEFAULT is signatures.ANTIGEN_RESPONSE_GENES_HGNC
+
+    def test_til_select_marker_panel_alias_same_object(self):
+        from tcrsift.til_select import MARKER_GENES_DEFAULT
+
+        assert MARKER_GENES_DEFAULT is signatures.MARKER_PANEL_HGNC
+
+
+class TestMarkerPanel:
+    """The default per-clone GEX scoring panel lives in ``signatures``
+    and is re-exported from ``til_select`` as ``MARKER_GENES_DEFAULT``."""
+
+    def test_panel_contents(self):
+        assert signatures.MARKER_PANEL_HGNC == (
+            "CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG",
+            "MKI67", "TNFRSF9", "CXCL13", "ENTPD1",
+        )
+
+    def test_panel_is_not_an_intent_signature(self):
+        # The union display panel is intentionally excluded from the
+        # snake-case intent-signature dict.
+        assert signatures.MARKER_PANEL_HGNC not in signatures.T_CELL_SIGNATURES.values()
+
+    def test_cli_default_matches_panel(self):
+        # The ``til-select --marker-genes`` default is derived from the
+        # canonical panel, so the two can't drift apart.
+        from tcrsift.cli import create_parser
+
+        parser = create_parser()
+        ns = parser.parse_args(["til-select"])
+        assert ns.marker_genes == ",".join(signatures.MARKER_PANEL_HGNC)
