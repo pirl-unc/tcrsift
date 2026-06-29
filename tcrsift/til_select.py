@@ -52,6 +52,9 @@ from .signatures import (
     CYTOLYTIC_GENES_HGNC as CYTOLYTIC_GENES_DEFAULT,
 )
 from .signatures import (
+    MARKER_PANEL_HGNC as MARKER_GENES_DEFAULT,
+)
+from .signatures import (
     TUMOR_REACTIVE_GENES_HGNC as ENRICHMENT_GENES_DEFAULT,
 )
 from .validation import TCRsiftValidationError, validate_file_exists
@@ -82,26 +85,14 @@ VIRAL_SPECIES_PATTERNS = [
     "yellow fever",
 ]
 
-MARKER_GENES_DEFAULT = [
-    "CD4",
-    "CD8A",
-    "CD8B",
-    "GZMB",
-    "PRF1",
-    "IFNG",
-    "MKI67",
-    "TNFRSF9",
-    "CXCL13",
-    "ENTPD1",
-]
 TCR_SEGMENTS_AA = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4")
 TCR_SEGMENTS_NT = tuple(f"{segment}_nt" for segment in TCR_SEGMENTS_AA)
 VDJ_SEGMENT_COLS = list(TCR_SEGMENTS_AA)
 VDJ_SEGMENT_NT_COLS = list(TCR_SEGMENTS_NT)
 # ``CYTOLYTIC_GENES_DEFAULT`` / ``ANTIGEN_RESPONSE_GENES_DEFAULT`` /
-# ``ENRICHMENT_GENES_DEFAULT`` are now back-compat aliases imported
-# above from :mod:`tcrsift.signatures`, which can drive non-TIL
-# selections too.
+# ``ENRICHMENT_GENES_DEFAULT`` / ``MARKER_GENES_DEFAULT`` are now
+# back-compat aliases imported above from :mod:`tcrsift.signatures`,
+# which can drive non-TIL selections too.
 RANK_METRICS = (
     "mean_frequency",
     "max_frequency",
@@ -2110,7 +2101,7 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
     marker_genes = [g.strip().upper() for g in str(args.marker_genes).split(",") if g.strip()]
     marker_genes = list(dict.fromkeys(marker_genes))
     if not marker_genes:
-        marker_genes = MARKER_GENES_DEFAULT.copy()
+        marker_genes = list(MARKER_GENES_DEFAULT)
 
     immunogenic_genes = [g.strip().upper() for g in str(args.immunogenic_genes).split(",") if g.strip()]
     cytotoxic_genes = [g.strip().upper() for g in str(args.cytotoxic_genes).split(",") if g.strip()]

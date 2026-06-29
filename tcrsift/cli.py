@@ -2527,6 +2527,8 @@ def cmd_report_polished(args):
 
 def create_parser():
     """Create the argument parser."""
+    from .signatures import MARKER_PANEL_HGNC
+
     parser = argparse.ArgumentParser(
         prog="tcrsift",
         description="TCRsift: TCR selection from antigen-specific culture and scRNA/VDJ sequencing data",
@@ -3337,7 +3339,7 @@ or auto-discovered from --data-dir.
     p_til_select.add_argument(
         "--marker-genes",
         type=str,
-        default="CD4,CD8A,CD8B,GZMB,PRF1,IFNG,MKI67,TNFRSF9,CXCL13,ENTPD1",
+        default=",".join(MARKER_PANEL_HGNC),
         help="Comma-separated marker genes for per-clone GEX scoring.",
     )
     p_til_select.add_argument(

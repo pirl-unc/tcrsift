@@ -47,6 +47,12 @@ Signatures grouped by intent:
 - :data:`TUMOR_REACTIVE_GENES_HGNC` — TIL-resident tumor-reactive
   phenotype: CXCL13 (Workel 2019, Cohen 2022, Veatch 2022) + ENTPD1
   / CD39 (Duhen 2018, Simoni 2018, Thommen 2018).
+- :data:`MARKER_PANEL_HGNC` — the default per-clone GEX scoring panel:
+  CD4/CD8 lineage markers plus the cytolytic, effector, antigen-response
+  and tumor-reactive readouts. Not a single-intent signature (so it is
+  intentionally absent from :data:`T_CELL_SIGNATURES`); it is the union
+  display panel shown per clone. ``til_select`` re-exports it as
+  ``MARKER_GENES_DEFAULT`` for back-compat.
 
 :data:`T_CELL_SIGNATURES` is a snake-case name → tuple dict for
 convenient iteration.
@@ -67,6 +73,14 @@ EXHAUSTION_GENES_HGNC: tuple[str, ...] = (
     "PDCD1", "LAG3", "HAVCR2", "TIGIT", "TOX", "CTLA4",
 )
 TUMOR_REACTIVE_GENES_HGNC: tuple[str, ...] = ("CXCL13", "ENTPD1")
+
+# Default per-clone GEX scoring panel (lineage + cytolytic + effector +
+# antigen-response + tumor-reactive). A union display panel, not a single
+# intent signature — kept out of T_CELL_SIGNATURES below on purpose.
+MARKER_PANEL_HGNC: tuple[str, ...] = (
+    "CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG",
+    "MKI67", "TNFRSF9", "CXCL13", "ENTPD1",
+)
 
 T_CELL_SIGNATURES: dict[str, tuple[str, ...]] = {
     "effector":          EFFECTOR_GENES_HGNC,
