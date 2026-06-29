@@ -506,3 +506,163 @@ def compute_cd4_cd8_counts(
         logger.info(f"  {result['CD8_only.count'].sum():,} CD8-only cells")
 
     return result
+
+
+# =============================================================================
+# Externally-chosen clone annotation (#302)
+# =============================================================================
+
+
+def _normalize_cdr3_series(s: pd.Series) -> pd.Series:
+    """Normalize a CDR3 column for key matching: NaN→"", stripped, upper.
+
+    Keeping this in one place is the whole point of :func:`annotate_chosen` —
+    a chosen-clone list assembled in one experiment and a scored table from
+    another must agree on whitespace/case before set membership means
+    anything.
+    """
+    return s.fillna("").astype(str).str.strip().str.upper()
+
+
+def _normalize_cdr3_value(value) -> str:
+    """Scalar counterpart of :func:`_normalize_cdr3_series` (NaN/None→"")."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and np.isnan(value):
+        return ""
+    return str(value).strip().upper()
+
+
+def _extract_chosen_chains(chosen, alpha_col: str, beta_col: str, match: str):
+    """Pull ``(alphas, betas)`` lists out of a heterogeneous chosen input.
+
+    Accepts a :class:`pandas.DataFrame` (reads ``alpha_col`` / ``beta_col``),
+    an iterable of ``(alpha, beta)`` tuples, or — for ``match="beta"`` — an
+    iterable of bare β strings. ``alphas`` entries are ``None`` when only β is
+    available/needed.
+    """
+    if isinstance(chosen, pd.DataFrame):
+        if beta_col not in chosen.columns:
+            raise TCRsiftValidationError(
+                f"chosen DataFrame missing β column {beta_col!r}",
+                hint=f"Available columns: {list(chosen.columns)[:10]}",
+            )
+        betas = chosen[beta_col].tolist()
+        if match == "pair":
+            if alpha_col not in chosen.columns:
+                raise TCRsiftValidationError(
+                    f"chosen DataFrame missing α column {alpha_col!r} "
+                    "(required for match='pair')",
+                    hint=f"Available columns: {list(chosen.columns)[:10]}",
+                )
+            alphas = chosen[alpha_col].tolist()
+        else:
+            alphas = [None] * len(betas)
+        return alphas, betas
+
+    items = list(chosen)
+    if match == "beta":
+        # A bare β string or the β slot of an (α, β) tuple both work.
+        betas = [it[1] if isinstance(it, (tuple, list)) else it for it in items]
+        return [None] * len(betas), betas
+
+    alphas, betas = [], []
+    for it in items:
+        if not isinstance(it, (tuple, list)) or len(it) < 2:
+            raise TCRsiftValidationError(
+                "match='pair' needs (alpha, beta) pairs",
+                hint=f"Got element {it!r}; pass a DataFrame or (α, β) tuples.",
+            )
+        alphas.append(it[0])
+        betas.append(it[1])
+    return alphas, betas
+
+
+def annotate_chosen(
+    table: pd.DataFrame,
+    chosen,
+    *,
+    alpha_col: str = "CDR3_alpha",
+    beta_col: str = "CDR3_beta",
+    match: str = "pair",
+    name: str = "chosen",
+) -> pd.Series:
+    """Flag rows of ``table`` that appear in an externally-chosen clone list (#302).
+
+    Centralizes the αβ-pair / CDR3β key matching that otherwise gets
+    re-implemented (slightly differently) every time a clone list selected in
+    one experiment is contextualized against a clone table scored in another
+    (e.g. peptide-culture picks projected onto the TIL repertoire). The
+    returned mask is the single primitive behind "chosen vs background",
+    "chosen vs all", and "chosen + overlap pool" views — they differ only in
+    which table you pass and which other masks you combine it with.
+
+    Matching is exact on normalized CDR3 strings (NaN→"", stripped,
+    upper-cased on both sides), never fuzzy — selection lists are curated, so
+    a near-miss is a data-entry problem to surface, not silently absorb. Empty
+    keys never match.
+
+    Parameters
+    ----------
+    table : pd.DataFrame
+        Scored / harmonized clone table to annotate. Must contain ``beta_col``
+        (and ``alpha_col`` when ``match="pair"``). One clone per row, as
+        produced by :func:`tcrsift.til_select.build_harmonized_table`.
+    chosen : pd.DataFrame | iterable
+        The externally-chosen clones. A DataFrame (uses ``alpha_col`` /
+        ``beta_col``), an iterable of ``(alpha, beta)`` tuples, or — for
+        ``match="beta"`` — an iterable of bare β strings.
+    alpha_col, beta_col : str
+        CDR3α / CDR3β column names (shared by ``table`` and a chosen
+        DataFrame). Defaults match the harmonized-table convention.
+    match : {"pair", "beta"}
+        ``"pair"`` requires both α and β to match (exact αβ pair).
+        ``"beta"`` matches on CDR3β alone — the looser key for when chosen α
+        chains are unavailable or unreliable.
+    name : str
+        Name of the returned Series.
+
+    Returns
+    -------
+    pd.Series
+        Boolean Series aligned to ``table.index``; True where the row's
+        clone is in ``chosen``.
+    """
+    if match not in {"pair", "beta"}:
+        raise TCRsiftValidationError(
+            f"Invalid match: {match!r}",
+            hint="Valid options are: 'pair', 'beta'",
+        )
+    if beta_col not in table.columns:
+        raise TCRsiftValidationError(
+            f"table missing β column {beta_col!r}",
+            hint=f"Available columns: {list(table.columns)[:10]}",
+        )
+    if match == "pair" and alpha_col not in table.columns:
+        raise TCRsiftValidationError(
+            f"table missing α column {alpha_col!r} (required for match='pair')",
+            hint=f"Available columns: {list(table.columns)[:10]}",
+        )
+
+    chosen_alphas, chosen_betas = _extract_chosen_chains(
+        chosen, alpha_col, beta_col, match
+    )
+
+    tbl_beta = _normalize_cdr3_series(table[beta_col])
+    if match == "beta":
+        keyset = {_normalize_cdr3_value(b) for b in chosen_betas}
+        keyset.discard("")
+        mask = tbl_beta.isin(keyset)
+    else:
+        keyset = {
+            (_normalize_cdr3_value(a), _normalize_cdr3_value(b))
+            for a, b in zip(chosen_alphas, chosen_betas)
+        }
+        keyset = {(a, b) for (a, b) in keyset if a and b}
+        tbl_alpha = _normalize_cdr3_series(table[alpha_col])
+        pairs = pd.Series(zip(tbl_alpha, tbl_beta), index=table.index)
+        mask = pairs.isin(keyset)
+
+    return pd.Series(
+        np.asarray(mask, dtype=bool), index=table.index, name=name
+    )
