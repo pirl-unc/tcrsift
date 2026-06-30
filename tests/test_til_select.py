@@ -14,15 +14,21 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from types import SimpleNamespace
+import matplotlib
 
-import anndata as ad
-import numpy as np
-import pandas as pd
-import scipy.sparse as sp
+matplotlib.use("Agg")
+
+from pathlib import Path  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+import anndata as ad  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
+import scipy.sparse as sp  # noqa: E402
 
 from tcrsift.til_select import (
+    _plot_til_signature_map,
     compute_marker_scores_for_timepoint,
     default_timepoint_inputs,
     load_from_consensus,
@@ -239,6 +245,12 @@ class TestTilSelectCore:
                 "score_cp10k_TNFRSF9_mean": [0.4, 0.0, 0.0],
                 "score_cp10k_CXCL13_mean": [3.0, 0.1, 0.0],
                 "score_cp10k_ENTPD1_mean": [2.5, 0.1, 0.0],
+                # activation (AIM) + exhaustion panel genes (#303)
+                "score_cp10k_TNFRSF4_mean": [0.6, 0.0, 0.0],
+                "score_cp10k_IL2RA_mean": [0.5, 0.0, 0.0],
+                "score_cp10k_PDCD1_mean": [1.2, 0.1, 0.0],
+                "score_cp10k_TOX_mean": [0.9, 0.0, 0.0],
+                "score_cp10k_LAG3_mean": [0.8, 0.0, 0.0],
                 "score_z_GZMB_T1": [0.5, -0.2, 0.0],
                 "score_z_GZMB_T2": [1.1, -0.3, 0.0],
                 "score_z_PRF1_T1": [0.6, -0.2, 0.0],
@@ -249,15 +261,24 @@ class TestTilSelectCore:
         out_df, subsets, _seq, _ind, _branch = run_selection_pipeline(
             df,
             timepoint_order=["T1", "T2"],
-            marker_genes=["CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG", "MKI67", "TNFRSF9", "CXCL13", "ENTPD1"],
+            marker_genes=[
+                "CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG", "MKI67",
+                "TNFRSF9", "TNFRSF4", "IL2RA", "CXCL13", "ENTPD1",
+                "PDCD1", "TOX", "LAG3",
+            ],
         )
 
         assert "is_base_selected" in out_df.columns
         assert "is_candidate_tumor_reactive" in out_df.columns
-        assert "is_branch_enrichment_markers" in out_df.columns
-        assert "is_top_enrichment_score" in out_df.columns
+        # #303: activation + exhaustion branches replace the enrichment branch.
+        assert "is_branch_activation" in out_df.columns
+        assert "is_top_activation_score" in out_df.columns
+        assert "is_branch_exhaustion" in out_df.columns
+        assert "is_top_exhaustion_score" in out_df.columns
+        assert "is_branch_enrichment_markers" not in out_df.columns
         assert "subset_candidate_tumor_reactive" in subsets
-        assert "subset_top_enrichment_score" in subsets
+        assert "subset_top_activation_score" in subsets
+        assert "subset_top_exhaustion_score" in subsets
 
 
 class TestTilSelectEndToEnd:
@@ -312,7 +333,9 @@ class TestTilSelectEndToEnd:
             cytotoxic_genes="GZMB,PRF1,IFNG,MKI67,TNFRSF9",
             cytolytic_genes="GZMB,PRF1",
             antigen_response_genes="TNFRSF9,MKI67",
-            enrichment_genes="CXCL13,ENTPD1",
+            activation_genes="TNFRSF9,TNFRSF4,IL2RA,MKI67",
+            exhaustion_genes="PDCD1,TOX,LAG3,HAVCR2,TIGIT",
+            enrichment_genes="",
             pyensembl_release=110,
             rank_by="mean_frequency",
             fig_dir=fig_dir,
@@ -335,8 +358,66 @@ class TestTilSelectEndToEnd:
         assert (fig_dir / "abTCR_annotated.csv").exists()
         assert (fig_dir / "selection_masks.csv").exists()
         assert (fig_dir / "subset_candidate_tumor_reactive.csv").exists()
-        assert (fig_dir / "subset_top_enrichment_score.csv").exists()
+        assert (fig_dir / "subset_top_exhaustion_score.csv").exists()
+        assert (fig_dir / "subset_top_activation_score.csv").exists()
         assert (fig_dir / "marker_cells_T1.csv").exists()
         assert (fig_dir / "marker_clonotype_scores_T1.csv").exists()
         assert (fig_dir / "abTCR_topk.csv").exists()
         assert out_report.exists()
+
+
+class TestFunctionalPanelSelection:
+    """#303: activation/exhaustion branches + TIL signature map."""
+
+    @staticmethod
+    def _df():
+        return pd.DataFrame(
+            {
+                "CDR3ab": ["A_B", "C_D"],
+                "frequency_T1": [0.02, 0.01],
+                "frequency_T2": [0.03, 0.01],
+                "total_cells": [10, 2],
+                "score_cp10k_CD8A_mean": [2.0, 0.0],
+                "score_cp10k_PDCD1_mean": [1.0, 0.0],
+                "score_cp10k_FOO_mean": [5.0, 0.0],
+            }
+        )
+
+    def test_enrichment_genes_is_deprecated_alias_for_exhaustion(self):
+        # --enrichment-genes / enrichment_genes_preferred now seeds the
+        # exhaustion panel when no explicit exhaustion genes are given.
+        out, *_ = run_selection_pipeline(
+            self._df(),
+            timepoint_order=["T1", "T2"],
+            marker_genes=["CD8A", "PDCD1", "FOO"],
+            enrichment_genes_preferred=["FOO"],
+        )
+        assert out.loc[0, "exhaustion_score_cp10k_mean"] == pytest.approx(5.0)
+
+    def test_explicit_exhaustion_genes_take_precedence_over_alias(self):
+        out, *_ = run_selection_pipeline(
+            self._df(),
+            timepoint_order=["T1", "T2"],
+            marker_genes=["CD8A", "PDCD1", "FOO"],
+            exhaustion_genes_preferred=["PDCD1"],
+            enrichment_genes_preferred=["FOO"],
+        )
+        assert out.loc[0, "exhaustion_score_cp10k_mean"] == pytest.approx(1.0)
+
+    def test_til_signature_map_real_when_scores_present(self, tmp_path):
+        df = pd.DataFrame(
+            {
+                "cytolytic_score_cp10k_mean": [0.1, 0.5, 0.9],
+                "exhaustion_score_cp10k_mean": [0.2, 0.4, 0.8],
+                "is_candidate_tumor_reactive": [False, True, True],
+            }
+        )
+        out = tmp_path / "sigmap.png"
+        _plot_til_signature_map(df, out)
+        assert out.exists()
+
+    def test_til_signature_map_falls_back_to_placeholder(self, tmp_path):
+        # Missing score columns -> placeholder file (still written).
+        out = tmp_path / "placeholder.png"
+        _plot_til_signature_map(pd.DataFrame({"x": [1, 2]}), out)
+        assert out.exists()

@@ -46,15 +46,21 @@ from scipy.sparse import issparse
 
 from .annotate import canonicalize_species
 from .signatures import (
+    AIM_GENES_HGNC as ACTIVATION_GENES_DEFAULT,
+)
+from .signatures import (
     ANTIGEN_RESPONSE_GENES_HGNC as ANTIGEN_RESPONSE_GENES_DEFAULT,
 )
 from .signatures import (
     CYTOLYTIC_GENES_HGNC as CYTOLYTIC_GENES_DEFAULT,
 )
 from .signatures import (
-    MARKER_PANEL_HGNC as MARKER_GENES_DEFAULT,
+    EXHAUSTION_GENES_HGNC as EXHAUSTION_GENES_DEFAULT,
 )
 from .signatures import (
+    MARKER_PANEL_HGNC as MARKER_GENES_DEFAULT,
+)
+from .signatures import (  # noqa: F401  (back-compat re-export; #303 retired the enrichment branch)
     TUMOR_REACTIVE_GENES_HGNC as ENRICHMENT_GENES_DEFAULT,
 )
 from .validation import TCRsiftValidationError, validate_file_exists
@@ -1378,6 +1384,8 @@ def run_selection_pipeline(
     cytotoxic_genes_preferred: list[str] | None = None,
     cytolytic_genes_preferred: list[str] | None = None,
     antigen_response_genes_preferred: list[str] | None = None,
+    activation_genes_preferred: list[str] | None = None,
+    exhaustion_genes_preferred: list[str] | None = None,
     enrichment_genes_preferred: list[str] | None = None,
 ) -> tuple[
     pd.DataFrame,
@@ -1517,12 +1525,24 @@ def run_selection_pipeline(
     )
     antigen_response_genes = _dedupe_valid(antigen_seed, ANTIGEN_RESPONSE_GENES_DEFAULT)
 
-    enrichment_seed = (
-        [g.strip().upper() for g in enrichment_genes_preferred if g.strip()]
-        if enrichment_genes_preferred
-        else list(ENRICHMENT_GENES_DEFAULT)
+    activation_seed = (
+        [g.strip().upper() for g in activation_genes_preferred if g.strip()]
+        if activation_genes_preferred
+        else list(ACTIVATION_GENES_DEFAULT)
     )
-    enrichment_genes = _dedupe_valid(enrichment_seed, ENRICHMENT_GENES_DEFAULT)
+    activation_genes = _dedupe_valid(activation_seed, ACTIVATION_GENES_DEFAULT)
+
+    # #303: the exhaustion branch replaces the old "enrichment" branch.
+    # ``enrichment_genes_preferred`` is a deprecated alias kept so existing
+    # callers/scripts don't break: it seeds exhaustion when no explicit
+    # exhaustion genes are supplied.
+    exhaustion_pref = exhaustion_genes_preferred or enrichment_genes_preferred
+    exhaustion_seed = (
+        [g.strip().upper() for g in exhaustion_pref if g.strip()]
+        if exhaustion_pref
+        else list(EXHAUSTION_GENES_DEFAULT)
+    )
+    exhaustion_genes = _dedupe_valid(exhaustion_seed, EXHAUSTION_GENES_DEFAULT)
 
     for tp in timepoint_order:
         z_cols = [f"score_z_{g}_{tp}" for g in cytotoxic_genes if f"score_z_{g}_{tp}" in df.columns]
@@ -1569,7 +1589,8 @@ def run_selection_pipeline(
 
     _add_panel_scores("cytolytic", cytolytic_genes)
     _add_panel_scores("antigen_response", antigen_response_genes)
-    _add_panel_scores("enrichment", enrichment_genes)
+    _add_panel_scores("activation", activation_genes)
+    _add_panel_scores("exhaustion", exhaustion_genes)
 
     first_z = pd.to_numeric(df.get(f"cytotoxic_score_z_{first_tp}", 0.0), errors="coerce").fillna(0.0)
     last_z = pd.to_numeric(df.get(f"cytotoxic_score_z_{last_tp}", 0.0), errors="coerce").fillna(0.0)
@@ -1654,10 +1675,20 @@ def run_selection_pipeline(
         immunogenic_min_cp10k,
         immunogenic_require_above_median,
     )
-    n_top_enrichment = _select_top_panel_score(
+    n_top_activation = _select_top_panel_score(
         df,
-        "enrichment_score_cp10k_mean",
-        "is_top_enrichment_score",
+        "activation_score_cp10k_mean",
+        "is_top_activation_score",
+        immunogenic_percentile,
+        immunogenic_percentile_slack_frac,
+        immunogenic_min_cp10k,
+        immunogenic_require_above_median,
+    )
+    # #303: exhaustion replaces the former "enrichment" (tumor-reactivity) branch.
+    n_top_exhaustion = _select_top_panel_score(
+        df,
+        "exhaustion_score_cp10k_mean",
+        "is_top_exhaustion_score",
         immunogenic_percentile,
         immunogenic_percentile_slack_frac,
         immunogenic_min_cp10k,
@@ -1667,14 +1698,16 @@ def run_selection_pipeline(
     df["is_branch_top_immunogenic"] = df["is_top_immunogenic_any"]
     df["is_branch_cytolytic"] = df["is_top_cytolytic_score"]
     df["is_branch_antigen_response"] = df["is_top_antigen_response_score"]
-    df["is_branch_enrichment_markers"] = df["is_top_enrichment_score"]
+    df["is_branch_activation"] = df["is_top_activation_score"]
+    df["is_branch_exhaustion"] = df["is_top_exhaustion_score"]
     df["is_branch_enriched"] = df["is_increasing_nonzero"]
     df["is_branch_increasing"] = df["is_increasing_all_timepoints"]
     df["is_branch_any"] = (
         df["is_branch_top_immunogenic"]
         | df["is_branch_cytolytic"]
         | df["is_branch_antigen_response"]
-        | df["is_branch_enrichment_markers"]
+        | df["is_branch_activation"]
+        | df["is_branch_exhaustion"]
         | df["is_branch_enriched"]
         | df["is_branch_increasing"]
     )
@@ -1682,7 +1715,8 @@ def run_selection_pipeline(
         df["is_top_immunogenic_any"]
         | df["is_top_cytolytic_score"]
         | df["is_top_antigen_response_score"]
-        | df["is_top_enrichment_score"]
+        | df["is_top_activation_score"]
+        | df["is_top_exhaustion_score"]
     )
     df["is_candidate_tumor_reactive"] = df["is_base_selected"] & df["is_branch_any"]
     df["is_branch_union_within_base"] = df["is_candidate_tumor_reactive"]
@@ -1699,7 +1733,8 @@ def run_selection_pipeline(
         "subset_top_immunogenic_any": df[df["is_top_immunogenic_any"]].copy(),
         "subset_top_cytolytic_score": df[df["is_top_cytolytic_score"]].copy(),
         "subset_top_antigen_response_score": df[df["is_top_antigen_response_score"]].copy(),
-        "subset_top_enrichment_score": df[df["is_top_enrichment_score"]].copy(),
+        "subset_top_activation_score": df[df["is_top_activation_score"]].copy(),
+        "subset_top_exhaustion_score": df[df["is_top_exhaustion_score"]].copy(),
         "subset_enriched": df[df["is_enriched"]].copy(),
         "subset_increasing": df[df["is_increasing_nonzero"]].copy(),
         "subset_increasing_positive": df[df["is_increasing_all_timepoints"]].copy(),
@@ -1745,7 +1780,8 @@ def run_selection_pipeline(
         *immunogenic_branch_rows,
         ("Cytolytic", n_top_cytolytic),
         ("AgResp", n_top_antigen_response),
-        ("Enrich", n_top_enrichment),
+        ("Activation", n_top_activation),
+        ("Exhaust", n_top_exhaustion),
         (f"Inc>={increase_ratio_nonzero_min:g}x", int((df["is_base_selected"] & df["is_branch_enriched"]).sum())),
         ("Union", int(df["is_branch_union_within_base"].sum())),
         ("Final", int(df["is_candidate_tumor_reactive"].sum())),
@@ -1761,7 +1797,8 @@ def run_selection_pipeline(
         ("ImmAny", int(df["is_top_immunogenic_any"].sum())),
         ("Cytolytic", int(df["is_top_cytolytic_score"].sum())),
         ("AgResp", int(df["is_top_antigen_response_score"].sum())),
-        ("Enrich", int(df["is_top_enrichment_score"].sum())),
+        ("Activation", int(df["is_top_activation_score"].sum())),
+        ("Exhaust", int(df["is_top_exhaustion_score"].sum())),
         *immunogenic_independent_rows,
         (f"Inc>={increase_ratio_nonzero_min:g}x", int(df["is_increasing_nonzero"].sum())),
         ("Inc+Cyto", int(df["is_increasing_and_became_cytotoxic"].sum())),
@@ -1959,6 +1996,33 @@ def _save_placeholder_plot(path: Path, title: str, body: str = "") -> None:
     plt.close(fig)
 
 
+def _plot_til_signature_map(df: pd.DataFrame, path: Path) -> None:
+    """TIL cytolytic-vs-exhaustion signature map (#303).
+
+    Effector (PRF1/GZMB) vs exhausted-state (PD-1/TOX/LAG3/TIM-3/TIGIT) axis
+    for the intratumoral clones, with the final tumor-reactive candidates
+    highlighted. Far more detectable in TIL than the old antigen-response axis.
+    Falls back to a placeholder when the panel scores aren't present.
+    """
+    x_col, y_col = "cytolytic_score_cp10k_mean", "exhaustion_score_cp10k_mean"
+    if df is None or not {x_col, y_col}.issubset(df.columns) or df.empty:
+        _save_placeholder_plot(path, "Selection scatter panels")
+        return
+    from .plots import plot_signature_map
+
+    highlight = df["is_candidate_tumor_reactive"] if "is_candidate_tumor_reactive" in df.columns else None
+    plot_signature_map(
+        df,
+        x_col,
+        y_col,
+        highlight_mask=highlight,
+        x_label="cytolytic score (PRF1 / GZMB)",
+        y_label="exhaustion score (PD-1 / TOX / LAG3 / TIM-3 / TIGIT)",
+        title="TIL clones: cytolytic vs exhaustion (candidates highlighted)",
+        output_path=path,
+    )
+
+
 def export_all_plots_pdf(fig_dir: Path, output_pdf: Path) -> None:
     """Compile all PNG figures into a single PDF."""
     png_paths = sorted([p for p in fig_dir.glob("*.png") if p.is_file()])
@@ -2109,8 +2173,16 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
     antigen_response_genes = [
         g.strip().upper() for g in str(args.antigen_response_genes).split(",") if g.strip()
     ]
+    activation_genes = [
+        g.strip().upper() for g in str(getattr(args, "activation_genes", "") or "").split(",") if g.strip()
+    ]
+    exhaustion_genes = [
+        g.strip().upper() for g in str(getattr(args, "exhaustion_genes", "") or "").split(",") if g.strip()
+    ]
+    # Deprecated alias (#303): --enrichment-genes still seeds the exhaustion
+    # branch when --exhaustion-genes isn't supplied.
     enrichment_genes = [
-        g.strip().upper() for g in str(args.enrichment_genes).split(",") if g.strip()
+        g.strip().upper() for g in str(getattr(args, "enrichment_genes", "") or "").split(",") if g.strip()
     ]
 
     fig_dir = Path(args.fig_dir)
@@ -2188,6 +2260,8 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
         cytotoxic_genes_preferred=cytotoxic_genes,
         cytolytic_genes_preferred=cytolytic_genes,
         antigen_response_genes_preferred=antigen_response_genes,
+        activation_genes_preferred=activation_genes,
+        exhaustion_genes_preferred=exhaustion_genes,
         enrichment_genes_preferred=enrichment_genes,
     )
 
@@ -2362,8 +2436,11 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
     summary_df = summary_df.sort_values("timepoint")
     summary_df.to_csv(fig_dir / "timepoint_summary.csv", index=False)
 
-    # Lightweight placeholders for legacy plot artifacts.
-    _save_placeholder_plot(fig_dir / "selection_scatter_panels.png", "Selection scatter panels")
+    # #303: real TIL signature map — cytolytic (PRF1/GZMB) vs exhaustion
+    # (PD-1/TOX/LAG3/TIM-3/TIGIT), the effector-vs-exhausted state of
+    # intratumoral clones, with the final candidates highlighted. Falls back
+    # to a placeholder when the score columns aren't available.
+    _plot_til_signature_map(master_df, fig_dir / "selection_scatter_panels.png")
     _save_placeholder_plot(fig_dir / "marker_gene_histograms_cp10k_mean.png", "Marker gene histograms")
     for i in range(1, 6):
         _save_placeholder_plot(
