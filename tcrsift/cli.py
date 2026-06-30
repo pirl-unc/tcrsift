@@ -2527,7 +2527,7 @@ def cmd_report_polished(args):
 
 def create_parser():
     """Create the argument parser."""
-    from .signatures import MARKER_PANEL_HGNC
+    from .signatures import AIM_GENES_HGNC, EXHAUSTION_GENES_HGNC, MARKER_PANEL_HGNC
 
     parser = argparse.ArgumentParser(
         prog="tcrsift",
@@ -3367,10 +3367,23 @@ or auto-discovered from --data-dir.
         help="Comma-separated genes for antigen-response score branch.",
     )
     p_til_select.add_argument(
+        "--activation-genes",
+        type=str,
+        default=",".join(AIM_GENES_HGNC),
+        help="Comma-separated genes for the activation (AIM) score branch (#303).",
+    )
+    p_til_select.add_argument(
+        "--exhaustion-genes",
+        type=str,
+        default=",".join(EXHAUSTION_GENES_HGNC),
+        help="Comma-separated genes for the exhaustion score branch (#303).",
+    )
+    p_til_select.add_argument(
         "--enrichment-genes",
         type=str,
-        default="CXCL13,ENTPD1",
-        help="Comma-separated genes for exhaustion/tumor-reactivity enrichment branch.",
+        default="",
+        help="DEPRECATED (#303): alias for --exhaustion-genes; seeds the "
+        "exhaustion branch when --exhaustion-genes is not given.",
     )
     p_til_select.add_argument(
         "--pyensembl-release",
