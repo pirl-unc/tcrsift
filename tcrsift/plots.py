@@ -35,9 +35,11 @@ from .format import pretty_method, pretty_methods, pretty_sample, pretty_samples
 # truth is :mod:`tcrsift.signatures`.
 from .signatures import (  # noqa: F401, E402
     ACTIVATION_GENES_HGNC,
+    AIM_GENES_HGNC,
     ANTIGEN_RESPONSE_GENES_HGNC,
     CYTOLYTIC_GENES_HGNC,
     EXHAUSTION_GENES_HGNC,
+    EXPANSION_CORE_GENES_HGNC,
     TUMOR_REACTIVE_GENES_HGNC,
 )
 

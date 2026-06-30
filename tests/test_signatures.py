@@ -46,9 +46,11 @@ class TestModuleShape:
             "activation",  # deprecated alias of effector (#142)
             "naive_stem",
             "antigen_response",
+            "aim",  # #303 activation-induced markers
             "cytolytic",
             "exhaustion",
             "tumor_reactive",
+            "expansion_core",  # #303 cross-compartment core
         }
         # Each value is a non-empty tuple of strings.
         for name, genes in signatures.T_CELL_SIGNATURES.items():
@@ -61,6 +63,42 @@ class TestModuleShape:
         assert signatures.ANTIGEN_RESPONSE_GENES_HGNC == ("TNFRSF9", "MKI67")
         assert signatures.CYTOLYTIC_GENES_HGNC == ("PRF1", "GZMB")
         assert signatures.TUMOR_REACTIVE_GENES_HGNC == ("CXCL13", "ENTPD1")
+
+
+class TestExpansionCorrelationPanels:
+    """#303: panels re-grounded on clone-level expansion correlation."""
+
+    def test_aim_panel(self):
+        # Activation-induced markers (culture compartment).
+        assert signatures.AIM_GENES_HGNC == ("TNFRSF9", "TNFRSF4", "IL2RA", "MKI67")
+
+    def test_antigen_response_is_aim_subset(self):
+        # Kept as the 2-gene back-compat subset of AIM.
+        assert set(signatures.ANTIGEN_RESPONSE_GENES_HGNC).issubset(
+            set(signatures.AIM_GENES_HGNC)
+        )
+
+    def test_exhaustion_dropped_ctla4(self):
+        assert signatures.EXHAUSTION_GENES_HGNC == (
+            "PDCD1", "TOX", "LAG3", "HAVCR2", "TIGIT",
+        )
+        assert "CTLA4" not in signatures.EXHAUSTION_GENES_HGNC
+
+    def test_expansion_core_panel(self):
+        assert signatures.EXPANSION_CORE_GENES_HGNC == (
+            "MKI67", "TNFRSF9", "EGR2", "IFNG", "CXCL13", "HAVCR2",
+        )
+
+    def test_activation_alias_untouched(self):
+        # The new AIM panel must NOT collide with the deprecated
+        # ACTIVATION alias, which still means effector (#142).
+        assert signatures.ACTIVATION_GENES_HGNC == signatures.EFFECTOR_GENES_HGNC
+        assert signatures.AIM_GENES_HGNC != signatures.ACTIVATION_GENES_HGNC
+
+    def test_new_panels_top_level_importable(self):
+        assert tcrsift.AIM_GENES_HGNC == signatures.AIM_GENES_HGNC
+        assert tcrsift.EXPANSION_CORE_GENES_HGNC == signatures.EXPANSION_CORE_GENES_HGNC
+        assert tcrsift.MARKER_PANEL_HGNC == signatures.MARKER_PANEL_HGNC
 
 
 class TestTopLevelExports:
@@ -105,11 +143,27 @@ class TestMarkerPanel:
     """The default per-clone GEX scoring panel lives in ``signatures``
     and is re-exported from ``til_select`` as ``MARKER_GENES_DEFAULT``."""
 
-    def test_panel_contents(self):
-        assert signatures.MARKER_PANEL_HGNC == (
-            "CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG",
-            "MKI67", "TNFRSF9", "CXCL13", "ENTPD1",
-        )
+    def test_panel_has_lineage_and_no_dupes(self):
+        panel = signatures.MARKER_PANEL_HGNC
+        assert {"CD4", "CD8A", "CD8B"}.issubset(panel)  # lineage markers
+        assert len(panel) == len(set(panel))  # no duplicates
+        assert all(g.isupper() for g in panel)
+
+    def test_panel_is_union_of_functional_panels(self):
+        # #303: the panel was widened so every functional panel is
+        # computable from one extraction pass — i.e. it must be a
+        # superset of each. This guards against a panel gene being added
+        # without also widening the extraction.
+        panel = set(signatures.MARKER_PANEL_HGNC)
+        for genes in (
+            signatures.AIM_GENES_HGNC,
+            signatures.ANTIGEN_RESPONSE_GENES_HGNC,
+            signatures.CYTOLYTIC_GENES_HGNC,
+            signatures.EXHAUSTION_GENES_HGNC,
+            signatures.TUMOR_REACTIVE_GENES_HGNC,
+            signatures.EXPANSION_CORE_GENES_HGNC,
+        ):
+            assert set(genes).issubset(panel), set(genes) - panel
 
     def test_panel_is_not_an_intent_signature(self):
         # The union display panel is intentionally excluded from the
