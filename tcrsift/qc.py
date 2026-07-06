@@ -864,6 +864,18 @@ DEFAULT_LINEAGE_PROGRAMS: dict[str, list[str]] = {
     "fibroblast": ["COL1A1", "COL1A2", "DCN", "LUM", "PDGFRA"],
 }
 
+# Solid-tumor TME preset (#327). Lineage programs are CONTEXT-DEPENDENT: the
+# defaults assume a blood/PBMC context. In a solid tumor the malignant cells
+# co-express stroma genes (an osteosarcoma cluster carries COL1A1), so the
+# ``fibroblast`` program would make every tumor cell self-flag as a doublet — it
+# is DROPPED here. Osteoclasts (a bone-tumor TME resident) are folded into the
+# ``myeloid`` program rather than tracked as a distinct lineage. Pass your own
+# via ``lineage_sets=`` when neither preset fits your tissue.
+SOLID_TUMOR_LINEAGE_PROGRAMS: dict[str, list[str]] = {
+    **{k: v for k, v in DEFAULT_LINEAGE_PROGRAMS.items() if k != "fibroblast"},
+    "myeloid": DEFAULT_LINEAGE_PROGRAMS["myeloid"] + ["ACP5", "CTSK", "MMP9"],
+}
+
 
 def _gene_vector(adata, gene: str) -> np.ndarray:
     """Dense per-cell expression for one gene (zeros if the gene is absent)."""
@@ -966,6 +978,12 @@ def cell_qc_funnel(
     max_mito_pct: float | None = None,
     lineage_sets: dict[str, list[str]] | None = None,
     require_high_umi: bool = True,
+    xlineage_score_min: float = 0.5,
+    xlineage_min_programs: int = 2,
+    umi_outlier_mult: float = 2.0,
+    cd3_gene: str = "CD3E",
+    cd4_gene: str = "CD4",
+    cd8_genes: tuple[str, ...] = ("CD8A", "CD8B"),
     trb_doublet_col: str = "multi_TRB",
     low_coverage_genes: int | None = None,
     mark_low_coverage: bool = True,
@@ -987,6 +1005,16 @@ def cell_qc_funnel(
     (its ``load`` section, or anything exposing those attributes) to reuse them,
     or override any individually; explicit kwargs win over ``config`` win over
     the built-in defaults (so there is no parallel config).
+
+    The doublet-gate internals are tunable through the funnel (#327): the
+    cross-lineage stringency (``xlineage_score_min`` / ``xlineage_min_programs`` /
+    ``umi_outlier_mult``, forwarded to :func:`cross_lineage_doublets`) and the
+    CD4/CD8/CD3 gene symbols (``cd3_gene`` / ``cd4_gene`` / ``cd8_genes``, for
+    non-standard symbol sets or other species). ``lineage_sets`` is
+    context-dependent: the default :data:`DEFAULT_LINEAGE_PROGRAMS` assumes
+    blood/PBMC — for a solid tumor pass :data:`SOLID_TUMOR_LINEAGE_PROGRAMS`
+    (drops the fibroblast program so collagen-expressing tumor cells don't
+    self-flag) or your own.
 
     A doublet is NOT simply a high-coverage cell — a deeply sequenced singlet
     also has many genes. The decisive signal is disjoint-lineage co-expression;
@@ -1049,13 +1077,20 @@ def cell_qc_funnel(
     if trb_doublet_col in adata.obs.columns:
         drop(adata.obs[trb_doublet_col].fillna(False).astype(bool), "tcr_2b",
              ">=2 productive TRB (T-T)")
-    drop(cd4_cd8_doublet_mask(adata), "cd4cd8_dp", "CD4+CD8 double-positive")
+    drop(
+        cd4_cd8_doublet_mask(
+            adata, cd3_gene=cd3_gene, cd4_gene=cd4_gene, cd8_genes=cd8_genes
+        ),
+        "cd4cd8_dp", "CD4+CD8 double-positive",
+    )
     if adata.n_obs:
         drop(
             cross_lineage_doublets(
-                adata, lineage_sets, require_high_umi=require_high_umi
+                adata, lineage_sets, score_min=xlineage_score_min,
+                min_programs=xlineage_min_programs, require_high_umi=require_high_umi,
+                umi_outlier_mult=umi_outlier_mult,
             ),
-            "xlineage", ">=2 disjoint lineages",
+            "xlineage", f">={xlineage_min_programs} disjoint lineages",
         )
 
     if mark_low_coverage and adata.n_obs:

@@ -28,6 +28,7 @@ import pytest
 
 from tcrsift.qc import (
     DEFAULT_LINEAGE_PROGRAMS,
+    SOLID_TUMOR_LINEAGE_PROGRAMS,
     cd4_cd8_doublet_mask,
     cell_qc_funnel,
     cross_lineage_doublets,
@@ -171,3 +172,52 @@ class TestCellQcFunnel:
             cell_qc_funnel(qc_adata, min_genes=3, min_counts=5, min_mito_pct=0.0)
         assert qc_adata.n_obs == n_before
         assert "qc_low_coverage" not in qc_adata.obs.columns
+
+
+class TestFunnelDoubletTunables:
+    """Cross-lineage stringency + CD gene symbols are reachable through the
+    funnel (#327), not fixed internally."""
+
+    def _xlineage_removed(self, adata, **kw):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _, wf = cell_qc_funnel(
+                adata, min_genes=3, min_counts=5, min_mito_pct=0.0, **kw
+            )
+        row = wf[wf["step"] == "xlineage"]
+        return int(row["removed"].iloc[0]) if len(row) else 0
+
+    def test_xlineage_min_programs_threaded(self, qc_adata):
+        # The 5 T+myeloid doublets are a 2-program event: default min_programs=2
+        # flags them; requiring 3 disjoint programs lets them through.
+        assert self._xlineage_removed(qc_adata, xlineage_min_programs=2) == 5
+        assert self._xlineage_removed(qc_adata, xlineage_min_programs=3) == 0
+
+    def test_xlineage_score_min_threaded(self, qc_adata):
+        # A punishingly high per-program score floor calls nothing "on".
+        assert self._xlineage_removed(qc_adata, xlineage_score_min=99.0) == 0
+
+    def test_cd_gene_symbols_threaded(self):
+        # A double-positive T cell whose CD8 sits under a non-standard symbol is
+        # missed by the defaults but flagged when cd8_genes points at it.
+        genes = ["CD3E", "CD4", "CD8x"] + [f"G{i}" for i in range(40)]
+        gi = {g: i for i, g in enumerate(genes)}
+        X = np.zeros((4, len(genes)))
+        for fg in [f"G{i}" for i in range(40)]:
+            X[:, gi[fg]] = 30
+        X[0, [gi["CD3E"], gi["CD4"], gi["CD8x"]]] = 40  # DP under CD8x
+        adata = ad.AnnData(X=X, var=pd.DataFrame(index=genes),
+                           obs=pd.DataFrame(index=[f"c{i}" for i in range(4)]))
+        assert not cd4_cd8_doublet_mask(adata).any()            # default CD8A/B
+        assert cd4_cd8_doublet_mask(adata, cd8_genes=("CD8x",))[0]
+
+
+class TestSolidTumorPreset:
+    def test_drops_fibroblast_folds_osteoclast(self):
+        # The solid-tumor preset drops the fibroblast program (tumor collagen
+        # would self-flag) and folds osteoclast markers into myeloid.
+        assert "fibroblast" not in SOLID_TUMOR_LINEAGE_PROGRAMS
+        assert "fibroblast" in DEFAULT_LINEAGE_PROGRAMS
+        for g in ("ACP5", "CTSK", "MMP9"):
+            assert g in SOLID_TUMOR_LINEAGE_PROGRAMS["myeloid"]
+        assert set(SOLID_TUMOR_LINEAGE_PROGRAMS) < set(DEFAULT_LINEAGE_PROGRAMS)
