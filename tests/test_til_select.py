@@ -27,10 +27,13 @@ import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 import scipy.sparse as sp  # noqa: E402
 
+from tcrsift.cli import _parse_per_lineage_min
 from tcrsift.til_select import (
     _plot_til_signature_map,
     compute_marker_scores_for_timepoint,
     default_timepoint_inputs,
+    dominant_specificity_from_master,
+    load_antigen_label_map,
     load_from_consensus,
     parse_config,
     parse_sample_args,
@@ -349,9 +352,16 @@ class TestTilSelectEndToEnd:
             out_annotated=None,
             out_annotated_heatmap=None,
             out_selected_report=out_report,
+            # Dominant-specificity selection on (#328).
+            dominant_specificity=True,
+            min_specificity=0.9,
+            dominant_min_cells=1,
+            per_lineage_min=None,
+            dominant_lineage_col=None,
+            antigen_labels=None,
         )
 
-        run_til_select(args)
+        master = run_til_select(args)
 
         assert out_table.exists()
         assert (fig_dir / "abTCR_master_table.csv").exists()
@@ -364,6 +374,10 @@ class TestTilSelectEndToEnd:
         assert (fig_dir / "marker_clonotype_scores_T1.csv").exists()
         assert (fig_dir / "abTCR_topk.csv").exists()
         assert out_report.exists()
+        # #328: dominant-specificity wired through end-to-end.
+        assert (fig_dir / "abTCR_dominant_specificity.csv").exists()
+        assert "is_dominant_specific" in master.columns
+        assert "is_dominant_specific" in pd.read_csv(out_table).columns
 
 
 class TestFunctionalPanelSelection:
@@ -421,3 +435,62 @@ class TestFunctionalPanelSelection:
         out = tmp_path / "placeholder.png"
         _plot_til_signature_map(pd.DataFrame({"x": [1, 2]}), out)
         assert out.exists()
+
+
+class TestDominantSpecificityCLI:
+    """til-select surfacing of select_by_dominant_specificity (#328)."""
+
+    def _master(self):
+        # Condition axis = per-sample cell counts. B1 lives in P2, B2 in P7,
+        # B3 split (bystander), B4 confined to P2 with a low count.
+        return pd.DataFrame({
+            "CDR3_beta": ["B1", "B2", "B3", "B4"],
+            "cell_count_P2": [10, 0, 4, 3],
+            "cell_count_P7": [0, 8, 4, 0],
+            "cd4_to_cd8_ratio": [0.2, 3.0, 0.1, 0.1],  # B1/B3/B4 CD8, B2 CD4
+        })
+
+    def test_dominant_over_samples(self):
+        res = dominant_specificity_from_master(
+            self._master(), ["P2", "P7"], min_specificity=0.95, min_dominant_cells=5,
+        )
+        flag = res.set_index("CDR3_beta")["is_dominant_specific"].to_dict()
+        assert flag["B1"] and flag["B2"]        # confined + enough cells
+        assert not flag["B3"]                    # split across pools
+        assert not flag["B4"]                    # confined but only 3 < 5 cells
+
+    def test_per_lineage_min_auto_derived_lineage(self):
+        # CD8 floor 2 rescues B4 (3 cells) that the default floor 5 rejected.
+        res = dominant_specificity_from_master(
+            self._master(), ["P2", "P7"], min_specificity=0.95,
+            per_lineage_min={"CD8": 2, "CD4": 5},
+        )
+        flag = res.set_index("CDR3_beta")["is_dominant_specific"].to_dict()
+        assert flag["B4"]                        # CD8 floor 2, dominant 3
+        assert "lineage" in res.columns
+
+    def test_antigen_label_map_prettifies(self):
+        res = dominant_specificity_from_master(
+            self._master(), ["P2", "P7"], min_specificity=0.95, min_dominant_cells=1,
+            label_map={"P2": "KIF1C epitope", "P7": "MAGEA4 epitope"},
+        )
+        ag = res.set_index("CDR3_beta")["dominant_antigen"].to_dict()
+        assert ag["B1"] == "KIF1C epitope"
+        assert ag["B2"] == "MAGEA4 epitope"
+
+    def test_load_antigen_label_map_named_and_positional(self, tmp_path):
+        named = tmp_path / "named.csv"
+        named.write_text("condition,label\nP2,KIF1C epitope\nP7,MAGEA4 epitope\n")
+        assert load_antigen_label_map(named)["P2"] == "KIF1C epitope"
+        pos = tmp_path / "pos.csv"
+        pos.write_text("pool,antigen_name\nP15,P15 (EXOC4)\n")
+        assert load_antigen_label_map(pos)["P15"] == "P15 (EXOC4)"
+
+    def test_parse_per_lineage_min(self):
+        assert _parse_per_lineage_min("CD8=2,CD4=5") == {"CD8": 2, "CD4": 5}
+        assert _parse_per_lineage_min(None) is None
+        assert _parse_per_lineage_min("") is None
+        with pytest.raises(Exception):
+            _parse_per_lineage_min("CD8")       # no '='
+        with pytest.raises(Exception):
+            _parse_per_lineage_min("CD8=two")   # non-int

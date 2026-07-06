@@ -16,6 +16,8 @@ Command-line interface for TCRsift.
 TCRsift: TCR selection from antigen-specific culture and scRNA/VDJ sequencing data.
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import sys
@@ -40,6 +42,29 @@ def setup_logging(verbose: bool = False):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+def _parse_per_lineage_min(spec: str | None) -> dict | None:
+    """Parse a ``CD8=2,CD4=5`` string into ``{"CD8": 2, "CD4": 5}`` (#328)."""
+    if not spec:
+        return None
+    out: dict = {}
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise argparse.ArgumentTypeError(
+                f"--per-lineage-min entry {part!r} must be LINEAGE=INT (e.g. CD8=2)"
+            )
+        key, val = part.split("=", 1)
+        try:
+            out[key.strip()] = int(val)
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(
+                f"--per-lineage-min value in {part!r} must be an integer"
+            ) from e
+    return out or None
 
 
 # =============================================================================
@@ -548,6 +573,9 @@ def cmd_til_select(args):
     n_final = int(master_df["is_candidate_tumor_reactive"].sum())
     print(f"Saved harmonized table: {args.out_table}")
     print(f"Final candidate clonotypes: {n_final}")
+    if getattr(args, "dominant_specificity", False) and "is_dominant_specific" in master_df.columns:
+        n_dom = int(master_df["is_dominant_specific"].sum())
+        print(f"Dominant-specificity antigen-specific clones: {n_dom}")
     print(f"Figures/subsets directory: {args.fig_dir}")
 
 
@@ -3484,6 +3512,52 @@ or auto-discovered from --data-dir.
         type=Path,
         default=None,
         help="Output PDF for selected clone report (default: FIG_DIR/selected_clones_report.pdf).",
+    )
+    # Dominant-fraction antigen-specificity selection (#328 / #316).
+    dom_group = p_til_select.add_argument_group("dominant-specificity selection (#328)")
+    dom_group.add_argument(
+        "--dominant-specificity",
+        action="store_true",
+        help="Flag clones confined to one sample/antigen pool (dominant-fraction "
+        "rule): adds is_dominant_specific + specificity + dominant_antigen to the "
+        "harmonized table and writes abTCR_dominant_specificity.csv. The condition "
+        "axis is the per-sample cell counts, so name samples by antigen pool.",
+    )
+    dom_group.add_argument(
+        "--min-specificity",
+        type=float,
+        default=0.95,
+        help="Min dominant-condition fraction (dominant/total) to call a clone "
+        "specific (default: 0.95).",
+    )
+    dom_group.add_argument(
+        "--dominant-min-cells",
+        type=int,
+        default=5,
+        help="Absolute dominant-condition cell floor when no --per-lineage-min "
+        "entry applies (default: 5).",
+    )
+    dom_group.add_argument(
+        "--per-lineage-min",
+        type=_parse_per_lineage_min,
+        default=None,
+        metavar="CD8=2,CD4=5",
+        help="Per-lineage dominant-cell floors, e.g. CD8=2,CD4=5. Lineage comes "
+        "from --dominant-lineage-col or is auto-derived from cd4_to_cd8_ratio.",
+    )
+    dom_group.add_argument(
+        "--dominant-lineage-col",
+        type=str,
+        default=None,
+        help="Harmonized-table column holding the per-clone lineage for "
+        "--per-lineage-min (default: auto-derive from cd4_to_cd8_ratio).",
+    )
+    dom_group.add_argument(
+        "--antigen-labels",
+        type=Path,
+        default=None,
+        help="CSV mapping condition -> antigen label (e.g. P15 -> 'P15 (EXOC4)'), "
+        "columns condition,label. Prettifies dominant_antigen without a Python call.",
     )
     p_til_select.set_defaults(func=cmd_til_select)
 

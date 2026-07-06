@@ -2145,6 +2145,106 @@ def _write_subset_tables(subset_dfs: dict[str, pd.DataFrame], fig_dir: Path) -> 
         subset_df.to_csv(fig_dir / f"{name}.csv", index=False)
 
 
+def load_antigen_label_map(path: str | Path) -> dict:
+    """Read a ``condition → antigen-label`` map from a two-column CSV (#328).
+
+    Columns named ``condition`` + one of ``label``/``antigen``/``antigen_label``
+    are used when present, else the first two columns positionally. So the CLI is
+    self-contained — a pool token is mapped to a human antigen name
+    (``"P15 (EXOC4)"``) without a Python ``set_antigen_labels()`` call.
+    """
+    df = pd.read_csv(path)
+    if df.shape[1] < 2:
+        raise ValueError(
+            f"antigen-labels CSV {path} needs >=2 columns (condition,label)"
+        )
+    cols = {c.lower(): c for c in df.columns}
+    key = cols.get("condition", df.columns[0])
+    val = next(
+        (cols[c] for c in ("label", "antigen", "antigen_label") if c in cols),
+        df.columns[1],
+    )
+    return {
+        str(k): str(v)
+        for k, v in zip(df[key], df[val])
+        if str(k).strip() and str(v).strip()
+    }
+
+
+def dominant_specificity_from_master(
+    master_df: pd.DataFrame,
+    timepoint_order: list[str],
+    *,
+    min_specificity: float = 0.95,
+    min_dominant_cells: int = 5,
+    per_lineage_min: dict | None = None,
+    lineage_col: str | None = None,
+    label_map: dict | None = None,
+) -> pd.DataFrame:
+    """Run :func:`tcrsift.selection.select_by_dominant_specificity` on the
+    harmonized TIL table (#328).
+
+    The condition axis is the per-sample cell count (``cell_count_<label>``
+    columns melted long) — since til-select samples are user-labeled, a "sample"
+    can be an antigen pool, so a clone confined to one sample is the
+    dominant-specificity signal. Beta-keyed on ``CDR3_beta`` (falls back to
+    ``CDR3ab``). When ``per_lineage_min`` is given, the lineage is taken from
+    ``lineage_col`` if present, else auto-derived from ``cd4_to_cd8_ratio``
+    (``CD8`` when ``<1``, else ``CD4``). Returns the per-clone dominant-specificity
+    table; empty when no per-sample count columns are present.
+    """
+    from .selection import select_by_dominant_specificity
+
+    clone_col = "CDR3_beta" if "CDR3_beta" in master_df.columns else "CDR3ab"
+    if clone_col not in master_df.columns:
+        raise ValueError(
+            "dominant_specificity_from_master: no CDR3_beta / CDR3ab clone column"
+        )
+    count_cols = {
+        tp: f"cell_count_{tp}"
+        for tp in timepoint_order
+        if f"cell_count_{tp}" in master_df.columns
+    }
+    if not count_cols:
+        return master_df.head(0).assign(is_dominant_specific=pd.Series(dtype=bool))
+
+    long_rows = master_df[[clone_col, *count_cols.values()]].melt(
+        id_vars=clone_col, var_name="condition", value_name="count"
+    )
+    long_rows["condition"] = long_rows["condition"].str.replace(
+        "cell_count_", "", regex=False
+    )
+    long_rows["count"] = pd.to_numeric(long_rows["count"], errors="coerce").fillna(0.0)
+    long_rows = long_rows[long_rows["count"] > 0]
+
+    use_lineage_col = None
+    if per_lineage_min:
+        if lineage_col and lineage_col in master_df.columns:
+            lin = master_df.set_index(clone_col)[lineage_col]
+        elif "cd4_to_cd8_ratio" in master_df.columns:
+            ratio = pd.to_numeric(
+                master_df.set_index(clone_col)["cd4_to_cd8_ratio"], errors="coerce"
+            )
+            lin = pd.Series(np.where(ratio < 1.0, "CD8", "CD4"), index=ratio.index)
+        else:
+            lin = None
+        if lin is not None:
+            long_rows["lineage"] = long_rows[clone_col].map(lin.to_dict())
+            use_lineage_col = "lineage"
+
+    return select_by_dominant_specificity(
+        long_rows,
+        condition_col="condition",
+        clone_col=clone_col,
+        count_column="count",
+        min_specificity=min_specificity,
+        min_dominant_cells=min_dominant_cells,
+        lineage_col=use_lineage_col,
+        per_lineage_min=per_lineage_min,
+        label_map=label_map,
+    )
+
+
 def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
     """
     Execute TIL-only clone selection workflow.
@@ -2288,6 +2388,42 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
 
     _write_subset_tables(subset_dfs, fig_dir)
     plot_selection_funnel(branch_union_stages, fig_dir / "selection_funnel.png", "Selection Funnel")
+
+    # Optional dominant-fraction antigen-specificity selection (#328): confine a
+    # clone to a single sample/antigen pool, with per-lineage floors + antigen
+    # labels. Opt-in; adds columns to the master (so they flow into every output)
+    # plus a standalone side CSV.
+    if getattr(args, "dominant_specificity", False):
+        label_map = None
+        if getattr(args, "antigen_labels", None):
+            label_map = load_antigen_label_map(args.antigen_labels)
+        dom = dominant_specificity_from_master(
+            master_df,
+            timepoint_order,
+            min_specificity=float(getattr(args, "min_specificity", 0.95)),
+            min_dominant_cells=int(getattr(args, "dominant_min_cells", 5)),
+            per_lineage_min=getattr(args, "per_lineage_min", None),
+            lineage_col=getattr(args, "dominant_lineage_col", None),
+            label_map=label_map,
+        )
+        dom.to_csv(fig_dir / "abTCR_dominant_specificity.csv", index=False)
+        dom_clone_col = "CDR3_beta" if "CDR3_beta" in master_df.columns else "CDR3ab"
+        merge_cols = [
+            c
+            for c in [dom_clone_col, "specificity", "dominant_condition",
+                      "dominant_antigen", "is_dominant_specific"]
+            if c in dom.columns
+        ]
+        if dom_clone_col in dom.columns:
+            master_df = master_df.merge(dom[merge_cols], on=dom_clone_col, how="left")
+        master_df["is_dominant_specific"] = (
+            master_df.get("is_dominant_specific", pd.Series(False, index=master_df.index))
+            .fillna(False).astype(bool)
+        )
+        logger.info(
+            "til-select dominant-specificity: %s antigen-specific clones",
+            int(master_df["is_dominant_specific"].sum()),
+        )
 
     plot_source = sort_harmonized_by_rank(master_df, args.rank_by)
     out_table = Path(args.out_table)
