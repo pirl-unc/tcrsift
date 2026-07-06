@@ -76,6 +76,15 @@ _MODULE_EXPORTS = {
         "filter_by_tcell_type",
         "get_phenotype_summary",
     ),
+    ".annotate_cells": (
+        "annotate_cells",
+        "annotate_clusters",
+        "score_reference",
+        "compose_phenotype_labels",
+        "top_markers",
+        "AnnotationGates",
+        "DEFAULT_GATES",
+    ),
     ".clonotype": (
         "aggregate_clonotypes",
         "build_clone_method_long",
@@ -247,6 +256,11 @@ _MODULE_EXPORTS = {
         "MANASCORE_WEIGHTS_HGNC",
         "NEOTCR8_GENES_HGNC",
         "NEOTCR4_GENES_HGNC",
+        "CELL_TYPE_SIGNATURES",
+        "T_STATE_SIGNATURES",
+        "B_STATE_SIGNATURES",
+        "LINEAGE_GENES",
+        "PBMC_CULTURE_TYPES",
     ),
     ".qc": (
         "QCReport",
