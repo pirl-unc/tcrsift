@@ -257,6 +257,10 @@ _MODULE_EXPORTS = {
         "validate_sequence",
         "validate_clonotypes",
         "get_qc_summary",
+        "cell_qc_funnel",
+        "cross_lineage_doublets",
+        "cd4_cd8_doublet_mask",
+        "DEFAULT_LINEAGE_PROGRAMS",
     ),
     ".sort_qc": (
         "DEFAULT_SORT_SIGNATURE_MAP",

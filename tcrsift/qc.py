@@ -838,3 +838,232 @@ def sample_integrity_qc(
             "warning": "; ".join(warnings),
         })
     return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------- #
+# Per-cell QC + doublet funnel (#314)
+# --------------------------------------------------------------------------- #
+# The cell-level counterpart of the sequence/clone QC above: a documented,
+# visualized per-cell funnel that filters an AnnData on the LoadConfig cell-QC
+# thresholds and flags the doublet classes the single-TRB gate misses. Every
+# step records cells-in → cells-out (a waterfall) so nothing is silently
+# dropped. Tumor/CTA identity is intentionally OUT of scope (belongs in
+# oncoref, #310), so the default lineage programs exclude it.
+
+# Mutually-exclusive lineage identity programs (generic; tumor/osteoblast
+# excluded — collagen co-expression would collide with the fibroblast program).
+# A real single cell expresses one of these; two at once in one barcode is a
+# cross-lineage doublet.
+DEFAULT_LINEAGE_PROGRAMS: dict[str, list[str]] = {
+    "T": ["CD3D", "CD3E", "CD3G", "TRAC", "TRBC1", "TRBC2", "CD2", "CD7"],
+    "B/plasma": ["CD79A", "CD79B", "MS4A1", "JCHAIN", "MZB1", "IGHG1", "IGKC"],
+    "myeloid": ["LYZ", "CD68", "C1QA", "C1QB", "C1QC", "CD14", "FCGR3A",
+                "AIF1", "CSF1R"],
+    "NK": ["KLRF1", "NCR1", "NCAM1", "NKG7", "GNLY", "KLRD1"],
+    "endothelial": ["PECAM1", "VWF", "CLDN5", "CDH5", "EGFL7"],
+    "fibroblast": ["COL1A1", "COL1A2", "DCN", "LUM", "PDGFRA"],
+}
+
+
+def _gene_vector(adata, gene: str) -> np.ndarray:
+    """Dense per-cell expression for one gene (zeros if the gene is absent)."""
+    if gene not in adata.var_names:
+        return np.zeros(adata.n_obs)
+    x = adata[:, gene].X
+    return x.toarray().ravel() if hasattr(x, "toarray") else np.asarray(x).ravel()
+
+
+def cross_lineage_doublets(
+    adata,
+    lineage_sets: dict[str, list[str]] | None = None,
+    *,
+    score_min: float = 0.5,
+    min_programs: int = 2,
+    require_high_umi: bool = True,
+    umi_outlier_mult: float = 2.0,
+    counts_layer: str | None = None,
+) -> np.ndarray:
+    """Mask of cells co-expressing ≥ ``min_programs`` disjoint lineage programs (#314).
+
+    Generalizes the cross-lineage doublet heuristic: score each program in
+    ``lineage_sets`` (default :data:`DEFAULT_LINEAGE_PROGRAMS`) with scanpy
+    ``score_genes`` on a fresh log1p-CP10K copy (background-corrected, so a
+    program is "on" only when enriched above matched control genes), and flag a
+    cell when ≥ ``min_programs`` disjoint programs are on. A single real cell
+    expresses ONE lineage; two mutually-exclusive programs in one barcode (e.g.
+    a T program + a myeloid program) is a doublet the single-TRB gate misses.
+
+    ``require_high_umi`` (default True) additionally requires the cell to be a
+    total-UMI outlier (``> umi_outlier_mult × median``) — the refined
+    mutual-exclusivity heuristic: co-expression is only called a doublet when
+    corroborated by the elevated coverage two cells' worth of RNA produces, so a
+    genuine ambiguous singlet isn't discarded.
+
+    Operates on raw counts in ``adata.X`` (or ``counts_layer``). Returns a
+    boolean mask aligned to ``adata.n_obs``.
+    """
+    import scanpy as sc
+
+    lineage_sets = lineage_sets or DEFAULT_LINEAGE_PROGRAMS
+    tmp = adata.copy()
+    if counts_layer is not None:
+        tmp.X = tmp.layers[counts_layer].copy()
+    total = np.asarray(tmp.X.sum(axis=1)).ravel()
+    sc.pp.normalize_total(tmp, target_sum=1e4)
+    sc.pp.log1p(tmp)
+
+    on = np.zeros(tmp.n_obs, dtype=int)
+    n_programs = 0
+    for genes in lineage_sets.values():
+        present = [g for g in genes if g in tmp.var_names]
+        if not present:
+            continue
+        n_programs += 1
+        ctrl = min(50, max(1, tmp.n_vars - len(present) - 1))
+        sc.tl.score_genes(tmp, present, score_name="_lin", ctrl_size=ctrl)
+        on += (tmp.obs["_lin"].to_numpy() > score_min).astype(int)
+
+    if n_programs < min_programs:
+        return np.zeros(adata.n_obs, dtype=bool)
+    mask = on >= min_programs
+    if require_high_umi:
+        med = float(np.median(total)) if total.size else 0.0
+        mask = mask & (total > umi_outlier_mult * med)
+    return np.asarray(mask, dtype=bool)
+
+
+def cd4_cd8_doublet_mask(
+    adata,
+    *,
+    cd3_gene: str = "CD3E",
+    cd4_gene: str = "CD4",
+    cd8_genes: tuple[str, ...] = ("CD8A", "CD8B"),
+) -> np.ndarray:
+    """Mask of CD4⁺CD8⁺ double-positive T cells — gated on CD3 (#314).
+
+    Mature T cells are single-positive, so CD4 and CD8 in one CD3⁺ barcode is a
+    T-T doublet. The CD3 gate is essential: CD4 is also a monocyte/macrophage/DC
+    marker, so without it a myeloid cell plus one ambient CD8 UMI would be
+    wrongly flagged. Returns a boolean mask aligned to ``adata.n_obs``.
+    """
+    cd3 = _gene_vector(adata, cd3_gene)
+    cd4 = _gene_vector(adata, cd4_gene)
+    cd8 = np.zeros(adata.n_obs)
+    for g in cd8_genes:
+        cd8 = np.maximum(cd8, _gene_vector(adata, g))
+    return (cd3 >= 1) & (cd4 >= 1) & (cd8 >= 1)
+
+
+def cell_qc_funnel(
+    adata,
+    config=None,
+    *,
+    min_genes: int | None = None,
+    max_genes: int | None = None,
+    min_counts: int | None = None,
+    max_counts: int | None = None,
+    min_mito_pct: float | None = None,
+    max_mito_pct: float | None = None,
+    lineage_sets: dict[str, list[str]] | None = None,
+    require_high_umi: bool = True,
+    trb_doublet_col: str = "multi_TRB",
+    low_coverage_genes: int | None = None,
+    mark_low_coverage: bool = True,
+    prefix: str = "qc",
+) -> tuple:
+    """Per-cell QC + doublet funnel on the LoadConfig thresholds (#314).
+
+    Filters ``adata`` in order, recording each step as a waterfall row so the
+    cull is fully visible rather than buried:
+
+    1. low-quality thresholds — ``min_genes`` / ``max_genes`` / ``min_counts`` /
+       ``max_counts`` and the mito window (``min_mito_pct`` floor removes
+       near-zero-mito ambient droplets; ``max_mito_pct`` removes dying cells);
+    2. doublet gates — ``>=2`` productive TRB (from the loader's
+       ``trb_doublet_col``), CD4/CD8 double-positive (CD3-gated), and
+       cross-lineage co-expression (:func:`cross_lineage_doublets`).
+
+    Thresholds mirror :class:`tcrsift.config.LoadConfig` — pass a ``config``
+    (its ``load`` section, or anything exposing those attributes) to reuse them,
+    or override any individually; explicit kwargs win over ``config`` win over
+    the built-in defaults (so there is no parallel config).
+
+    A doublet is NOT simply a high-coverage cell — a deeply sequenced singlet
+    also has many genes. The decisive signal is disjoint-lineage co-expression;
+    ``min_counts`` is a gentle low-quality floor, not a doublet call, so real
+    small resting lymphocytes survive. Ambiguous low-coverage survivors are
+    FLAGGED ``adata.obs["qc_low_coverage"]`` (default: below ``2×min_genes``)
+    rather than dropped — the annotator (#312) labels the ones that also match
+    no cell type "Low coverage".
+
+    Returns ``(filtered_adata, waterfall_df)`` where ``waterfall_df`` has
+    columns ``[step, reason, removed, remaining]`` (one row per QC/doublet
+    class).
+    """
+    def _resolve(val, attr, default):
+        if val is not None:
+            return val
+        if config is not None and getattr(config, attr, None) is not None:
+            return getattr(config, attr)
+        return default
+
+    min_genes = _resolve(min_genes, "min_genes", 250)
+    max_genes = _resolve(max_genes, "max_genes", 15000)
+    min_counts = _resolve(min_counts, "min_counts", 500)
+    max_counts = _resolve(max_counts, "max_counts", 100000)
+    min_mito_pct = _resolve(min_mito_pct, "min_mito_pct", 2.0)
+    max_mito_pct = _resolve(max_mito_pct, "max_mito_pct", 8.0)
+
+    adata = adata.copy()
+    adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
+    counts = np.asarray(adata.X.sum(axis=1)).ravel()
+    n_genes = np.asarray((adata.X > 0).sum(axis=1)).ravel()
+    mt_counts = np.asarray(adata[:, adata.var["mt"].to_numpy()].X.sum(axis=1)).ravel()
+    with np.errstate(invalid="ignore", divide="ignore"):
+        pct_mt = np.where(counts > 0, 100.0 * mt_counts / counts, 0.0)
+    adata.obs["_n_counts"] = counts
+    adata.obs["_n_genes"] = n_genes
+    adata.obs["pct_counts_mt"] = pct_mt
+
+    rows = [("input", "all cells", 0, adata.n_obs)]
+
+    def drop(mask, step: str, reason: str):
+        nonlocal adata
+        mask = np.asarray(mask, dtype=bool)
+        n_rm = int(mask.sum())
+        adata = adata[~mask].copy()
+        rows.append((step, reason, n_rm, adata.n_obs))
+        logger.info("cell_qc_funnel[%s] %s: -%d -> %d (%s)",
+                    prefix, step, n_rm, adata.n_obs, reason)
+
+    drop(adata.obs["_n_genes"] < min_genes, "min_genes", f"< {min_genes} genes")
+    drop(adata.obs["_n_genes"] > max_genes, "max_genes", f"> {max_genes} genes")
+    drop(adata.obs["_n_counts"] < min_counts, "min_counts", f"< {min_counts} UMIs")
+    drop(adata.obs["_n_counts"] > max_counts, "max_counts", f"> {max_counts} UMIs")
+    if min_mito_pct and min_mito_pct > 0:
+        drop(adata.obs["pct_counts_mt"] < min_mito_pct, "min_mito",
+             f"< {min_mito_pct:g}% mito (ambient)")
+    drop(adata.obs["pct_counts_mt"] >= max_mito_pct, "max_mito",
+         f">= {max_mito_pct:g}% mito")
+
+    if trb_doublet_col in adata.obs.columns:
+        drop(adata.obs[trb_doublet_col].fillna(False).astype(bool), "tcr_2b",
+             ">=2 productive TRB (T-T)")
+    drop(cd4_cd8_doublet_mask(adata), "cd4cd8_dp", "CD4+CD8 double-positive")
+    if adata.n_obs:
+        drop(
+            cross_lineage_doublets(
+                adata, lineage_sets, require_high_umi=require_high_umi
+            ),
+            "xlineage", ">=2 disjoint lineages",
+        )
+
+    if mark_low_coverage and adata.n_obs:
+        floor = low_coverage_genes if low_coverage_genes is not None else 2 * min_genes
+        adata.obs["qc_low_coverage"] = (adata.obs["_n_genes"] < floor).to_numpy()
+
+    for c in ("_n_counts", "_n_genes"):
+        adata.obs.drop(columns=c, inplace=True, errors="ignore")
+
+    waterfall = pd.DataFrame(rows, columns=["step", "reason", "removed", "remaining"])
+    return adata, waterfall
