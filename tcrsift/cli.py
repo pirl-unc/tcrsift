@@ -1133,6 +1133,14 @@ def cmd_run(args):
                 f"{atlas.obs['phenotype_base'].nunique()} cell types "
                 f"→ {data_dir / 'atlas.h5ad'}"
             )
+            # Atlas UMAPs (#315): the two guaranteed colorings. Provenance /
+            # signature-vs-background / raincloud are library calls the user runs
+            # against atlas.h5ad with their own subset flags + signature columns.
+            from .plots import plot_umap
+
+            plot_umap(atlas, "phenotype", plots_dir / "atlas_umap_phenotype.png")
+            plot_umap(atlas, "leiden", plots_dir / "atlas_umap_leiden.png")
+            print(f"  Atlas UMAPs (phenotype, leiden) → {plots_dir}")
         except ImportError as e:
             print(f"  [embed] skipped — install tcrsift[atlas] to enable ({e})")
 
