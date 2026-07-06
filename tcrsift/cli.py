@@ -1109,6 +1109,25 @@ def cmd_run(args):
 
     funnel_counts["Phenotyped"] = len(adata)
 
+    # Optional cell-level embedding (#311): an integrated UMAP + Leiden atlas of
+    # the cells BEFORE they collapse to clonotypes. Opt-in (config.embed.enabled)
+    # and gated on the `atlas` extra (harmonypy/igraph/leidenalg). Runs on a copy
+    # saved as atlas.h5ad for the atlas plots (#315); the clonotype pipeline
+    # below is unaffected.
+    if config.embed.enabled:
+        print("\n  Embedding cells (Pearson residuals → PCA → Harmony → UMAP → Leiden)...")
+        try:
+            from .embed import embed_cells
+
+            atlas = embed_cells(adata, config.embed)
+            atlas.write_h5ad(data_dir / "atlas.h5ad")
+            print(
+                f"  Atlas: {atlas.obs['leiden'].nunique()} Leiden clusters "
+                f"→ {data_dir / 'atlas.h5ad'}"
+            )
+        except ImportError as e:
+            print(f"  [embed] skipped — install tcrsift[atlas] to enable ({e})")
+
     # Step 3: Clonotype
     print("\n[3/7] Aggregating clonotypes...")
     clonotypes = aggregate_clonotypes(
