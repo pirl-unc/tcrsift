@@ -126,6 +126,14 @@ _MODULE_EXPORTS = {
         "build_harmonized_table",
         "run_selection_pipeline",
         "run_til_select",
+        "match_clonotypes",
+        "viral_cdr3b_set",
+    ),
+    ".selection": (
+        "build_selection_rules",
+        "select_specificity_candidates",
+        "select_by_dominant_specificity",
+        "select_freq_prism_per_condition",
     ),
     ".unify": (
         "merge_experiments",
@@ -171,6 +179,9 @@ _MODULE_EXPORTS = {
         "pretty_methods",
         "pretty_sample",
         "pretty_samples",
+        "pretty_antigen",
+        "pretty_antigens",
+        "set_antigen_labels",
         "set_baseline_markers",
     ),
     ".pgen": (

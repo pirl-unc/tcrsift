@@ -318,6 +318,27 @@ def match_clonotypes(
     return merged
 
 
+def viral_cdr3b_set(
+    clonotypes: pd.DataFrame,
+    database: pd.DataFrame,
+    *,
+    beta_col: str = "CDR3_beta",
+) -> set[str]:
+    """CDR3-beta strings matched to a viral/public epitope in a reference DB (#316).
+
+    Convenience wrapper around :func:`match_clonotypes` with
+    ``match_by="CDR3b_only"``: returns the set of ``beta_col`` sequences whose
+    beta matches a viral row (VDJDB/IEDB, per each DB's ``is_viral`` flag),
+    ready to pass as ``exclude_clones`` to
+    :func:`tcrsift.selection.select_by_dominant_specificity` (or any beta-keyed
+    selection) without re-deriving it. Concatenate the loaded public databases
+    first for a broader public/viral exclusion set.
+    """
+    matched = match_clonotypes(clonotypes, database, match_by="CDR3b_only")
+    viral = matched.loc[matched["is_viral"].astype(bool), beta_col]
+    return {str(b) for b in viral.dropna() if str(b).strip()}
+
+
 def plot_annotation_summary(df: pd.DataFrame, output_dir: Path) -> None:
     """Write annotation summary plots (pie + top species bar chart)."""
     if "db_match" not in df.columns:

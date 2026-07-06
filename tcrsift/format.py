@@ -61,6 +61,29 @@ def _is_baseline(token: str, last: Sequence[str]) -> bool:
     return any(m and m in token for m in last)
 
 
+# Antigen-agnostic display labels (#317). A condition / stimulation "pool" is a
+# grouping token in the data (a sample, a peptide-pool number, an antigen
+# code); its human-readable ANTIGEN label is opaque free text supplied by the
+# user (via the sample sheet's ``antigen_name``, or a config map) — tcrsift
+# never parses it, so it works for peptides, RNA/DNA-encoded antigens, whole
+# protein, lysate, tetramer, etc. The rule everywhere: never render a bare
+# condition token when an antigen label exists.
+_ANTIGEN_LABELS: dict[str, str] = {}
+
+
+def set_antigen_labels(mapping: dict | None = None, /, **kwargs: str) -> None:
+    """Register a global condition-token → antigen-label map (#317).
+
+    e.g. ``set_antigen_labels({"P2": "P2 (KIF1C)", "sampleA": "MART-1 26-35"})``.
+    Values are opaque display strings (peptide pool, minigene, protein, …).
+    Call with no arguments to clear. See :func:`pretty_antigen`.
+    """
+    global _ANTIGEN_LABELS
+    merged = dict(mapping or {})
+    merged.update(kwargs)
+    _ANTIGEN_LABELS = {str(k): str(v) for k, v in merged.items()}
+
+
 def condition_sort_key(
     name: str,
     *,
@@ -199,3 +222,38 @@ def pretty_sample(name: str) -> str:
 def pretty_samples(names: Iterable[str]) -> list[str]:
     """Map :func:`pretty_sample` over a list/Series of sample names."""
     return [pretty_sample(str(n)) for n in names]
+
+
+def pretty_antigen(
+    condition: object, *, label: str | None = None, labels: dict | None = None
+) -> str:
+    """Human-readable antigen label for a condition / stimulation token (#317).
+
+    Antigen-agnostic: the label is opaque free text (a peptide pool like
+    ``"P2 (KIF1C)"``, an epitope, an RNA/DNA minigene, whole protein, a
+    lysate…) — tcrsift never parses it. Resolution order (never a bare
+    condition token when a label exists):
+
+    1. an explicit ``label=`` argument,
+    2. the per-call ``labels`` map (``condition → antigen``),
+    3. the global map set via :func:`set_antigen_labels`,
+    4. fallback to :func:`pretty_method` on the raw token.
+
+    Route reactive-pool legends, per-culture axes, and candidate tables through
+    this so a pool is never shown by number alone.
+    """
+    if label is not None and str(label).strip():
+        return str(label)
+    registry = labels if labels is not None else _ANTIGEN_LABELS
+    key = str(condition)
+    mapped = registry.get(key)
+    if mapped is not None and str(mapped).strip():
+        return str(mapped)
+    return pretty_method(key)
+
+
+def pretty_antigens(
+    conditions: Iterable, *, labels: dict | None = None
+) -> list[str]:
+    """Map :func:`pretty_antigen` over a list/Series of condition tokens."""
+    return [pretty_antigen(c, labels=labels) for c in conditions]
