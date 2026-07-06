@@ -47,11 +47,24 @@ class TestNeoantigenConstants:
         assert "HLA-DPA1" in signatures.NEOTCR8_GENES_HGNC
         assert "CXCL13" in signatures.NEOTCR4_GENES_HGNC
 
+    def test_neotcr_pbl_set(self):
+        # 151-gene circulating (PBL) neoantigen-reactive CD8 set (Yossef Cancer
+        # Cell 2023, Table S2D, cluster C9 avg_log2FC>=0.5), deduped and verbatim.
+        pbl = signatures.NEOTCRPBL_GENES_HGNC
+        assert len(pbl) == 151
+        assert len(set(pbl)) == 151  # no duplicates
+        assert pbl[0] == "PASK"  # top gene by log2FC
+        # Hallmark blood-memory / inhibitory members present verbatim.
+        for g in ("SELL", "LEF1", "KLF2", "CTLA4", "TIGIT", "ITGAE", "HLA-DRB1"):
+            assert g in pbl
+        # Distinct from the TIL-derived NeoTCR8 (different signature).
+        assert set(pbl) != set(signatures.NEOTCR8_GENES_HGNC)
+
 
 class TestRegistryStructure:
     def test_registry_records_method_units_citation(self):
         reg = sm.NEOANTIGEN_SIGNATURES
-        assert set(reg) == {"MANAscore", "NeoTCR8", "NeoTCR4"}
+        assert set(reg) == {"MANAscore", "NeoTCR8", "NeoTCR4", "NeoTCR_PBL"}
         assert reg["MANAscore"].method == "weighted_z"
         assert reg["MANAscore"].units == "log1p"
         assert "39900903" in reg["MANAscore"].citation  # PMID
@@ -59,6 +72,10 @@ class TestRegistryStructure:
             assert reg[name].method == "geneset_enrichment"
             assert reg[name].units == "ranks"
             assert "35113651" in reg[name].citation
+        # NeoTCR_PBL is a geneset too, but from the Yossef Cancer Cell 2023 paper.
+        assert reg["NeoTCR_PBL"].method == "geneset_enrichment"
+        assert reg["NeoTCR_PBL"].units == "ranks"
+        assert "38039963" in reg["NeoTCR_PBL"].citation
 
     def test_signature_defaults_backward_compatible(self):
         # Pre-existing signatures stay plain zscore/log1p (no behaviour change).
