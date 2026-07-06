@@ -667,6 +667,7 @@ from .signatures import (  # noqa: E402  (deferred: pure-data module, no cycle)
     MANASCORE_UP_HGNC,
     NEOTCR4_GENES_HGNC,
     NEOTCR8_GENES_HGNC,
+    NEOTCRPBL_GENES_HGNC,
 )
 
 NEOANTIGEN_SIGNATURES: dict[str, Signature] = {
@@ -707,6 +708,18 @@ NEOANTIGEN_SIGNATURES: dict[str, Signature] = {
         citation="Lowery/Rosenberg, Science 2022 (PMID 35113651)",
         description="40-gene CD4 neoantigen-reactive set (Table S10). An "
         "UNWEIGHTED gene set scored by rank enrichment (scGSEA/score_genes).",
+    ),
+    "NeoTCR_PBL": Signature(
+        "NeoTCR_PBL",
+        NEOTCRPBL_GENES_HGNC,
+        panel="broad",
+        units="ranks",
+        method="geneset_enrichment",
+        citation="Yossef/Rosenberg, Cancer Cell 2023 (PMID 38039963)",
+        description="151-gene signature of circulating (peripheral-blood) "
+        "neoantigen-reactive CD8 T cells (cluster C9, avg_log2FC>=0.5; Table "
+        "S2D). An UNWEIGHTED gene set scored by rank enrichment. Distinct from "
+        "Lowery's TIL-derived NeoTCR8/4 — a separate blood-derived signature.",
     ),
 }
 

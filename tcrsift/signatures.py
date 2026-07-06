@@ -217,6 +217,39 @@ NEOTCR4_GENES_HGNC: tuple[str, ...] = (
     "CTSB", "C17orf49", "CORO1B"
 )
 
+# NeoTCR_PBL (Yossef/Rosenberg, Cancer Cell 2023; PMID 38039963) — 151-gene
+# signature of circulating (peripheral-blood) neoantigen-reactive CD8 T cells:
+# the genes upregulated in cluster C9 at avg_log2FC >= 0.5 (Table S2D). An
+# UNWEIGHTED gene set scored by rank enrichment — no published per-gene weights.
+# Verbatim from the supplement (descending log2FC order); a couple of entries are
+# Ensembl clone IDs / lncRNAs (AC119396.1, MIR4435-2HG, CYTOR, NEAT1) that only
+# score where present in the matrix — kept to preserve fidelity to the published
+# set. Distinct from Lowery's NeoTCR8/4 (a separate blood-derived signature).
+NEOTCRPBL_GENES_HGNC: tuple[str, ...] = (
+    "PASK", "MT2A", "MT1E", "S100A4", "SELL", "LIME1", "DENND10",
+    "ALOX5AP", "COTL1", "ITM2A", "MT1X", "EIF3A", "AQP3", "SMC4",
+    "UBXN11", "YWHAB", "S100A11", "S1PR4", "MYO1G", "LIMS1", "CHN1",
+    "RBPJ", "TMSB10", "CRIP1", "LEF1", "ITGB1", "TMEM123", "CD52",
+    "GYPC", "ANXA2", "SELPLG", "NPDC1", "LGALS3", "PAG1", "ANXA5",
+    "UCP2", "CORO1B", "CD82", "CD55", "NEAT1", "ITGB7", "VIM",
+    "CDC25B", "TLE5", "KLF2", "S100A10", "S100A6", "ACTG1", "TPM4",
+    "ITGAE", "MIR4435-2HG", "CNN2", "FYB1", "HLA-DQB1", "FXYD5", "SESN3",
+    "HLA-DRB1", "BIN1", "ISG20", "TIGIT", "RHOG", "MED15", "RNASET2",
+    "BEX3", "CAPZB", "CORO1A", "LIMD2", "MT1F", "PFN1", "ACTB",
+    "SLC1A4", "NAP1L4", "LSP1", "SUSD3", "ICAM2", "TNFRSF25", "CYTOR",
+    "GPSM3", "NR3C1", "TTN", "SPOCK2", "GSTK1", "CD5", "PLSCR3",
+    "LTB", "OCIAD2", "LEPROTL1", "PRDX1", "NME2", "NDUFA12", "RAB37",
+    "SH3KBP1", "NIBAN1", "SPN", "FKBP5", "NDUFB9", "SHMT2", "ZYX",
+    "SMAP2", "CSGALNACT1", "TRADD", "ATP5PD", "HLA-DRB5", "ELOVL5", "ARHGDIB",
+    "CTLA4", "R3HDM4", "GPR171", "RCSD1", "MYL6B", "TSPO", "IFITM1",
+    "CAMK4", "CD27", "TKT", "PPP2R5C", "VSIR", "CD7", "PAICS",
+    "S1PR1", "VOPP1", "RASA3", "MPRIP", "MCUB", "EMB", "GPI",
+    "RASGRP2", "MTERF4", "DUSP16", "SIT1", "CARHSP1", "ZMIZ1", "GMFG",
+    "RAC2", "PLEC", "DGKA", "SLC25A5", "PFKL", "OPTN", "ETS1",
+    "MSC", "ARID5B", "HLA-DPA1", "MFNG", "P2RY8", "SARAF", "MAP3K1",
+    "TRAPPC5", "AC119396.1", "SLC16A3", "CD3D"
+)
+
 
 # --------------------------------------------------------------------------- #
 # Cell-type / T-state registries for the per-cell annotator (#312)
