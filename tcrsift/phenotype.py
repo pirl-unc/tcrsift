@@ -51,6 +51,11 @@ def classify_tcell_type(
     """
     Classify a single cell as CD4+ or CD8+ based on expression.
 
+    This is the CD4/CD8-ratio typer. For general cell typing (myeloid, B/plasma,
+    NK, DC, stroma, and T sub-states) it is superseded by
+    :func:`tcrsift.annotate_cells.annotate_cells` (#312), where CD4/CD8 is the
+    T-cell branch; this stays as a thin, dependency-free back-compat shim.
+
     Parameters
     ----------
     cd4_expr : float

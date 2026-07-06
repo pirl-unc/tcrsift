@@ -216,3 +216,98 @@ NEOTCR4_GENES_HGNC: tuple[str, ...] = (
     "MIS18BP1", "TMEM173", "ADI1", "SLA", "GALM", "LBH", "SECISBP2L",
     "CTSB", "C17orf49", "CORO1B"
 )
+
+
+# --------------------------------------------------------------------------- #
+# Cell-type / T-state registries for the per-cell annotator (#312)
+# --------------------------------------------------------------------------- #
+# The generalized cell-typing gene sets, shared by the per-cell annotator
+# (:mod:`tcrsift.annotate_cells`). ``T_CELL_SIGNATURES`` above stays the
+# FUNCTIONAL-program registry (effector/exhaustion/…); these are cell-LINEAGE
+# and T-STATE registries. Tumor / cancer-testis-antigen typing is deliberately
+# OUT of scope (belongs in oncoref, #310) and is not included — tissue
+# restriction is done with ``annotate_clusters(allowed_types=...)``.
+#
+# TCR/Ig CONSTANT genes are lineage evidence (kept); clonal V/J segments are
+# excluded elsewhere so structure/labels aren't driven by clonotype.
+CELL_TYPE_SIGNATURES: dict[str, list[str]] = {
+    # --- lymphoid ---
+    "T cell": ["CD3D", "CD3E", "CD3G", "CD247", "CD2", "CD5", "CD7",
+               "TRAC", "TRBC1", "TRBC2"],
+    "NK cell": ["NKG7", "KLRD1", "KLRF1", "NCR1", "NCR3", "GNLY", "NCAM1",
+                "KLRC1", "KLRK1", "CD160", "CD244", "FCGR3A", "EOMES",
+                "KIR2DL3", "KIR3DL1", "TYROBP", "PRF1"],
+    "B cell": ["MS4A1", "CD79A", "CD79B", "CD19", "BANK1"],
+    "Plasma cell": ["MZB1", "XBP1", "SDC1", "PRDM1", "DERL3", "TNFRSF17", "JCHAIN"],
+    # --- myeloid ---
+    "Macrophage": ["CD68", "C1QA", "C1QB", "C1QC", "CD163", "MRC1", "APOE",
+                   "APOC1", "TREM2", "MARCO", "SELENOP"],
+    "Monocyte": ["FCN1", "VCAN", "S100A8", "S100A9", "S100A12", "CD14", "LYZ"],
+    "Dendritic cell": ["CLEC9A", "XCR1", "CD1C", "FCER1A", "LILRA4", "CLEC10A", "LAMP3"],
+    # KIT (CD117) is NOT mast-specific (HSPC/ILC2 express it): require the mast
+    # granule genes — tryptases, carboxypeptidase CPA3, FcERI-beta, HDC.
+    "Mast cell": ["TPSAB1", "TPSB2", "CPA3", "MS4A2", "HDC"],
+    "Neutrophil": ["FCGR3B", "CSF3R", "CXCR2", "G0S2", "FUT4", "CEACAM3", "IFITM2"],
+    # --- stroma / vasculature ---
+    "Fibroblast": ["COL1A1", "COL1A2", "COL3A1", "DCN", "LUM", "PDGFRA",
+                   "PDGFRB", "COL6A1", "COL6A2", "COL6A3", "FBLN1", "MFAP5",
+                   "SFRP2", "GSN"],
+    "Smooth muscle": ["ACTA2", "MYH11", "TAGLN", "CNN1", "MYL9", "DES",
+                      "PLN", "LMOD1", "MYLK"],
+    "Pericyte": ["RGS5", "NOTCH3", "PDGFRB", "MCAM", "KCNJ8", "HIGD1B",
+                 "CSPG4", "ABCC9"],
+    "Endothelial": ["PECAM1", "VWF", "CLDN5", "CDH5", "RAMP2", "EGFL7",
+                    "PLVAP", "ERG", "FLI1"],
+    "Platelet/megakaryocyte": ["PPBP", "PF4", "ITGA2B", "GP9", "GP1BB",
+                               "TUBB1", "NRGN", "GNG11"],
+    "Erythroid": ["GYPA", "ALAS2", "CA1", "SLC4A1", "KLF1", "GATA1"],
+}
+
+# Cell types that can appear in a Ficoll-isolated PBMC / peptide-stimulated
+# culture — pass to ``annotate_clusters(allowed_types=...)`` so a cultured
+# moDC/macrophage cluster can't win a stromal/granulocyte signature it shares
+# an activation program with. None = consider every type (whole-tissue TIL).
+PBMC_CULTURE_TYPES: frozenset = frozenset({
+    "T cell", "NK cell", "B cell", "Plasma cell",
+    "Macrophage", "Monocyte", "Dendritic cell",
+})
+
+# T-cell sub-states, one layer below the lineage call. A cluster's state is the
+# argmax of these, subject to the gates in DEFAULT_GATES (a shared master TF is
+# not enough — the defining effector cytokine must clear a floor).
+T_STATE_SIGNATURES: dict[str, list[str]] = {
+    "naive/Tcm": ["CCR7", "SELL", "TCF7", "LEF1", "IL7R"],
+    "effector/cytotoxic": ["GZMA", "GZMB", "GZMH", "GZMK", "GZMM", "PRF1",
+                           "GNLY", "NKG7", "FGFBP2", "KLRG1"],
+    "Trm": ["ITGAE", "ZNF683", "CXCR6", "ITGA1", "CD69"],
+    "Tex/CXCL13+": ["CXCL13", "PDCD1", "TOX", "LAG3", "HAVCR2", "TIGIT",
+                    "ENTPD1", "LAYN"],
+    "Tfh": ["CXCR5", "BCL6", "ICOS", "TOX2", "CD200"],
+    "Th1": ["TBX21", "IFNG", "CXCR3", "IL12RB2"],
+    "Th2": ["GATA3", "IL13", "IL4", "IL5", "IL17RB"],
+    "Th17": ["RORC", "IL17A", "IL17F", "CCR6", "IL23R", "IL22"],
+    "proliferating": ["MKI67", "TOP2A", "STMN1", "TYMS"],
+    "Treg": ["FOXP3", "IL2RA", "CTLA4", "IKZF2", "TNFRSF18", "CCR8"],
+    "IFN-stimulated": ["ISG15", "IFIT1", "IFIT3", "MX1", "OAS1"],
+}
+
+# B-cell sub-states (applied within B-cell clusters).
+B_STATE_SIGNATURES: dict[str, list[str]] = {
+    "naive B": ["TCL1A", "IGHD", "FCER2", "IL4R"],
+    "memory B": ["CD27", "TNFRSF13B", "CD80", "AIM2"],
+    "germinal-center B": ["BCL6", "RGS13", "AICDA", "MEF2B", "LRMP"],
+}
+
+# CD8/CD4 for T-lineage; CD3 = pan-T lineage genes that are TRULY T-specific
+# (absent in NK) to disambiguate cytotoxic CD8 from NK; NKspec = NK receptors
+# cytotoxic CD8 LACKS (the positive NK signal).
+LINEAGE_GENES: dict[str, list[str]] = {
+    "CD8": ["CD8A", "CD8B"],
+    "CD4": ["CD4"],
+    "CD3": ["CD3D", "CD3E", "CD3G", "TRAC", "TRBC1", "TRBC2", "CD5"],
+    "NKspec": ["GNLY", "KLRF1", "NCR1", "NCAM1", "FCGR3A", "KLRC1", "CD160"],
+}
+
+# Rare-but-important subtypes that keep their distinguishing-gene suffix even
+# when a small fraction of their lineage (exempt from the subtype-merge rule).
+PROTECTED_SUBTYPES: frozenset = frozenset({"pDC", "cDC1"})

@@ -1117,12 +1117,20 @@ def cmd_run(args):
     if config.embed.enabled:
         print("\n  Embedding cells (Pearson residuals → PCA → Harmony → UMAP → Leiden)...")
         try:
+            from .annotate_cells import annotate_cells, gates_from_phenotype_config
             from .embed import embed_cells
 
             atlas = embed_cells(adata, config.embed)
+            annotate_cells(
+                atlas,
+                allowed_types=config.phenotype.allowed_types,
+                gates=gates_from_phenotype_config(config.phenotype),
+                min_subtype_frac=config.phenotype.min_subtype_frac,
+            )
             atlas.write_h5ad(data_dir / "atlas.h5ad")
             print(
-                f"  Atlas: {atlas.obs['leiden'].nunique()} Leiden clusters "
+                f"  Atlas: {atlas.obs['leiden'].nunique()} Leiden clusters, "
+                f"{atlas.obs['phenotype_base'].nunique()} cell types "
                 f"→ {data_dir / 'atlas.h5ad'}"
             )
         except ImportError as e:

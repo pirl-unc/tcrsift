@@ -58,6 +58,24 @@ class PhenotypeConfig:
     # datasets — set 0 to disable, or raise it for deeper runs.
     min_cd3_reads: int = 3
 
+    # Generalized per-cell annotator knobs (#312; used by
+    # tcrsift.annotate_cells when the embedding is enabled). None cell-type
+    # restriction = consider every reference type (whole-tissue TIL); pass
+    # ["T cell", "NK cell", ...] (or the PBMC_CULTURE_TYPES names) for cultures.
+    allowed_types: list[str] | None = None
+    # Cluster-mean (log1p CP10K) floors for gated calls: a shared master-TF /
+    # activation signature isn't enough — the defining gene must clear these.
+    treg_foxp3_min: float = 0.2
+    th1_ifng_min: float = 0.2
+    th2_il13_min: float = 0.2
+    th17_il17a_min: float = 0.1
+    gd_tcr_min: float = 0.5      # δ-constant TRDC floor for a γδ T call
+    mait_min: float = 0.3        # SLC4A10 floor for a MAIT call
+    activation_min: float = 0.5  # activation-module floor for the "activated" catch-all
+    # Sub-clusters below this fraction of their cell type lose the
+    # distinguishing-gene suffix (a <1% fragment shouldn't read as a subtype).
+    min_subtype_frac: float = 0.01
+
 
 @dataclass
 class ClonotypeConfig:
@@ -416,6 +434,8 @@ class TCRsiftConfig:
             # Phenotype
             "cd4_cd8_ratio": ("phenotype", "cd4_cd8_ratio"),
             "min_cd3_reads": ("phenotype", "min_cd3_reads"),
+            "allowed_types": ("phenotype", "allowed_types"),
+            "min_subtype_frac": ("phenotype", "min_subtype_frac"),
             # Clonotype
             "group_by": ("clonotype", "group_by"),
             "handle_doublets": ("clonotype", "handle_doublets"),
