@@ -73,6 +73,24 @@ class Signature:
     "focal"/"broad" label for the small-vs-large variants. ``description``
     carries the biological caveat (e.g. which sample source it's meaningful
     in) as prose.
+
+    ``units``, ``method`` and ``citation`` (#309) record how a *published*
+    signature is meant to be scored, so heterogeneous signatures
+    (MANAscore-style signed-z proxies vs. unweighted rank-enrichment gene
+    sets) can live in one registry and be dispatched correctly by
+    :func:`score_by_name` rather than all being treated as weighted sums:
+
+    - ``units`` — the input space the score is defined on: ``"log1p"``
+      (log1p CP10K, the default), ``"cp10k"``, ``"scaled"`` or ``"ranks"``.
+    - ``method`` — the scoring rule: ``"zscore"`` (mean of per-gene
+      z-scores, the default and what :func:`score_signature` computes),
+      ``"weighted_z"`` (signed-sum of per-gene z-scores / ``sqrt(n)`` — the
+      transparent MANAscore proxy), or ``"geneset_enrichment"`` (rank-based
+      set score for unweighted published sets like NeoTCR4/8).
+    - ``citation`` — the source paper (free text, incl. PMID).
+
+    Defaults keep every pre-existing signature a plain ``zscore`` /
+    ``log1p`` signature, so this is backward compatible.
     """
 
     name: str
@@ -80,6 +98,9 @@ class Signature:
     genes_down: tuple[str, ...] = ()
     panel: str = "focal"
     description: str = ""
+    units: str = "log1p"
+    method: str = "zscore"
+    citation: str = ""
 
     @property
     def all_genes(self) -> tuple[str, ...]:
@@ -629,4 +650,239 @@ def build_signature_methods(
         )
     return signature_methods_long(
         obs, positive_by_signature, clone_col=clone_col, sample_col=sample_col,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Neoantigen-reactivity signature registry + dispatcher (#309)
+# --------------------------------------------------------------------------- #
+# The published neoantigen-reactivity signatures are NOT interchangeable
+# weighted gene sums — MANAscore is a signed 3-gene model, NeoTCR4/8 are
+# unweighted rank-enrichment gene sets. The registry records each one's true
+# structure (genes, sign, input units, scoring method, citation); the
+# dispatcher below routes each to the matching scorer so a caller can just say
+# ``score_by_name(adata, "manascore")`` and get the right thing.
+from .signatures import (  # noqa: E402  (deferred: pure-data module, no cycle)
+    MANASCORE_DOWN_HGNC,
+    MANASCORE_UP_HGNC,
+    NEOTCR4_GENES_HGNC,
+    NEOTCR8_GENES_HGNC,
+)
+
+NEOANTIGEN_SIGNATURES: dict[str, Signature] = {
+    "MANAscore": Signature(
+        "MANAscore",
+        MANASCORE_UP_HGNC,
+        MANASCORE_DOWN_HGNC,
+        panel="focal",
+        units="log1p",
+        method="weighted_z",
+        citation="Zeng/Smith, Nat Commun 2025 (PMID 39900903)",
+        description="Transparent signed-z proxy for MANAscore: "
+        "(z(CXCL13)+z(ENTPD1)-z(IL7R))/sqrt(3) on log1p CP10K. The published "
+        "model is a trained RF+linear ensemble with NO closed-form per-gene "
+        "weights; only the gene directions (+CXCL13,+ENTPD1,-IL7R) and input "
+        "units (log-normalized) are reproducible, and that is what this scores. "
+        "The faithful pickled ensemble is deliberately NOT shipped "
+        "(deserializing a third-party pickle is an arbitrary-code-execution "
+        "risk).",
+    ),
+    "NeoTCR8": Signature(
+        "NeoTCR8",
+        NEOTCR8_GENES_HGNC,
+        panel="broad",
+        units="ranks",
+        method="geneset_enrichment",
+        citation="Lowery/Rosenberg, Science 2022 (PMID 35113651)",
+        description="243-gene CD8 neoantigen-reactive set (Table S10). An "
+        "UNWEIGHTED gene set scored by rank enrichment (scGSEA/score_genes) — "
+        "'per-gene weight' is not a meaningful question for it.",
+    ),
+    "NeoTCR4": Signature(
+        "NeoTCR4",
+        NEOTCR4_GENES_HGNC,
+        panel="broad",
+        units="ranks",
+        method="geneset_enrichment",
+        citation="Lowery/Rosenberg, Science 2022 (PMID 35113651)",
+        description="40-gene CD4 neoantigen-reactive set (Table S10). An "
+        "UNWEIGHTED gene set scored by rank enrichment (scGSEA/score_genes).",
+    ),
+}
+
+
+def _combined_signature_registry() -> dict[str, Signature]:
+    """All known signatures: the selection composites + the neoantigen set."""
+    return {**SIGNATURES, **NEOANTIGEN_SIGNATURES}
+
+
+def _lookup_signature(name, registry: dict[str, Signature] | None = None) -> Signature:
+    if isinstance(name, Signature):
+        return name
+    reg = registry if registry is not None else _combined_signature_registry()
+    if name in reg:
+        return reg[name]
+    # Case-insensitive fallback so "manascore" resolves to "MANAscore".
+    lower = {k.lower(): v for k, v in reg.items()}
+    key = str(name).lower()
+    if key in lower:
+        return lower[key]
+    raise KeyError(
+        f"score_by_name: unknown signature {name!r}; known: {sorted(reg)}"
+    )
+
+
+def score_weighted_z(
+    expr: pd.DataFrame,
+    signature: Signature,
+    *,
+    log1p: bool = True,
+    background: pd.DataFrame | None = None,
+) -> pd.Series:
+    """Signed-sum-of-z score (MANAscore-style): ``sum(sign * z_g) / sqrt(n)``.
+
+    Each gene is z-scored (of ``log1p`` expression) across cells against
+    ``background`` (default: the input cells); ``genes_up`` contribute +1 and
+    ``genes_down`` -1; the signed sum is normalized by ``sqrt(n_present)`` so
+    the scale is comparable across signatures. For MANAscore (up=CXCL13,ENTPD1;
+    down=IL7R) this is exactly ``(z(CXCL13)+z(ENTPD1)-z(IL7R))/sqrt(3)``.
+    """
+    up = [g for g in signature.genes_up if g in expr.columns]
+    down = [g for g in signature.genes_down if g in expr.columns]
+    genes = up + down
+    if not genes:
+        return pd.Series(0.0, index=expr.index)
+    sub = expr[genes].astype(float)
+    ref = (background if background is not None else expr)[genes].astype(float)
+    if log1p:
+        sub = np.log1p(sub)
+        ref = np.log1p(ref)
+    mu = ref.mean(axis=0)
+    sd = ref.std(axis=0, ddof=0).replace(0.0, 1.0)
+    z = (sub - mu) / sd
+    signs = pd.Series(
+        {**{g: 1.0 for g in up}, **{g: -1.0 for g in down}}
+    ).reindex(genes)
+    return z.mul(signs, axis=1).sum(axis=1) / np.sqrt(len(genes))
+
+
+def _score_genes_adata(adata, genes, *, on_missing: str = "warn") -> pd.Series:
+    """Faithful rank-enrichment for an unweighted set via scanpy score_genes.
+
+    Robust to Ensembl ``var_names``: signature symbols are mapped to the
+    matrix's actual var names via the shared symbol resolver before scoring.
+    Assumes ``adata.X`` is log-normalized (the state score_genes expects).
+    """
+    import scanpy as sc
+
+    from .genes import adata_symbol_array
+
+    sym = adata_symbol_array(adata)
+    var_names = list(adata.var_names)
+    want = {str(g).upper() for g in genes}
+    present_syms = set(sym)
+    picked = [var_names[i] for i, s in enumerate(sym) if s in want]
+    missing = sorted(want - present_syms)
+    if missing:
+        msg = f"_score_genes_adata: {len(missing)} gene(s) absent from matrix: {missing}"
+        if on_missing == "error":
+            raise KeyError(msg)
+        if on_missing == "warn":
+            logger.warning("%s", msg)
+    index = adata.obs_names.astype(str)
+    if not picked:
+        return pd.Series(0.0, index=index)
+    tmp_key = "_tcrsift_geneset_score_tmp"
+    sc.tl.score_genes(adata, picked, score_name=tmp_key, ctrl_size=50)
+    out = pd.Series(np.asarray(adata.obs[tmp_key]), index=index)
+    del adata.obs[tmp_key]
+    return out
+
+
+def _score_frame(
+    expr: pd.DataFrame,
+    signature: Signature,
+    *,
+    log1p: bool,
+    background: pd.DataFrame | None,
+    groups: pd.Series | None,
+    on_missing: str,
+) -> pd.Series:
+    if signature.method == "weighted_z":
+        return score_weighted_z(expr, signature, log1p=log1p, background=background)
+    if signature.method in ("zscore", "mean"):
+        return score_signature(
+            expr, signature, combine="zscore" if signature.method == "zscore" else "mean",
+            log1p=log1p, background=background, groups=groups, on_missing=on_missing,
+        )
+    if signature.method == "geneset_enrichment":
+        # No AnnData here → no full gene universe for a true rank enrichment.
+        # Score the (unweighted) present genes as a mean-of-z proxy and say so.
+        logger.warning(
+            "score_by_name[%s]: geneset_enrichment on a bare frame falls back "
+            "to a mean-z proxy (pass the AnnData for faithful score_genes "
+            "rank enrichment).",
+            signature.name,
+        )
+        proxy = Signature(signature.name, signature.all_genes)  # all-up, zscore
+        return score_signature(
+            expr, proxy, combine="zscore", log1p=log1p, background=background,
+            groups=groups, on_missing=on_missing,
+        )
+    raise ValueError(
+        f"score_by_name[{signature.name}]: unknown method {signature.method!r}"
+    )
+
+
+def score_by_name(
+    data,
+    name,
+    *,
+    registry: dict[str, Signature] | None = None,
+    log1p: bool | None = None,
+    background: pd.DataFrame | None = None,
+    groups: pd.Series | None = None,
+    on_missing: str = "warn",
+    layer: str | None = None,
+    key_added: str | None = None,
+) -> pd.Series:
+    """Score a registered signature on cells, dispatched by its ``method`` (#309).
+
+    ``data`` is either an ``AnnData`` (per-cell scores from ``.X`` / ``layer``,
+    symbol resolution via the shared resolver) or a cells × genes symbol-keyed
+    ``DataFrame``. ``name`` is a registry key (case-insensitive) or a
+    :class:`Signature`. Routing:
+
+    - ``weighted_z`` → :func:`score_weighted_z` (MANAscore-style signed-z),
+    - ``zscore`` / ``mean`` → :func:`score_signature`,
+    - ``geneset_enrichment`` → scanpy ``score_genes`` on an AnnData (faithful
+      rank enrichment), or a mean-z proxy on a bare frame.
+
+    ``log1p`` defaults from the signature's ``units`` (applied for
+    ``log1p``/``cp10k`` inputs, skipped for ``scaled``/``ranks``); pass a bool
+    to override. ``key_added`` (AnnData only) writes the score to
+    ``adata.obs[key_added]`` in addition to returning it.
+    """
+    sig = _lookup_signature(name, registry)
+    apply_log1p = (sig.units in ("log1p", "cp10k")) if log1p is None else log1p
+    is_adata = hasattr(data, "obs") and hasattr(data, "var_names")
+    if is_adata:
+        index = data.obs_names.astype(str)
+        if sig.method == "geneset_enrichment":
+            series = _score_genes_adata(data, sig.all_genes, on_missing=on_missing)
+        else:
+            expr = expression_frame_from_adata(
+                data, sig.all_genes, layer=layer, on_missing=on_missing
+            )
+            series = _score_frame(
+                expr, sig, log1p=apply_log1p, background=background,
+                groups=groups, on_missing=on_missing,
+            )
+        series = series.reindex(index)
+        if key_added is not None:
+            data.obs[key_added] = series.to_numpy()
+        return series
+    return _score_frame(
+        data, sig, log1p=apply_log1p, background=background, groups=groups,
+        on_missing=on_missing,
     )

@@ -305,22 +305,53 @@ def aggregate_gex_by_clonotype(
     return result
 
 
+def _score_gene_block(
+    frame: pd.DataFrame, cols: list[str], *, zscore: bool
+) -> np.ndarray:
+    """Per-cell score for one gene block: mean over genes of ``log1p(expr)``,
+    optionally z-scored per gene across the cells in ``frame`` first.
+
+    The single per-cell scoring primitive shared by the per-clonotype and
+    per-cell signature scorers (#313) — ``zscore=False`` reproduces the
+    historical log1p-mean; ``zscore=True`` gives the z-scored program score
+    (``mean_z(genes)``) the atlas colorings and vs-background panels use.
+    """
+    vals = np.log1p(frame[cols].fillna(0).to_numpy(dtype=float))
+    if zscore:
+        mu = vals.mean(axis=0)
+        sd = vals.std(axis=0, ddof=0)
+        sd[sd == 0] = 1.0
+        vals = (vals - mu) / sd
+    return vals.mean(axis=1)
+
+
 def compute_signature_scores_per_clonotype(
     df: pd.DataFrame,
     *,
     signatures: dict[str, tuple[str, ...]] | None = None,
     group_col: str = "CDR3_pair",
     gex_prefix: str = "gex",
-    cd8_only: bool = True,
+    cd8_only: bool | None = None,
     cd8_col: str | None = None,
+    zscore: bool = False,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Compute per-clonotype signature scores (#74).
 
     For each named signature (gene set), compute the per-cell
-    ``log1p(expression)`` mean across the gene set, then aggregate per
-    clonotype as the **cell-count-weighted mean** (i.e. each cell
-    contributes equally; cells aren't first summarized per sample).
+    ``log1p(expression)`` mean across the gene set (or the z-scored program
+    score when ``zscore=True``, #313), then aggregate per clonotype as the
+    **cell-count-weighted mean** (i.e. each cell contributes equally; cells
+    aren't first summarized per sample).
+
+    ``cd8_only`` defaults to ``None``, which behaves as ``True`` (CD8+ only)
+    for backward compatibility **but drops CD4 cells** — pass it explicitly.
+    For CD4-inclusive scoring (or any non-CD8 analysis) pass
+    ``cd8_only=False``; the per-cell scorer
+    (:func:`compute_signature_scores_per_cell`) is CD4-inclusive by default.
+    ``zscore=True`` standardizes each gene across the (post-CD8-filter) cells
+    before averaging, so a program score isn't dominated by its
+    highest-expression gene.
 
     Parameters
     ----------
@@ -362,6 +393,15 @@ def compute_signature_scores_per_clonotype(
             f"compute_signature_scores_per_clonotype: missing {group_col!r} column"
         )
 
+    if cd8_only is None:
+        cd8_only = True
+        if verbose:
+            logger.warning(
+                "compute_signature_scores_per_clonotype: cd8_only defaulted to "
+                "True, which DROPS CD4 cells — pass cd8_only explicitly "
+                "(cd8_only=False for CD4-inclusive scoring)."
+            )
+
     sub = df
     if cd8_only:
         if cd8_col is None:
@@ -390,8 +430,7 @@ def compute_signature_scores_per_clonotype(
             sub = sub.assign(**{f"_signature_{sig_name}": np.nan})
             score_cols[sig_name] = f"_signature_{sig_name}"
             continue
-        # log1p mean across the available genes in the signature.
-        per_cell = np.log1p(sub[gex_cols].fillna(0).to_numpy()).mean(axis=1)
+        per_cell = _score_gene_block(sub, gex_cols, zscore=zscore)
         sub = sub.assign(**{f"_signature_{sig_name}": per_cell})
         score_cols[sig_name] = f"_signature_{sig_name}"
 
@@ -419,6 +458,72 @@ def compute_signature_scores_per_clonotype(
             f"{len(grouped):,} clonotypes across {len(signatures)} signatures"
         )
     return grouped
+
+
+def compute_signature_scores_per_cell(
+    adata,
+    *,
+    signatures: dict[str, tuple[str, ...]] | None = None,
+    zscore: bool = True,
+    layer: str | None = None,
+    key_prefix: str = "signature_",
+    on_missing: str = "warn",
+    verbose: bool = True,
+):
+    """Per-CELL signature scores written to ``adata.obs`` (#313).
+
+    The per-cell sibling of :func:`compute_signature_scores_per_clonotype`:
+    the scores that colour the single-cell UMAP and drive the
+    signature-vs-background panels. For each named gene set, extract the
+    symbol-keyed expression (via the shared Ensembl-aware resolver) and score
+    each cell as the mean over present genes of z-scored ``log1p`` expression
+    (``zscore=True``, the default) or plain ``log1p``-mean (``zscore=False``),
+    writing it to ``adata.obs[f"{key_prefix}{name}"]``.
+
+    Unlike the per-clonotype scorer this is CD4-INCLUSIVE (no CD8 gate) — it
+    scores every cell; restrict upstream for a lineage subset. For signed /
+    published registry signatures (MANAscore, NeoTCR) use
+    :func:`tcrsift.signature_methods.score_by_name` instead.
+
+    Both scorers share the one per-cell primitive (:func:`_score_gene_block`)
+    and default to the same :data:`tcrsift.signatures.T_CELL_SIGNATURES`, so a
+    gene set is defined once and scored identically per-cell and per-clone.
+
+    Returns the same ``adata`` (mutated in place); signatures with no gene
+    overlap get an all-NaN column and a warning.
+    """
+    from .signature_methods import expression_frame_from_adata
+
+    if signatures is None:
+        from .signatures import T_CELL_SIGNATURES
+
+        signatures = T_CELL_SIGNATURES
+
+    all_genes = sorted({g for genes in signatures.values() for g in genes})
+    expr = expression_frame_from_adata(
+        adata, all_genes, layer=layer, on_missing=on_missing
+    )
+    present = set(expr.columns)
+    n_scored = 0
+    for name, genes in signatures.items():
+        cols = [g for g in genes if g in present]
+        col_name = f"{key_prefix}{name}"
+        if not cols:
+            if verbose:
+                logger.warning(
+                    "compute_signature_scores_per_cell: signature %r — none of "
+                    "%s present; emitting NaN", name, list(genes),
+                )
+            adata.obs[col_name] = np.nan
+            continue
+        adata.obs[col_name] = _score_gene_block(expr, cols, zscore=zscore)
+        n_scored += 1
+    if verbose:
+        logger.info(
+            "compute_signature_scores_per_cell: scored %d/%d signatures over "
+            "%d cells", n_scored, len(signatures), adata.n_obs,
+        )
+    return adata
 
 
 def compute_cd4_cd8_counts(
