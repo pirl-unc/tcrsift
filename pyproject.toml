@@ -72,10 +72,22 @@ reports = [
 plots = [
     "upsetplot>=0.8",
 ]
+# Single-cell atlas embedding (#311): Harmony batch integration + Leiden
+# clustering. scanpy (core) already brings umap-learn; these are the extra
+# pieces its Leiden/Harmony steps need. Install with tcrsift[atlas] to use
+# tcrsift.embed.embed_cells / the `embed` run step.
+atlas = [
+    "harmonypy>=0.0.9",
+    "igraph>=0.10",
+    "leidenalg>=0.9",
+]
 full = [
     "reportlab>=4.0.0,<5.0.0",
     "pdfkit",
     "upsetplot>=0.8",
+    "harmonypy>=0.0.9",
+    "igraph>=0.10",
+    "leidenalg>=0.9",
 ]
 
 [tool.setuptools.dynamic]

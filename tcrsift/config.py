@@ -205,6 +205,37 @@ class GEXConfig:
 
 
 @dataclass
+class EmbedConfig:
+    """Configuration for the single-cell embedding step (#311).
+
+    An OPTIONAL atlas step (``enabled=False`` by default) that runs before
+    clonotype aggregation: analytic Pearson residuals on an informative-gene
+    panel → PCA → optional Harmony batch integration → neighbors → UMAP →
+    Leiden. Signature scoring/labeling stay on log1p CP10K (see
+    :mod:`tcrsift.gex`); this step only computes structure.
+    """
+
+    enabled: bool = False
+    # Clustering gene panel. None → pick highly-variable genes automatically
+    # (``n_top_genes``). Provide a curated list so structure reflects known
+    # biology rather than whatever is most variable (technical / ambient).
+    informative_genes: list[str] | None = None
+    n_top_genes: int = 2000
+    n_pcs: int = 40
+    # obs column to integrate over with Harmony (e.g. "sample"/"batch"). None
+    # skips integration and embeds on raw PCA.
+    batch_key: str | None = None
+    leiden_resolution: float = 1.0
+    n_neighbors: int = 15
+    min_cells: int = 3
+    # Drop TCR/Ig receptor transcripts from the clustering panel so structure
+    # isn't driven by clonotype (anti-leakage, consistent with the rest of the
+    # library).
+    exclude_receptor_genes: bool = True
+    seed: int = 0
+
+
+@dataclass
 class UnifyConfig:
     """Configuration for multi-experiment unification."""
 
@@ -326,6 +357,7 @@ class TCRsiftConfig:
     til: TILConfig = field(default_factory=TILConfig)
     sct: SCTConfig = field(default_factory=SCTConfig)
     gex: GEXConfig = field(default_factory=GEXConfig)
+    embed: EmbedConfig = field(default_factory=EmbedConfig)
     unify: UnifyConfig = field(default_factory=UnifyConfig)
     assemble: AssembleConfig = field(default_factory=AssembleConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
@@ -446,6 +478,12 @@ class TCRsiftConfig:
             "gene_groups": ("gex", "gene_groups"),
             "include_qc": ("gex", "include_qc"),
             "aggregation_ops": ("gex", "aggregation_ops"),
+            # Embed (#311)
+            "embed": ("embed", "enabled"),  # --embed / flat bool
+            "n_pcs": ("embed", "n_pcs"),
+            "batch_key": ("embed", "batch_key"),
+            "leiden_resolution": ("embed", "leiden_resolution"),
+            "informative_genes": ("embed", "informative_genes"),
             # Unify
             "add_occurrence_flags": ("unify", "add_occurrence_flags"),
             "add_combined_stats": ("unify", "add_combined_stats"),
@@ -494,6 +532,7 @@ class TCRsiftConfig:
             "til": {},
             "sct": {},
             "gex": {},
+            "embed": {},
             "unify": {},
             "assemble": {},
             "output": {},
@@ -538,6 +577,7 @@ class TCRsiftConfig:
             til=TILConfig(**nested["til"]),
             sct=SCTConfig(**nested["sct"]),
             gex=GEXConfig(**nested["gex"]),
+            embed=EmbedConfig(**nested["embed"]),
             unify=UnifyConfig(**nested["unify"]),
             assemble=AssembleConfig(**nested["assemble"]),
             output=OutputConfig(**nested["output"]),
@@ -569,6 +609,7 @@ class TCRsiftConfig:
             "til": dataclasses.asdict(self.til),
             "sct": dataclasses.asdict(self.sct),
             "gex": dataclasses.asdict(self.gex),
+            "embed": dataclasses.asdict(self.embed),
             "unify": dataclasses.asdict(self.unify),
             "assemble": dataclasses.asdict(self.assemble),
             "output": dataclasses.asdict(self.output),

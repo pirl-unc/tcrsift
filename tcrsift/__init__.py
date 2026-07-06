@@ -30,7 +30,11 @@ _MODULE_EXPORTS = {
         "AssembleConfig",
         "SCTConfig",
         "GEXConfig",
+        "EmbedConfig",
         "UnifyConfig",
+    ),
+    ".embed": (
+        "embed_cells",
     ),
     ".sample_sheet": (
         "Sample",
