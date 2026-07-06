@@ -185,8 +185,51 @@ class TestPdfSafe:
         assert "★" not in pdf_safe("a★b")
 
 
+class TestPrettyAntigen:
+    """#317: antigen-agnostic condition labels — never a bare pool token when
+    a label exists; the label is opaque free text (peptide / RNA / protein …)."""
+
+    def test_explicit_label_wins(self):
+        from tcrsift.format import pretty_antigen
+
+        assert pretty_antigen("P2", label="P2 (KIF1C)") == "P2 (KIF1C)"
+
+    def test_per_call_map(self):
+        from tcrsift.format import pretty_antigen
+
+        assert pretty_antigen("P2", labels={"P2": "P2 (KIF1C)"}) == "P2 (KIF1C)"
+
+    def test_unmapped_falls_back_to_pretty_method(self):
+        from tcrsift.format import pretty_antigen
+
+        # No label for P9 → the raw token (pretty_method leaves it unchanged).
+        assert pretty_antigen("P9", labels={"P2": "P2 (KIF1C)"}) == "P9"
+        # A sort-style token still gets the pretty superscript.
+        assert pretty_antigen("AIMpos") == "AIM⁺"
+
+    def test_format_neutral_free_text(self):
+        from tcrsift.format import pretty_antigen
+
+        # Works for non-peptide antigens — the label is never parsed.
+        for lbl in ("WT1 minigene pool B", "MART-1 26-35", "EBV lysate", "whole PRAME"):
+            assert pretty_antigen("cond", label=lbl) == lbl
+
+    def test_global_registry_set_and_clear(self):
+        from tcrsift.format import pretty_antigen, set_antigen_labels
+
+        set_antigen_labels({"WT1": "WT1 minigene pool B"})
+        try:
+            assert pretty_antigen("WT1") == "WT1 minigene pool B"
+        finally:
+            set_antigen_labels()  # clear so other tests aren't affected
+        assert pretty_antigen("WT1") == "WT1"
+
+
 class TestTopLevelExport:
     def test_importable_from_top_level(self):
         assert tcrsift.pretty_method("AIMpos") == "AIM⁺"
         assert tcrsift.pretty_sample("tetpos-3") == "tet⁺"
         assert tcrsift.order_conditions(["CTYneg", "AIMpos"]) == ["AIMpos", "CTYneg"]
+
+    def test_pretty_antigen_importable_from_top_level(self):
+        assert tcrsift.pretty_antigen("P2", label="P2 (KIF1C)") == "P2 (KIF1C)"

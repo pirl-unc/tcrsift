@@ -725,6 +725,148 @@ def select_specificity_candidates(
     return out
 
 
+# Count-like columns for the dominant-specificity rule, in priority order.
+# Frequency (a 0-1 fraction) is deliberately excluded — this rule gates on an
+# ABSOLUTE per-condition cell count, so a fractional column would never clear
+# the min_dominant_cells floor.
+_DOMINANT_COUNT_CANDIDATES = (
+    "Num_Combined_TCRs", "Num_Complete_TCRs", "cell_count", "n_cells",
+    "num_cells", "cells", "count",
+)
+
+
+def _resolve_dominant_count_column(
+    df: pd.DataFrame, count_column: str | None
+) -> str:
+    if count_column is not None:
+        if count_column not in df.columns:
+            raise ValueError(
+                f"select_by_dominant_specificity: count_column "
+                f"{count_column!r} not in columns {list(df.columns)}"
+            )
+        return count_column
+    lower = {c.lower(): c for c in df.columns}
+    for cand in _DOMINANT_COUNT_CANDIDATES:
+        if cand.lower() in lower:
+            return lower[cand.lower()]
+    raise ValueError(
+        "select_by_dominant_specificity: could not auto-detect a count column "
+        f"(looked for {list(_DOMINANT_COUNT_CANDIDATES)}); pass count_column."
+    )
+
+
+def _lineage_min_threshold(
+    label: object, per_lineage_min: dict | None, default: int
+) -> int:
+    """Per-lineage dominant-cell floor: first ``per_lineage_min`` key that is a
+    substring of the lineage label (e.g. key ``"CD8"`` matches ``"CD8+"`` /
+    ``"Confident CD8+"``), else ``default``."""
+    if not per_lineage_min:
+        return default
+    s = str(label).lower()
+    for key, val in per_lineage_min.items():
+        if str(key).lower() in s:
+            return int(val)
+    return default
+
+
+def select_by_dominant_specificity(
+    clone_condition_long: pd.DataFrame,
+    *,
+    condition_col: str,
+    clone_col: str = "CDR3_beta",
+    count_column: str | None = None,
+    min_specificity: float = 0.95,
+    min_dominant_cells: int = 5,
+    lineage_col: str | None = None,
+    per_lineage_min: dict | None = None,
+    exclude_clones: set | None = None,
+    label_map: dict | None = None,
+) -> pd.DataFrame:
+    """Dominant-condition-fraction antigen-specific selection (#316).
+
+    Reproduces the peptide-culture recipe: a clone is antigen-specific when it
+    is essentially confined to ONE condition (peptide pool / antigen), not
+    spread across conditions like a bystander. For each clone (keyed on
+    ``clone_col``, typically CDR3-beta), aggregate ``count_column`` per
+    condition, then flag it when:
+
+    - ``specificity = dominant_condition_count / total_count >= min_specificity``
+      (default 0.95) — the clone lives essentially in one condition, and
+    - the dominant-condition count clears an ABSOLUTE floor (``min_dominant_cells``;
+      per-lineage via ``per_lineage_min``, e.g. ``{"CD8": 2, "CD4": 5}`` since
+      tumor-resident CD8 clones are culture-rarer), and
+    - the clone is not in ``exclude_clones`` (viral / public bystanders — see
+      :func:`tcrsift.til_select.viral_cdr3b_set`).
+
+    Unlike :func:`select_specificity_candidates` (a Ppost private-receptor
+    proxy) and :func:`select_freq_prism_per_condition` (frequency + top-K),
+    this is a confinement rule on an ABSOLUTE per-condition count, not a
+    frequency/rank gate. Beta-keyable (``clone_col``) and count-column-choosable
+    (``count_column``: combined vs complete). Returns one row per clone with
+    ``[clone_col, dominant_count, total_count, specificity, dominant_condition,
+    min_dominant_cells, is_dominant_specific]``, plus ``lineage`` (if
+    ``lineage_col``) and ``dominant_antigen`` (if ``label_map``, #317).
+    """
+    for col in (condition_col, clone_col):
+        if col not in clone_condition_long.columns:
+            raise ValueError(
+                f"select_by_dominant_specificity: missing {col!r} column"
+            )
+    count_col = _resolve_dominant_count_column(clone_condition_long, count_column)
+
+    df = clone_condition_long[[clone_col, condition_col, count_col]].copy()
+    df[count_col] = pd.to_numeric(df[count_col], errors="coerce").fillna(0.0)
+    per = (
+        df.groupby([clone_col, condition_col], observed=True)[count_col]
+        .sum()
+        .reset_index()
+    )
+    grp = per.groupby(clone_col, observed=True)[count_col]
+    dominant = grp.max()
+    total = grp.sum()
+    dom_rows = per.loc[grp.idxmax()]
+    dom_condition = dom_rows.set_index(clone_col)[condition_col]
+
+    res = pd.DataFrame({clone_col: dominant.index})
+    res["dominant_count"] = dominant.to_numpy()
+    res["total_count"] = total.reindex(dominant.index).to_numpy()
+    res["dominant_condition"] = dom_condition.reindex(dominant.index).to_numpy()
+    res["specificity"] = res["dominant_count"] / res["total_count"].replace(0, np.nan)
+
+    if lineage_col is not None:
+        if lineage_col not in clone_condition_long.columns:
+            raise ValueError(
+                f"select_by_dominant_specificity: missing lineage_col "
+                f"{lineage_col!r}"
+            )
+        lineage = clone_condition_long.groupby(clone_col, observed=True)[
+            lineage_col
+        ].agg(lambda s: s.mode().iloc[0] if not s.mode().empty else "Unknown")
+        res["lineage"] = lineage.reindex(dominant.index).to_numpy()
+        res["min_dominant_cells"] = [
+            _lineage_min_threshold(lab, per_lineage_min, min_dominant_cells)
+            for lab in res["lineage"]
+        ]
+    else:
+        res["min_dominant_cells"] = min_dominant_cells
+
+    excl = {str(x) for x in (exclude_clones or ())}
+    res["is_dominant_specific"] = (
+        (res["specificity"] >= min_specificity)
+        & (res["dominant_count"] >= res["min_dominant_cells"])
+        & ~res[clone_col].astype(str).isin(excl)
+    )
+
+    if label_map is not None:
+        from .format import pretty_antigen
+
+        res["dominant_antigen"] = [
+            pretty_antigen(c, labels=label_map) for c in res["dominant_condition"]
+        ]
+    return res.reset_index(drop=True)
+
+
 def pivot_per_sample_tiers(
     clone_sample_long: pd.DataFrame,
     *,

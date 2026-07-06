@@ -245,6 +245,31 @@ class SampleSheet:
                 return s
         return None
 
+    def antigen_label_map(self, *, key: str = "sample") -> dict[str, str]:
+        """Map ``{condition token → antigen label}`` from each sample's
+        ``antigen_name`` (#317), for routing plot/table condition labels
+        through :func:`tcrsift.format.pretty_antigen` so a pool/condition is
+        never shown by a bare token.
+
+        ``key`` is the :class:`Sample` attribute used as the condition token
+        (default the ``sample`` name; e.g. ``"enrichment_method"`` to key by
+        sort). The label is opaque free text (peptide pool, minigene, protein,
+        …). Samples with no ``antigen_name`` are omitted; a multi-antigen
+        ``antigen_names`` list is joined with " + " when the scalar
+        ``antigen_name`` is absent.
+        """
+        out: dict[str, str] = {}
+        for s in self.samples:
+            token = getattr(s, key, None)
+            if token is None:
+                continue
+            label = s.antigen_name
+            if not label and getattr(s, "antigen_names", None):
+                label = " + ".join(str(a) for a in s.antigen_names if a)
+            if label:
+                out[str(token)] = str(label)
+        return out
+
     def get_culture_samples(self) -> list[Sample]:
         """Get all culture samples (not TIL, tetramer, or SCT)."""
         return [s for s in self.samples if s.source == "culture"]

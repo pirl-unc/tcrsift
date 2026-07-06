@@ -583,3 +583,28 @@ class TestValidateSampleSheet:
         warnings = validate_sample_sheet(ss)
         # Should only have no warnings (paths exist, consistent metadata)
         assert len(warnings) == 0
+
+
+class TestAntigenLabelMap:
+    """#317: build a {condition → antigen label} map from each sample's
+    existing ``antigen_name`` (antigen-agnostic; no Peptide_Number)."""
+
+    def test_maps_sample_to_antigen_name(self):
+        sheet = SampleSheet(samples=[
+            Sample(sample="cultA", vdj_dir="/p", antigen_name="PRAME"),
+            Sample(sample="cultB", vdj_dir="/p", antigen_names=["CMV pp65", "EBV BMLF1"]),
+            Sample(sample="cultC", vdj_dir="/p"),  # no antigen → omitted
+        ])
+        assert sheet.antigen_label_map() == {
+            "cultA": "PRAME",
+            "cultB": "CMV pp65 + EBV BMLF1",
+        }
+
+    def test_key_by_other_attribute(self):
+        sheet = SampleSheet(samples=[
+            Sample(sample="s1", vdj_dir="/p", enrichment_method="AIMpos",
+                   antigen_name="WT1 minigene pool B"),
+        ])
+        assert sheet.antigen_label_map(key="enrichment_method") == {
+            "AIMpos": "WT1 minigene pool B",
+        }
