@@ -34,6 +34,7 @@ from tcrsift.plots import (  # noqa: E402
     plot_raincloud,
     plot_signature_vs_background,
     plot_umap,
+    plot_umap_facets,
 )
 
 
@@ -71,6 +72,10 @@ def atlas():
             "cytotoxic": rng.normal(0, 1, n),
             "antigen_specific": flag,
             "peptide": peptide,
+            # Facet column + two provenance layers (CD8 vs CD4 antigen-specific).
+            "timepoint": np.array(["T1", "T2", "T3"])[np.arange(n) % 3],
+            "is_as_cd8": flag & (leiden == "0"),
+            "is_as_cd4": flag & (leiden == "1"),
         },
         index=[f"c{i}" for i in range(n)],
     )
@@ -115,11 +120,65 @@ class TestPlotUmap:
         ax = plot_umap(atlas, "phenotype")
         assert hasattr(ax, "scatter")
 
+    def test_pinned_layout_and_scale(self, atlas):
+        # Pinned color_map / centroids / vrange / view stamp all accepted (#326).
+        cmap = {"CD8 T": "#d62728", "CD4 T": "#1f77b4", "(unspecified)": (0.8, 0.8, 0.8)}
+        centroids = {"CD8 T": (0.0, 0.0), "CD4 T": (5.0, 0.0)}
+        ax = plot_umap(atlas, "phenotype", color_map=cmap, centroids=centroids,
+                       grayscale_prefixes=("(unspecified)",), view_label="(T1)")
+        assert hasattr(ax, "scatter")
+        ax2 = plot_umap(atlas, "manascore", vrange=(0.0, 1.0), show_legend=False)
+        assert hasattr(ax2, "scatter")
+
+
+class TestPlotUmapFacets:
+    def test_categorical_facets(self, atlas, tmp_path):
+        out = plot_umap_facets(atlas, "timepoint", "phenotype",
+                               tmp_path / "facets.png",
+                               grayscale_prefixes=("(unspecified)",))
+        assert _nonempty(out)
+
+    def test_continuous_facets_shared_vrange(self, atlas, tmp_path):
+        out = plot_umap_facets(atlas, "timepoint", "manascore",
+                               tmp_path / "facets_cont.png", shared_vrange=True)
+        assert _nonempty(out)
+
+    def test_returns_figure_with_integrated_plus_facets(self, atlas):
+        fig = plot_umap_facets(atlas, "timepoint", "phenotype")
+        # integrated + 3 timepoints = 4 drawn panels (rest turned off).
+        drawn = [a for a in fig.axes if a.has_data()]
+        assert len(drawn) >= 4
+
+    def test_missing_facet_col_raises(self, atlas):
+        with pytest.raises(ValueError, match="facet_col"):
+            plot_umap_facets(atlas, "nope", "phenotype")
+
 
 class TestPlotProvenance:
     def test_single_highlight(self, atlas, tmp_path):
         out = plot_provenance(atlas, "antigen_specific", tmp_path / "prov.png")
         assert _nonempty(out)
+
+    def test_multi_layer_overlay(self, atlas, tmp_path):
+        out = plot_provenance(
+            atlas, layers=[("is_as_cd8", "#d62728", "CD8"),
+                           ("is_as_cd4", "#1f77b4", "CD4")],
+            output_path=tmp_path / "prov_layers.png",
+        )
+        assert _nonempty(out)
+
+    def test_multi_layer_legend_labels(self, atlas):
+        ax = plot_provenance(atlas, layers=[("is_as_cd8", "#d62728", "CD8"),
+                                            ("is_as_cd4", "#1f77b4", "CD4")])
+        texts = {t.get_text() for t in ax.get_legend().get_texts()}
+        assert {"CD8", "CD4"} <= texts
+
+    def test_flag_and_layers_mutually_exclusive(self, atlas):
+        with pytest.raises(ValueError, match="exactly one"):
+            plot_provenance(atlas, "antigen_specific",
+                            layers=[("is_as_cd8", "#d62728", "CD8")])
+        with pytest.raises(ValueError, match="exactly one"):
+            plot_provenance(atlas)  # neither
 
     def test_by_peptide_uses_pretty_antigen(self, atlas, tmp_path):
         # The legend must show the mapped antigen name, not the bare pool token.

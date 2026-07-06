@@ -182,6 +182,7 @@ _MODULE_EXPORTS = {
         "plot_pgen_distribution",
         "plot_publicness_vs_match_score",
         "plot_umap",
+        "plot_umap_facets",
         "plot_provenance",
         "plot_signature_vs_background",
         "plot_raincloud",

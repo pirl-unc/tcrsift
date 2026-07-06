@@ -2337,6 +2337,11 @@ def plot_umap(
     label_centroids: bool = True,
     cmap: str = "viridis",
     point_size: float = 6.0,
+    vrange: tuple[float, float] | None = None,
+    color_map: dict | None = None,
+    centroids: dict | None = None,
+    view_label: str | None = None,
+    show_legend: bool = True,
     title: str | None = None,
     ax: plt.Axes | None = None,
 ) -> plt.Axes | Path:
@@ -2350,6 +2355,13 @@ def plot_umap(
     de-emphasized labels (e.g. ``("(unspecified)", "(activated)")``) so the
     specific phenotypes carry the palette. Continuous colorings render a
     percentile-clipped colorbar.
+
+    To keep a facet grid comparable across panels (#326), pin the layout/scale so
+    every call renders identically: ``color_map`` (category→color) and
+    ``centroids`` (category→(x, y)) for categorical, ``vrange`` (lo, hi) for
+    continuous. ``view_label`` stamps a small view tag (e.g. ``"(T1)"``) in the
+    corner; ``show_legend`` suppresses the per-panel legend/colorbar so a facet
+    grid can carry one shared legend. :func:`plot_umap_facets` wires these up.
 
     Returns the saved path when ``output_path`` is given and a figure was created
     here, otherwise the Axes (so panels compose into a multi-panel figure).
@@ -2365,39 +2377,50 @@ def plot_umap(
 
     if kind == "categorical":
         cats = values.to_numpy()
-        ordered, color_map = _categorical_colors(
-            cats, order=categorical_order, grayscale_prefixes=grayscale_prefixes
-        )
         prefixes = tuple(grayscale_prefixes or ())
+        if color_map is None:
+            ordered, color_map = _categorical_colors(
+                cats, order=categorical_order, grayscale_prefixes=prefixes
+            )
+        else:
+            # Pinned palette (facet grid): honor a requested order, then append
+            # any categories present here but not in the order.
+            present = list(dict.fromkeys(str(c) for c in cats))
+            ordered = [c for c in (categorical_order or color_map) if c in color_map]
+            ordered += [c for c in present if c not in set(ordered)]
+        grey_cats = {c for c in ordered if prefixes and c.startswith(prefixes)}
         # Draw greyed (de-emphasized) categories underneath the colored ones.
-        grey_cats = [c for c in ordered if prefixes and c.startswith(prefixes)]
-        for c in grey_cats + [c for c in ordered if c not in set(grey_cats)]:
+        for c in list(grey_cats) + [c for c in ordered if c not in grey_cats]:
             m = cats == c
             if not m.any():
                 continue
-            is_grey = c in set(grey_cats)
+            is_grey = c in grey_cats
             ax.scatter(
                 coords[m, 0], coords[m, 1], s=point_size,
-                color=color_map[c], alpha=0.35 if is_grey else 0.8,
+                color=color_map.get(c, (0.78, 0.78, 0.78)),
+                alpha=0.35 if is_grey else 0.8,
                 linewidth=0, zorder=1 if is_grey else 2,
                 label="_nolegend_" if is_grey else c,
             )
         if label_centroids:
             for c in ordered:
-                if prefixes and c.startswith(prefixes):
+                if c in grey_cats:
                     continue
-                m = cats == c
-                if not m.any():
-                    continue
-                cx, cy = np.median(coords[m, 0]), np.median(coords[m, 1])
+                if centroids is not None and c in centroids:
+                    cx, cy = centroids[c]
+                else:
+                    m = cats == c
+                    if not m.any():
+                        continue
+                    cx, cy = np.median(coords[m, 0]), np.median(coords[m, 1])
                 ax.text(
                     cx, cy, c, fontsize=7, fontweight="bold", ha="center",
                     va="center", zorder=4,
                     bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
                               alpha=0.7, edgecolor="none"),
                 )
-        n_leg = sum(1 for c in ordered if not (prefixes and c.startswith(prefixes)))
-        if 0 < n_leg <= 25:
+        n_leg = sum(1 for c in ordered if c not in grey_cats)
+        if show_legend and 0 < n_leg <= 25:
             ax.legend(
                 markerscale=2.0, fontsize=7, loc="center left",
                 bbox_to_anchor=(1.01, 0.5), framealpha=0.9,
@@ -2405,23 +2428,34 @@ def plot_umap(
             )
     else:
         v = pd.to_numeric(values, errors="coerce").to_numpy()
-        finite = v[np.isfinite(v)]
-        vmin, vmax = (
-            (np.percentile(finite, 2), np.percentile(finite, 98))
-            if finite.size else (0.0, 1.0)
-        )
+        if vrange is not None:
+            vmin, vmax = vrange
+        else:
+            finite = v[np.isfinite(v)]
+            vmin, vmax = (
+                (np.percentile(finite, 2), np.percentile(finite, 98))
+                if finite.size else (0.0, 1.0)
+            )
         order = np.argsort(np.nan_to_num(v, nan=-np.inf))  # high values on top
         sc = ax.scatter(
             coords[order, 0], coords[order, 1], c=v[order], s=point_size,
             cmap=cmap, vmin=vmin, vmax=max(vmax, vmin + 1e-9), linewidth=0,
             alpha=0.85,
         )
-        cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.02)
-        cbar.set_label(label, fontsize=9)
+        if show_legend:
+            cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.02)
+            cbar.set_label(label, fontsize=9)
 
     ax.set_xlabel("UMAP1")
     ax.set_ylabel("UMAP2")
     ax.set_title(title if title is not None else label)
+    if view_label:
+        ax.text(
+            0.02, 0.98, view_label, transform=ax.transAxes, ha="left", va="top",
+            fontsize=8, fontweight="bold", zorder=5,
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7,
+                      edgecolor="none"),
+        )
     ax.set_xticks([])
     ax.set_yticks([])
     ax.grid(False)
@@ -2431,11 +2465,148 @@ def plot_umap(
     return ax
 
 
-def plot_provenance(
+def _shared_umap_scale(adata, color, basis, *, categorical_order, grayscale_prefixes):
+    """Compute the pinned color_map + centroids (categorical) or vrange
+    (continuous) from the FULL atlas, so facet panels stay comparable (#326)."""
+    coords = _umap_coords(adata, basis)
+    values, kind, _ = _resolve_cell_values(adata, color)
+    if kind == "categorical":
+        cats = values.to_numpy()
+        ordered, color_map = _categorical_colors(
+            cats, order=categorical_order, grayscale_prefixes=grayscale_prefixes
+        )
+        prefixes = tuple(grayscale_prefixes or ())
+        centroids = {}
+        for c in ordered:
+            if prefixes and c.startswith(prefixes):
+                continue
+            m = cats == c
+            if m.any():
+                centroids[c] = (float(np.median(coords[m, 0])),
+                                float(np.median(coords[m, 1])))
+        return kind, ordered, color_map, centroids, None
+    v = pd.to_numeric(values, errors="coerce").to_numpy()
+    finite = v[np.isfinite(v)]
+    vrange = (
+        (float(np.percentile(finite, 2)), float(np.percentile(finite, 98)))
+        if finite.size else (0.0, 1.0)
+    )
+    return kind, None, None, None, vrange
+
+
+def plot_umap_facets(
     adata: ad.AnnData,
-    flag: str,
+    facet_col: str,
+    color: str,
     output_path: str | Path | None = None,
     *,
+    basis: str = "X_umap",
+    shared_layout: bool = True,
+    shared_vrange: bool = True,
+    include_integrated: bool = True,
+    view_labels: dict | None = None,
+    integrated_label: str | None = None,
+    categorical_order: Sequence[str] | None = None,
+    grayscale_prefixes: Sequence[str] | None = None,
+    cmap: str = "viridis",
+    point_size: float = 6.0,
+    max_cols: int = 3,
+    title: str | None = None,
+) -> Path | plt.Figure:
+    """A grid of per-``facet_col`` UMAPs that share layout + color scale (#326).
+
+    Loop-``plot_umap``-per-subset recomputes the palette / centroid layout / color
+    range independently, so panels don't line up. This computes them ONCE from the
+    full atlas and pins them across every panel: the same category→color mapping
+    and centroid positions (``shared_layout``) and the same continuous vrange
+    (``shared_vrange``). With ``include_integrated`` the first panel is the whole
+    atlas; each panel gets a corner view stamp (``view_labels`` maps facet value →
+    label, default ``"(<value>)"``; the integrated panel uses ``integrated_label``
+    or ``"(<all>/<values>)"``). One shared legend/colorbar is drawn on the first
+    panel only.
+    """
+    if facet_col not in adata.obs.columns:
+        raise ValueError(f"facet_col {facet_col!r} not in adata.obs")
+    groups = [str(g) for g in sorted(adata.obs[facet_col].astype(str).unique())]
+    fvals = adata.obs[facet_col].astype(str)
+
+    kind = color_map = centroids = vrange = ordered = None
+    if shared_layout or shared_vrange:
+        kind, ordered, color_map, centroids, vrange = _shared_umap_scale(
+            adata, color, basis,
+            categorical_order=categorical_order,
+            grayscale_prefixes=grayscale_prefixes,
+        )
+    if not shared_layout:
+        color_map = centroids = None
+    if not shared_vrange:
+        vrange = None
+
+    view_labels = view_labels or {}
+    panels = []
+    if include_integrated:
+        integ = integrated_label or f"({'/'.join(groups)})"
+        panels.append((adata, integ))
+    for g in groups:
+        panels.append((adata[(fvals == g).to_numpy()], view_labels.get(g, f"({g})")))
+
+    # One shared legend/colorbar for the whole grid (from the pinned scale) beats
+    # a per-panel legend that would jut into its neighbor.
+    shared_key = (kind == "categorical" and color_map is not None) or (
+        kind == "continuous" and vrange is not None
+    )
+    n_rows, n_cols = _grid_shape(len(panels), max_cols=max_cols)
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(6.0 * n_cols, 5.0 * n_cols / max_cols + 0.5 * n_rows),
+        squeeze=False,
+    )
+    flat = axes.flatten()
+    for i, (panel_adata, vlabel) in enumerate(panels):
+        plot_umap(
+            panel_adata, color, ax=flat[i], basis=basis,
+            categorical_order=ordered or categorical_order,
+            grayscale_prefixes=grayscale_prefixes, cmap=cmap, point_size=point_size,
+            color_map=color_map, centroids=centroids, vrange=vrange,
+            view_label=vlabel, show_legend=(not shared_key and i == 0), title=" ",
+        )
+    for j in range(len(panels), len(flat)):
+        flat[j].axis("off")
+
+    if shared_key and kind == "categorical":
+        prefixes = tuple(grayscale_prefixes or ())
+        handles = [
+            plt.Line2D([0], [0], marker="o", linestyle="", markersize=8,
+                       markerfacecolor=color_map[c], markeredgecolor="none", label=c)
+            for c in ordered if not (prefixes and c.startswith(prefixes))
+        ]
+        if handles:
+            fig.legend(handles=handles, loc="center left", bbox_to_anchor=(1.0, 0.5),
+                       fontsize=8, framealpha=0.9, title=color, title_fontsize=9)
+    elif shared_key and kind == "continuous":
+        sm = plt.cm.ScalarMappable(
+            norm=plt.Normalize(vrange[0], max(vrange[1], vrange[0] + 1e-9)), cmap=cmap
+        )
+        sm.set_array([])
+        fig.colorbar(sm, ax=flat[:len(panels)].tolist(), fraction=0.02, pad=0.02,
+                     label=color)
+
+    fig.suptitle(title if title is not None else f"{color} by {facet_col}",
+                 fontsize=13, y=1.01)
+    # An external shared legend/colorbar defeats tight_layout; save_figure's
+    # bbox_inches="tight" already crops the final image cleanly.
+    if not shared_key:
+        fig.tight_layout()
+    if output_path is not None:
+        return save_figure(fig, output_path)
+    return fig
+
+
+def plot_provenance(
+    adata: ad.AnnData,
+    flag: str | None = None,
+    output_path: str | Path | None = None,
+    *,
+    layers: Sequence[tuple] | None = None,
     basis: str = "X_umap",
     by: str | None = None,
     group_colors: dict[str, str] | None = None,
@@ -2455,19 +2626,63 @@ def plot_provenance(
     routed through :func:`pretty_antigen` (never a bare pool number) and honoring
     a ``group_colors`` override keyed by the *pretty* label. ``antigen_labels``
     is an optional per-call ``condition → antigen`` map.
+
+    Pass ``layers=[(flag_col, color, label), ...]`` to overlay MULTIPLE subsets on
+    one panel with distinct colors (#326) — e.g. CD4-antigen-specific (blue) and
+    CD8-antigen-specific (red) stars on the same UMAP. Background is every cell in
+    no layer; later layers draw on top. ``flag`` and ``layers`` are mutually
+    exclusive.
     """
     from .format import pretty_antigen
 
     coords = _umap_coords(adata, basis)
-    if flag not in adata.obs.columns:
-        raise ValueError(f"flag column {flag!r} not in adata.obs")
-    hi = adata.obs[flag].fillna(False).to_numpy(dtype=bool)
+    if (flag is None) == (layers is None):
+        raise ValueError("plot_provenance needs exactly one of flag= or layers=")
 
     created_fig = ax is None
     if ax is None:
         fig, ax = plt.subplots(figsize=(7, 6))
     else:
         fig = ax.figure
+
+    # Multi-layer overlay: grey background under N distinctly-colored subsets.
+    if layers is not None:
+        masks = []
+        for spec in layers:
+            fcol = spec[0]
+            if fcol not in adata.obs.columns:
+                raise ValueError(f"layer flag column {fcol!r} not in adata.obs")
+            masks.append(adata.obs[fcol].fillna(False).to_numpy(dtype=bool))
+        any_hi = np.logical_or.reduce(masks) if masks else np.zeros(adata.n_obs, bool)
+        ax.scatter(
+            coords[~any_hi, 0], coords[~any_hi, 1], s=point_size * 0.6,
+            color=background_color, alpha=0.5, linewidth=0, zorder=1,
+            label="_nolegend_",
+        )
+        palette = sns.color_palette("tab10", n_colors=max(len(layers), 1))
+        for i, (spec, m) in enumerate(zip(layers, masks)):
+            col = spec[1] if len(spec) > 1 and spec[1] else palette[i % len(palette)]
+            lbl = spec[2] if len(spec) > 2 and spec[2] else spec[0]
+            ax.scatter(
+                coords[m, 0], coords[m, 1], s=point_size * 3, color=col,
+                alpha=0.9, edgecolor="white", linewidth=0.4, zorder=3 + i,
+                label=lbl,
+            )
+        ax.legend(markerscale=1.6, fontsize=7, loc="center left",
+                  bbox_to_anchor=(1.01, 0.5), framealpha=0.9)
+        ax.set_xlabel("UMAP1")
+        ax.set_ylabel("UMAP2")
+        ax.set_title(title if title is not None else "provenance")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.grid(False)
+        if output_path is not None and created_fig:
+            return save_figure(fig, output_path)
+        return ax
+
+    if flag not in adata.obs.columns:
+        raise ValueError(f"flag column {flag!r} not in adata.obs")
+    hi = adata.obs[flag].fillna(False).to_numpy(dtype=bool)
 
     ax.scatter(
         coords[~hi, 0], coords[~hi, 1], s=point_size * 0.6,
