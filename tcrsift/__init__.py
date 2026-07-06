@@ -288,6 +288,7 @@ _MODULE_EXPORTS = {
         "cross_lineage_doublets",
         "cd4_cd8_doublet_mask",
         "DEFAULT_LINEAGE_PROGRAMS",
+        "SOLID_TUMOR_LINEAGE_PROGRAMS",
     ),
     ".sort_qc": (
         "DEFAULT_SORT_SIGNATURE_MAP",
