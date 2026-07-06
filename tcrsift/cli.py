@@ -16,6 +16,8 @@ Command-line interface for TCRsift.
 TCRsift: TCR selection from antigen-specific culture and scRNA/VDJ sequencing data.
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import sys
