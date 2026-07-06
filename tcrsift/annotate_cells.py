@@ -89,6 +89,108 @@ class AnnotationGates:
 DEFAULT_GATES = AnnotationGates()
 
 
+@dataclass
+class MarkerCountOverride:
+    """Relabel a cluster on **positive marker-count evidence**, after the argmax (#325).
+
+    The cell-type argmax can mis-call a cluster whose defining biology isn't in
+    :data:`CELL_TYPE_SIGNATURES` — the motivating case is a solid-tumor cluster
+    that shares collagen with fibroblasts and loses the argmax. Rather than teach
+    the annotator tumor biology (that stays oncoref's job, #310), this is a
+    generic mechanism: **a cluster is relabeled** ``label`` **when a fraction**
+    ``min_cluster_frac`` **of its cells each express** ``>= min_distinct``
+    **distinct genes from** ``gene_set``. The gene set is caller-supplied domain
+    data (e.g. an oncoref cancer-testis-antigen panel, an ISG set, a cycling
+    set) — tcrsift only provides the counting + override.
+
+    ``rescue`` optionally saves a low-coverage cluster whose sparse markers drop
+    below ``min_cluster_frac``: ``(score, min_mean, min_frac)`` fires the override
+    when the cluster-mean of ``score`` is ``>= min_mean`` *and* at least
+    ``min_frac`` of its cells still carry the marker load. ``score`` is either an
+    ``adata.obs`` column name (a caller-precomputed lineage-TF score) or a gene
+    list (its per-cell block-mean) — e.g. osteoblastic TFs rescuing a
+    low-CTA-coverage osteosarcoma cluster.
+
+    The per-cell "# distinct markers from ``gene_set``" is written to
+    ``adata.obs[count_col]`` (default ``"n_markers_<label>"``) — reused for the
+    marker-load UMAP and for QC (an immune cell carrying a tumor-level antigen
+    load is a doublet).
+    """
+
+    label: str
+    gene_set: tuple
+    min_distinct: int = 2
+    min_cluster_frac: float = 0.4
+    rescue: tuple | None = None
+    min_expr: float = 0.0
+    count_col: str | None = None
+
+    def resolved_count_col(self) -> str:
+        if self.count_col:
+            return self.count_col
+        return "n_markers_" + re.sub(r"\W+", "_", self.label.strip().lower())
+
+
+def _distinct_marker_counts(adata, gene_set, min_expr: float = 0.0) -> np.ndarray:
+    """Per-cell count of DISTINCT genes from ``gene_set`` expressed (> ``min_expr``).
+
+    Genes absent from the matrix are skipped; detection (``> min_expr`` with the
+    default ``0.0``) is orientation-invariant between raw counts and log1p.
+    """
+    present = [g for g in gene_set if g in adata.var_names]
+    if not present:
+        return np.zeros(adata.n_obs, dtype=int)
+    X = adata[:, present].X
+    X = X.toarray() if hasattr(X, "toarray") else np.asarray(X)
+    return np.asarray((X > min_expr).sum(axis=1)).ravel().astype(int)
+
+
+def _rescue_cluster_mean(adata, score, leiden_col: str) -> dict:
+    """Per-cluster mean of a rescue ``score``: an obs column name, a single gene,
+    or a gene list (block-mean). Empty dict if unresolvable."""
+    if isinstance(score, str):
+        if score in adata.obs.columns:
+            v = pd.to_numeric(adata.obs[score], errors="coerce").to_numpy()
+            return (
+                pd.Series(v, index=adata.obs.index)
+                .groupby(adata.obs[leiden_col], observed=True).mean().to_dict()
+            )
+        return _cluster_gene_mean(adata, score, leiden_col)
+    v = _block_mean(adata, list(score))
+    return (
+        pd.Series(v, index=adata.obs.index)
+        .groupby(adata.obs[leiden_col], observed=True).mean().to_dict()
+    )
+
+
+def _apply_marker_overrides(adata, labels: dict, leiden_col: str, overrides) -> dict:
+    """Relabel clusters per :class:`MarkerCountOverride`, and write each override's
+    per-cell distinct-marker count to ``adata.obs[count_col]``. First matching
+    override wins; a cluster already carrying an override label is left alone."""
+    leiden = adata.obs[leiden_col]
+    overridden: set = set()
+    for ov in overrides:
+        counts = _distinct_marker_counts(adata, ov.gene_set, ov.min_expr)
+        adata.obs[ov.resolved_count_col()] = counts
+        hit = pd.Series(counts >= ov.min_distinct, index=adata.obs.index)
+        frac = hit.groupby(leiden, observed=True).mean()
+        rescue_mean = (
+            _rescue_cluster_mean(adata, ov.rescue[0], leiden_col)
+            if ov.rescue is not None else {}
+        )
+        for cl in frac.index:
+            if cl in overridden:
+                continue
+            fire = frac.loc[cl] >= ov.min_cluster_frac
+            if not fire and ov.rescue is not None:
+                _, rmin, rfrac = ov.rescue
+                fire = rescue_mean.get(cl, 0.0) >= rmin and frac.loc[cl] >= rfrac
+            if fire:
+                labels[cl] = ov.label
+                overridden.add(cl)
+    return labels
+
+
 def gates_from_phenotype_config(config) -> AnnotationGates:
     """Build :class:`AnnotationGates` from a :class:`tcrsift.config.PhenotypeConfig`
     (#312), so the annotator's floors are configured through the one phenotype
@@ -176,6 +278,7 @@ def annotate_clusters(
     reference: dict | None = None,
     allowed_types=None,
     gates: AnnotationGates = DEFAULT_GATES,
+    overrides=None,
 ) -> dict:
     """Label each Leiden cluster: cell-type signature argmax → label; T clusters
     get CD8/CD4 + a gated dominant state; weakly-typed clusters → ``"Other"``.
@@ -184,8 +287,12 @@ def annotate_clusters(
     :data:`tcrsift.signatures.CELL_TYPE_SIGNATURES`); ``allowed_types`` restricts
     the argmax (e.g. :data:`tcrsift.signatures.PBMC_CULTURE_TYPES` for a culture,
     so a moDC/macrophage cluster can't win a stromal signature it shares an
-    activation program with). Requires :func:`score_reference` to have run.
-    Returns ``{cluster -> label}``.
+    activation program with). ``overrides`` is a list of
+    :class:`MarkerCountOverride` applied per-cluster **after** the argmax (before
+    label composition), relabeling a cluster on positive marker-count evidence
+    (e.g. CTA→Tumor) and writing each override's per-cell distinct-marker count to
+    ``adata.obs``. Requires :func:`score_reference` to have run. Returns
+    ``{cluster -> label}``.
     """
     reference = reference if reference is not None else CELL_TYPE_SIGNATURES
     types = list(reference) if allowed_types is None else [
@@ -277,6 +384,9 @@ def annotate_clusters(
                           if len(bstate) and bstate.max() > 0.0 else "B cell")
         else:
             labels[cl] = best
+
+    if overrides:
+        labels = _apply_marker_overrides(adata, labels, leiden_col, overrides)
     return labels
 
 
@@ -344,6 +454,7 @@ def annotate_cells(
     reference: dict | None = None,
     allowed_types=None,
     gates: AnnotationGates = DEFAULT_GATES,
+    overrides=None,
     normalize: bool = True,
     min_subtype_frac: float = 0.01,
     add_suffix: bool = True,
@@ -353,9 +464,12 @@ def annotate_cells(
     Writes ``adata.obs["phenotype_base"]`` (the per-cluster type/state, e.g.
     ``"CD8 effector/cytotoxic"``) and, when ``add_suffix``,
     ``adata.obs["phenotype"]`` (with the distinguishing-gene suffix for
-    non-negligible sub-clusters). ``normalize=True`` scores on a log1p-CP10K
-    copy (from the ``counts`` layer if present) so the embedded raw-count
-    AnnData can be passed straight through. Returns ``adata``.
+    non-negligible sub-clusters). ``overrides`` (a list of
+    :class:`MarkerCountOverride`) relabels clusters on positive marker-count
+    evidence (e.g. CTA→Tumor, #325) and adds a per-cell distinct-marker-count
+    column to ``adata.obs``. ``normalize=True`` scores on a log1p-CP10K copy
+    (from the ``counts`` layer if present) so the embedded raw-count AnnData can
+    be passed straight through. Returns ``adata``.
     """
     if leiden_col not in adata.obs.columns:
         raise ValueError(
@@ -374,8 +488,14 @@ def annotate_cells(
     score_reference(scored)
     labels = annotate_clusters(
         scored, leiden_col=leiden_col, reference=reference,
-        allowed_types=allowed_types, gates=gates,
+        allowed_types=allowed_types, gates=gates, overrides=overrides,
     )
+    # Propagate each override's per-cell distinct-marker count from the scored
+    # copy back onto the returned adata (score_reference writes to `scored`).
+    for ov in overrides or []:
+        col = ov.resolved_count_col()
+        if col in scored.obs.columns:
+            adata.obs[col] = scored.obs[col].to_numpy()
     sizes = scored.obs[leiden_col].value_counts().to_dict()
     adata.obs["phenotype_base"] = (
         adata.obs[leiden_col].map(labels).astype("object")

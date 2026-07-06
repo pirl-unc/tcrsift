@@ -27,6 +27,7 @@ import pandas as pd
 
 from tcrsift.annotate_cells import (
     AnnotationGates,
+    MarkerCountOverride,
     annotate_cells,
     compose_phenotype_labels,
     gates_from_phenotype_config,
@@ -172,3 +173,120 @@ class TestBackCompatShim:
 
         assert "CD8" in classify_tcell_type(0.0, 10.0)
         assert "CD4" in classify_tcell_type(10.0, 0.0)
+
+
+# --------------------------------------------------------------------------- #
+# Marker-count cluster override (#325)
+# --------------------------------------------------------------------------- #
+_CTA = tuple(f"CTA{i}" for i in range(1, 7))
+_TF = ("TF1", "TF2")
+_OV_GENES = list(
+    dict.fromkeys(
+        ["COL1A1", "COL1A2", "COL3A1", "DCN", "LUM"]  # fibroblast (collagen)
+        + list(_CTA) + list(_TF)
+        + ["CD3D", "CD3E", "CD8A", "CD8B", "GZMB"]
+        + [f"F{i}" for i in range(120)]
+    )
+)
+_OVI = {g: i for i, g in enumerate(_OV_GENES)}
+
+
+def _build_tumor():
+    """Three clusters at realistic depth: a collagen+CTA tumor (mis-argmaxes to
+    Fibroblast), a low-CTA-coverage-but-high-TF tumor (needs rescue), and a clean
+    CD8 T cluster with no CTA load."""
+    rng = np.random.default_rng(0)
+    rows, leiden = [], []
+
+    def cell(bumps):
+        x = np.zeros(len(_OV_GENES))
+        for i in range(len(_OV_GENES)):
+            if _OV_GENES[i].startswith("F"):
+                x[i] = rng.poisson(25)
+        for g, v in bumps.items():
+            x[_OVI[g]] = v
+        return x
+
+    collagen = {"COL1A1": 8, "COL1A2": 8, "COL3A1": 8, "DCN": 6, "LUM": 6}
+    # tumor: every cell carries 3 distinct CTAs → frac 1.0
+    for _ in range(40):
+        rows.append(cell({**collagen, "CTA1": 5, "CTA2": 5, "CTA3": 5,
+                          "TF1": 4, "TF2": 4}))
+        leiden.append("tumor")
+    # tumor_lo: only 6/40 cells carry ≥2 CTAs (frac 0.15 < 0.4) but TF is high
+    for j in range(40):
+        b = {**collagen, "TF1": 6, "TF2": 6}
+        if j < 6:
+            b.update({"CTA1": 5, "CTA2": 5})
+        rows.append(cell(b))
+        leiden.append("tumor_lo")
+    # tcell: clean CD8, no CTAs
+    for _ in range(40):
+        rows.append(cell({"CD3D": 6, "CD3E": 6, "CD8A": 6, "CD8B": 6, "GZMB": 6}))
+        leiden.append("tcell")
+
+    return ad.AnnData(
+        X=np.array(rows), var=pd.DataFrame(index=_OV_GENES),
+        obs=pd.DataFrame({"leiden": pd.Categorical(leiden)},
+                         index=[f"c{i}" for i in range(len(rows))]),
+    )
+
+
+def _ov_labels(adata, **kw):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        out = annotate_cells(adata, **kw)
+    return out, out.obs.groupby("leiden", observed=True)["phenotype_base"].first().to_dict()
+
+
+class TestMarkerCountOverride:
+    def test_relabels_collagen_cluster_as_tumor(self):
+        # Without the override the collagen+CTA cluster mis-argmaxes (Fibroblast
+        # or Other); with it, positive CTA evidence relabels it Tumor.
+        base, base_labels = _ov_labels(_build_tumor())
+        assert base_labels["tumor"] != "Tumor"
+
+        ov = MarkerCountOverride("Tumor", _CTA, min_distinct=2, min_cluster_frac=0.4)
+        out, labels = _ov_labels(_build_tumor(), overrides=[ov])
+        assert labels["tumor"] == "Tumor"
+        assert labels["tcell"].startswith("CD8")  # immune cluster untouched
+
+    def test_exposes_per_cell_marker_count(self):
+        ov = MarkerCountOverride("Tumor", _CTA, min_distinct=2)
+        out, _ = _ov_labels(_build_tumor(), overrides=[ov])
+        assert "n_markers_tumor" in out.obs.columns
+        counts = out.obs.groupby("leiden", observed=True)["n_markers_tumor"].mean()
+        assert counts["tumor"] >= 2.0     # 3 distinct CTAs per cell
+        assert counts["tcell"] == 0.0     # no CTA load on T cells
+
+    def test_low_coverage_needs_rescue(self):
+        # tumor_lo has only 15% of cells carrying ≥2 CTAs — below min_cluster_frac.
+        no_rescue = MarkerCountOverride("Tumor", _CTA, min_distinct=2,
+                                        min_cluster_frac=0.4)
+        _, labels = _ov_labels(_build_tumor(), overrides=[no_rescue])
+        assert labels["tumor_lo"] != "Tumor"
+
+        # With a TF-mean rescue at a lowered fraction floor, it is saved.
+        rescued = MarkerCountOverride("Tumor", _CTA, min_distinct=2,
+                                      min_cluster_frac=0.4,
+                                      rescue=(list(_TF), 1.0, 0.1))
+        _, labels2 = _ov_labels(_build_tumor(), overrides=[rescued])
+        assert labels2["tumor_lo"] == "Tumor"
+
+    def test_custom_count_col_and_first_match_wins(self):
+        # Explicit count_col; two overlapping overrides → first listed wins.
+        first = MarkerCountOverride("TumorA", _CTA, min_distinct=2,
+                                    min_cluster_frac=0.4, count_col="cta_load")
+        second = MarkerCountOverride("TumorB", _CTA, min_distinct=2,
+                                     min_cluster_frac=0.4)
+        out, labels = _ov_labels(_build_tumor(), overrides=[first, second])
+        assert labels["tumor"] == "TumorA"
+        assert "cta_load" in out.obs.columns
+
+    def test_no_override_no_count_column(self):
+        out, _ = _ov_labels(_build_tumor())
+        assert not any(c.startswith("n_markers") for c in out.obs.columns)
+
+    def test_resolved_count_col_default(self):
+        assert MarkerCountOverride("Tumor", _CTA).resolved_count_col() == "n_markers_tumor"
+        assert MarkerCountOverride("ISG-high", _CTA).resolved_count_col() == "n_markers_isg_high"
