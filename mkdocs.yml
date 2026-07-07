@@ -67,6 +67,7 @@ nav:
     - Sample Sheets: getting-started/sample-sheets.md
   - User Guide:
     - Pipeline Overview: user-guide/pipeline.md
+    - Single-Cell Atlas Path: user-guide/atlas.md
     - CLI Reference: user-guide/cli.md
     - Filtering Strategies: user-guide/filtering.md
     - Signature Reproducibility Map: reproducibility_map.md

@@ -178,3 +178,40 @@ class TestMarkerPanel:
         parser = create_parser()
         ns = parser.parse_args(["til-select"])
         assert ns.marker_genes == ",".join(signatures.MARKER_PANEL_HGNC)
+
+
+class TestSolidTumorCellTypePreset:
+    """Blood/PBMC default flagged + a solid-tumor cell-type preset parallel to
+    the SOLID_TUMOR_LINEAGE_PROGRAMS QC preset (#340)."""
+
+    def test_pbmc_alias_is_the_default(self):
+        assert signatures.PBMC_CELL_TYPE_SIGNATURES is signatures.CELL_TYPE_SIGNATURES
+
+    def test_solid_tumor_preset_extends_default(self):
+        base = set(signatures.CELL_TYPE_SIGNATURES)
+        solid = set(signatures.SOLID_TUMOR_CELL_TYPE_SIGNATURES)
+        assert base < solid  # strict superset
+        added = solid - base
+        assert added == {
+            "Mesothelial", "Osteoclast", "Skeletal muscle", "Adipocyte",
+            "Schwann/nerve",
+        }
+
+    def test_solid_tumor_preset_preserves_shared_gene_lists(self):
+        for t, genes in signatures.CELL_TYPE_SIGNATURES.items():
+            assert signatures.SOLID_TUMOR_CELL_TYPE_SIGNATURES[t] == genes
+
+    def test_tumor_not_a_signature(self):
+        # Malignant cells stay MarkerCountOverride territory, not a gene set.
+        for t in signatures.SOLID_TUMOR_CELL_TYPE_SIGNATURES:
+            assert "tumor" not in t.lower()
+
+    def test_all_gene_lists_nonempty(self):
+        for genes in signatures.SOLID_TUMOR_CELL_TYPE_SIGNATURES.values():
+            assert genes and all(isinstance(g, str) for g in genes)
+
+    def test_exposed_at_package_top_level(self):
+        assert tcrsift.SOLID_TUMOR_CELL_TYPE_SIGNATURES is (
+            signatures.SOLID_TUMOR_CELL_TYPE_SIGNATURES
+        )
+        assert tcrsift.PBMC_CELL_TYPE_SIGNATURES is signatures.CELL_TYPE_SIGNATURES
