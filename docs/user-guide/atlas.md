@@ -10,9 +10,10 @@ cell_qc_funnel  →  embed_cells  →  annotate_cells / annotate_clusters
    funnel)            UMAP → Leiden)            biology-aware gates)
 ```
 
-These are library functions (see the [CLI Reference](cli.md) for the `qc` /
-`embed` / `annotate` subcommands that wrap them). Everything below runs on a raw-
-count `AnnData` — for example the object returned by `tcrsift.load_sample`.
+These are library functions; on the command line they are the
+[`tcrsift cells qc` / `cells embed` / `cells annotate`](cli.md#tcrsift-cells)
+subcommands. Everything below runs on a raw-count `AnnData` — for example the
+object returned by `tcrsift.load_sample`.
 
 ## End to end
 

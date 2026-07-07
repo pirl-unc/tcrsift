@@ -62,20 +62,20 @@ tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
 
 ---
 
-### `tcrsift atlas`
+### `tcrsift cells`
 
-The single-cell gene-expression **atlas path** — QC → embed → annotate — as
-three `.h5ad`-in/`.h5ad`-out subcommands wrapping `cell_qc_funnel`,
-`embed_cells`, and `annotate_cells`. See the [Single-Cell Atlas
-Path](atlas.md) guide for the library equivalents and the solid-tumor overrides.
+The single-cell gene-expression path — QC → embed → annotate — as three
+`.h5ad`-in/`.h5ad`-out subcommands wrapping `cell_qc_funnel`, `embed_cells`, and
+`annotate_cells`. See the [Single-Cell Atlas Path](atlas.md) guide for the
+library equivalents and the solid-tumor overrides.
 
 ```bash
-tcrsift atlas qc       -i raw.h5ad   -o qc.h5ad    --min-genes 250 --max-mito 8
-tcrsift atlas embed    -i qc.h5ad    -o embed.h5ad --batch-key sample --resolution 1.0
-tcrsift atlas annotate -i embed.h5ad -o atlas.h5ad --solid-tumor
+tcrsift cells qc       -i raw.h5ad   -o qc.h5ad    --min-genes 250 --max-mito 8
+tcrsift cells embed    -i qc.h5ad    -o embed.h5ad --batch-key sample --resolution 1.0
+tcrsift cells annotate -i embed.h5ad -o atlas.h5ad --solid-tumor
 ```
 
-**`atlas qc`** — per-cell QC + doublet funnel.
+**`cells qc`** — per-cell QC + doublet funnel.
 
 | Option | Description |
 |--------|-------------|
@@ -86,7 +86,7 @@ tcrsift atlas annotate -i embed.h5ad -o atlas.h5ad --solid-tumor
 | `--solid-tumor` | Use `SOLID_TUMOR_LINEAGE_PROGRAMS` for the cross-lineage doublet gate |
 | `--waterfall-csv` | Also write the QC waterfall to a CSV |
 
-**`atlas embed`** — Pearson-residual PCA → Harmony → UMAP → Leiden.
+**`cells embed`** — Pearson-residual PCA → Harmony → UMAP → Leiden.
 
 | Option | Description |
 |--------|-------------|
@@ -94,7 +94,7 @@ tcrsift atlas annotate -i embed.h5ad -o atlas.h5ad --solid-tumor
 | `--batch-key` | obs column to integrate over with Harmony (default: none) |
 | `--resolution` / `--n-pcs` / `--n-neighbors` / `--n-top-genes` / `--seed` | Clustering knobs |
 
-**`atlas annotate`** — per-cluster cell-type + T/B-state labels.
+**`cells annotate`** — per-cluster cell-type + T/B-state labels.
 
 | Option | Description |
 |--------|-------------|
