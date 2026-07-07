@@ -22,6 +22,21 @@ All gene symbols are HGNC (human). Gene sets grouped by intent:
 
 `T_CELL_SIGNATURES` is a snake-case-name → tuple dict for convenient iteration.
 
+## Cell-type / state registries (atlas annotator)
+
+The per-cell annotator (`tcrsift.annotate_cells`) argmaxes each Leiden cluster
+over these registries. The defaults are **blood/PBMC-calibrated**; a solid-tumor
+atlas should override `reference=` (see the [Single-Cell Atlas
+Path](../user-guide/atlas.md) guide).
+
+| Constant | What |
+| --- | --- |
+| `CELL_TYPE_SIGNATURES` | Default cell-type registry (immune + common stroma), blood/PBMC-calibrated. |
+| `PBMC_CELL_TYPE_SIGNATURES` | Explicit alias for the default, naming its PBMC orientation. |
+| `SOLID_TUMOR_CELL_TYPE_SIGNATURES` | Default **plus** solid-tissue lineages (mesothelial, osteoclast, skeletal muscle, adipocyte, Schwann/nerve). Parallels `tcrsift.qc.SOLID_TUMOR_LINEAGE_PROGRAMS`. Malignant cells stay `MarkerCountOverride` territory. |
+| `T_STATE_SIGNATURES` / `B_STATE_SIGNATURES` | T-cell / B-cell sub-state registries (injectable via `t_state_reference=` / `b_state_reference=`). |
+| `PBMC_CULTURE_TYPES` | Type allow-list for a PBMC/culture (`annotate_clusters(allowed_types=...)`). |
+
 ## Usage
 
 ```python

@@ -261,6 +261,16 @@ NEOTCRPBL_GENES_HGNC: tuple[str, ...] = (
 # OUT of scope (belongs in oncoref, #310) and is not included — tissue
 # restriction is done with ``annotate_clusters(allowed_types=...)``.
 #
+# THIS DEFAULT IS BLOOD/PBMC-CALIBRATED (#340): it covers the immune lineages and
+# the common stromal/vascular types, but OMITS solid-tissue types a tumor atlas
+# needs — mesothelial, osteoclast, skeletal muscle, adipocyte, Schwann/nerve —
+# and gene lists for the shared types are tuned to blood/PBMC. A solid-tumor
+# atlas should pass ``reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES`` (below) or its
+# own registry to :func:`~tcrsift.annotate_cells.annotate_cells`; the
+# ``PBMC_CELL_TYPE_SIGNATURES`` alias names this default explicitly. (Malignant
+# cells are still typed by marker-count evidence via
+# :class:`~tcrsift.annotate_cells.MarkerCountOverride`, not a signature.)
+#
 # TCR/Ig CONSTANT genes are lineage evidence (kept); clonal V/J segments are
 # excluded elsewhere so structure/labels aren't driven by clonotype.
 CELL_TYPE_SIGNATURES: dict[str, list[str]] = {
@@ -294,6 +304,29 @@ CELL_TYPE_SIGNATURES: dict[str, list[str]] = {
     "Platelet/megakaryocyte": ["PPBP", "PF4", "ITGA2B", "GP9", "GP1BB",
                                "TUBB1", "NRGN", "GNG11"],
     "Erythroid": ["GYPA", "ALAS2", "CA1", "SLC4A1", "KLF1", "GATA1"],
+}
+
+# Explicit alias naming the blood/PBMC calibration of the default registry, so a
+# caller override reads symmetrically against SOLID_TUMOR_CELL_TYPE_SIGNATURES
+# (#340). Same object — the default is unchanged.
+PBMC_CELL_TYPE_SIGNATURES: dict[str, list[str]] = CELL_TYPE_SIGNATURES
+
+# Solid-tumor cell-type registry: the blood/PBMC default plus the solid-tissue
+# lineages a tumor atlas needs but PBMC data never shows (#340). Parallels
+# :data:`tcrsift.qc.SOLID_TUMOR_LINEAGE_PROGRAMS` (the doublet-gate preset). Pass
+# as ``annotate_cells(reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES)``. Malignant
+# cells are NOT a signature here — they stay marker-count-override territory
+# (:class:`~tcrsift.annotate_cells.MarkerCountOverride`, oncoref #310) — so this
+# adds only non-malignant stroma/parenchyma. Shared types keep the base gene
+# lists; a project can layer further overrides on top.
+SOLID_TUMOR_CELL_TYPE_SIGNATURES: dict[str, list[str]] = {
+    **CELL_TYPE_SIGNATURES,
+    "Mesothelial": ["MSLN", "UPK3B", "WT1", "CALB2", "PDPN", "LRRN4", "KRT19"],
+    "Osteoclast": ["ACP5", "CTSK", "MMP9", "OSCAR", "ATP6V0D2", "DCSTAMP", "CALCR"],
+    "Skeletal muscle": ["MYH1", "MYH2", "ACTN2", "TNNT3", "TNNC2", "CKM", "TTN",
+                        "MYLPF"],
+    "Adipocyte": ["ADIPOQ", "LEP", "PLIN1", "FABP4", "CFD", "GPD1", "LIPE"],
+    "Schwann/nerve": ["PLP1", "MPZ", "S100B", "SOX10", "NRXN1", "CDH19", "GPM6B"],
 }
 
 # Cell types that can appear in a Ficoll-isolated PBMC / peptide-stimulated
