@@ -2584,7 +2584,7 @@ def cmd_report_polished(args):
 
 
 # =============================================================================
-# Atlas command group (qc / embed / annotate) — the single-cell GEX path (#342)
+# Cells command group (qc / embed / annotate) — the single-cell GEX path (#342)
 # =============================================================================
 
 # Sentinel distinguishing "threshold not passed on the CLI" (let cell_qc_funnel
@@ -2592,7 +2592,7 @@ def cmd_report_polished(args):
 # bound). argparse never applies ``type=`` to a default, so this survives untouched.
 _UNSET_CLI = object()
 
-_ATLAS_QC_THRESHOLDS = (
+_CELLS_QC_THRESHOLDS = (
     ("min_genes", "min_genes", "Min genes per cell"),
     ("max_genes", "max_genes", "Max genes per cell"),
     ("min_counts", "min_counts", "Min UMI counts"),
@@ -2602,7 +2602,7 @@ _ATLAS_QC_THRESHOLDS = (
 )
 
 
-def _atlas_threshold(value):
+def _cells_threshold(value):
     """Parse a qc-threshold CLI value: ``none``/``off``/``disable`` → ``None``
     (disable the bound, per cell_qc_funnel's #333 semantics); else a number
     (int when integer-valued, so waterfall reasons read cleanly)."""
@@ -2618,7 +2618,7 @@ def _atlas_threshold(value):
     return int(f) if f.is_integer() else f
 
 
-def cmd_atlas_qc(args):
+def cmd_cells_qc(args):
     """Per-cell QC + doublet funnel on an AnnData (cell_qc_funnel, #314/#342)."""
     import anndata as ad
 
@@ -2632,7 +2632,7 @@ def cmd_atlas_qc(args):
     # the funnel's own (gentle) defaults. Explicit kwargs win over --pbmc-preset.
     kwargs = {
         param: getattr(args, cli_name)
-        for cli_name, param, _ in _ATLAS_QC_THRESHOLDS
+        for cli_name, param, _ in _CELLS_QC_THRESHOLDS
         if getattr(args, cli_name) is not _UNSET_CLI
     }
     config = None
@@ -2653,7 +2653,7 @@ def cmd_atlas_qc(args):
         print(f"Waterfall written to {args.waterfall_csv}")
 
 
-def cmd_atlas_embed(args):
+def cmd_cells_embed(args):
     """Variance-stabilized embedding → Leiden clusters (embed_cells, #311/#342)."""
     import anndata as ad
 
@@ -2681,7 +2681,7 @@ def cmd_atlas_embed(args):
     )
 
 
-def cmd_atlas_annotate(args):
+def cmd_cells_annotate(args):
     """Per-cluster cell-type + T/B-state annotation (annotate_cells, #312/#342)."""
     import anndata as ad
 
@@ -2754,94 +2754,94 @@ def create_parser():
     p_load.set_defaults(func=cmd_load)
 
     # -------------------------------------------------------------------------
-    # Atlas command group: single-cell GEX path (qc → embed → annotate) (#342)
+    # Cells command group: single-cell GEX path (qc → embed → annotate) (#342)
     # -------------------------------------------------------------------------
-    p_atlas = subparsers.add_parser(
-        "atlas", help="Single-cell atlas path: QC → embed → annotate (.h5ad in/out)"
+    p_cells = subparsers.add_parser(
+        "cells", help="Single-cell GEX path: QC → embed → annotate (.h5ad in/out)"
     )
-    p_atlas_sub = p_atlas.add_subparsers(dest="atlas_command", required=True)
+    p_cells_sub = p_cells.add_subparsers(dest="cells_command", required=True)
 
-    # atlas qc
-    p_atlas_qc = p_atlas_sub.add_parser(
+    # cells qc
+    p_cells_qc = p_cells_sub.add_parser(
         "qc", help="Per-cell QC + doublet funnel (cell_qc_funnel)"
     )
-    p_atlas_qc.add_argument("--input", "-i", required=True, help="Input h5ad (raw counts)")
-    p_atlas_qc.add_argument("--output", "-o", required=True, help="Output h5ad (filtered)")
-    for cli_name, _param, helptext in _ATLAS_QC_THRESHOLDS:
-        p_atlas_qc.add_argument(
+    p_cells_qc.add_argument("--input", "-i", required=True, help="Input h5ad (raw counts)")
+    p_cells_qc.add_argument("--output", "-o", required=True, help="Output h5ad (filtered)")
+    for cli_name, _param, helptext in _CELLS_QC_THRESHOLDS:
+        p_cells_qc.add_argument(
             f"--{cli_name.replace('_', '-')}",
-            type=_atlas_threshold,
+            type=_cells_threshold,
             default=_UNSET_CLI,
             metavar="N|none",
             help=f"{helptext} (default: cell_qc_funnel's; pass 'none' to disable)",
         )
-    p_atlas_qc.add_argument(
+    p_cells_qc.add_argument(
         "--pbmc-preset", action="store_true",
         help="Use the opinionated PBMC LoadConfig() thresholds as the baseline",
     )
-    p_atlas_qc.add_argument(
+    p_cells_qc.add_argument(
         "--solid-tumor", action="store_true",
         help="Use SOLID_TUMOR_LINEAGE_PROGRAMS for the cross-lineage doublet gate",
     )
-    p_atlas_qc.add_argument("--waterfall-csv", help="Also write the QC waterfall to this CSV")
-    p_atlas_qc.add_argument("--verbose", action="store_true", help="Verbose output")
-    p_atlas_qc.set_defaults(func=cmd_atlas_qc)
+    p_cells_qc.add_argument("--waterfall-csv", help="Also write the QC waterfall to this CSV")
+    p_cells_qc.add_argument("--verbose", action="store_true", help="Verbose output")
+    p_cells_qc.set_defaults(func=cmd_cells_qc)
 
-    # atlas embed
-    p_atlas_embed = p_atlas_sub.add_parser(
+    # cells embed
+    p_cells_embed = p_cells_sub.add_parser(
         "embed", help="Pearson-residual PCA → Harmony → UMAP → Leiden (embed_cells)"
     )
-    p_atlas_embed.add_argument("--input", "-i", required=True, help="Input h5ad (raw counts)")
-    p_atlas_embed.add_argument("--output", "-o", required=True, help="Output h5ad (embedded)")
-    p_atlas_embed.add_argument(
+    p_cells_embed.add_argument("--input", "-i", required=True, help="Input h5ad (raw counts)")
+    p_cells_embed.add_argument("--output", "-o", required=True, help="Output h5ad (embedded)")
+    p_cells_embed.add_argument(
         "--batch-key", default=None,
         help="obs column to integrate over with Harmony (default: no integration)",
     )
-    p_atlas_embed.add_argument(
+    p_cells_embed.add_argument(
         "--resolution", type=float, default=1.0,
         help="Leiden resolution (default: 1.0)",
     )
-    p_atlas_embed.add_argument("--n-pcs", type=int, default=40, help="PCA components (default: 40)")
-    p_atlas_embed.add_argument(
+    p_cells_embed.add_argument("--n-pcs", type=int, default=40, help="PCA components (default: 40)")
+    p_cells_embed.add_argument(
         "--n-neighbors", type=int, default=15, help="kNN neighbors (default: 15)"
     )
-    p_atlas_embed.add_argument(
+    p_cells_embed.add_argument(
         "--n-top-genes", type=int, default=2000,
         help="Highly-variable genes for the clustering panel (default: 2000)",
     )
-    p_atlas_embed.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
-    p_atlas_embed.add_argument("--verbose", action="store_true", help="Verbose output")
-    p_atlas_embed.set_defaults(func=cmd_atlas_embed)
+    p_cells_embed.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
+    p_cells_embed.add_argument("--verbose", action="store_true", help="Verbose output")
+    p_cells_embed.set_defaults(func=cmd_cells_embed)
 
-    # atlas annotate
-    p_atlas_annotate = p_atlas_sub.add_parser(
+    # cells annotate
+    p_cells_annotate = p_cells_sub.add_parser(
         "annotate", help="Per-cluster cell-type + T/B-state annotation (annotate_cells)"
     )
-    p_atlas_annotate.add_argument(
+    p_cells_annotate.add_argument(
         "--input", "-i", required=True, help="Input h5ad (embedded, has obs['leiden'])"
     )
-    p_atlas_annotate.add_argument("--output", "-o", required=True, help="Output h5ad (annotated)")
-    p_atlas_annotate.add_argument(
+    p_cells_annotate.add_argument("--output", "-o", required=True, help="Output h5ad (annotated)")
+    p_cells_annotate.add_argument(
         "--leiden-col", default="leiden", help="Cluster column in obs (default: leiden)"
     )
-    p_atlas_annotate.add_argument(
+    p_cells_annotate.add_argument(
         "--solid-tumor", action="store_true",
         help="Use SOLID_TUMOR_CELL_TYPE_SIGNATURES instead of the PBMC default",
     )
-    p_atlas_annotate.add_argument(
+    p_cells_annotate.add_argument(
         "--pbmc-culture", action="store_true",
         help="Restrict the argmax to PBMC_CULTURE_TYPES (Ficoll/culture)",
     )
-    p_atlas_annotate.add_argument(
+    p_cells_annotate.add_argument(
         "--min-subtype-frac", type=float, default=0.01,
         help="Sub-clusters below this fraction of their type lose the gene suffix (default: 0.01)",
     )
-    p_atlas_annotate.add_argument(
+    p_cells_annotate.add_argument(
         "--no-suffix", action="store_true",
         help="Skip the distinguishing-gene suffix (phenotype == phenotype_base)",
     )
-    p_atlas_annotate.add_argument("--verbose", action="store_true", help="Verbose output")
-    p_atlas_annotate.set_defaults(func=cmd_atlas_annotate)
+    p_cells_annotate.add_argument("--verbose", action="store_true", help="Verbose output")
+    p_cells_annotate.set_defaults(func=cmd_cells_annotate)
 
     # -------------------------------------------------------------------------
     # Phenotype command

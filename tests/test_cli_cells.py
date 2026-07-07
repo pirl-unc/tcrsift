@@ -10,10 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CLI subcommands for the single-cell atlas path (#342).
+"""CLI subcommands for the single-cell GEX path (#342).
 
-`tcrsift atlas qc | embed | annotate` wrap cell_qc_funnel / embed_cells /
-annotate_cells so the GEX atlas has CLI parity with the TCR-selection path.
+`tcrsift cells qc | embed | annotate` wrap cell_qc_funnel / embed_cells /
+annotate_cells so the GEX path has CLI parity with the TCR-selection path.
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ import pytest
 
 from tcrsift.cli import (
     _UNSET_CLI,
-    cmd_atlas_annotate,
-    cmd_atlas_qc,
+    cmd_cells_annotate,
+    cmd_cells_qc,
     create_parser,
 )
 
@@ -64,10 +64,10 @@ def _clustered_adata(n=60):
     return adata
 
 
-class TestAtlasParser:
+class TestCellsParser:
     def test_qc_wires_command_and_defaults(self):
-        args = create_parser().parse_args(["atlas", "qc", "-i", "a.h5ad", "-o", "b.h5ad"])
-        assert args.func is cmd_atlas_qc
+        args = create_parser().parse_args(["cells", "qc", "-i", "a.h5ad", "-o", "b.h5ad"])
+        assert args.func is cmd_cells_qc
         # Unpassed thresholds stay the sentinel → funnel uses its own defaults.
         assert args.min_genes is _UNSET_CLI
         assert args.max_genes is _UNSET_CLI
@@ -75,7 +75,7 @@ class TestAtlasParser:
 
     def test_qc_threshold_number_and_none(self):
         args = create_parser().parse_args(
-            ["atlas", "qc", "-i", "a", "-o", "b",
+            ["cells", "qc", "-i", "a", "-o", "b",
              "--min-genes", "300", "--max-genes", "none", "--max-mito", "12.5"]
         )
         assert args.min_genes == 300 and isinstance(args.min_genes, int)
@@ -85,35 +85,35 @@ class TestAtlasParser:
     def test_qc_rejects_non_numeric_threshold(self):
         with pytest.raises(SystemExit):
             create_parser().parse_args(
-                ["atlas", "qc", "-i", "a", "-o", "b", "--min-genes", "lots"]
+                ["cells", "qc", "-i", "a", "-o", "b", "--min-genes", "lots"]
             )
 
     def test_embed_wires_command(self):
         args = create_parser().parse_args(
-            ["atlas", "embed", "-i", "a", "-o", "b", "--batch-key", "sample",
+            ["cells", "embed", "-i", "a", "-o", "b", "--batch-key", "sample",
              "--resolution", "0.8"]
         )
-        assert args.func.__name__ == "cmd_atlas_embed"
+        assert args.func.__name__ == "cmd_cells_embed"
         assert args.batch_key == "sample" and args.resolution == 0.8
 
     def test_annotate_wires_command(self):
         args = create_parser().parse_args(
-            ["atlas", "annotate", "-i", "a", "-o", "b", "--solid-tumor", "--no-suffix"]
+            ["cells", "annotate", "-i", "a", "-o", "b", "--solid-tumor", "--no-suffix"]
         )
-        assert args.func is cmd_atlas_annotate
+        assert args.func is cmd_cells_annotate
         assert args.solid_tumor is True and args.no_suffix is True
 
-    def test_atlas_requires_subcommand(self):
+    def test_cells_requires_subcommand(self):
         with pytest.raises(SystemExit):
-            create_parser().parse_args(["atlas"])
+            create_parser().parse_args(["cells"])
 
 
-class TestAtlasQcCommand:
+class TestCellsQcCommand:
     def _run(self, tmp_path, extra=None):
         inp = tmp_path / "raw.h5ad"
         out = tmp_path / "qc.h5ad"
         _raw_adata().write_h5ad(inp)
-        argv = ["atlas", "qc", "-i", str(inp), "-o", str(out),
+        argv = ["cells", "qc", "-i", str(inp), "-o", str(out),
                 "--min-genes", "3", "--min-counts", "5"] + (extra or [])
         args = create_parser().parse_args(argv)
         args.func(args)
@@ -140,13 +140,13 @@ class TestAtlasQcCommand:
         assert ad.read_h5ad(out).n_obs > 0
 
 
-class TestAtlasAnnotateCommand:
+class TestCellsAnnotateCommand:
     def test_annotates_and_writes_phenotype(self, tmp_path):
         inp = tmp_path / "clustered.h5ad"
         out = tmp_path / "annotated.h5ad"
         _clustered_adata().write_h5ad(inp)
         args = create_parser().parse_args(
-            ["atlas", "annotate", "-i", str(inp), "-o", str(out)]
+            ["cells", "annotate", "-i", str(inp), "-o", str(out)]
         )
         args.func(args)
         res = ad.read_h5ad(out)
@@ -159,23 +159,22 @@ class TestAtlasAnnotateCommand:
         out = tmp_path / "x.h5ad"
         _raw_adata().write_h5ad(inp)  # no leiden column
         args = create_parser().parse_args(
-            ["atlas", "annotate", "-i", str(inp), "-o", str(out)]
+            ["cells", "annotate", "-i", str(inp), "-o", str(out)]
         )
         with pytest.raises(ValueError, match="leiden"):
             args.func(args)
 
 
-class TestAtlasEmbedCommand:
+class TestCellsEmbedCommand:
     def test_embed_produces_leiden(self, tmp_path):
         pytest.importorskip("igraph")
         pytest.importorskip("leidenalg")
-        from tcrsift.cli import cmd_atlas_embed  # noqa: F401
 
         inp = tmp_path / "raw.h5ad"
         out = tmp_path / "embed.h5ad"
         _raw_adata(120).write_h5ad(inp)
         args = create_parser().parse_args(
-            ["atlas", "embed", "-i", str(inp), "-o", str(out),
+            ["cells", "embed", "-i", str(inp), "-o", str(out),
              "--n-pcs", "10", "--n-neighbors", "10", "--n-top-genes", "30"]
         )
         args.func(args)
