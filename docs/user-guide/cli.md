@@ -62,6 +62,52 @@ tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
 
 ---
 
+### `tcrsift atlas`
+
+The single-cell gene-expression **atlas path** — QC → embed → annotate — as
+three `.h5ad`-in/`.h5ad`-out subcommands wrapping `cell_qc_funnel`,
+`embed_cells`, and `annotate_cells`. See the [Single-Cell Atlas
+Path](atlas.md) guide for the library equivalents and the solid-tumor overrides.
+
+```bash
+tcrsift atlas qc       -i raw.h5ad   -o qc.h5ad    --min-genes 250 --max-mito 8
+tcrsift atlas embed    -i qc.h5ad    -o embed.h5ad --batch-key sample --resolution 1.0
+tcrsift atlas annotate -i embed.h5ad -o atlas.h5ad --solid-tumor
+```
+
+**`atlas qc`** — per-cell QC + doublet funnel.
+
+| Option | Description |
+|--------|-------------|
+| `-i`, `--input` / `-o`, `--output` | Input (raw counts) / output .h5ad (required) |
+| `--min-genes` / `--max-genes` / `--min-counts` / `--max-counts` | Coverage bounds (`N` or `none` to disable; default: the funnel's) |
+| `--min-mito` / `--max-mito` | Mito-percent floor / ceiling (`N` or `none`) |
+| `--pbmc-preset` | Use the opinionated PBMC `LoadConfig()` thresholds as the baseline |
+| `--solid-tumor` | Use `SOLID_TUMOR_LINEAGE_PROGRAMS` for the cross-lineage doublet gate |
+| `--waterfall-csv` | Also write the QC waterfall to a CSV |
+
+**`atlas embed`** — Pearson-residual PCA → Harmony → UMAP → Leiden.
+
+| Option | Description |
+|--------|-------------|
+| `-i`, `--input` / `-o`, `--output` | Input (raw counts) / output .h5ad (required) |
+| `--batch-key` | obs column to integrate over with Harmony (default: none) |
+| `--resolution` / `--n-pcs` / `--n-neighbors` / `--n-top-genes` / `--seed` | Clustering knobs |
+
+**`atlas annotate`** — per-cluster cell-type + T/B-state labels.
+
+| Option | Description |
+|--------|-------------|
+| `-i`, `--input` (has `obs['leiden']`) / `-o`, `--output` | Input / output .h5ad (required) |
+| `--leiden-col` | Cluster column in obs (default: `leiden`) |
+| `--solid-tumor` | Use `SOLID_TUMOR_CELL_TYPE_SIGNATURES` instead of the PBMC default |
+| `--pbmc-culture` | Restrict the argmax to `PBMC_CULTURE_TYPES` |
+| `--min-subtype-frac` / `--no-suffix` | Distinguishing-gene-suffix controls |
+
+Requires the `atlas` extra (`pip install 'tcrsift[atlas]'`) for `embed`.
+
+---
+
 ### `tcrsift phenotype`
 
 Classify cells as CD4+ or CD8+.
