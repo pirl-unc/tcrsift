@@ -45,6 +45,13 @@ dependencies = [
     # dependency: the shipped k-mer Pgen/Ppost models need nothing at runtime.)
     "tcrpeg>=1.0.0",
     "torch>=2.0.0",
+    # Cancer-testis-antigen panels for tumor typing. tcrsift owns the counting +
+    # relabel MECHANISM (annotate_cells.tumor_override / MarkerCountOverride); the
+    # curated, versioned CTA gene sets live in oncoref (#310) and are the default
+    # panel, so tumor typing works out of the box across cancer types rather than
+    # requiring a hand-rolled panel. Light footprint (its only new transitive dep
+    # is pyarrow; the panels are bundled, no network).
+    "oncoref>=1.8.81,<2.0",
 ]
 
 [project.optional-dependencies]

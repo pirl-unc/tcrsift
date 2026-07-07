@@ -84,24 +84,28 @@ evidence instead. `tumor_override` wires the h37-style rule in one line:
   cells (catches low-coverage tumor whose sparse markers dropped below the
   primary bar).
 
+The marker panel defaults to **oncoref's** curated pan-cancer CTA set
+(`oncoref.CTA_gene_names()`) — CTAs are shared across solid tumors, so the panel
+is reused across cancers and only the lineage-TF rescue is tissue-specific:
+
 ```python
 from tcrsift.annotate_cells import tumor_override
 
-# The marker panel (cancer-testis antigens, etc.) and the rescue TFs are YOUR
-# domain data — TCRsift ships no tumor panel (that stays oncoref's job); it only
-# provides the counting + relabel mechanism.
-osteosarcoma = tumor_override(MY_CTA_PANEL, lineage_tfs=["RUNX2", "SATB2"])
+osteosarcoma = tumor_override(lineage_tfs=["RUNX2", "SATB2"])  # panel auto-filled
 annotate_cells(atlas, reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES,
                overrides=[osteosarcoma])
 ```
 
-Adapting to another cancer is just swapping the domain data — a different CTA
-panel and, if you have one, a tissue-lineage-TF set for the rescue (omit
-`lineage_tfs` to use the primary bar alone):
+Adapting to another cancer is usually just swapping the rescue TFs (omit
+`lineage_tfs` for the primary bar alone); override `gene_set` when you want a
+tighter or tuned oncoref panel:
 
 ```python
-tumor_override(MELANOMA_PANEL, lineage_tfs=["MITF", "SOX10"])   # melanoma
-tumor_override(CARCINOMA_PANEL)                                  # no rescue signal
+tumor_override(lineage_tfs=["MITF", "SOX10"])                    # melanoma
+tumor_override()                                                 # no rescue signal
+# a tighter, testis-restricted panel:
+import oncoref
+tumor_override(oncoref.CTA_testis_restricted_gene_names(), lineage_tfs=["MITF"])
 ```
 
 `tumor_override` returns a `MarkerCountOverride`, so you can still reach for the

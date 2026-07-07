@@ -427,6 +427,16 @@ class TestTumorOverrideFactory:
     def test_no_rescue_without_tfs(self):
         assert tumor_override(_CTA).rescue is None
 
+    def test_defaults_to_oncoref_cta_panel(self):
+        import oncoref
+
+        ov = tumor_override(lineage_tfs=["RUNX2"])
+        assert set(ov.gene_set) == oncoref.CTA_gene_names()
+        assert len(ov.gene_set) > 100  # oncoref ships a few hundred CTAs
+
+    def test_explicit_gene_set_overrides_default(self):
+        assert tumor_override(_CTA).gene_set == tuple(_CTA)
+
     def test_custom_label_and_thresholds_propagate(self):
         ov = tumor_override(
             _CTA, label="Malignant", min_distinct=3, min_cluster_frac=0.6,

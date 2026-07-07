@@ -17,6 +17,29 @@ import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
 
+# oncoref (a hard dependency — see pyproject; it backs annotate_cells.tumor_override's
+# default CTA panel) calls logging.basicConfig() at import time, adding a stdout
+# handler to the ROOT logger and flipping the root level to INFO. That leaks into
+# pytest's caplog-based tests (once an extra root handler is present a later test
+# can't capture its WARNING records) and makes those tests order-dependent. Import
+# oncoref ONCE here, before any test runs, and strip the added handler / restore the
+# level so the mutation never reaches a test; subsequent `import oncoref` in tests is
+# a cached no-op, so this is a complete fix.
+import logging as _logging  # noqa: E402
+
+_root_logger = _logging.getLogger()
+_handlers_before_oncoref = _root_logger.handlers[:]
+_root_level_before_oncoref = _root_logger.level
+try:
+    import oncoref  # noqa: E402,F401
+except Exception:  # pragma: no cover - oncoref is a declared dependency
+    pass
+else:
+    for _h in _root_logger.handlers[:]:
+        if _h not in _handlers_before_oncoref:
+            _root_logger.removeHandler(_h)
+    _root_logger.setLevel(_root_level_before_oncoref)
+
 import tempfile  # noqa: E402
 from pathlib import Path  # noqa: E402
 
