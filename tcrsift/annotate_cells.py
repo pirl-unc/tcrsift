@@ -104,12 +104,17 @@ class MarkerCountOverride:
     set) — tcrsift only provides the counting + override.
 
     ``rescue`` optionally saves a low-coverage cluster whose sparse markers drop
-    below ``min_cluster_frac``: ``(score, min_mean, min_frac)`` fires the override
-    when the cluster-mean of ``score`` is ``>= min_mean`` *and* at least
-    ``min_frac`` of its cells still carry the marker load. ``score`` is either an
-    ``adata.obs`` column name (a caller-precomputed lineage-TF score) or a gene
-    list (its per-cell block-mean) — e.g. osteoblastic TFs rescuing a
-    low-CTA-coverage osteosarcoma cluster.
+    below ``min_cluster_frac``: ``(score, min_mean, min_frac[, rescue_min_distinct])``
+    fires the override when the cluster-mean of ``score`` is ``>= min_mean`` *and*
+    at least ``min_frac`` of its cells carry ``>= rescue_min_distinct`` distinct
+    markers. ``rescue_min_distinct`` defaults to ``min_distinct`` (so a 3-tuple
+    behaves exactly as before), but a **lower** floor lets the rescue gate on a
+    BROADER any-marker signal — ``rescue_min_distinct=1`` fires on "``score`` high
+    AND ``>= 1`` marker in ``>= min_frac`` of cells", the natural low-coverage
+    rescue when sparse dropout leaves few cells clearing the full ``>= min_distinct``
+    bar (#339). ``score`` is either an ``adata.obs`` column name (a
+    caller-precomputed lineage-TF score) or a gene list (its per-cell block-mean)
+    — e.g. osteoblastic TFs rescuing a low-CTA-coverage osteosarcoma cluster.
 
     The per-cell "# distinct markers from ``gene_set``" is written to
     ``adata.obs[count_col]`` (default ``"n_markers_<label>"``) — reused for the
@@ -174,21 +179,50 @@ def _apply_marker_overrides(adata, labels: dict, leiden_col: str, overrides) -> 
         adata.obs[ov.resolved_count_col()] = counts
         hit = pd.Series(counts >= ov.min_distinct, index=adata.obs.index)
         frac = hit.groupby(leiden, observed=True).mean()
-        rescue_mean = (
-            _rescue_cluster_mean(adata, ov.rescue[0], leiden_col)
-            if ov.rescue is not None else {}
-        )
+        rescue_mean: dict = {}
+        rescue_frac = None
+        if ov.rescue is not None:
+            rescue_mean = _rescue_cluster_mean(adata, ov.rescue[0], leiden_col)
+            # The rescue fraction may gate on a BROADER distinct-count floor than
+            # the primary bar: rescue[3] (rescue_min_distinct) defaults to
+            # ov.min_distinct — a 3-tuple keeps the old behavior — while e.g. 1
+            # lets a low-coverage cluster fire on "score high AND >=1 marker in
+            # >=min_frac of cells" (#339).
+            rescue_min_distinct = ov.rescue[3] if len(ov.rescue) > 3 else ov.min_distinct
+            rhit = pd.Series(counts >= rescue_min_distinct, index=adata.obs.index)
+            rescue_frac = rhit.groupby(leiden, observed=True).mean()
         for cl in frac.index:
             if cl in overridden:
                 continue
             fire = frac.loc[cl] >= ov.min_cluster_frac
             if not fire and ov.rescue is not None:
-                _, rmin, rfrac = ov.rescue
-                fire = rescue_mean.get(cl, 0.0) >= rmin and frac.loc[cl] >= rfrac
+                rmin, rfrac = ov.rescue[1], ov.rescue[2]
+                fire = (rescue_mean.get(cl, 0.0) >= rmin
+                        and rescue_frac.loc[cl] >= rfrac)
             if fire:
                 labels[cl] = ov.label
                 overridden.add(cl)
     return labels
+
+
+def _warn_dropped_states(adata, prefix: str, registry) -> None:
+    """Warn when :func:`score_reference` wrote a ``<prefix>::`` column whose state
+    the active registry won't read — the silent-drop case #337 is about. Fires
+    only on genuine drift (a scored state absent from the registry), so the
+    all-defaults path is quiet."""
+    dropped = sorted(
+        c for c in adata.obs.columns
+        if c.startswith(prefix + "::") and c.split("::", 1)[1] not in registry
+    )
+    if dropped:
+        lineage = "T" if prefix == "st" else "B"
+        param = "t" if prefix == "st" else "b"
+        logger.warning(
+            "annotate_clusters: %d scored %s-state column(s) not in the active "
+            "%s_state_reference and will be ignored: %s — pass the matching "
+            "registry as %s_state_reference= to include them.",
+            len(dropped), lineage, param, ", ".join(dropped), param,
+        )
 
 
 def gates_from_phenotype_config(config) -> AnnotationGates:
@@ -276,6 +310,8 @@ def annotate_clusters(
     *,
     leiden_col: str = "leiden",
     reference: dict | None = None,
+    t_state_reference: dict | None = None,
+    b_state_reference: dict | None = None,
     allowed_types=None,
     gates: AnnotationGates = DEFAULT_GATES,
     overrides=None,
@@ -284,23 +320,36 @@ def annotate_clusters(
     get CD8/CD4 + a gated dominant state; weakly-typed clusters → ``"Other"``.
 
     ``reference`` is the cell-type registry (default
-    :data:`tcrsift.signatures.CELL_TYPE_SIGNATURES`); ``allowed_types`` restricts
-    the argmax (e.g. :data:`tcrsift.signatures.PBMC_CULTURE_TYPES` for a culture,
-    so a moDC/macrophage cluster can't win a stromal signature it shares an
-    activation program with). ``overrides`` is a list of
-    :class:`MarkerCountOverride` applied per-cluster **after** the argmax (before
-    label composition), relabeling a cluster on positive marker-count evidence
-    (e.g. CTA→Tumor) and writing each override's per-cell distinct-marker count to
-    ``adata.obs``. Requires :func:`score_reference` to have run. Returns
-    ``{cluster -> label}``.
+    :data:`tcrsift.signatures.CELL_TYPE_SIGNATURES`); ``t_state_reference`` /
+    ``b_state_reference`` are the T-state / B-state registries read for the
+    per-cluster state call (defaults
+    :data:`tcrsift.signatures.T_STATE_SIGNATURES` /
+    :data:`~tcrsift.signatures.B_STATE_SIGNATURES`). Pass your own to have
+    caller-defined states considered — the registries must match those given to
+    :func:`score_reference`, or a scored ``st::``/``bt::`` state absent from the
+    active registry is ignored (a WARNING flags this drift, #337).
+    ``allowed_types`` restricts the argmax (e.g.
+    :data:`tcrsift.signatures.PBMC_CULTURE_TYPES` for a culture, so a
+    moDC/macrophage cluster can't win a stromal signature it shares an activation
+    program with). ``overrides`` is a list of :class:`MarkerCountOverride` applied
+    per-cluster **after** the argmax (before label composition), relabeling a
+    cluster on positive marker-count evidence (e.g. CTA→Tumor) and writing each
+    override's per-cell distinct-marker count to ``adata.obs``. Requires
+    :func:`score_reference` to have run. Returns ``{cluster -> label}``.
     """
     reference = reference if reference is not None else CELL_TYPE_SIGNATURES
+    t_state_reference = (t_state_reference if t_state_reference is not None
+                         else T_STATE_SIGNATURES)
+    b_state_reference = (b_state_reference if b_state_reference is not None
+                         else B_STATE_SIGNATURES)
     types = list(reference) if allowed_types is None else [
         t for t in reference if t in allowed_types
     ]
     ct_cols = [f"ct::{t}" for t in types if f"ct::{t}" in adata.obs.columns]
-    st_cols = [f"st::{s}" for s in T_STATE_SIGNATURES if f"st::{s}" in adata.obs.columns]
-    bt_cols = [f"bt::{s}" for s in B_STATE_SIGNATURES if f"bt::{s}" in adata.obs.columns]
+    st_cols = [f"st::{s}" for s in t_state_reference if f"st::{s}" in adata.obs.columns]
+    bt_cols = [f"bt::{s}" for s in b_state_reference if f"bt::{s}" in adata.obs.columns]
+    _warn_dropped_states(adata, "st", t_state_reference)
+    _warn_dropped_states(adata, "bt", b_state_reference)
     grp = adata.obs.groupby(leiden_col, observed=True)
     ctm = grp[ct_cols].mean()
     stm = grp[st_cols].mean() if st_cols else pd.DataFrame(index=ctm.index)
@@ -452,6 +501,8 @@ def annotate_cells(
     *,
     leiden_col: str = "leiden",
     reference: dict | None = None,
+    t_state_reference: dict | None = None,
+    b_state_reference: dict | None = None,
     allowed_types=None,
     gates: AnnotationGates = DEFAULT_GATES,
     overrides=None,
@@ -464,12 +515,16 @@ def annotate_cells(
     Writes ``adata.obs["phenotype_base"]`` (the per-cluster type/state, e.g.
     ``"CD8 effector/cytotoxic"``) and, when ``add_suffix``,
     ``adata.obs["phenotype"]`` (with the distinguishing-gene suffix for
-    non-negligible sub-clusters). ``overrides`` (a list of
-    :class:`MarkerCountOverride`) relabels clusters on positive marker-count
-    evidence (e.g. CTA→Tumor, #325) and adds a per-cell distinct-marker-count
-    column to ``adata.obs``. ``normalize=True`` scores on a log1p-CP10K copy
-    (from the ``counts`` layer if present) so the embedded raw-count AnnData can
-    be passed straight through. Returns ``adata``.
+    non-negligible sub-clusters). ``reference`` / ``t_state_reference`` /
+    ``b_state_reference`` override the cell-type / T-state / B-state registries;
+    they are threaded to **both** :func:`score_reference` and
+    :func:`annotate_clusters`, so a caller-defined type or state is consistently
+    scored *and* read (default registries are PBMC/blood-oriented — see #340).
+    ``overrides`` (a list of :class:`MarkerCountOverride`) relabels clusters on
+    positive marker-count evidence (e.g. CTA→Tumor, #325) and adds a per-cell
+    distinct-marker-count column to ``adata.obs``. ``normalize=True`` scores on a
+    log1p-CP10K copy (from the ``counts`` layer if present) so the embedded
+    raw-count AnnData can be passed straight through. Returns ``adata``.
     """
     if leiden_col not in adata.obs.columns:
         raise ValueError(
@@ -485,9 +540,13 @@ def annotate_cells(
         sc.pp.normalize_total(scored, target_sum=1e4)
         sc.pp.log1p(scored)
 
-    score_reference(scored)
+    score_reference(
+        scored, cell_types=reference,
+        t_states=t_state_reference, b_states=b_state_reference,
+    )
     labels = annotate_clusters(
         scored, leiden_col=leiden_col, reference=reference,
+        t_state_reference=t_state_reference, b_state_reference=b_state_reference,
         allowed_types=allowed_types, gates=gates, overrides=overrides,
     )
     # Propagate each override's per-cell distinct-marker count from the scored

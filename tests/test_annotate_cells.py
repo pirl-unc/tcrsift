@@ -19,6 +19,7 @@ CD4/CD8-only phenotype path.
 
 from __future__ import annotations
 
+import logging
 import warnings
 
 import anndata as ad
@@ -29,6 +30,7 @@ from tcrsift.annotate_cells import (
     AnnotationGates,
     MarkerCountOverride,
     annotate_cells,
+    annotate_clusters,
     compose_phenotype_labels,
     gates_from_phenotype_config,
 )
@@ -290,3 +292,119 @@ class TestMarkerCountOverride:
     def test_resolved_count_col_default(self):
         assert MarkerCountOverride("Tumor", _CTA).resolved_count_col() == "n_markers_tumor"
         assert MarkerCountOverride("ISG-high", _CTA).resolved_count_col() == "n_markers_isg_high"
+
+    def test_rescue_can_gate_on_any_marker_fraction(self):
+        # Low-coverage tumor: sparse dropout leaves NO cell clearing >=2 CTAs, but
+        # most cells still show >=1 CTA and the lineage-TF is high. The >=2 rescue
+        # (3-tuple, rescue_min_distinct defaults to min_distinct) can't fire; a
+        # rescue_min_distinct=1 (4-tuple) rescue gates on the broad any-marker
+        # fraction and does (#339) — h37's real osteosarcoma rule.
+        rng = np.random.default_rng(1)
+        collagen = {"COL1A1": 8, "COL1A2": 8, "COL3A1": 8, "DCN": 6, "LUM": 6}
+
+        def cell(bumps):
+            x = np.zeros(len(_OV_GENES))
+            for i, g in enumerate(_OV_GENES):
+                if g.startswith("F"):
+                    x[i] = rng.poisson(25)
+            for g, v in bumps.items():
+                x[_OVI[g]] = v
+            return x
+
+        rows, leiden = [], []
+        for j in range(40):  # 34/40 carry exactly ONE CTA: >=1 frac 0.85, >=2 frac 0
+            b = {**collagen, "TF1": 6, "TF2": 6}
+            if j < 34:
+                b["CTA1"] = 5
+            rows.append(cell(b)); leiden.append("tumor_sparse")
+        for _ in range(40):  # a clean CD8 cluster so there is >1 cluster
+            rows.append(cell({"CD3D": 6, "CD3E": 6, "CD8A": 6, "CD8B": 6, "GZMB": 6}))
+            leiden.append("tcell")
+        adata = ad.AnnData(
+            X=np.array(rows), var=pd.DataFrame(index=_OV_GENES),
+            obs=pd.DataFrame({"leiden": pd.Categorical(leiden)},
+                             index=[f"c{i}" for i in range(len(rows))]),
+        )
+
+        # >=2 rescue never fires (no cell clears the 2-CTA bar, so rescue_frac is 0).
+        strict = MarkerCountOverride("Tumor", _CTA, min_distinct=2,
+                                     min_cluster_frac=0.4, rescue=(list(_TF), 1.0, 0.1))
+        _, labels = _ov_labels(adata.copy(), overrides=[strict])
+        assert labels["tumor_sparse"] != "Tumor"
+
+        # rescue_min_distinct=1 fires on the broad >=1 fraction.
+        broad = MarkerCountOverride("Tumor", _CTA, min_distinct=2,
+                                    min_cluster_frac=0.4, rescue=(list(_TF), 1.0, 0.1, 1))
+        _, labels2 = _ov_labels(adata.copy(), overrides=[broad])
+        assert labels2["tumor_sparse"] == "Tumor"
+
+    def test_three_tuple_rescue_unchanged(self):
+        # Back-compat: the existing 3-tuple rescue still saves the tumor_lo cluster.
+        rescued = MarkerCountOverride("Tumor", _CTA, min_distinct=2,
+                                      min_cluster_frac=0.4, rescue=(list(_TF), 1.0, 0.1))
+        _, labels = _ov_labels(_build_tumor(), overrides=[rescued])
+        assert labels["tumor_lo"] == "Tumor"
+
+
+class TestInjectableStateRegistries:
+    """Caller T-state/B-state registries are considered instead of being silently
+    dropped by the module-level defaults (#337)."""
+
+    def _t_cell_obs(self):
+        # A single CD8 T cluster with a caller-scored state column already present.
+        n = 12
+        obs = pd.DataFrame(index=[f"c{i}" for i in range(n)])
+        obs["leiden"] = pd.Categorical(["0"] * n)
+        obs["ct::T cell"] = 1.0
+        obs["lin::CD8"] = 1.0
+        obs["lin::CD4"] = 0.0
+        obs["lin::CD3"] = 2.0
+        obs["lin::NKspec"] = 0.0
+        obs["st::MyState"] = 1.0  # scored by a caller, not in tcrsift's registry
+        return ad.AnnData(X=np.zeros((n, 1)), var=pd.DataFrame(index=["G0"]), obs=obs)
+
+    def test_default_registry_drops_caller_state(self):
+        adata = self._t_cell_obs()
+        labels = annotate_clusters(adata, reference={"T cell": ["G0"]})
+        assert "MyState" not in labels["0"]  # dropped by the built-in T-state keys
+
+    def test_injected_registry_reads_caller_state(self):
+        adata = self._t_cell_obs()
+        labels = annotate_clusters(
+            adata, reference={"T cell": ["G0"]},
+            t_state_reference={"MyState": ["G0"]},
+        )
+        assert labels["0"] == "CD8 MyState"
+
+    def test_warns_on_scored_state_absent_from_registry(self, caplog):
+        adata = self._t_cell_obs()
+        with caplog.at_level(logging.WARNING, logger="tcrsift.annotate_cells"):
+            annotate_clusters(adata, reference={"T cell": ["G0"]})
+        assert any("st::MyState" in r.message and "ignored" in r.message
+                   for r in caplog.records)
+
+    def test_all_defaults_do_not_warn(self, caplog):
+        # The all-defaults path (scored registry == read registry) is quiet.
+        labels = _labels(_build({
+            "0": {"CD3D": 30, "CD3E": 30, "CD8A": 30, "CD8B": 25, "GZMB": 30},
+            "1": {"MS4A1": 40, "CD79A": 30, "CD79B": 30, "CD19": 20},
+        }))
+        assert labels["0"].startswith("CD8")
+        with caplog.at_level(logging.WARNING, logger="tcrsift.annotate_cells"):
+            _labels(_build({
+                "0": {"CD3D": 30, "CD3E": 30, "CD8A": 30, "CD8B": 25, "GZMB": 30},
+                "1": {"MS4A1": 40, "CD79A": 30, "CD79B": 30, "CD19": 20},
+            }))
+        assert not any("will be ignored" in r.message for r in caplog.records)
+
+    def test_annotate_cells_threads_custom_t_state(self):
+        # End to end through the one-call path: a custom T-state registry is both
+        # scored (score_reference) and read (annotate_clusters).
+        custom_t = {"Cyto2": ["GZMB", "PRF1", "GZMA", "NKG7", "GZMH"]}
+        adata = _build({
+            "0": {"CD3D": 30, "CD3E": 30, "CD8A": 30, "CD8B": 25,
+                  "GZMB": 40, "PRF1": 30, "GZMA": 30, "NKG7": 20, "GZMH": 20},
+            "1": {"CD3D": 30, "CD3E": 30, "CD4": 30, "CCR7": 25, "IL7R": 18},
+        })
+        labels = _labels(adata, t_state_reference=custom_t)
+        assert labels["0"] == "CD8 Cyto2"
