@@ -864,15 +864,21 @@ DEFAULT_LINEAGE_PROGRAMS: dict[str, list[str]] = {
     "fibroblast": ["COL1A1", "COL1A2", "DCN", "LUM", "PDGFRA"],
 }
 
-# Solid-tumor TME preset (#327). Lineage programs are CONTEXT-DEPENDENT: the
-# defaults assume a blood/PBMC context. In a solid tumor the malignant cells
-# co-express stroma genes (an osteosarcoma cluster carries COL1A1), so the
-# ``fibroblast`` program would make every tumor cell self-flag as a doublet — it
-# is DROPPED here. Osteoclasts (a bone-tumor TME resident) are folded into the
-# ``myeloid`` program rather than tracked as a distinct lineage. Pass your own
-# via ``lineage_sets=`` when neither preset fits your tissue.
+# Solid-tumor TME preset (#327, #334). Lineage programs are CONTEXT-DEPENDENT:
+# osteoclasts (a bone-tumor TME resident) are folded into ``myeloid`` rather than
+# tracked as a distinct lineage. ``fibroblast`` is KEPT (#334 — an earlier version
+# dropped it): it is the only handle cross-lineage detection has on tumor+immune
+# doublets, because tumor is not (and should not be) its own lineage program but
+# its collagen registers as the fibroblast program, so a tumor+T doublet trips
+# fibroblast+T = 2 programs and is caught. It also catches CAF+immune doublets.
+# A PURE tumor cell expresses collagen but no second program → 1 program → NOT
+# flagged (the gate needs ≥2), so it never self-flags — and the gate REMOVES
+# rather than annotates (tumor labeling is annotate_cells + MarkerCountOverride,
+# #325, a separate path). Guard the rare tumor + ambient-second-lineage false
+# flag with ``require_high_umi`` / ``umi_outlier_mult``, not by dropping a
+# lineage. Pass your own via ``lineage_sets=`` when neither preset fits.
 SOLID_TUMOR_LINEAGE_PROGRAMS: dict[str, list[str]] = {
-    **{k: v for k, v in DEFAULT_LINEAGE_PROGRAMS.items() if k != "fibroblast"},
+    **DEFAULT_LINEAGE_PROGRAMS,
     "myeloid": DEFAULT_LINEAGE_PROGRAMS["myeloid"] + ["ACP5", "CTSK", "MMP9"],
 }
 
@@ -1013,8 +1019,9 @@ def cell_qc_funnel(
     non-standard symbol sets or other species). ``lineage_sets`` is
     context-dependent: the default :data:`DEFAULT_LINEAGE_PROGRAMS` assumes
     blood/PBMC — for a solid tumor pass :data:`SOLID_TUMOR_LINEAGE_PROGRAMS`
-    (drops the fibroblast program so collagen-expressing tumor cells don't
-    self-flag) or your own.
+    (folds osteoclasts into myeloid; keeps fibroblast, since tumor collagen is
+    the handle for tumor+immune doublets and a pure tumor cell is only one
+    program so it never self-flags) or your own.
 
     A doublet is NOT simply a high-coverage cell — a deeply sequenced singlet
     also has many genes. The decisive signal is disjoint-lineage co-expression;
