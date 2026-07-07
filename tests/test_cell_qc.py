@@ -333,3 +333,81 @@ class TestQcNoneDisableAndWarn:
             out, _ = cell_qc_funnel(adata, min_genes=None, min_counts=1)
         assert out.n_obs == 3
         assert "qc_low_coverage" in out.obs.columns
+
+
+class TestPctCountsMtPreserved:
+    """cell_qc_funnel leaves a caller's pre-existing pct_counts_mt untouched and
+    still gates the same cells (#338)."""
+
+    def test_preexisting_pct_counts_mt_not_clobbered(self, qc_adata):
+        # A caller-supplied pct_counts_mt (e.g. from scanpy calculate_qc_metrics)
+        # must survive the funnel unchanged on the returned subset.
+        sentinel = np.arange(qc_adata.n_obs, dtype=float) / 1000.0
+        qc_adata.obs["pct_counts_mt"] = sentinel
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out, _ = cell_qc_funnel(
+                qc_adata, min_genes=3, min_counts=5, max_mito_pct=None
+            )
+        # No cells dropped for mito (max_mito disabled), so every survivor keeps
+        # the exact value the caller stored — not tcrsift's own arithmetic.
+        expected = pd.Series(sentinel, index=qc_adata.obs.index).loc[out.obs.index]
+        assert np.array_equal(out.obs["pct_counts_mt"].to_numpy(), expected.to_numpy())
+
+    def test_computes_pct_counts_mt_when_absent(self, qc_adata):
+        # With no caller value, the funnel still populates the column.
+        assert "pct_counts_mt" not in qc_adata.obs.columns
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out, _ = cell_qc_funnel(qc_adata, min_genes=3, min_counts=5)
+        assert "pct_counts_mt" in out.obs.columns
+        assert "_pct_mt" not in out.obs.columns  # internal gate column cleaned up
+
+    def test_mito_gate_independent_of_caller_column(self, qc_adata):
+        # Cells 18-19 are high-mito. A garbage caller pct_counts_mt (all zero) must
+        # NOT change which cells the mito gate drops — the gate uses tcrsift's own
+        # arithmetic, so survivors match the no-column run exactly.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            ref, _ = cell_qc_funnel(qc_adata, min_genes=3, min_counts=5, max_mito_pct=10.0)
+        poisoned = qc_adata.copy()
+        poisoned.obs["pct_counts_mt"] = 0.0
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out, _ = cell_qc_funnel(poisoned, min_genes=3, min_counts=5, max_mito_pct=10.0)
+        assert list(out.obs.index) == list(ref.obs.index)
+
+
+class TestConfigUnwrap:
+    """cell_qc_funnel(config=TCRsiftConfig()) reads the nested .load section
+    instead of silently ignoring it (#341)."""
+
+    def test_top_level_tcrsift_config_unwrapped(self, qc_adata):
+        from tcrsift.config import LoadConfig, TCRsiftConfig
+
+        cfg = TCRsiftConfig(
+            load=LoadConfig(
+                min_genes=3, max_genes=15000, min_counts=5, max_counts=100000,
+                min_mito_pct=0.0, max_mito_pct=40.0,
+            )
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out, wf = cell_qc_funnel(qc_adata, config=cfg)
+        # Same outcome as passing the flat LoadConfig directly (2 high-mito dropped).
+        assert wf.set_index("step")["removed"]["max_mito"] == 2
+        assert out.n_obs == 48
+
+    def test_flat_load_config_still_works(self, qc_adata):
+        from tcrsift.config import LoadConfig
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            flat, _ = cell_qc_funnel(
+                qc_adata,
+                config=LoadConfig(
+                    min_genes=3, max_genes=15000, min_counts=5, max_counts=100000,
+                    min_mito_pct=0.0, max_mito_pct=40.0,
+                ),
+            )
+        assert flat.n_obs == 48

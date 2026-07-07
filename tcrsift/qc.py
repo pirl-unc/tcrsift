@@ -1013,10 +1013,18 @@ def cell_qc_funnel(
        ``trb_doublet_col``), CD4/CD8 double-positive (CD3-gated), and
        cross-lineage co-expression (:func:`cross_lineage_doublets`).
 
-    Thresholds mirror :class:`tcrsift.config.LoadConfig` — pass a ``config``
-    (its ``load`` section, or anything exposing those attributes) to reuse them,
-    or override any individually; explicit kwargs win over ``config`` win over
-    the built-in defaults (so there is no parallel config).
+    Thresholds mirror :class:`tcrsift.config.LoadConfig` — pass a ``config`` (a
+    top-level :class:`tcrsift.config.TCRsiftConfig`, its flat ``load`` section, or
+    anything exposing those attributes) to reuse them, or override any
+    individually; explicit kwargs win over ``config`` win over the built-in
+    defaults (so there is no parallel config). A ``TCRsiftConfig`` is unwrapped to
+    its ``.load`` section automatically, so passing the top-level config is no
+    longer silently ignored (#341).
+
+    ``pct_counts_mt`` is left untouched if the caller already computed it (e.g.
+    with ``scanpy.pp.calculate_qc_metrics``); it is only written when absent. The
+    mito gate runs off tcrsift's own arithmetic either way, so which cells survive
+    is independent of a caller's stored value (#338).
 
     **A resolved ``None`` means "disable this bound"** (#333), matching scanpy's
     None semantics — pass ``max_genes=None`` and no cell is dropped for having
@@ -1054,6 +1062,13 @@ def cell_qc_funnel(
     columns ``[step, reason, removed, remaining]`` (one row per QC/doublet
     class).
     """
+    # Accept a top-level TCRsiftConfig (its thresholds live under `.load`) as well
+    # as a flat LoadConfig / duck-typed object: unwrap the nested `.load` section
+    # if present so `cell_qc_funnel(config=TCRsiftConfig())` isn't silently ignored
+    # (#341). A flat config has no `.load`, so it is read directly.
+    if config is not None and hasattr(config, "load"):
+        config = config.load
+
     def _resolve(val, attr, default):
         # Explicitly passed (including None → disable) wins; else config; else the
         # built-in default. The _UNSET sentinel keeps "not passed" distinct from
@@ -1087,7 +1102,14 @@ def cell_qc_funnel(
         pct_mt = np.where(counts > 0, 100.0 * mt_counts / counts, 0.0)
     adata.obs["_n_counts"] = counts
     adata.obs["_n_genes"] = n_genes
-    adata.obs["pct_counts_mt"] = pct_mt
+    # Gate the mito filters off our own deterministic arithmetic (`_pct_mt`), but
+    # don't clobber a caller's pre-existing `pct_counts_mt` (e.g. from
+    # scanpy.pp.calculate_qc_metrics), which can differ at ~the 6th decimal from
+    # summation dtype/order (#338). Survivors are unaffected — the two agree at the
+    # gate threshold — we just stop overwriting the value the caller plots.
+    adata.obs["_pct_mt"] = pct_mt
+    if "pct_counts_mt" not in adata.obs.columns:
+        adata.obs["pct_counts_mt"] = pct_mt
 
     rows = [("input", "all cells", 0, adata.n_obs)]
 
@@ -1119,10 +1141,10 @@ def cell_qc_funnel(
     if max_counts is not None:
         drop(adata.obs["_n_counts"] > max_counts, "max_counts", f"> {max_counts} UMIs")
     if min_mito_pct is not None and min_mito_pct > 0:
-        drop(adata.obs["pct_counts_mt"] < min_mito_pct, "min_mito",
+        drop(adata.obs["_pct_mt"] < min_mito_pct, "min_mito",
              f"< {min_mito_pct:g}% mito (ambient)")
     if max_mito_pct is not None:
-        drop(adata.obs["pct_counts_mt"] >= max_mito_pct, "max_mito",
+        drop(adata.obs["_pct_mt"] >= max_mito_pct, "max_mito",
              f">= {max_mito_pct:g}% mito")
 
     if trb_doublet_col in adata.obs.columns:
@@ -1153,7 +1175,7 @@ def cell_qc_funnel(
             floor = 2 * (min_genes if min_genes is not None else 250)
         adata.obs["qc_low_coverage"] = (adata.obs["_n_genes"] < floor).to_numpy()
 
-    for c in ("_n_counts", "_n_genes"):
+    for c in ("_n_counts", "_n_genes", "_pct_mt"):
         adata.obs.drop(columns=c, inplace=True, errors="ignore")
 
     waterfall = pd.DataFrame(rows, columns=["step", "reason", "removed", "remaining"])
