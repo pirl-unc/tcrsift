@@ -213,11 +213,50 @@ class TestFunnelDoubletTunables:
 
 
 class TestSolidTumorPreset:
-    def test_drops_fibroblast_folds_osteoclast(self):
-        # The solid-tumor preset drops the fibroblast program (tumor collagen
-        # would self-flag) and folds osteoclast markers into myeloid.
-        assert "fibroblast" not in SOLID_TUMOR_LINEAGE_PROGRAMS
-        assert "fibroblast" in DEFAULT_LINEAGE_PROGRAMS
+    def test_keeps_fibroblast_folds_osteoclast(self):
+        # The solid-tumor preset KEEPS the fibroblast program (#334): tumor
+        # collagen is the only handle cross-lineage detection has on tumor+immune
+        # doublets. It folds osteoclast markers into myeloid.
+        assert "fibroblast" in SOLID_TUMOR_LINEAGE_PROGRAMS
+        assert SOLID_TUMOR_LINEAGE_PROGRAMS["fibroblast"] == [
+            "COL1A1", "COL1A2", "DCN", "LUM", "PDGFRA"
+        ]
         for g in ("ACP5", "CTSK", "MMP9"):
             assert g in SOLID_TUMOR_LINEAGE_PROGRAMS["myeloid"]
-        assert set(SOLID_TUMOR_LINEAGE_PROGRAMS) < set(DEFAULT_LINEAGE_PROGRAMS)
+        # Same lineages as the default (plus osteoclast markers on myeloid).
+        assert set(SOLID_TUMOR_LINEAGE_PROGRAMS) == set(DEFAULT_LINEAGE_PROGRAMS)
+
+    def test_tumor_immune_doublet_needs_fibroblast_handle(self):
+        # A tumor+T doublet (collagen + CD3) trips fibroblast+T = 2 programs and
+        # is flagged; a PURE tumor cell (collagen only) is 1 program and is not.
+        # Include the full lineage-gene universe (mostly zero) so score_genes has
+        # control genes, as in the qc_adata fixture.
+        lineage_genes = sorted(
+            {g for gs in SOLID_TUMOR_LINEAGE_PROGRAMS.values() for g in gs}
+        )
+        filler = [f"G{i}" for i in range(120)]
+        genes = list(dict.fromkeys(lineage_genes + filler))
+        gi = {g: i for i, g in enumerate(genes)}
+        collagen = ["COL1A1", "COL1A2", "DCN", "LUM", "PDGFRA"]
+        tcell = ["CD3D", "CD3E", "CD3G", "TRAC", "CD2", "CD7"]
+        rng = np.random.default_rng(0)
+        n = 30  # 0-9 pure tumor, 10-19 tumor+T doublets, 20-29 clean T
+        X = np.zeros((n, len(genes)))
+        for fg in filler:  # spread background levels so score_genes control bins fill
+            X[:, gi[fg]] = rng.poisson(rng.integers(2, 40), size=n)
+        for g in collagen:
+            X[0:20, gi[g]] = 60                # tumor + doublets carry collagen
+        for g in tcell:
+            X[10:30, gi[g]] = 60               # doublets + clean T carry CD3
+        adata = ad.AnnData(X=X, var=pd.DataFrame(index=genes),
+                           obs=pd.DataFrame(index=[f"c{i}" for i in range(n)]))
+        # require_high_umi=False isolates the program-counting logic (#334): the
+        # UMI-outlier corroboration is a separate lever, not the fibroblast handle.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            mask = cross_lineage_doublets(
+                adata, SOLID_TUMOR_LINEAGE_PROGRAMS, require_high_umi=False
+            )
+        assert not mask[0:10].any()   # pure tumor: 1 program (fibroblast), not flagged
+        assert mask[10:20].all()      # tumor+T doublet: caught via fibroblast handle
+        assert not mask[20:30].any()  # clean T cells
