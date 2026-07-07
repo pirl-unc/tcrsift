@@ -972,16 +972,21 @@ def cd4_cd8_doublet_mask(
     return (cd3 >= 1) & (cd4 >= 1) & (cd8 >= 1)
 
 
+# Sentinel so an explicit ``None`` (disable this bound) is distinguishable from
+# "not passed" (use the built-in default / config value) — #333.
+_UNSET = object()
+
+
 def cell_qc_funnel(
     adata,
     config=None,
     *,
-    min_genes: int | None = None,
-    max_genes: int | None = None,
-    min_counts: int | None = None,
-    max_counts: int | None = None,
-    min_mito_pct: float | None = None,
-    max_mito_pct: float | None = None,
+    min_genes: int | None = _UNSET,
+    max_genes: int | None = _UNSET,
+    min_counts: int | None = _UNSET,
+    max_counts: int | None = _UNSET,
+    min_mito_pct: float | None = _UNSET,
+    max_mito_pct: float | None = _UNSET,
     lineage_sets: dict[str, list[str]] | None = None,
     require_high_umi: bool = True,
     xlineage_score_min: float = 0.5,
@@ -993,6 +998,7 @@ def cell_qc_funnel(
     trb_doublet_col: str = "multi_TRB",
     low_coverage_genes: int | None = None,
     mark_low_coverage: bool = True,
+    warn_frac: float = 0.10,
     prefix: str = "qc",
 ) -> tuple:
     """Per-cell QC + doublet funnel on the LoadConfig thresholds (#314).
@@ -1011,6 +1017,19 @@ def cell_qc_funnel(
     (its ``load`` section, or anything exposing those attributes) to reuse them,
     or override any individually; explicit kwargs win over ``config`` win over
     the built-in defaults (so there is no parallel config).
+
+    **A resolved ``None`` means "disable this bound"** (#333), matching scanpy's
+    None semantics — pass ``max_genes=None`` and no cell is dropped for having
+    many genes. The bare-kwarg defaults are deliberately gentle: only the
+    near-universal low-quality floors (``min_genes=250`` / ``min_counts=500``)
+    and the dying-cell ceiling (``max_mito_pct=8``) are on; the context-dependent
+    bounds — ``max_genes``, ``max_counts``, and the ``min_mito_pct`` *floor* —
+    default OFF, because an unset caller should not be silently culled (a 2% mito
+    floor legitimately removes most of a low-mito solid-tumor/stroma sample). The
+    opinionated PBMC preset is one explicit ``config`` away (``LoadConfig()`` sets
+    all six). As a backstop, any single step that removes more than ``warn_frac``
+    (default 10%) of the cells entering it logs a loud WARNING — a large cull is
+    never silent.
 
     The doublet-gate internals are tunable through the funnel (#327): the
     cross-lineage stringency (``xlineage_score_min`` / ``xlineage_min_programs`` /
@@ -1036,17 +1055,27 @@ def cell_qc_funnel(
     class).
     """
     def _resolve(val, attr, default):
-        if val is not None:
+        # Explicitly passed (including None → disable) wins; else config; else the
+        # built-in default. The _UNSET sentinel keeps "not passed" distinct from
+        # an explicit None so `min_genes=None` truly disables it (#333).
+        if val is not _UNSET:
             return val
         if config is not None and getattr(config, attr, None) is not None:
             return getattr(config, attr)
         return default
 
+    # A resolved None means "disable this bound" (#333). The bare-kwarg defaults
+    # keep only the near-universal low-quality floors (min_genes / min_counts)
+    # and the dying-cell ceiling (max_mito_pct); the context-dependent bounds
+    # (max_genes / max_counts / the min_mito FLOOR) default to OFF so an unset
+    # caller isn't silently culled (a 2% mito floor legitimately removes most of
+    # a low-mito solid-tumor/stroma sample). The opinionated PBMC preset stays
+    # reachable via ``config`` (e.g. LoadConfig(), which sets all six).
     min_genes = _resolve(min_genes, "min_genes", 250)
-    max_genes = _resolve(max_genes, "max_genes", 15000)
+    max_genes = _resolve(max_genes, "max_genes", None)
     min_counts = _resolve(min_counts, "min_counts", 500)
-    max_counts = _resolve(max_counts, "max_counts", 100000)
-    min_mito_pct = _resolve(min_mito_pct, "min_mito_pct", 2.0)
+    max_counts = _resolve(max_counts, "max_counts", None)
+    min_mito_pct = _resolve(min_mito_pct, "min_mito_pct", None)
     max_mito_pct = _resolve(max_mito_pct, "max_mito_pct", 8.0)
 
     adata = adata.copy()
@@ -1064,22 +1093,37 @@ def cell_qc_funnel(
 
     def drop(mask, step: str, reason: str):
         nonlocal adata
+        n_before = adata.n_obs
         mask = np.asarray(mask, dtype=bool)
         n_rm = int(mask.sum())
         adata = adata[~mask].copy()
         rows.append((step, reason, n_rm, adata.n_obs))
         logger.info("cell_qc_funnel[%s] %s: -%d -> %d (%s)",
                     prefix, step, n_rm, adata.n_obs, reason)
+        # A single step culling a large fraction is almost always a wrong/unfit
+        # threshold, not a bad sample — never let it be silent (#333).
+        if n_before and warn_frac and n_rm / n_before > warn_frac:
+            logger.warning(
+                "cell_qc_funnel[%s] %s removed %d/%d cells (%.0f%%) in one step "
+                "(%s) — check the threshold; pass a different value or None to "
+                "disable it.",
+                prefix, step, n_rm, n_before, 100.0 * n_rm / n_before, reason,
+            )
 
-    drop(adata.obs["_n_genes"] < min_genes, "min_genes", f"< {min_genes} genes")
-    drop(adata.obs["_n_genes"] > max_genes, "max_genes", f"> {max_genes} genes")
-    drop(adata.obs["_n_counts"] < min_counts, "min_counts", f"< {min_counts} UMIs")
-    drop(adata.obs["_n_counts"] > max_counts, "max_counts", f"> {max_counts} UMIs")
-    if min_mito_pct and min_mito_pct > 0:
+    if min_genes is not None:
+        drop(adata.obs["_n_genes"] < min_genes, "min_genes", f"< {min_genes} genes")
+    if max_genes is not None:
+        drop(adata.obs["_n_genes"] > max_genes, "max_genes", f"> {max_genes} genes")
+    if min_counts is not None:
+        drop(adata.obs["_n_counts"] < min_counts, "min_counts", f"< {min_counts} UMIs")
+    if max_counts is not None:
+        drop(adata.obs["_n_counts"] > max_counts, "max_counts", f"> {max_counts} UMIs")
+    if min_mito_pct is not None and min_mito_pct > 0:
         drop(adata.obs["pct_counts_mt"] < min_mito_pct, "min_mito",
              f"< {min_mito_pct:g}% mito (ambient)")
-    drop(adata.obs["pct_counts_mt"] >= max_mito_pct, "max_mito",
-         f">= {max_mito_pct:g}% mito")
+    if max_mito_pct is not None:
+        drop(adata.obs["pct_counts_mt"] >= max_mito_pct, "max_mito",
+             f">= {max_mito_pct:g}% mito")
 
     if trb_doublet_col in adata.obs.columns:
         drop(adata.obs[trb_doublet_col].fillna(False).astype(bool), "tcr_2b",
@@ -1101,7 +1145,12 @@ def cell_qc_funnel(
         )
 
     if mark_low_coverage and adata.n_obs:
-        floor = low_coverage_genes if low_coverage_genes is not None else 2 * min_genes
+        # Default floor is 2×min_genes; if min_genes is disabled, fall back to a
+        # fixed 2×the 250-gene default so the flag still means something (#333).
+        if low_coverage_genes is not None:
+            floor = low_coverage_genes
+        else:
+            floor = 2 * (min_genes if min_genes is not None else 250)
         adata.obs["qc_low_coverage"] = (adata.obs["_n_genes"] < floor).to_numpy()
 
     for c in ("_n_counts", "_n_genes"):
