@@ -33,6 +33,7 @@ from tcrsift.annotate_cells import (
     annotate_clusters,
     compose_phenotype_labels,
     gates_from_phenotype_config,
+    tumor_override,
 )
 from tcrsift.config import PhenotypeConfig
 from tcrsift.signatures import (
@@ -408,3 +409,71 @@ class TestInjectableStateRegistries:
         })
         labels = _labels(adata, t_state_reference=custom_t)
         assert labels["0"] == "CD8 Cyto2"
+
+
+class TestTumorOverrideFactory:
+    """tumor_override wires the h37-style tumor rule (primary OR any-marker+TF
+    rescue) in one line, with caller-supplied panels (#340 follow-up)."""
+
+    def test_builds_h37_rule_shape(self):
+        ov = tumor_override(_CTA, lineage_tfs=["RUNX2", "SATB2"])
+        assert isinstance(ov, MarkerCountOverride)
+        assert ov.label == "Tumor"
+        assert ov.gene_set == tuple(_CTA)
+        assert ov.min_distinct == 2 and ov.min_cluster_frac == 0.4
+        # rescue gates on the BROAD >=1-marker fraction (rescue_min_distinct=1).
+        assert ov.rescue == (["RUNX2", "SATB2"], 1.0, 0.1, 1)
+
+    def test_no_rescue_without_tfs(self):
+        assert tumor_override(_CTA).rescue is None
+
+    def test_custom_label_and_thresholds_propagate(self):
+        ov = tumor_override(
+            _CTA, label="Malignant", min_distinct=3, min_cluster_frac=0.6,
+            lineage_tfs="tf_score", tf_min=2.0, rescue_frac=0.2,
+            rescue_min_distinct=2, count_col="cta_load",
+        )
+        assert ov.label == "Malignant" and ov.min_distinct == 3
+        assert ov.min_cluster_frac == 0.6
+        assert ov.rescue == ("tf_score", 2.0, 0.2, 2)
+        assert ov.resolved_count_col() == "cta_load"
+
+    def test_rescues_low_coverage_tumor_end_to_end(self):
+        # Low-coverage tumor: no cell clears >=2 CTAs, but most show >=1 and TF is
+        # high. tumor_override with lineage_tfs fires (any-marker rescue); without
+        # it, the cluster stays non-Tumor.
+        rng = np.random.default_rng(1)
+        collagen = {"COL1A1": 8, "COL1A2": 8, "COL3A1": 8, "DCN": 6, "LUM": 6}
+
+        def cell(bumps):
+            x = np.zeros(len(_OV_GENES))
+            for i, g in enumerate(_OV_GENES):
+                if g.startswith("F"):
+                    x[i] = rng.poisson(25)
+            for g, v in bumps.items():
+                x[_OVI[g]] = v
+            return x
+
+        rows, leiden = [], []
+        for j in range(40):
+            b = {**collagen, "TF1": 6, "TF2": 6}
+            if j < 34:
+                b["CTA1"] = 5
+            rows.append(cell(b)); leiden.append("tumor_sparse")
+        for _ in range(40):
+            rows.append(cell({"CD3D": 6, "CD3E": 6, "CD8A": 6, "CD8B": 6, "GZMB": 6}))
+            leiden.append("tcell")
+        adata = ad.AnnData(
+            X=np.array(rows), var=pd.DataFrame(index=_OV_GENES),
+            obs=pd.DataFrame({"leiden": pd.Categorical(leiden)},
+                             index=[f"c{i}" for i in range(len(rows))]),
+        )
+
+        _, no_tf = _ov_labels(adata.copy(), overrides=[tumor_override(_CTA)])
+        assert no_tf["tumor_sparse"] != "Tumor"
+
+        _, with_tf = _ov_labels(
+            adata.copy(), overrides=[tumor_override(_CTA, lineage_tfs=list(_TF))]
+        )
+        assert with_tf["tumor_sparse"] == "Tumor"
+        assert with_tf["tcell"].startswith("CD8")  # immune cluster untouched

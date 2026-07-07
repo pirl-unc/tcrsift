@@ -85,6 +85,7 @@ _MODULE_EXPORTS = {
         "AnnotationGates",
         "DEFAULT_GATES",
         "MarkerCountOverride",
+        "tumor_override",
     ),
     ".clonotype": (
         "aggregate_clonotypes",
