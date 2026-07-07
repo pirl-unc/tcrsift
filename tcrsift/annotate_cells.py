@@ -136,6 +136,61 @@ class MarkerCountOverride:
         return "n_markers_" + re.sub(r"\W+", "_", self.label.strip().lower())
 
 
+def tumor_override(
+    gene_set,
+    *,
+    label: str = "Tumor",
+    min_distinct: int = 2,
+    min_cluster_frac: float = 0.4,
+    lineage_tfs=None,
+    tf_min: float = 1.0,
+    rescue_frac: float = 0.1,
+    rescue_min_distinct: int = 1,
+    min_expr: float = 0.0,
+    count_col: str | None = None,
+) -> MarkerCountOverride:
+    """Build a :class:`MarkerCountOverride` encoding the h37-style tumor call, so a
+    new cancer type gets the rule in one line (#340 follow-up).
+
+    The rule (h37's osteosarcoma relabel, generalized): a cluster is ``label``
+    when **either**
+
+    - **primary** — a fraction ``min_cluster_frac`` of its cells each express
+      ``>= min_distinct`` distinct genes from ``gene_set``; **or**
+    - **rescue** — the cluster-mean of ``lineage_tfs`` is ``>= tf_min`` *and* a
+      fraction ``rescue_frac`` of its cells express ``>= rescue_min_distinct``
+      (default **1**, the broad any-marker signal) — catching low-coverage tumor
+      whose sparse markers dropped below the primary bar.
+
+    ``gene_set`` (a marker/cancer-testis-antigen panel) and ``lineage_tfs`` (a
+    gene list, single gene, or precomputed ``adata.obs`` score column) are
+    **caller/oncoref-supplied domain data** — tcrsift deliberately ships no tumor
+    gene panel (that stays oncoref's job, #310), only this mechanism. Different
+    cancers plug in their own panels:
+
+    >>> # osteosarcoma: osteoblastic TFs rescue low-CTA-coverage tumor
+    >>> tumor_override(MY_CTA_PANEL, lineage_tfs=["RUNX2", "SATB2"])
+    >>> # a carcinoma with no rescue signal — primary bar only
+    >>> tumor_override(MY_CTA_PANEL)
+
+    Pass the result to ``annotate_cells(overrides=[...])``. Omitting
+    ``lineage_tfs`` disables the rescue (primary bar only).
+    """
+    rescue = (
+        (lineage_tfs, tf_min, rescue_frac, rescue_min_distinct)
+        if lineage_tfs is not None else None
+    )
+    return MarkerCountOverride(
+        label=label,
+        gene_set=tuple(gene_set),
+        min_distinct=min_distinct,
+        min_cluster_frac=min_cluster_frac,
+        rescue=rescue,
+        min_expr=min_expr,
+        count_col=count_col,
+    )
+
+
 def _distinct_marker_counts(adata, gene_set, min_expr: float = 0.0) -> np.ndarray:
     """Per-cell count of DISTINCT genes from ``gene_set`` expressed (> ``min_expr``).
 

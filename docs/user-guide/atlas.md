@@ -71,24 +71,41 @@ annotate_cells(atlas, reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES)
 `PBMC_CELL_TYPE_SIGNATURES` is an explicit alias for the default, so an override
 reads symmetrically against `SOLID_TUMOR_CELL_TYPE_SIGNATURES`.
 
-## Typing malignant cells
+## Typing malignant cells (any cancer type)
 
 Malignant cells are **not** a signature in either registry — a tumor cluster
-often shares collagen with fibroblasts and loses the argmax. Type it on positive
-marker-count evidence instead, with `MarkerCountOverride` (a caller-supplied
-antigen/marker panel; TCRsift only counts + relabels):
+often shares collagen with fibroblasts and loses the argmax, and there is no
+reliable pan-cancer tumor expression program. Type it on positive marker-count
+evidence instead. `tumor_override` wires the h37-style rule in one line:
+
+- **primary** — relabel `Tumor` if a fraction of cells each express ≥2 distinct
+  markers from your panel; **or**
+- **rescue** — a lineage-TF is high **and** ≥1 marker shows in a fraction of
+  cells (catches low-coverage tumor whose sparse markers dropped below the
+  primary bar).
 
 ```python
-from tcrsift.annotate_cells import MarkerCountOverride
+from tcrsift.annotate_cells import tumor_override
 
-tumor = MarkerCountOverride(
-    "Tumor", gene_set=MY_CTA_PANEL, min_distinct=2, min_cluster_frac=0.4,
-    # Rescue a low-coverage cluster: lineage-TF high AND >=1 marker in >=10% of
-    # cells (rescue_min_distinct=1 gates on the broad any-marker fraction).
-    rescue=(["RUNX2", "SATB2"], 1.0, 0.1, 1),
-)
-annotate_cells(atlas, reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES, overrides=[tumor])
+# The marker panel (cancer-testis antigens, etc.) and the rescue TFs are YOUR
+# domain data — TCRsift ships no tumor panel (that stays oncoref's job); it only
+# provides the counting + relabel mechanism.
+osteosarcoma = tumor_override(MY_CTA_PANEL, lineage_tfs=["RUNX2", "SATB2"])
+annotate_cells(atlas, reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES,
+               overrides=[osteosarcoma])
 ```
+
+Adapting to another cancer is just swapping the domain data — a different CTA
+panel and, if you have one, a tissue-lineage-TF set for the rescue (omit
+`lineage_tfs` to use the primary bar alone):
+
+```python
+tumor_override(MELANOMA_PANEL, lineage_tfs=["MITF", "SOX10"])   # melanoma
+tumor_override(CARCINOMA_PANEL)                                  # no rescue signal
+```
+
+`tumor_override` returns a `MarkerCountOverride`, so you can still reach for the
+class directly when you need finer control (custom `min_expr`, `count_col`, …).
 
 ## Notes
 
