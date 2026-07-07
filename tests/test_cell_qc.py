@@ -260,3 +260,76 @@ class TestSolidTumorPreset:
         assert not mask[0:10].any()   # pure tumor: 1 program (fibroblast), not flagged
         assert mask[10:20].all()      # tumor+T doublet: caught via fibroblast handle
         assert not mask[20:30].any()  # clean T cells
+
+
+class TestQcNoneDisableAndWarn:
+    """#333: None means 'disable this bound', gentle defaults, loud cull warning."""
+
+    def test_min_mito_floor_off_by_default(self, qc_adata):
+        # qc_adata's non-doublet cells are ~0% mito; the OLD 2% default floor
+        # would cull them. Bare-ish call must NOT apply a mito floor now.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out, wf = cell_qc_funnel(qc_adata, min_genes=3, min_counts=5)
+        assert "min_mito" not in set(wf["step"])   # floor off by default
+        # The ~0%-mito majority survives (only doublet gates + max_mito trim);
+        # the old 2% floor would have culled nearly all of them.
+        assert out.n_obs > 40
+
+    def test_none_disables_max_genes(self):
+        genes = [f"G{i}" for i in range(50)]
+        X = np.zeros((4, len(genes)))
+        X[0, :40] = 5.0          # cell 0: 40 genes (high)
+        X[1:, :8] = 5.0          # cells 1-3: 8 genes each
+        adata = ad.AnnData(X=X, var=pd.DataFrame(index=genes),
+                           obs=pd.DataFrame(index=[f"c{i}" for i in range(4)]))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            # max_genes unset (None) → the high-gene cell is kept.
+            keep, _ = cell_qc_funnel(adata, min_genes=1, min_counts=1)
+            # max_genes=20 → it is dropped.
+            drop, wf = cell_qc_funnel(adata, min_genes=1, min_counts=1, max_genes=20)
+        assert keep.n_obs == 4
+        assert drop.n_obs == 3
+        assert "max_genes" in set(wf["step"])
+
+    def test_loud_warning_on_large_single_step_cull(self, qc_adata, caplog):
+        import logging
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with caplog.at_level(logging.WARNING, logger="tcrsift.qc"):
+                out, wf = cell_qc_funnel(
+                    qc_adata, min_genes=3, min_counts=5, min_mito_pct=2.0
+                )
+        # The 2% floor is the reported footgun: it culls the ~0%-mito majority.
+        assert wf.set_index("step")["removed"]["min_mito"] > 10
+        assert any(
+            "min_mito" in r.getMessage() and "removed" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_config_restores_opinionated_floor(self, qc_adata):
+        from tcrsift.config import LoadConfig
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            off, _ = cell_qc_funnel(qc_adata, min_genes=3, min_counts=5)
+            cfg, wf = cell_qc_funnel(
+                qc_adata, config=LoadConfig(min_genes=3, min_counts=5)
+            )
+        # LoadConfig carries the opinionated PBMC min_mito_pct=2.0 → floor applies.
+        assert "min_mito" in set(wf["step"])
+        assert cfg.n_obs < off.n_obs
+
+    def test_low_coverage_flag_survives_disabled_min_genes(self):
+        # min_genes=None must not crash the 2×min_genes low-coverage default.
+        genes = [f"G{i}" for i in range(30)]
+        X = np.zeros((3, len(genes)))
+        X[:, :20] = 3.0
+        adata = ad.AnnData(X=X, var=pd.DataFrame(index=genes),
+                           obs=pd.DataFrame(index=[f"c{i}" for i in range(3)]))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out, _ = cell_qc_funnel(adata, min_genes=None, min_counts=1)
+        assert out.n_obs == 3
+        assert "qc_low_coverage" in out.obs.columns
