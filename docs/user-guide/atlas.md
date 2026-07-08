@@ -121,38 +121,57 @@ dominated by whole-atlas structure. Biology that lives *within* a compartment �
 rare pDC/cDC1 co-embedded in myeloid, genuine γδ vs ambient-αβ CD8 sharing one
 cytotoxic cluster, tumor sub-states — doesn't resolve there. `refine_cluster` is
 the general recovery pass: it isolates a compartment, **re-embeds it alone** on
-its own Pearson residuals (via `embed_cells`), sub-clusters it, and hands each
-sub-cluster to a caller callback that names it. The discriminating logic lives
-entirely in `relabel_fn` — the same primitive drives γδ/αβ-CD8 disaggregation,
-DC recovery, and tumor sub-state splitting.
+its own Pearson residuals, sub-clusters it, and hands each sub-cluster to a
+caller callback that names it. The discriminating logic lives entirely in
+`relabel_fn` — the same primitive drives γδ/αβ-CD8 disaggregation, DC recovery,
+and tumor sub-state splitting.
+
+The re-embed is a **fixed, exposed recipe**: `counts → normalize_pearson_residuals
+→ nan_to_num → pca(n_comps=min(n_pcs, n_obs-1, n_vars-1)) → neighbors(n_neighbors)
+→ leiden(resolution, flavor="igraph", n_iterations=2, directed=False)`, all on
+`random_state`, no UMAP. When you pass `informative_genes` the clustering panel
+is used **verbatim** — no MT/receptor/min-cells curation — so a hand-rolled pass
+running the identical steps and seeds reproduces the sub-partition byte-for-byte
+and can be retired in favor of this primitive.
+
+γδ/αβ-CD8 disaggregation ships as a ready `relabel_fn`, `gd_cd8_relabel`:
 
 ```python
-import numpy as np
-from tcrsift import refine_cluster
+from tcrsift import refine_cluster, gd_cd8_relabel
 
-def call_gd_vs_ab(sub):
-    # One sub-cluster of the re-embedded compartment. Decide on aggregate signal.
-    trdc = float(np.asarray(sub[:, "TRDC"].X).mean())
-    ab_capture = sub.obs["has_ab_contig"].mean()   # per-cell αβ-VDJ capture
-    if trdc >= 0.9 and ab_capture < 0.25:
-        return "γδ T", "cd8::gd"        # (label, optional final_cluster tag)
-    return None                          # leave this sub-cluster's label as-is
+# has_ab_contig is a caller-populated bool obs column — materialize it however
+# your VDJ capture is encoded. For a "α/β" paired-CDR3 string:
+s = atlas.obs["CDR3a/b"].astype(str)
+atlas.obs["has_ab_contig"] = (s != "/") & (s != "") & s.str.contains("[A-Z]", regex=True)
 
 refine_cluster(
-    atlas,                               # mutated in place
-    "CD8 T",                             # compartment: label / bool mask / predicate
-    relabel_fn=call_gd_vs_ab,
-    resolution=1.0,
+    atlas,                          # mutated in place
+    "CD8 T",                        # compartment: label / bool mask / index / predicate
+    relabel_fn=gd_cd8_relabel(),    # TRDC>=0.9 (log1p CP10K) AND αβ-capture<0.25 → γδ
+    informative_genes=panel,        # used verbatim
+    resolution=0.5,
+    n_pcs=30,
+    min_cells=51,                   # skip compartments too small to re-embed
+    label_col="phenotype_base",
     final_cluster_col="final_cluster",
 )
 ```
 
-`mask` selects the compartment (a label matched against `label_col`, a boolean
-mask, a positional-index list, or a predicate `adata -> mask`); only those cells'
-labels are touched. `relabel_fn(sub_adata)` receives a copy of one sub-cluster
-(raw counts + the local re-embedding) and returns a label, a
-`(label, final_cluster)` pair, or `None` to leave it unchanged. Compartments
-smaller than `min_cells` are skipped (too few cells to resolve sub-structure).
+`gd_cd8_relabel` calls a sub-cluster γδ **iff both** its mean `TRDC` (read from
+`.X`, so keep it on the log1p-CP10K scale the 0.9 cutoff assumes) clears
+`trdc_min` **and** its mean `has_ab_contig` is below `ab_max` — aggregating per
+sub-cluster is what makes it robust to the ~46% per-cell `TRDC` dropout. It
+returns `("gd T", "gdt")` or `("CD8 effector/cytotoxic", "gdt_cd8")`, and warns
+(doesn't fail) when a sub-cluster's mean capture lands between the two regimes.
+All of that — gene, obs column, thresholds, labels — is overridable.
+
+Writing your own `relabel_fn` is the general path: it receives a copy of one
+sub-cluster (original-scale `.X`, `obs` intact, plus `obs["leiden"]` = the local
+sub-cluster id) and returns a label, a `(label, final_cluster)` pair, or `None`
+to leave it unchanged. `mask` selects the compartment (a label matched against
+`label_col`, a boolean mask, a positional-index list, or a predicate `adata ->
+mask`); only those cells' labels are touched. Compartments smaller than
+`min_cells` are skipped.
 
 ## Notes
 

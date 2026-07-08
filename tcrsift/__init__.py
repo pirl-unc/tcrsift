@@ -36,6 +36,7 @@ _MODULE_EXPORTS = {
     ".embed": (
         "embed_cells",
         "refine_cluster",
+        "gd_cd8_relabel",
     ),
     ".sample_sheet": (
         "Sample",
