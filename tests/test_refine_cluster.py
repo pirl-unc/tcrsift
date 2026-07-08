@@ -50,6 +50,8 @@ def mixed_atlas():
     X[50:100, 20:40] += rng.poisson(8, size=(50, 20))   # CD8 sub-pop B
     X[100:200, 40:60] += rng.poisson(8, size=(100, 20))  # Myeloid
     genes = [f"GENE{i}" for i in range(g)]
+    genes[150] = "MT-CO1"       # a mito + a receptor gene the verbatim panel
+    genes[151] = "TRBV20-1"     # must keep (embed_cells would have dropped both)
     obs = pd.DataFrame(
         {"phenotype": ["CD8 T"] * 100 + ["Myeloid"] * 100},
         index=[f"c{i}" for i in range(n)],
@@ -153,3 +155,77 @@ class TestRefineCluster:
         assert set(mixed_atlas.obs["phenotype"].iloc[0:50]) == {"CD8 alpha-beta"}
         # Cells outside the mask were created but never relabeled.
         assert mixed_atlas.obs["phenotype"].iloc[100:200].isna().all()
+
+
+class TestFaithfulReembed:
+    """The re-embed must run the caller's recipe on the panel VERBATIM — the
+    byte-for-byte property a hand-rolled pass needs to be deletable."""
+
+    def test_informative_genes_used_verbatim_not_curated(self, mixed_atlas):
+        # A panel of ONLY a mito + a receptor gene: embed_cells drops both and
+        # would raise "none present"; the faithful re-embed keeps them, so the
+        # call succeeds and the compartment is relabeled.
+        _refine(
+            mixed_atlas,
+            "CD8 T",
+            lambda sub: "refined",
+            informative_genes=["MT-CO1", "TRBV20-1"],
+        )
+        assert set(mixed_atlas.obs["phenotype"].iloc[0:100]) == {"refined"}
+
+    def test_deterministic_partition(self, mixed_atlas):
+        a = mixed_atlas.copy()
+        b = mixed_atlas.copy()
+        _refine(a, "CD8 T", _dominant_marker_label, random_state=0)
+        _refine(b, "CD8 T", _dominant_marker_label, random_state=0)
+        assert list(a.obs["phenotype"]) == list(b.obs["phenotype"])
+
+
+@pytest.fixture
+def gd_compartment():
+    """120-cell "CD8 T" compartment holding a genuine γδ sub-pop (high TRDC,
+    low αβ-capture, marker set A) and an ambient-αβ CD8 sub-pop (no TRDC, high
+    αβ-capture, marker set B); plus a 80-cell untouched myeloid block."""
+    rng = np.random.default_rng(0)
+    n, g = 200, 200
+    X = rng.poisson(0.5, size=(n, g)).astype(float)
+    X[0:60, 0:20] += rng.poisson(8, size=(60, 20))       # γδ marker set
+    X[60:120, 20:40] += rng.poisson(8, size=(60, 20))    # αβ-CD8 marker set
+    X[120:200, 40:60] += rng.poisson(8, size=(80, 20))   # myeloid (excluded)
+    genes = [f"GENE{i}" for i in range(g)]
+    genes[100] = "TRDC"
+    X[:, 100] = 0.0
+    X[0:60, 100] = 3.0                                   # TRDC only in γδ cells
+    ab = np.zeros(n, dtype=bool)
+    ab[0:60] = rng.random(60) < 0.10                     # γδ: sparse αβ-capture
+    ab[60:120] = rng.random(60) < 0.85                   # αβ-CD8: high capture
+    obs = pd.DataFrame(
+        {
+            "phenotype": ["CD8 T"] * 120 + ["Myeloid"] * 80,
+            "has_ab_contig": ab,
+        },
+        index=[f"c{i}" for i in range(n)],
+    )
+    return ad.AnnData(X=X, var=pd.DataFrame(index=genes), obs=obs)
+
+
+class TestGdCd8ThroughRefineCluster:
+    def test_disaggregates_gd_from_ab_cd8(self, gd_compartment):
+        from tcrsift.embed import gd_cd8_relabel
+
+        _refine(
+            gd_compartment,
+            "CD8 T",
+            gd_cd8_relabel(),
+            resolution=0.5,
+            final_cluster_col="final_cluster",
+        )
+        pheno = gd_compartment.obs["phenotype"]
+        fc = gd_compartment.obs["final_cluster"]
+        assert set(pheno.iloc[0:60]) == {"gd T"}
+        assert set(fc.iloc[0:60]) == {"gdt"}
+        assert set(pheno.iloc[60:120]) == {"CD8 effector/cytotoxic"}
+        assert set(fc.iloc[60:120]) == {"gdt_cd8"}
+        # Myeloid untouched, no final-cluster tag.
+        assert set(pheno.iloc[120:200]) == {"Myeloid"}
+        assert fc.iloc[120:200].isna().all()
