@@ -35,6 +35,7 @@ _MODULE_EXPORTS = {
     ),
     ".embed": (
         "embed_cells",
+        "refine_cluster",
     ),
     ".sample_sheet": (
         "Sample",
