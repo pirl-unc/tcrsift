@@ -114,6 +114,46 @@ tumor_override(oncoref.CTA_testis_restricted_gene_names(), lineage_tfs=["MITF"])
 `tumor_override` returns a `MarkerCountOverride`, so you can still reach for the
 class directly when you need finer control (custom `min_expr`, `count_col`, …).
 
+## Recovering sub-structure with `refine_cluster`
+
+`annotate_clusters` labels clusters over the **global** embedding, whose axes are
+dominated by whole-atlas structure. Biology that lives *within* a compartment —
+rare pDC/cDC1 co-embedded in myeloid, genuine γδ vs ambient-αβ CD8 sharing one
+cytotoxic cluster, tumor sub-states — doesn't resolve there. `refine_cluster` is
+the general recovery pass: it isolates a compartment, **re-embeds it alone** on
+its own Pearson residuals (via `embed_cells`), sub-clusters it, and hands each
+sub-cluster to a caller callback that names it. The discriminating logic lives
+entirely in `relabel_fn` — the same primitive drives γδ/αβ-CD8 disaggregation,
+DC recovery, and tumor sub-state splitting.
+
+```python
+import numpy as np
+from tcrsift import refine_cluster
+
+def call_gd_vs_ab(sub):
+    # One sub-cluster of the re-embedded compartment. Decide on aggregate signal.
+    trdc = float(np.asarray(sub[:, "TRDC"].X).mean())
+    ab_capture = sub.obs["has_ab_contig"].mean()   # per-cell αβ-VDJ capture
+    if trdc >= 0.9 and ab_capture < 0.25:
+        return "γδ T", "cd8::gd"        # (label, optional final_cluster tag)
+    return None                          # leave this sub-cluster's label as-is
+
+refine_cluster(
+    atlas,                               # mutated in place
+    "CD8 T",                             # compartment: label / bool mask / predicate
+    relabel_fn=call_gd_vs_ab,
+    resolution=1.0,
+    final_cluster_col="final_cluster",
+)
+```
+
+`mask` selects the compartment (a label matched against `label_col`, a boolean
+mask, a positional-index list, or a predicate `adata -> mask`); only those cells'
+labels are touched. `relabel_fn(sub_adata)` receives a copy of one sub-cluster
+(raw counts + the local re-embedding) and returns a label, a
+`(label, final_cluster)` pair, or `None` to leave it unchanged. Compartments
+smaller than `min_cells` are skipped (too few cells to resolve sub-structure).
+
 ## Notes
 
 - **Config**: `cell_qc_funnel(config=...)` accepts a top-level `TCRsiftConfig`
