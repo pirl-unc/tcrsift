@@ -162,14 +162,17 @@ def tumor_override(
       (default **1**, the broad any-marker signal) — catching low-coverage tumor
       whose sparse markers dropped below the primary bar.
 
-    ``gene_set`` defaults to oncoref's pan-cancer cancer-testis-antigen panel
-    (:func:`oncoref.CTA_gene_names`, HPA-filtered + expressed). CTAs are shared
-    across solid tumors, so the **panel is reused across cancers** and only
-    ``lineage_tfs`` (the rescue) is tissue-specific. tcrsift owns the counting +
-    relabel mechanism; the curated CTA gene sets live in oncoref (#310). Pass your
-    own ``gene_set`` (e.g. ``oncoref.CTA_testis_restricted_gene_names()`` or a
-    tuned ``oncoref.CTA_by_axes(...)``) to override. ``lineage_tfs`` is a gene
-    list, single gene, or precomputed ``adata.obs`` score column:
+    ``gene_set`` defaults to oncoref's pan-cancer cancer-testis-antigen panel —
+    :func:`oncoref.CTA_gene_names` (HPA-filtered + expressed) **unioned with**
+    :func:`oncoref.cta_clinical_target_gene_names` (canonical clinically-expressed
+    CTAs — NY-ESO-1/CTAG2, MAGEA11, … — that testis-restriction filtering excludes
+    but are real tumor markers, #350). CTAs are shared across solid tumors, so the
+    **panel is reused across cancers** and only ``lineage_tfs`` (the rescue) is
+    tissue-specific. tcrsift owns the counting + relabel mechanism; the curated CTA
+    gene sets live in oncoref (#310). Pass your own ``gene_set`` (e.g.
+    ``oncoref.CTA_testis_restricted_gene_names()`` or a tuned
+    ``oncoref.CTA_by_axes(...)``) to override. ``lineage_tfs`` is a gene list,
+    single gene, or precomputed ``adata.obs`` score column:
 
     >>> # osteosarcoma: osteoblastic TFs rescue low-CTA-coverage tumor
     >>> tumor_override(lineage_tfs=["RUNX2", "SATB2"])
@@ -184,9 +187,15 @@ def tumor_override(
     if gene_set is None:
         import oncoref
 
-        # Deterministic order (oncoref returns a set); order is immaterial to the
-        # marker count but keeps the override reproducible.
-        gene_set = sorted(oncoref.CTA_gene_names())
+        # oncoref's testis-restricted default (CTA_gene_names) drops several
+        # canonical clinically-expressed CTAs (NY-ESO-1/CTAG2, MAGEA11, …) that are
+        # bona-fide tumor markers; union in the clinical-target set so the default
+        # doesn't undercount tumor (#350). Sorted for a reproducible override
+        # (order is immaterial to the marker count).
+        gene_set = sorted(
+            set(oncoref.CTA_gene_names())
+            | set(oncoref.cta_clinical_target_gene_names())
+        )
     rescue = (
         (lineage_tfs, tf_min, rescue_frac, rescue_min_distinct)
         if lineage_tfs is not None else None

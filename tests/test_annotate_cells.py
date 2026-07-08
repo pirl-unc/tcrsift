@@ -431,7 +431,13 @@ class TestTumorOverrideFactory:
         import oncoref
 
         ov = tumor_override(lineage_tfs=["RUNX2"])
-        assert set(ov.gene_set) == oncoref.CTA_gene_names()
+        # Default is the testis-restricted set UNIONED with the clinical targets
+        # it excludes (NY-ESO-1/CTAG2, MAGEA11, …) so tumor isn't undercounted (#350).
+        expected = set(oncoref.CTA_gene_names()) | set(
+            oncoref.cta_clinical_target_gene_names()
+        )
+        assert set(ov.gene_set) == expected
+        assert {"CTAG2", "MAGEA11"} <= set(ov.gene_set)  # clinical targets present
         assert len(ov.gene_set) > 100  # oncoref ships a few hundred CTAs
 
     def test_explicit_gene_set_overrides_default(self):
