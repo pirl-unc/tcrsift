@@ -84,9 +84,12 @@ evidence instead. `tumor_override` wires the h37-style rule in one line:
   cells (catches low-coverage tumor whose sparse markers dropped below the
   primary bar).
 
-The marker panel defaults to **oncoref's** curated pan-cancer CTA set
-(`oncoref.CTA_gene_names()`) — CTAs are shared across solid tumors, so the panel
-is reused across cancers and only the lineage-TF rescue is tissue-specific:
+The marker panel defaults to **oncoref's** curated pan-cancer CTA set —
+`oncoref.CTA_gene_names()` unioned with `oncoref.cta_clinical_target_gene_names()`
+(canonical clinically-expressed CTAs like NY-ESO-1/CTAG2 and MAGEA11 that
+testis-restriction filtering drops but are real tumor markers). CTAs are shared
+across solid tumors, so the panel is reused across cancers and only the
+lineage-TF rescue is tissue-specific:
 
 ```python
 from tcrsift.annotate_cells import tumor_override
