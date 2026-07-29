@@ -1818,22 +1818,23 @@ def assemble_full_sequences(
         Leader sequence for beta chain. Same options as alpha_leader.
         Default is "CD8A" to provide distinct sequences from alpha chain.
     leader_fallback : str or None
-        Curated signal peptide (CD8A/CD28/IgK/TRAC/TRBC) to substitute when a
-        ``from_contig`` leader is implausible — weak-Kozak over-capture,
-        out-of-window length, missing Met/h-region (#263). Default ``None``
-        keeps the contig-extracted leader and leaves its ``{chain}_leader_qc``
-        flag set (visible, not silent). Only affects ``from_contig`` leaders.
+        Signal peptide to substitute when a ``from_contig`` leader is
+        implausible — weak-Kozak over-capture, out-of-window length, missing
+        Met/h-region (#263). Default ``"germline"`` uses the V gene's germline
+        leader; curated keys CD8A/CD28/IgK/TRAC/TRBC are also accepted. ``None``
+        currently resolves to the same germline fallback. Only affects
+        ``from_contig`` leaders.
     include_constant : bool
         Include constant region sequences.
     constant_source : str
         Source for constant regions:
 
-        - ``"canonical"`` (default): splice in the hardcoded canonical
+        - ``"canonical"``: splice in the packaged canonical
           human TRAC / TRBC1 / TRBC2 (:data:`HUMAN_CONSTANT_REGIONS_AA`).
           When CellRanger contigs are available, the canonical's first
           ~15 residues are verified against the observed contig start
           and a ``qc_warnings`` entry is emitted on mismatch.
-        - ``"ensembl"``: back-compat alias for ``"canonical"``. The
+        - ``"ensembl"`` (default): back-compat alias for ``"canonical"``. The
           earlier pyensembl-backed path was removed in #66 — it read
           the full mRNA at the wrong frame offset and silently
           truncated constants to 2–11 residues.

@@ -11,7 +11,8 @@
 # limitations under the License.
 
 """
-TCRsift: TCR selection from antigen-specific culture and scRNA/VDJ sequencing data.
+TCRsift: TCR clonotype prioritization from antigen-enrichment cultures and
+single-cell VDJ and gene-expression data.
 
 The public API is resolved lazily so light-weight imports such as
 `tcrsift.sample_sheet` or `from tcrsift import load_sample_sheet` do not pull in

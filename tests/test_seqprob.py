@@ -137,7 +137,7 @@ def test_tcrpeg_missing_deps_raises():
         seqprob.TCRpegProbabilityModel().fit(["CASSF"])
 
 
-@pytest.mark.skipif(not _HAS_TCRPEG, reason="needs the [tcrpeg] extra")
+@pytest.mark.skipif(not _HAS_TCRPEG, reason="needs the core TCRpeg dependency")
 class TestTCRpegBackend:
     def test_fit_and_score_smoke(self):
         seqs = _toy_repertoire(400)

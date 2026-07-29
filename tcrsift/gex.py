@@ -359,8 +359,8 @@ def compute_signature_scores_per_clonotype(
         Per-cell frame with GEX columns named ``{gex_prefix}.GENE``
         (the shape :func:`augment_with_gex` writes).
     signatures : dict[str, tuple[str, ...]] | None
-        Mapping of signature name → gene-symbol tuple. Defaults to the
-        five canonical T-cell signatures from :mod:`tcrsift.signatures`.
+        Mapping of signature name → gene-symbol tuple. Defaults to
+        :data:`tcrsift.signatures.T_CELL_SIGNATURES`.
     group_col : str
         Column identifying the clonotype (default ``CDR3_pair``).
     gex_prefix : str

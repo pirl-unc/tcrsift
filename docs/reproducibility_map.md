@@ -20,7 +20,7 @@ SIGNATURE_GUIDANCE["Differentiated"].use_for
 | Signature | Use for | Why it's reproducible |
 | --- | --- | --- |
 | **Differentiated** (effector − naïve/stem, signed; #141) | **clonal expansion** — which clones expanded in culture | Best RNA axis: separates expanded vs rare clones at AUROC up to 0.85, same direction in both donors. |
-| **AcuteActivation** (TNFRSF9/4-1BB, MKI67; #142) | the **one reproducible RNA correlate of publicness** | Consistently *lower* in public (TRAV12-2) clones across all three normalizations and both donors (modest but stable). Private/specific clones carry more recent cognate activation + proliferation; the public pool is more bystander-like. Runs *inverse* to expansion. |
+| **AcuteActivation** (TNFRSF9/4-1BB, MKI67; #142/#303) | recent antigen response / proliferation; a pilot correlate of publicness | Lower in public TRAV12-2 clones across both donors in the MART-1 pilot, but both genes positively tracked culture expansion in the later compartment analysis. Use as supporting state evidence, not a standalone specificity or expansion call. |
 
 ## Situational — document, don't default
 

@@ -4,6 +4,13 @@ Lightweight generation-probability estimator for TCR β/α CDR3
 sequences. Used to flag likely-public CDR3s so DB matches against
 them can be appropriately discounted (#58).
 
+This is the older, interpretable V/J/length/insertion heuristic behind
+`annotate_clonotypes(add_publicness=True)`. New selection workflows normally
+use the externally fitted Pgen/Ppost backgrounds in
+[Sequence probability](seqprob.md), especially observed-repertoire Ppost.
+Their numerical scales are different; do not transfer thresholds between
+them.
+
 ## Why a proxy, not OLGA
 
 The gold-standard tool is **OLGA** (Sethna 2019), which fits explicit

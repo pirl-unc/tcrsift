@@ -29,7 +29,7 @@ interface:
   repertoires (OLGA used *once at build time* to produce training
   sequences — never at runtime, so tcrsift stays Apache-2.0).
 - :class:`TCRpegProbabilityModel` — wraps **TCRpeg** (Jiang & Li 2023), an
-  autoregressive deep model. Optional extra: ``pip install tcrsift[tcrpeg]``.
+  autoregressive deep model. TCRpeg and PyTorch are core dependencies.
 
 Both are trained on an external reference (not the experiment's own clones)
 so the probability is a genuine background, not circular with the selection
@@ -325,18 +325,19 @@ class GeneAwareKmerModel(SequenceProbabilityModel):
 
 
 class TCRpegProbabilityModel(SequenceProbabilityModel):
-    """TCRpeg-backed CDR3 probability (optional ``[tcrpeg]`` extra).
+    """TCRpeg-backed CDR3 probability.
 
     Wraps the autoregressive TCRpeg model (Jiang & Li 2023). Heavier
     (PyTorch) but better-calibrated than the k-mer Markov model. Trained on
     the same external reference. Lazy import; raises :class:`ImportError`
-    with an install hint when the extra is missing.
+    with an install hint when the core dependency is missing.
     """
 
     _INSTALL_HINT = (
         "TCRpeg (+ torch) is required for the TCRpeg sequence-probability "
-        "backend but is not installed. Install with:\n\n"
-        "    pip install tcrsift[tcrpeg]\n\n"
+        "backend but is not installed. Reinstall tcrsift with its core "
+        "dependencies:\n\n"
+        "    pip install --upgrade tcrsift\n\n"
         "Or use the numpy-only KmerProbabilityModel (the default backend)."
     )
 
@@ -527,9 +528,9 @@ def load_background_model(
     post-selection publicness measure) or ``"pgen"`` (fit on an
     OLGA-generated reference, pre-selection generation probability). Only the
     ``"kmer"`` backend ships defaults. **Role-pure**: raises
-    :class:`FileNotFoundError` when the requested role isn't shipped for that
-    chain (e.g. no observed-α ppost) — it never silently returns the Pgen
-    model in place of Ppost. Callers decide how to degrade.
+    :class:`FileNotFoundError` when the requested backend/role/chain model is
+    not shipped — it never silently returns a Pgen model in place of Ppost.
+    Callers decide how to degrade.
     """
     chain = chain.lower()
     key = (chain, backend, role)

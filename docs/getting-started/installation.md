@@ -3,8 +3,11 @@
 ## Requirements
 
 - Python 3.9 or higher
-- numpy, pandas, scanpy, anndata (core dependencies)
-- matplotlib, seaborn (visualization)
+- Enough memory and temporary disk for the combined single-cell dataset
+
+The normal install includes the scientific stack, PDF sequence reports,
+constant-region references, Excel input support, and the k-mer/TCRpeg sequence
+probability backends.
 
 ## Install from PyPI
 
@@ -22,51 +25,27 @@ pip install -e .
 
 ## Optional Dependencies
 
-Install all optional feature bundles:
+Install everything, including atlas and optional plotting/report helpers:
 
 ```bash
-pip install "tcrsift[reports,assembly,excel]"
+pip install "tcrsift[full]"
 ```
 
-### PDF Report Generation
+Available extras:
 
-For generating PDF reports:
+| Extra | Adds |
+| --- | --- |
+| `atlas` | Harmony, Leiden, and graph dependencies for `tcrsift cells embed` |
+| `plots` | UpSet plots (a built-in bar-chart fallback is used without it) |
+| `reports` | `pdfkit` for legacy HTML-to-PDF report paths |
+| `docs` | MkDocs and the documentation theme/plugins |
+| `dev` | pytest, coverage, Ruff, and Pylint |
+| `full` | `atlas`, `plots`, and `reports` together |
 
-```bash
-pip install "tcrsift[reports]"
-```
-
-You'll also need wkhtmltopdf:
-
-=== "macOS"
-    ```bash
-    brew install wkhtmltopdf
-    ```
-
-=== "Ubuntu/Debian"
-    ```bash
-    sudo apt-get install wkhtmltopdf
-    ```
-
-=== "Windows"
-    Download from [wkhtmltopdf.org](https://wkhtmltopdf.org/downloads.html)
-
-### Ensembl Data for Constant Regions
-
-For assembling full-length TCR sequences with constant regions:
-
-```bash
-pip install "tcrsift[assembly]"
-pyensembl install --release 93 --species human
-```
-
-### Excel Support
-
-For SCT Excel input files:
-
-```bash
-pip install "tcrsift[excel]"
-```
+There are no `assembly`, `excel`, or `tcrpeg` extras. Those capabilities and
+dependencies are part of the core package. Constant-region assembly uses
+packaged canonical references; it does not require a separate
+`pyensembl install` download.
 
 ## Verify Installation
 

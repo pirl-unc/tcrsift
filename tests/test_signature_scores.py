@@ -65,10 +65,7 @@ class TestComputeSignatureScores:
         assert result.loc["B", "signature_antigen_response"] == 0
 
     def test_three_default_signatures_emitted(self):
-        """When ``signatures`` is None, the five canonical T-cell sets
-        from ``tcrsift.signatures`` are scored — but the issue #74 ask
-        focuses on three for clonotype output. Verify the focal three
-        all appear in the result."""
+        """The default registry includes the focal issue-#74 output columns."""
         df = _per_cell([
             {
                 "CDR3_pair": "A",

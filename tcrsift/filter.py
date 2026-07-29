@@ -13,7 +13,7 @@
 """
 Clonotype filtering for TCRsift.
 
-Implements tiered filtering to identify antigen-specific TCR clones.
+Implements tiered abundance and study-design filtering for clone prioritization.
 """
 
 from __future__ import annotations

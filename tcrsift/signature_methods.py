@@ -147,10 +147,12 @@ _INVARIANT_SIGNATURES = [
     ),
     Signature(
         "AcuteActivation", ("TNFRSF9", "MKI67"), panel="focal",
-        description="Immediate-early / proliferation axis (4-1BB + Ki-67). "
-        "Runs INVERSE to in-vitro clonal expansion at snapshot (#142): "
-        "singletons look more acutely activated than expanded clones. Not a "
-        "selection signature — split out of the old AntigenExperienced.",
+        description="Recent antigen-response / proliferation axis (4-1BB + "
+        "Ki-67). The newer clone-level compartment analysis found both genes "
+        "positively associated with culture expansion (#303), while the "
+        "earlier two-donor MART-1 pilot found the score lower in public "
+        "TRAV12-2 clones (#142). Treat it as state evidence, not a standalone "
+        "specificity or expansion call.",
     ),
 ]
 
@@ -172,10 +174,11 @@ _COMPOSITE_SIGNATURES = [
         ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7"),
         panel="broad",
         description="Effector program of antigen-experienced cells (IFNG + "
-        "cytolytic core). Recomposed in #142: dropped TNFRSF9/MKI67, which "
-        "are non- or anti-informative for in-vitro clonal expansion and only "
-        "diluted the effector signal — they now live in AcuteActivation. For "
-        "the expansion use case prefer the Differentiated (eff−naïve) axis.",
+        "cytolytic core). Recomposed in #142 to keep this effector axis "
+        "separate from TNFRSF9/MKI67 recent-response/proliferation state, "
+        "which now lives in AcuteActivation and has context-dependent "
+        "associations (#142/#303). For expansion, prefer the Differentiated "
+        "(effector−naïve) axis.",
     ),
     Signature(
         "AIM", ("TNFRSF9", "TNFRSF4"), panel="focal",
@@ -241,12 +244,12 @@ SIGNATURE_GUIDANCE: dict[str, SignatureGuidance] = {
     ),
     "AcuteActivation": SignatureGuidance(
         "recommended",
-        "the one reproducible RNA correlate of publicness",
-        "Modest but stable: TNFRSF9/MKI67 are consistently *lower* in public "
-        "(TRAV12-2) clones across all normalizations and both donors. "
-        "Private/specific clones carry more recent cognate activation + "
-        "proliferation; the public pool is more bystander-like. NB: this "
-        "axis runs inverse to in-vitro clonal expansion (#142).",
+        "recent antigen response / proliferation; pilot publicness correlate",
+        "TNFRSF9/MKI67 were consistently lower in public TRAV12-2 clones in "
+        "the two-donor MART-1 pilot (#142), but both positively tracked culture "
+        "expansion in the later compartment analysis (#303). The context "
+        "difference is why this remains supporting state evidence rather than "
+        "a standalone specificity filter.",
     ),
     "AntigenExperienced": SignatureGuidance(
         "situational",
