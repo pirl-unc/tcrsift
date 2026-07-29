@@ -21,8 +21,13 @@ from tcrsift import (
 )
 
 # 1) Clonotype-level signature scores (mean log1p, CD8-restricted).
-sig_scores = compute_signature_scores_per_clonotype(per_cell_df)
-clones = aggregate_clonotypes(adata).merge(sig_scores, on="CDR3_pair")
+# Use the same clone key as aggregate_clonotypes.
+sig_scores = compute_signature_scores_per_clonotype(
+    per_cell_df,
+    group_col="CDR3ab",
+    cd8_only=True,
+)
+clones = aggregate_clonotypes(adata).merge(sig_scores, on="CDR3ab")
 
 # 2) Tag tier1 ∪ tier2 ∪ top-N-by-signature.
 clones = select_candidates(clones, top_n=3)
@@ -30,7 +35,7 @@ shortlist = clones[clones["is_selected"]]
 
 # 3) Optional per-method picks for the selection-route heatmap.
 clone_method = build_clone_method_long(build_clone_sample_long(adata))
-clone_method = clone_method.merge(sig_scores, on="CDR3_pair")
+clone_method = clone_method.merge(sig_scores, on="CDR3ab")
 per_method_picks = compute_signature_picks_per_method(
     clone_method, top_n=1, pool_clones=set(tier3_plus_clones),
 )

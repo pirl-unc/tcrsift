@@ -1347,6 +1347,22 @@ class TestValidateAnnotateGexArgs:
 class TestAssembleParserHelpStrings:
     """Tests for assemble command help string organization."""
 
+    def test_assemble_accepts_documented_canonical_constant_source(self):
+        """The explicit canonical spelling should match the documented API."""
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "assemble",
+                "-i",
+                "input.csv",
+                "-o",
+                "output.csv",
+                "--constant-source",
+                "canonical",
+            ]
+        )
+        assert args.constant_source == "canonical"
+
     def test_assemble_has_required_group(self):
         """Assemble parser should have a 'required arguments' group."""
         parser = create_parser()
@@ -1665,6 +1681,17 @@ class TestTilSelectParser:
         assert args.samples == [
             "T1=consensus_annotations.T1.csv,clonotypes.T1.csv",
         ]
+
+
+class TestPgenParser:
+    """Tests for the Pgen/Ppost model-management parser."""
+
+    def test_train_defaults_to_packaged_model_compatible_role(self):
+        """Training defaults to custom Ppost; packaged Pgen is not retrained."""
+        parser = create_parser()
+        args = parser.parse_args(["pgen", "train"])
+        assert args.backend == "kmer"
+        assert args.role == "ppost"
 
 
 class TestValidateMatchTilArgs:

@@ -1,5 +1,5 @@
 site_name: TCRsift
-site_description: T-cell receptor selection for TCR-T studies from antigen-specific culture and scRNA/VDJ sequencing
+site_description: T-cell receptor clonotype prioritization from antigen-enrichment cultures and single-cell VDJ and gene-expression data
 site_url: https://pirl-unc.github.io/tcrsift/
 repo_url: https://github.com/pirl-unc/tcrsift
 repo_name: pirl-unc/tcrsift
@@ -67,6 +67,7 @@ nav:
     - Sample Sheets: getting-started/sample-sheets.md
   - User Guide:
     - Pipeline Overview: user-guide/pipeline.md
+    - Multi-sample TIL Prioritization: user-guide/til-signatures.md
     - Single-Cell Atlas Path: user-guide/atlas.md
     - CLI Reference: user-guide/cli.md
     - Filtering Strategies: user-guide/filtering.md

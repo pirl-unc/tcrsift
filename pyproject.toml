@@ -2,7 +2,7 @@
 name = "tcrsift"
 requires-python = ">=3.9"
 authors = [ {name="Alex Rubinsteyn", email="alex.rubinsteyn@unc.edu" } ]
-description = "T-cell receptor selection for TCR-T studies from antigen specific culture and scRNA/VDJ sequencing"
+description = "T-cell receptor clonotype prioritization from antigen-enrichment cultures and single-cell VDJ and gene-expression data"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",

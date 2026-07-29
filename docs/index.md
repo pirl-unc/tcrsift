@@ -1,63 +1,83 @@
 # TCRsift
 
-T-cell receptor selection for TCR-T studies from antigen-specific culture and scRNA/VDJ sequencing.
+Prioritize T-cell receptor clonotypes from paired single-cell VDJ and gene
+expression data.
 
 ## Overview
 
-TCRsift is a comprehensive pipeline for identifying antigen-specific T cell receptor clones from single-cell sequencing data. It supports:
+TCRsift combines observed clonal expansion, T-cell phenotype and expression
+state, public-database annotation, sequence publicness, and optional TIL
+matching. These are prioritization signals: antigen specificity still requires
+experimental validation.
 
-- **Data Loading**: Parse CellRanger VDJ and GEX outputs
-- **CD4/CD8 Phenotyping**: Classify cells based on gene expression
-- **Clonotype Aggregation**: Group cells by CDR3 sequences
-- **Tiered Filtering**: Apply biology-aware filtering to identify antigen-specific clones
-- **Database Annotation**: Match against VDJdb, IEDB, and CEDAR
-- **TIL Matching**: Find culture-validated TCRs in tumor samples
-- **Sequence Assembly**: Build full-length TCR sequences with constant regions
+TCRsift takes standard 10x Genomics Cell Ranger outputs as input:
 
-## Quick Example
+- **VDJ output** from `cellranger vdj`, containing TCR contigs and clonotypes
+- **Matching GEX output** from `cellranger count`, when the workflow uses
+  CD4/CD8 phenotyping or gene-expression signatures
 
-```python
-import tcrsift
+Using those inputs, it can:
 
-# Load sample sheet
-sample_sheet = tcrsift.load_sample_sheet("samples.yaml")
+- prioritize expanded clonotypes with biology-aware filtering
+- score T-cell phenotype and published expression signatures
+- annotate known database matches and sequence publicness
+- find culture-enriched TCRs in matched tumor samples
+- assemble full-length TCR sequences for selected candidates
 
-# Load samples
-adata = tcrsift.load_samples(sample_sheet)
+VDJ-only workflows are also supported when expression-based analyses are not
+needed. See [Input requirements](getting-started/sample-sheets.md) for the
+expected files and sample-sheet fields.
 
-# Phenotype cells
-adata = tcrsift.phenotype_cells(adata)
+## Quick example
 
-# Aggregate clonotypes
-clonotypes = tcrsift.aggregate_clonotypes(adata)
-
-# Filter clonotypes
-filtered = tcrsift.filter_clonotypes(clonotypes, method="threshold", tcell_type="cd8")
-
-# Annotate with VDJdb
-annotated = tcrsift.annotate_clonotypes(filtered, vdjdb_path="/path/to/vdjdb")
-```
-
-Or via command line:
-
-```bash
-tcrsift run \
-    --sample-sheet samples.yaml \
-    --output-dir results/ \
-    --vdjdb /path/to/vdjdb
-```
-
-## Installation
+Install TCRsift and create a minimal sample sheet pointing to the Cell Ranger
+output directories:
 
 ```bash
 pip install tcrsift
 ```
 
-See [Installation](getting-started/installation.md) for detailed instructions.
+```yaml title="samples.yaml"
+samples:
+  - sample: "Patient1_Culture"
+    vdj_dir: "/data/patient1/vdj"
+    gex_dir: "/data/patient1/gex"
+```
+
+Run the pipeline:
+
+```bash
+tcrsift run --sample-sheet samples.yaml --output-dir results/
+```
+
+The result directory contains per-cell data, clonotype tables, plots, and a
+record of the resolved configuration. Database annotation and sequence assembly
+outputs appear when their optional inputs are provided. `source` defaults to
+`culture`. TIL-only analyses use `source: "til"` and the
+[multi-sample TIL workflow](user-guide/til-signatures.md), not this
+culture-oriented `run` command.
+
+See the [Quick Start](getting-started/quickstart.md) for a complete example or
+the [Python API](user-guide/pipeline.md) for step-by-step control.
+
+## Choose a workflow
+
+| Starting data | Start here |
+| --- | --- |
+| Antigen-stimulated culture, optionally with matched TIL | [Quick Start](getting-started/quickstart.md) |
+| Multiple TIL VDJ + GEX samples | [Multi-sample TIL Prioritization](user-guide/til-signatures.md) |
+| A single-cell atlas that needs QC, embedding, and cell typing | [Single-Cell Atlas Path](user-guide/atlas.md) |
+
+## Installation
+
+The quick example uses the core PyPI package. See
+[Installation](getting-started/installation.md) for optional dependencies and
+source installation.
 
 ## Next Steps
 
 - [Quick Start Guide](getting-started/quickstart.md)
+- [Multi-sample TIL Prioritization](user-guide/til-signatures.md)
 - [Sample Sheet Format](getting-started/sample-sheets.md)
 - [Pipeline Overview](user-guide/pipeline.md)
 - [API Reference](api/sample_sheet.md)

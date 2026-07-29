@@ -661,6 +661,12 @@ def select_specificity_candidates(
     they are deliberately **not** part of this gate — only the sequence axis
     (Ppost) is used.
 
+    ``ppost_col`` accepts either raw probabilities or natural-log probabilities.
+    :func:`tcrsift.annotate_tcrs.add_pgen_ppost` emits the latter despite the
+    historical ``ppost_*`` column names. Both representations have the same
+    ascending rank order. When ``abs_log10_ppost`` is supplied, values are
+    converted to log10 probability before the absolute cutoff is applied.
+
     Adds:
     - ``specificity_gated`` — passes the frequency + complete-αβ gate.
     - ``specificity_ppost_rank`` — 1 = lowest Ppost(α) among gated clones.
@@ -710,7 +716,7 @@ def select_specificity_candidates(
     out["specificity_gated"] = gated
 
     # Rank gated clones by ascending Ppost(alpha) (lowest = most private).
-    ppost = out[ppost_col]
+    ppost = pd.to_numeric(out[ppost_col], errors="coerce")
     out["specificity_ppost_rank"] = (
         ppost.where(gated).rank(method="min", ascending=True).astype("Int64")
     )
@@ -720,7 +726,19 @@ def select_specificity_candidates(
         cutoff = ppost[gated].quantile(percentile / 100.0)
         candidate = gated & (ppost <= cutoff)
         if abs_log10_ppost is not None:
-            candidate = candidate & (np.log10(ppost.clip(lower=1e-300)) <= abs_log10_ppost)
+            # add_pgen_ppost emits ln(P), while older callers/tests may provide
+            # raw P. Applying log10 directly to ln(P) clips every negative
+            # value to 1e-300 and makes the absolute cutoff meaningless.
+            log10_ppost = pd.Series(np.nan, index=ppost.index, dtype=float)
+            # A raw probability may legitimately be exactly zero. Treat only
+            # negative values as ln(P); zero is clipped as a raw probability.
+            is_log_probability = ppost < 0
+            log10_ppost.loc[is_log_probability] = (
+                ppost.loc[is_log_probability] / np.log(10.0)
+            )
+            raw_probability = ppost.loc[~is_log_probability].clip(lower=1e-300)
+            log10_ppost.loc[~is_log_probability] = np.log10(raw_probability)
+            candidate = candidate & (log10_ppost <= abs_log10_ppost)
     out["specificity_candidate"] = candidate
     return out
 

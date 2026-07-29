@@ -280,6 +280,30 @@ class TestSpecificityRoute:
         assert out["specificity_gated"].all()
         assert out.set_index("CDR3_alpha").loc["A1", "specificity_candidate"]
 
+    @pytest.mark.parametrize(
+        ("ppost", "expected"),
+        [
+            ([1e-9, 1e-6], [True, False]),
+            ([0.0, 1e-6], [True, False]),
+            ([np.log(1e-9), np.log(1e-6)], [True, False]),
+        ],
+    )
+    def test_absolute_cutoff_accepts_probability_or_natural_log(self, ppost, expected):
+        from tcrsift.selection import select_specificity_candidates
+
+        df = pd.DataFrame({
+            "CDR3_alpha": ["A1", "A2"],
+            "CDR3_beta": ["B1", "B2"],
+            "max_frequency": [0.05, 0.05],
+            "ppost_alpha": ppost,
+        })
+        out = select_specificity_candidates(
+            df,
+            percentile=100,
+            abs_log10_ppost=-7,
+        )
+        assert out["specificity_candidate"].tolist() == expected
+
 
 # --------------------------------------------------------------------------- #
 # #160 — backend auto-select + never-zero / canonicalization acceptance

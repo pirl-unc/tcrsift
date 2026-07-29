@@ -5,15 +5,51 @@
 [![Coverage Status](https://coveralls.io/repos/github/pirl-unc/tcrsift/badge.svg)](https://coveralls.io/github/pirl-unc/tcrsift)
 [![PyPI version](https://badge.fury.io/py/tcrsift.svg)](https://pypi.org/project/tcrsift/)
 
-Select antigen-specific TCRs from single-cell sequencing data.
+Prioritize TCR clonotypes from paired single-cell VDJ and gene-expression data.
+The inputs are standard 10x Genomics Cell Ranger output directories:
+`cellranger vdj` output supplies TCR sequences and clonotypes, while matching
+`cellranger count` output supplies gene expression for phenotyping and signature
+scoring. VDJ-only workflows are also available when expression analysis is not
+needed.
+
+TCRsift combines expansion, phenotype, expression signatures, public-database
+annotation, sequence publicness, and optional TIL matching. It produces
+candidates for experimental validation; it does not infer antigen specificity
+from sequence or expression alone.
+
+## Quick example
+
+Install TCRsift:
 
 ```bash
 pip install tcrsift
-tcrsift run --sample-sheet samples.yaml -o results/
 ```
+
+Point a minimal sample sheet at the Cell Ranger output directories:
+
+```yaml
+samples:
+  - sample: "Patient1_Culture"
+    vdj_dir: "/data/patient1/vdj"
+    gex_dir: "/data/patient1/gex"
+```
+
+Run the pipeline:
+
+```bash
+tcrsift run --sample-sheet samples.yaml --output-dir results/
+```
+
+The result directory contains per-cell data, clonotype tables, plots, and
+configuration provenance. See [CellRanger Requirements](#cellranger-requirements)
+for the expected files. `source` defaults to `culture`. TIL-only analyses use
+`source: "til"` and the [multi-sample TIL workflow](examples/multi_sample_til.py),
+not this culture-oriented `run` command.
 
 ## Contents
 
+- [Quick example](#quick-example)
+- [Choose a Workflow](#choose-a-workflow)
 - [Architecture](#architecture)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -23,6 +59,15 @@ tcrsift run --sample-sheet samples.yaml -o results/
 - [Workflows](#workflows)
 - [API Reference](#api-reference)
 - [Output Files](#output-files)
+
+## Choose a Workflow
+
+| Starting data | Recommended path |
+|---|---|
+| Antigen-stimulated culture, optionally with matched TIL | `tcrsift run` |
+| Multiple standard CellRanger VDJ + GEX TIL samples | [`examples/multi_sample_til.py`](examples/multi_sample_til.py) and the [TIL guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/) |
+| Two or more ordered TIL samples in the legacy per-timepoint layout | `tcrsift til-select` |
+| A single-cell atlas needing QC, embedding, and cell typing | `tcrsift cells` or the Python atlas API |
 
 ## Architecture
 
@@ -94,20 +139,19 @@ pip install -e .
 ### Optional Dependencies
 
 ```bash
-# Common add-on bundles
-pip install "tcrsift[reports,assembly,excel]"
+# All optional plotting, report, and atlas helpers
+pip install "tcrsift[full]"
 
-# For PDF report generation
-pip install "tcrsift[reports]"
-brew install wkhtmltopdf  # macOS
-
-# For constant region sequences from Ensembl
-pip install "tcrsift[assembly]"
-pyensembl install --release 93 --species human
-
-# For SCT Excel input files
-pip install "tcrsift[excel]"
+# Or install only what you need
+pip install "tcrsift[atlas]"    # Harmony + Leiden embedding
+pip install "tcrsift[plots]"    # UpSet plots
+pip install "tcrsift[reports]"  # legacy HTML-to-PDF helper
 ```
+
+Assembly, Excel input, sequence PDF reports, and the k-mer/TCRpeg probability
+backends are included in the core install. See the
+[installation guide](https://pirl-unc.github.io/tcrsift/getting-started/installation/)
+for the complete extras table.
 
 ## Quick Start
 
@@ -297,13 +341,16 @@ tcrsift filter -i clonotypes.csv -o filtered/ --method threshold --tcell-type cd
 
 **Tier thresholds (default):**
 
-| Tier | Min Cells | Min Frequency | Max Conditions |
-|------|-----------|---------------|----------------|
-| 1 | 10 | 1% | 2 |
-| 2 | 5 | 0.5% | 3 |
-| 3 | 3 | 0.1% | 5 |
-| 4 | 2 | 0.05% | 10 |
-| 5 | 2 | 0% | unlimited |
+| Tier | Min Cells | Min Frequency |
+|------|-----------|---------------|
+| 1 | 10 | 1% |
+| 2 | 5 | 0.5% |
+| 3 | 3 | 0.1% |
+| 4 | 2 | 0.05% |
+| 5 | 2 | 0% |
+
+The bundled tiers are abundance-only. Study-design filters (donor, method,
+timepoint, APC, or custom condition limits) are configured separately.
 
 #### FDR scope (`--fdr-scope`)
 
@@ -501,8 +548,10 @@ This creates a harmonized clonotype table with:
 
 ### TIL-Only Clone Prioritization (`til-select`)
 
-For 10x VDJ + GEX tumor timepoints, use `til-select` to prioritize clones with
-CD8 bias plus enrichment/immunogenic/cytolytic branch signals.
+For two or more ordered 10x VDJ + GEX tumor samples/timepoints, use
+`til-select` to prioritize clones with a CD8/non-viral base mask plus
+cytolytic, antigen-response, AIM, exhaustion, and frequency-change branches.
+The union is a review shortlist, not a tumor-specificity call.
 
 Input layout per timepoint:
 - `consensus_annotations.<TP>.csv`
@@ -616,7 +665,7 @@ tcrsift unify \
 |----------|-----|
 | One patient, culture + TIL in same sample sheet | `run` (TIL auto-detected) |
 | One patient, culture + TIL processed separately | `match-til` |
-| TIL-only, one or more tumor timepoints (10x VDJ+GEX) | `til-select` |
+| TIL-only, two or more ordered tumor samples/timepoints (10x VDJ+GEX) | `til-select` |
 | Multiple patients or experiments | `unify` |
 | Comparing results across different data sources | `unify` |
 
@@ -841,7 +890,7 @@ export_fasta(assembled, "sequences.fasta", sequence_col="single_chain_aa")
 | `Tcell_type_consensus` | Consensus T cell type |
 | `tier` | Quality tier (1-5) |
 | `db_match` | Matched in public database |
-| `is_viral` | Viral specificity flag |
+| `is_viral` | Known viral public-database match flag |
 | `n_donors`, `n_methods_per_donor`, `max_methods_per_donor` | Multi-donor / multi-method aggregations (populated when `patient_id` + `enrichment_method` are set) |
 
 ### Multi-donor / multi-method outputs

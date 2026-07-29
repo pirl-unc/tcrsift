@@ -353,7 +353,7 @@ def ensure_model(
         return model
 
     # Shipped k-mer defaults (instant, no training). Raises FileNotFoundError
-    # for a role/chain with no shipped model (e.g. k-mer ppost alpha).
+    # if a requested role/chain model is absent.
     if backend == "kmer":
         model = seqprob.load_background_model(chain, "kmer", role)
         _CACHE[key] = model

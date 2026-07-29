@@ -21,9 +21,9 @@ support the same input model as legacy ad-hoc scripts:
 - per-timepoint ``filtered_contig_annotations.<TP>.csv``
 - per-timepoint ``sample_filtered_feature_bc_matrix.<TP>.h5``
 
-The workflow produces a harmonized table across timepoints, marker-expression
-scores from 10x GEX, optional public-DB annotation, and v2-style selection
-subset files.
+The workflow requires at least two ordered samples/timepoints. It produces a
+harmonized table, marker-expression scores from 10x GEX, optional public-DB
+annotation, and v2-style selection subset files.
 """
 
 from __future__ import annotations
@@ -2389,10 +2389,11 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
     _write_subset_tables(subset_dfs, fig_dir)
     plot_selection_funnel(branch_union_stages, fig_dir / "selection_funnel.png", "Selection Funnel")
 
-    # Optional dominant-fraction antigen-specificity selection (#328): confine a
-    # clone to a single sample/antigen pool, with per-lineage floors + antigen
-    # labels. Opt-in; adds columns to the master (so they flow into every output)
-    # plus a standalone side CSV.
+    # Optional dominant-fraction selection (#328): find clones concentrated in
+    # a single sample/antigen pool, with per-lineage floors + antigen labels.
+    # This is an enrichment pattern, not proof of antigen binding. Opt-in; adds
+    # columns to the master (so they flow into every output) plus a standalone
+    # side CSV.
     if getattr(args, "dominant_specificity", False):
         label_map = None
         if getattr(args, "antigen_labels", None):
@@ -2421,7 +2422,7 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
             .fillna(False).astype(bool)
         )
         logger.info(
-            "til-select dominant-specificity: %s antigen-specific clones",
+            "til-select dominant-specificity: %s condition-concentrated clones",
             int(master_df["is_dominant_specific"].sum()),
         )
 

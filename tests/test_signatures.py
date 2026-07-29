@@ -26,8 +26,7 @@ from tcrsift import signatures
 
 
 class TestModuleShape:
-    """The five canonical signatures must be exposed as tuples plus a
-    convenience dict."""
+    """The canonical signatures are exposed as tuples plus a convenience dict."""
 
     def test_all_five_signatures_exposed(self):
         for name in (

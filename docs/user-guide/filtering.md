@@ -1,6 +1,7 @@
 # Filtering Strategies
 
-TCRsift provides tiered filtering to prioritize antigen-specific clones while minimizing false positives.
+TCRsift uses abundance and study-design metadata to prioritize clones for
+review. Filtering does not establish antigen specificity.
 
 ## Overview
 
@@ -16,13 +17,13 @@ TCRsift uses multiple criteria to separate these populations.
 
 The threshold method applies configurable criteria at each tier:
 
-| Tier | Min Cells | Min Frequency | Max Conditions | Confidence |
-|------|-----------|---------------|----------------|------------|
-| Tier 1 | 10 | 1% | 2 | Highest |
-| Tier 2 | 5 | 0.5% | 3 | High |
-| Tier 3 | 3 | 0.1% | 5 | Medium |
-| Tier 4 | 2 | 0.05% | 10 | Low |
-| Tier 5 | 2 | 0% | unlimited | Lowest |
+| Tier | Min Cells | Min Frequency | Confidence |
+|------|-----------|---------------|------------|
+| Tier 1 | 10 | 1% | Highest |
+| Tier 2 | 5 | 0.5% | High |
+| Tier 3 | 3 | 0.1% | Medium |
+| Tier 4 | 2 | 0.05% | Low |
+| Tier 5 | 2 | 0% | Lowest |
 
 ### Criteria Explained
 
@@ -30,7 +31,9 @@ The threshold method applies configurable criteria at each tier:
 
 **Min Frequency**: Higher frequency suggests active expansion.
 
-**Max Conditions**: Antigen-specific clones should stay concentrated within a small number of antigen conditions. TCRsift uses antigen/condition counts when they are available and falls back to sample count otherwise.
+The bundled tiers are abundance-only. A custom tier definition may still add
+`max_conditions`, but cross-condition specificity is better represented
+explicitly through the sample/method/donor selection helpers.
 
 ### Using Threshold Filtering
 
@@ -107,17 +110,23 @@ TCRsift uses the consensus T cell type from phenotyping. A clone is classified b
 
 ## Viral Exclusion
 
-Exclude clones matching known viral epitopes:
+First annotate the clones, then remove known viral matches:
 
 ```bash
-tcrsift filter -i clonotypes.csv -o filtered/ --exclude-viral
+tcrsift annotate -i clonotypes.csv -o annotated.csv \
+  --vdjdb /path/to/vdjdb --iedb /path/to/iedb --flag-only
+
+tcrsift filter -i annotated.csv -o filtered/ --exclude-viral
 ```
 
-This requires prior annotation with `tcrsift annotate`. Clones matching CMV, EBV, HIV, influenza, and other common viruses are excluded.
+Alternatively, `tcrsift annotate ... --exclude-viral` annotates and removes
+them in one step. A database hit is evidence of a known viral specificity; no
+hit means unknown, not proven non-viral. Matching strictness also matters:
+paired αβ matching is more specific than β-only matching.
 
 ## Combining with TIL Data
 
-For tumor studies, the strongest evidence for tumor-specificity is:
+For tumor studies, useful combined prioritization evidence is:
 
 1. Clone expanded in antigen culture
 2. Clone also present in tumor (TIL)
@@ -130,7 +139,8 @@ tcrsift filter -i culture_clonotypes.csv -o filtered/ --method threshold
 tcrsift match-til -i filtered/tier1.csv --til-csv til_clonotypes.csv -o matched.csv
 ```
 
-Clones in both culture and TIL are the highest confidence candidates.
+Clones in both culture and TIL are strong candidates for functional
+validation, but overlap alone does not establish tumor specificity.
 
 ## Recommended Workflow
 
@@ -143,14 +153,15 @@ Clones in both culture and TIL are the highest confidence candidates.
    - Many clones in tier 1? Your cultures worked well.
    - Mostly tier 4-5? Consider more stringent culture conditions.
 
-3. **Annotate and exclude viral**
+3. **Annotate and exclude known viral matches**
    ```bash
-   tcrsift annotate -i filtered/tier1.csv -o annotated.csv --vdjdb /path/to/vdjdb
+   tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
+     --vdjdb /path/to/vdjdb --exclude-viral
    ```
 
 4. **If available, validate with TIL**
    ```bash
-tcrsift match-til -i annotated.csv --til-csv til.csv -o final.csv
+   tcrsift match-til -i annotated.csv --til-csv til.csv -o final.csv
    ```
 
 5. **Prioritize clones for validation**

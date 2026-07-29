@@ -1,13 +1,17 @@
 # Assembly API
 
-Module for full-length TCR sequence assembly.
+Build full-length TCR sequences and synthesis-ready β-2A-α constructs.
 
 ## Overview
 
-The assembly module builds full-length TCR sequences from CDR3 and V/J gene information. It supports:
+The input must contain assembled V(D)J segment sequence, as produced by
+TCRsift clonotype aggregation; CDR3 and V/J names alone are not enough to
+reconstruct the full variable region.
+
+The module supports:
 
 - **Leader sequences**: Per-chain configuration - extract from contig FASTAs or use standard signal peptides
-- **Constant regions**: Fetch from Ensembl (TRAC, TRBC1, TRBC2) or use built-in sequences
+- **Constant regions**: Packaged canonical TRAC/TRBC references or explicit sequence columns from the input
 - **2A linkers**: Join alpha and beta chains with self-cleaving peptides (T2A, P2A, E2A, F2A)
 - **Single-chain constructs**: Generate β-linker-α format for expression
 
@@ -79,6 +83,29 @@ assembled = assemble_full_sequences(
     beta_leader=None,
 )
 ```
+
+## Constant-region construction
+
+Canonical constant-region amino-acid sequences are packaged in
+`tcrsift/refseqs/canonical_constants.fasta`. The default
+`constant_source="ensembl"` is a backward-compatible name for this packaged
+canonical path; no runtime Ensembl download occurs. Use
+`constant_source="from-data"` to read explicit
+`{chain}_constant_aa`/`{chain}_constant_nt` input columns.
+
+With CellRanger contigs, nucleotide assembly is a hybrid:
+
+1. Preserve the donor's J→C boundary and following complete codons while their
+   translation agrees with the selected canonical protein.
+2. Complete a 1- or 2-base terminal codon only when a compatible canonical
+   amino-acid codon exists.
+3. Use canonical codon-optimized nucleotides after contig coverage ends or
+   translation diverges.
+
+The protein remains canonical. `{chain}_constant_source` records how much
+donor sequence was retained, and `qc_warnings` reports any divergence. Omit
+`contigs_dir` to use canonical codon-optimized nucleotides for the entire
+constant region.
 
 ## API Reference
 

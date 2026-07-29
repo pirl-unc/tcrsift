@@ -21,10 +21,10 @@ independently toggleable; the sequence-probability columns never return
 Annotations
 -----------
 - **Pgen / Ppost** per chain (``pgen_alpha``/``pgen_beta``,
-  ``ppost_alpha``/``ppost_beta``) via :mod:`tcrsift.seqprob`. **Ppost
+  ``ppost_alpha``/``ppost_beta``) via :mod:`tcrsift.seqprob`. Despite their
+  historical names, these columns contain natural-log probabilities. **Ppost
   (observed-repertoire background) is the default publicness measure**;
-  ``log_q_<chain> = log Ppost − log Pgen`` is the data-driven selection
-  factor.
+  ``log_q_<chain> = ln(Ppost) − ln(Pgen)`` is the data-driven selection factor.
 - **GEX signature scores** (``antigen_response_score``, ``naive_score``)
   from per-cell expression, **z-scored within each sample or donor group**
   (#144/#145), then averaged per clone.
@@ -86,13 +86,14 @@ def add_pgen_ppost(
     with_q: bool = True,
     auto_train: bool = True,
 ) -> pd.DataFrame:
-    """Add ``pgen_<chain>`` / ``ppost_<chain>`` / ``log_q_<chain>`` columns.
+    """Add per-chain log-probability and selection-factor columns.
 
-    Ppost (observed-repertoire background) is the publicness default; Pgen is
-    the OLGA-generated background; ``log_q`` is their difference (the
-    selection factor). ``cdr3_cols`` maps chain → CDR3 column (default
-    ``CDR3_<chain>``). Chains whose CDR3 column is absent are skipped.
-    Returns a copy.
+    The historically named ``pgen_<chain>`` and ``ppost_<chain>`` columns hold
+    **natural-log probabilities**, not raw probabilities. Ppost uses an
+    observed-repertoire background and is the default publicness measure; Pgen
+    uses the OLGA-generated background. ``log_q`` is ``ln(Ppost) - ln(Pgen)``.
+    ``cdr3_cols`` maps chain → CDR3 column (default ``CDR3_<chain>``). Chains
+    whose CDR3 column is absent are skipped. Returns a copy.
     """
     from .pgen_models import ensure_model
 
@@ -443,5 +444,3 @@ def annotate_tcrs(
                 [p.score for p in PRISM_DEFAULT_PREDICATES], have,
             )
     return out
-
-

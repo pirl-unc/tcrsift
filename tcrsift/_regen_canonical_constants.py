@@ -61,7 +61,7 @@ def fetch_canonical_constants(release: int = 110) -> dict[str, str]:
     except ImportError as exc:
         raise RuntimeError(
             "pyensembl is required for regenerating canonical constants. "
-            "Install with `pip install 'tcrsift[assembly]'`."
+            "Reinstall tcrsift with its core dependencies."
         ) from exc
     ens = pyensembl.EnsemblRelease(release)
     out: dict[str, str] = {}

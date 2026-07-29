@@ -1,70 +1,78 @@
-# Sequence probability (data-driven Pgen)
+# Sequence probability: Pgen and Ppost
 
-Data-driven CDR3 generation/occurrence probability — the **precursor-
-frequency / publicness** axis — a model **fit once on an external
-reference repertoire** (it replaced an earlier OLGA/SONIA runtime path, since
-removed), so `log_pgen(seq)` is a fast, calibrated score for
-"how generatable / common is this CDR3" — lower = rarer precursor / more
-private.
+Sequence-background scores provide a **precursor-frequency/publicness axis**:
 
-On the B1-2 pilot the default k-mer model recovers the same alpha-chain
-publicness signal as OLGA (TRAV12-2 vs other TRAV **AUROC ≈ 0.64**, matching
-OLGA's 0.65–0.67) — with **no GPL and no runtime dependency beyond numpy**.
+- Pgen asks how probable a CDR3 is under a generated-repertoire background.
+- Ppost asks how common it is under an observed healthy-repertoire background.
 
-## Two backends, one interface
+Both are ranking proxies, not specificity or avidity measurements. The shipped
+k-mer scores are natural-log probabilities; lower (more negative) values mean
+a rarer/private sequence.
 
-Both implement `SequenceProbabilityModel` (`fit` / `log_prob` / `save` /
-`load`):
+## Backends and shipped models
 
-| Backend | Deps | Notes |
-| --- | --- | --- |
-| `KmerProbabilityModel` (**default**) | numpy only | Order-`k` Markov model over CDR3 AAs (length captured via an EOS symbol; add-`alpha` smoothing). Ships a default for each chain. |
-| `TCRpegProbabilityModel` | `pip install tcrsift[tcrpeg]` | Wraps TCRpeg (autoregressive, PyTorch). Heavier, better-calibrated. |
+Both backends implement `SequenceProbabilityModel` (`fit`, `log_prob`, `save`,
+and `load`):
 
-## Shipped defaults & the GPL boundary
+| Backend | Notes |
+| --- | --- |
+| `KmerProbabilityModel` (default) | Fast order-k Markov model over CDR3 amino acids, with length represented by an end symbol and optional V/J marginals |
+| `TCRpegProbabilityModel` | Autoregressive PyTorch model; heavier and useful when trained on a sufficiently large reference |
 
-The default k-mer models (`tcrsift/refseqs/kmer_background_{alpha,beta}.npz`,
-~300 KB each) are fit **offline at build time** on OLGA-generated synthetic
-repertoires (`scripts/generate_kmer_background.py`). OLGA (GPL-3.0) is used
-*only* to produce training sequences; tcrsift never imports it at runtime,
-so the package stays Apache-2.0.
+TCRpeg and PyTorch are core dependencies. No `tcrsift[tcrpeg]` extra is
+required.
 
-To retrain on a different reference, fit and `save` your own:
+Packaged files are role- and chain-specific:
 
-```python
-from tcrsift.seqprob import KmerProbabilityModel
-model = KmerProbabilityModel(order=3, chain="beta").fit(my_reference_cdr3s)
-model.save("my_beta_background.npz")
-```
+- `kmer_pgen_alpha.npz`, `kmer_pgen_beta.npz`
+- `kmer_ppost_alpha.npz`, `kmer_ppost_beta.npz`
+
+Pgen references were generated offline with OLGA; tcrsift does not import OLGA
+at runtime. Ppost references come from pooled observed healthy PBMC
+repertoires. See `tcrsift/refseqs/PROVENANCE.md` in the source distribution for
+the exact data and calibration notes.
 
 ## Usage
 
+Add both roles per chain:
+
 ```python
-from tcrsift.seqprob import score_log_pgen, load_background_model
+from tcrsift import add_pgen_ppost
 
-# default shipped k-mer background:
-clones["log_pgen_beta"] = score_log_pgen(clones, chain="beta")
+clones = add_pgen_ppost(clones, backend="kmer")
+# pgen_alpha, ppost_alpha, pgen_beta, ppost_beta are ln(probability)
+```
 
-# explicit model / TCRpeg backend:
-clones["log_pgen_alpha"] = score_log_pgen(clones, chain="alpha", backend="tcrpeg")
+Score only one role:
+
+```python
+from tcrsift.seqprob import score_log_prob
+
+clones["log_ppost_beta"] = score_log_prob(
+    clones,
+    chain="beta",
+    role="ppost",
+)
 ```
 
 CLI:
 
 ```bash
-tcrsift log-pgen clones.csv -o clones_pgen.csv --chain both          # k-mer
-tcrsift log-pgen clones.csv -o out.csv --backend tcrpeg --chain beta # TCRpeg
+tcrsift pgen annotate clones.csv -o clones_probability.csv --chain both
 ```
 
-The resulting `log_pgen_<chain>` column plugs directly into the in-silico
-filter ([`insilico_filter`](insilico_filter.md)) as a `Ppost^low`-style
-predicate.
+Use Ppost as a cohort-relative ranking signal or through
+`select_specificity_candidates`; do not copy a threshold calibrated on a
+different model/reference without validation. Ppost also partly reflects CDR3
+length, so review length and V/J usage alongside it.
 
 ::: tcrsift.seqprob
     options:
       members:
         - SequenceProbabilityModel
         - KmerProbabilityModel
+        - GeneAwareKmerModel
         - TCRpegProbabilityModel
         - load_background_model
+        - score_log_prob
         - score_log_pgen

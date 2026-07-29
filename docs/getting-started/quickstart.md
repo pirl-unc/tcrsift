@@ -40,7 +40,8 @@ This will:
 3. Aggregate clonotypes
 4. Apply tiered filtering
 5. Annotate with VDJdb
-6. Generate a summary report
+6. Match TIL samples when present
+7. Assemble sequences and generate a summary report
 
 ### Python API
 
@@ -81,7 +82,9 @@ annotated.to_csv("results/annotated_clonotypes.csv", index=False)
 
 ### Output Files
 
-The pipeline creates:
+The pipeline always writes the loaded/phenotyped data, clonotypes, resolved
+configuration, and provenance. Annotation, TIL, assembly, and report outputs
+appear only when those steps are enabled and have the required inputs.
 
 ```
 results/
@@ -98,11 +101,11 @@ results/
 │   ├── til_matched.csv       # TIL matching results (if TIL samples provided)
 │   └── full_sequences.csv    # Assembled sequences (if assembly enabled)
 ├── plots/
-│   ├── qc.pdf
-│   ├── phenotype.pdf
-│   ├── clonotypes.pdf
-│   └── tcrsift_report.pdf    # Summary report (if enabled)
-└── config.yaml               # Resolved config used for the run
+│   ├── *.png                 # QC/selection figures
+│   └── all-figures.pdf       # Summary bundle (if PDF reporting is enabled)
+├── config.yaml               # Resolved config used for the run
+├── provenance.json
+└── provenance.txt
 ```
 
 ### Key Columns
@@ -119,10 +122,11 @@ The output CSV files contain:
 | `tier` | Quality tier (1 = best) |
 | `Tcell_type_consensus` | CD4+ or CD8+ |
 | `db_match` | Matched in public database |
-| `is_viral` | Known viral specificity |
+| `is_viral` | Known viral public-database match |
 
 ## Next Steps
 
 - [Sample Sheet Format](sample-sheets.md) - Detailed sample sheet options
 - [Pipeline Overview](../user-guide/pipeline.md) - Understanding each step
 - [Filtering Strategies](../user-guide/filtering.md) - Customizing filters
+- [Multi-sample TIL Prioritization](../user-guide/til-signatures.md) - TIL-only VDJ+GEX example

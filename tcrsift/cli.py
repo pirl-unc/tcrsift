@@ -13,7 +13,8 @@
 """
 Command-line interface for TCRsift.
 
-TCRsift: TCR selection from antigen-specific culture and scRNA/VDJ sequencing data.
+TCRsift prioritizes TCR clonotypes from antigen-enrichment cultures and
+single-cell VDJ and gene-expression data.
 """
 
 from __future__ import annotations
@@ -575,7 +576,7 @@ def cmd_til_select(args):
     print(f"Final candidate clonotypes: {n_final}")
     if getattr(args, "dominant_specificity", False) and "is_dominant_specific" in master_df.columns:
         n_dom = int(master_df["is_dominant_specific"].sum())
-        print(f"Dominant-specificity antigen-specific clones: {n_dom}")
+        print(f"Dominant-specificity (condition-concentrated) clones: {n_dom}")
     print(f"Figures/subsets directory: {args.fig_dir}")
 
 
@@ -765,9 +766,8 @@ def cmd_log_pgen(args):
 
     Reads a clonotype CSV and adds ``log_pgen_<chain>`` using the shipped
     OLGA-generated k-mer background (default) or a TCRpeg model
-    (``--backend tcrpeg``, needs ``pip install tcrsift[tcrpeg]``). This is
-    the data-driven replacement for the OLGA/SONIA runtime path: no GPL deps
-    for the default k-mer backend.
+    (``--backend tcrpeg``). This is the data-driven replacement for the
+    OLGA/SONIA runtime path: no GPL deps for the default k-mer backend.
     """
     import pandas as pd
 
@@ -830,7 +830,7 @@ def cmd_pgen_fetch(args):
 
 
 def cmd_pgen_train(args):
-    """Train + cache Pgen/Ppost background models (kmer or tcrpeg)."""
+    """Train + cache a custom Ppost model; packaged Pgen is not trainable."""
     from .pgen_models import train_model
 
     chains = ["alpha", "beta"] if args.chain == "both" else [args.chain]
@@ -2719,7 +2719,10 @@ def create_parser():
 
     parser = argparse.ArgumentParser(
         prog="tcrsift",
-        description="TCRsift: TCR selection from antigen-specific culture and scRNA/VDJ sequencing data",
+        description=(
+            "TCRsift: prioritize TCR clonotypes from antigen-enrichment "
+            "cultures and single-cell VDJ and gene-expression data"
+        ),
     )
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
 
@@ -3481,9 +3484,11 @@ TIL DATA SOURCE (provide ONE of the following):
     # -------------------------------------------------------------------------
     p_til_select = subparsers.add_parser(
         "til-select",
-        help="Select promising TIL clonotypes from multi-timepoint VDJ+GEX inputs",
+        help="Select promising TIL clonotypes from 2+ ordered VDJ+GEX samples",
         description="""
-Prioritize promising TIL clonotypes from one or more tumor timepoints.
+Prioritize promising TIL clonotypes from two or more ordered tumor samples or
+timepoints. Independent samples can be ordered for harmonization, but frequency
+increase flags are meaningful only for a genuine longitudinal series.
 
 Input model is compatible with legacy v2 scripts:
   - consensus_annotations.<TP>.csv
@@ -3917,9 +3922,10 @@ CONDITIONALLY REQUIRED:
     )
     asm_seq.add_argument(
         "--constant-source",
-        choices=["ensembl", "from-data"],
+        choices=["canonical", "ensembl", "from-data"],
         default="ensembl",
-        help="Source for constant regions (default: ensembl)",
+        help="Constant source: packaged canonical (canonical or legacy alias "
+             "ensembl, the default) or explicit from-data columns",
     )
     asm_seq.add_argument(
         "--trac-allele",
@@ -4044,8 +4050,8 @@ CONDITIONALLY REQUIRED:
     # -------------------------------------------------------------------------
     p_pgen = subparsers.add_parser(
         "pgen",
-        help="Manage Pgen/Ppost background models (fetch data, train, "
-             "annotate); TCRpeg default, auto-trains on first use",
+        help="Annotate Pgen/Ppost or manage custom Ppost backgrounds "
+             "(packaged k-mer models are the default)",
     )
     p_pgen_sub = p_pgen.add_subparsers(dest="pgen_command")
 
@@ -4063,9 +4069,17 @@ CONDITIONALLY REQUIRED:
                     help="V-gene column to filter chain (TRA*/TRB*)")
     pf.set_defaults(func=cmd_pgen_fetch)
 
-    pt = p_pgen_sub.add_parser("train", help="Train + cache background models")
+    pt = p_pgen_sub.add_parser(
+        "train",
+        help="Train + cache a custom Ppost model (Pgen models are packaged)",
+    )
     pt.add_argument("--backend", choices=["kmer", "kmer_gene", "tcrpeg"], default="kmer")
-    pt.add_argument("--role", choices=["pgen", "ppost", "both"], default="both")
+    pt.add_argument(
+        "--role",
+        choices=["pgen", "ppost", "both"],
+        default="ppost",
+        help="Role to request (default: ppost); packaged Pgen cannot be retrained",
+    )
     pt.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
     pt.add_argument("--url", default=None, help="observed repertoire for ppost")
     pt.add_argument("--epochs", type=int, default=30, help="TCRpeg epochs")
@@ -4320,8 +4334,9 @@ CONDITIONALLY REQUIRED:
     asm_group.add_argument("--no-include-constant", dest="include_constant", action="store_false")
     asm_group.add_argument(
         "--constant-source",
-        choices=["ensembl", "from-data"],
-        help="Constant region source (default: ensembl)",
+        choices=["canonical", "ensembl", "from-data"],
+        help="Constant source: packaged canonical (canonical or legacy alias "
+             "ensembl, the default) or explicit from-data columns",
     )
     asm_group.add_argument(
         "--linker", choices=["T2A", "P2A", "E2A", "F2A"], help="Linker peptide (default: T2A)"

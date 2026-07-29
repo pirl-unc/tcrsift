@@ -3,7 +3,7 @@
 A uniform, pluggable way to add optional, **always-defined** per-clone
 columns to any TCR table, plus the **PRISM** selection method.
 
-## Pgen / Ppost — robust, never-zero (#157)
+## Pgen / Ppost — generation and observed-repertoire backgrounds
 
 The OLGA/SONIA runtime path returned `Pgen = 0` on ~3.5–5% of α junctions
 (CDR3s not ending in the conserved F/W — an anchor parse failure), and
@@ -19,16 +19,20 @@ Two **roles** per chain:
   post-selection publicness. `log_q = log Ppost − log Pgen` is the
   data-driven selection factor (`Q = Ppost/Pgen`).
 
+For historical compatibility, the output columns are named `pgen_alpha`,
+`ppost_alpha`, and so on, but their values are **natural-log probabilities**.
+Higher (less negative) Ppost means more common under the observed background;
+lower means more private.
+
 ```python
 from tcrsift.annotate_tcrs import add_pgen_ppost
 clones = add_pgen_ppost(clones)   # pgen_/ppost_/log_q_ {alpha,beta}
 ```
 
-Shipped k-mer defaults: Pgen (α+β, OLGA-generated) and Ppost (β, observed).
-**No observed α reference is bundled** → α-Ppost falls back to α-Pgen (finite,
-not circular) with a logged note until one is supplied. TCRpeg is the
-higher-accuracy backend (`backend="tcrpeg"`, needs `pip install
-tcrsift[tcrpeg]`).
+Shipped k-mer defaults cover Pgen and Ppost for both α and β. Pgen models were
+fit offline on generated repertoires; Ppost models use a pooled observed
+healthy-PBMC reference. TCRpeg is the heavier alternative
+(`backend="tcrpeg"`) and is part of the core install.
 
 ## GEX signature scores, z-scored per sample/donor
 
