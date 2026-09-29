@@ -54,7 +54,7 @@ class TestAttachPerSampleTiers:
         assert tiers["A"] == "tier1"   # cells>=10, freq>=0.01
         assert tiers["B"] == "tier3"   # cells>=3, freq>=0.001
         assert tiers["C"] == "tier4"   # cells>=2, freq>=0.0005
-        assert tiers["D"] is None      # cells<2 clears no tier
+        assert pd.isna(tiers["D"])      # cells<2 clears no tier
 
     def test_does_not_mutate_input(self):
         long_df = self._long()
@@ -134,7 +134,7 @@ class TestAttachMethodTiers:
         out = selection.attach_method_tiers(cml)
         tiers = dict(zip(out["CDR3ab"], out["tier"]))
         assert tiers["A"] == "tier1"   # 12 cells, 2% freq
-        assert tiers["B"] is None      # 1 cell clears nothing
+        assert pd.isna(tiers["B"])      # 1 cell clears nothing
 
     def test_empty_frame(self):
         out = selection.attach_method_tiers(

@@ -1945,7 +1945,7 @@ class TestContigFidelityGate:
         assert out["alpha_count"].tolist() == [1, 2]
         assert out["dual_alpha"].tolist() == [False, True]
         # Explicit second-α identity (#237): None for single-α, partner for dual.
-        assert out["CDR3_alpha_2"].iloc[0] is None
+        assert pd.isna(out["CDR3_alpha_2"].iloc[0])
         assert out["CDR3_alpha_2"].iloc[1] == "CAAA"
         # No contig provided → constructs are not contig-verified.
         assert (~out["construct_contig_verified"]).all()

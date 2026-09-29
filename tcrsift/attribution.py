@@ -106,9 +106,11 @@ def attribute_cells(
         return pd.Series(pd.array([pd.NA] * n, dtype="string"), index=df.index)
 
     def _cdr3_valid(s: pd.Series) -> np.ndarray:
-        return (
-            s.notna() & (s.str.len() > 0) & (s.str.lower() != "nan")
-        ).to_numpy()
+        # Missing optional chains are invalid, including Arrow-backed strings.
+        present = s.fillna("")
+        return ((present.str.len() > 0) & (present.str.lower() != "nan")).to_numpy(
+            dtype=bool,
+        )
 
     def _chain_valid(cdr3_col: str, umi_col: str) -> np.ndarray:
         v = _cdr3_valid(_str(cdr3_col))

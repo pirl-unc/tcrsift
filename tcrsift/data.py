@@ -90,7 +90,7 @@ def annotate_combined_df(
         [aa + "_" + bb for aa in a.split(";") for bb in b.split(";")]
         for a, b in zip(df["CDR3_alpha"], df["CDR3_beta"])
     ]
-    df["Cell_ID"] = df.Peptide_Number + "-" + df.Barcode
+    df["Cell_ID"] = df["Peptide_Number"].astype("string") + "-" + df["Barcode"].astype("string")
     df["CD3"] = df["CD3D"] + df["CD3E"] + df["CD3G"]
     df["CD8"] = df["CD8A"] + df["CD8B"]
     df["Both_CD4_and_CD8"] = (df.CD4 > 1) & (df.CD8 > 1)

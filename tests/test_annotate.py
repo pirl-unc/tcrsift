@@ -155,7 +155,8 @@ class TestCanonicalizeAntigen:
         result = canonicalize_antigens(
             pd.Series(["MLANA", "Spike glycoprotein", None, "unknown"])
         )
-        assert list(result) == ["MART-1", "SARS-CoV-2 Spike", None, "unknown"]
+        assert result.iloc[[0, 1, 3]].tolist() == ["MART-1", "SARS-CoV-2 Spike", "unknown"]
+        assert pd.isna(result.iloc[2])
 
 
 class TestCanonicalizeSpecies:
@@ -202,7 +203,8 @@ class TestCanonicalizeSpecies:
         result = canonicalize_species_labels(
             pd.Series(["HomoSapiens", "Human cytomegalovirus", None])
         )
-        assert list(result) == ["Homo sapiens", "CMV", None]
+        assert result.iloc[:2].tolist() == ["Homo sapiens", "CMV"]
+        assert pd.isna(result.iloc[2])
 
 
 class TestClassifyCategory:
