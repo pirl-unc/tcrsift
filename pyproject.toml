@@ -22,9 +22,9 @@ dependencies = [
     "numpy>=2.0.0,<3.0.0",
     "pandas>=2.1.4",
     "scanpy>=1.10.2,<2.0.0",
-    # concat_on_disk lives in anndata.experimental — pinning below 0.13
-    # until the API stabilizes or moves out of experimental. Bump deliberately.
-    "anndata>=0.10.0,<0.13.0",
+    # concat_on_disk remains experimental; validate each new AnnData minor.
+    # The 0.13 series is covered by our concatenation and expression tests.
+    "anndata>=0.10.0,<0.14.0",
     "matplotlib>=3.7.0,<4.0.0",
     "seaborn>=0.13,<1.0.0",
     "pyyaml>=6.0,<7.0",
@@ -33,8 +33,8 @@ dependencies = [
     # core dep (previously optional, which left the PDF silently skipped
     # when not installed — including on CI). pypdf concatenates the per-run
     # vector figure PDFs into the `tcrsift report bundle` cohort PDF (#123).
-    "reportlab>=4.0.0,<5.0.0",
-    "pypdf>=4.0.0,<6.0.0",
+    "reportlab>=4.0.0,<6.0.0",
+    "pypdf>=4.0.0,<7.0.0",
     # Core, not extras (one library, shared deps): pyensembl is the shared
     # Ensembl↔HGNC mapping behind tcrsift.genes (used by all expression
     # lookups); openpyxl backs Excel export. Both permissively licensed.
@@ -71,7 +71,7 @@ docs = [
     "pymdown-extensions>=10.0.0",
 ]
 reports = [
-    "reportlab>=4.0.0,<5.0.0",
+    "reportlab>=4.0.0,<6.0.0",
     "pdfkit",
 ]
 # Optional N-way set-overlap (UpSet) plots (#208). Without it, plot_set_overlap
@@ -89,7 +89,7 @@ atlas = [
     "leidenalg>=0.9",
 ]
 full = [
-    "reportlab>=4.0.0,<5.0.0",
+    "reportlab>=4.0.0,<6.0.0",
     "pdfkit",
     "upsetplot>=0.8",
     "harmonypy>=0.0.9",

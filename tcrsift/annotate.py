@@ -669,7 +669,7 @@ def canonicalize_antigen(antigen: str | None) -> str | None:
     ``[organism]`` suffixes, "protein" descriptors, capitalization
     variants, and parenthetical synonyms that should be ignored.
     """
-    if antigen is None:
+    if pd.isna(antigen):
         return None
     raw = str(antigen).strip()
     if not raw:
