@@ -1,5 +1,6 @@
 """Tests for the packaged sample-sheet TIL prioritization workflow."""
 
+import json
 import runpy
 import sys
 from pathlib import Path
@@ -78,10 +79,13 @@ def test_same_clone_is_not_collapsed_across_patients():
 
 def test_parser_defaults_keep_heuristic_filters_auditable(tmp_path):
     args = create_parser().parse_args(["til-prioritize", "samples.yaml", "-o", str(tmp_path)])
-    assert args.exclude_known_viral
+    assert not args.exclude_known_viral
     assert args.exclude_known_mart1
     assert not args.exclude_trav12_2
     assert args.exclude_public_quantile is None
+    assert args.tcell_type == "cd8"
+    assert args.context == "solid-tumor"
+    assert args.max_clones == 100
 
 
 def test_parser_accepts_example_options(tmp_path):
@@ -110,7 +114,7 @@ def _til_cells():
     from tcrsift.signature_methods import NEOANTIGEN_SIGNATURES, SIGNATURES
 
     registry = {**SIGNATURES, **NEOANTIGEN_SIGNATURES}
-    genes = sorted({g for name in til_prioritize.SIGNATURE_NAMES for g in registry[name].all_genes})
+    genes = sorted({g for signature in registry.values() for g in signature.all_genes})
     genes += [f"background_{i}" for i in range(500)]
     rng = np.random.default_rng(4)
     X = rng.poisson(np.linspace(1, 12, len(genes)), size=(12, len(genes))).astype(float) + 1
@@ -124,6 +128,8 @@ def _til_cells():
         "CDR3_beta": (["CASSLGQAYEQYF"] * 4 + ["CASSLAGAYEQYF"] * 2) * 2,
         "TRA_1_umis": 3,
         "TRB_1_umis": 3,
+        "TRA_1_reads": 30,
+        "TRB_1_reads": 30,
         "CD3": 30,
         "CD4": [0] * 6 + [20] * 6,
         "CD8": [20] * 6 + [0] * 6,
@@ -131,20 +137,30 @@ def _til_cells():
     return ad.AnnData(X=X, obs=obs, var=pd.DataFrame(index=genes))
 
 
-@pytest.mark.parametrize("entrypoint", ["cli", "example"])
-def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsys, entrypoint):
+def _mock_samples(tmp_path, monkeypatch, cells):
     from tcrsift import loader
 
+    sheet = tmp_path / "samples.yaml"
+    sheet.write_text("samples:\n" + "".join(
+        f"  - sample: {sample}\n    vdj_dir: vdj\n    gex_dir: gex\n"
+        for sample in cells.obs["sample"].unique()
+    ))
+    def load_samples(sample_sheet, **kwargs):
+        assert [s.sample for s in sample_sheet] == list(cells.obs["sample"].unique())
+        assert kwargs["min_mito_pct"] == 0
+        return cells.copy()
+    monkeypatch.setattr(loader, "load_samples", load_samples)
+    return str(sheet)
+
+
+@pytest.mark.parametrize("entrypoint", ["cli", "example"])
+def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsys, entrypoint):
     # Loading is covered by loader tests. Exercise the actual scoring,
     # clone aggregation, publicness, annotation, filtering, and CSV writes.
     cells = _til_cells()
 
-    def load_samples(path):
-        assert path == Path("samples.yaml")
-        return cells.copy()
-
-    monkeypatch.setattr(loader, "load_samples", load_samples)
-    argv = ["samples.yaml", "-o", str(tmp_path), "--min-cells", "3"]
+    sheet = _mock_samples(tmp_path, monkeypatch, cells)
+    argv = [sheet, "-o", str(tmp_path), "--min-cells", "3", "--tcell-type", "both"]
     if entrypoint == "cli":
         main(["til-prioritize", *argv])
     else:
@@ -161,16 +177,22 @@ def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsy
     assert candidates["cell_count"].tolist() == [4, 4]
     assert candidates["selected_for_review"].all()
     assert len(audit) == len(scores) == 4
-    assert audit["selected_for_review"].tolist() == [True, True, False, False]
-    for name in til_prioritize.SIGNATURE_NAMES:
-        assert np.isfinite(scores[f"signature_{name}"]).all()
+    assert audit["selected_for_review"].sum() == 2
+    config = json.loads((tmp_path / "prioritization.json").read_text())
+    for name in config["resolved_signatures"]:
+        from tcrsift.prioritize import SIGNATURE_LINEAGE
+        valid = scores.lineage.eq(SIGNATURE_LINEAGE[name]) if name in SIGNATURE_LINEAGE else np.ones(len(scores), bool)
+        assert np.isfinite(scores.loc[valid, f"signature_{name}"]).all()
+        assert scores.loc[~valid, f"signature_{name}"].isna().all()
     assert "Wrote 2 candidates" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("option,value", [
     ("--min-cells", "0"), ("--min-frequency", "1.1"),
-    ("--signature-quantile", "0"), ("--min-signature-support", "7"),
+    ("--signature-quantile", "1.1"), ("--min-signature-support", "999"),
     ("--exclude-public-quantile", "0"),
+    ("--max-clones", "-1"), ("--min-expression", "GZMB=nan"),
+    ("--min-vdj-reads", "-1"), ("--min-alpha-cdr3-length", "-1"),
 ])
 def test_invalid_threshold_fails_before_loading(tmp_path, monkeypatch, caplog, option, value):
     from tcrsift import loader
@@ -185,12 +207,52 @@ def test_invalid_threshold_fails_before_loading(tmp_path, monkeypatch, caplog, o
     assert option in caplog.text
 
 
-def test_single_sample_has_clear_error(tmp_path, monkeypatch, caplog):
-    from tcrsift import loader
+def test_single_sample_and_default_cd8_are_supported(tmp_path, monkeypatch):
+    cells = _til_cells()[:6].copy()
+    sheet = _mock_samples(tmp_path, monkeypatch, cells)
+    main(["prioritize", sheet, "-o", str(tmp_path), "--max-clones", "1"])
+    candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
+    assert len(candidates) == 1
+    assert candidates.Tcell_type_consensus.str.contains("CD8").all()
+    assert candidates.selection_rank.tolist() == [1]
+
+
+@pytest.mark.parametrize("exclude_viral,expected", [(False, 1), (True, 0)])
+def test_mart1_excluded_by_default_and_viral_opt_in(tmp_path, monkeypatch, exclude_viral, expected):
+    from tcrsift import annotate
 
     cells = _til_cells()[:6].copy()
-    monkeypatch.setattr(loader, "load_samples", lambda path: cells)
-    with pytest.raises(SystemExit) as error:
-        main(["til-prioritize", "samples.yaml", "-o", str(tmp_path)])
-    assert error.value.code == 1
-    assert "at least two named samples" in caplog.text
+    sheet = _mock_samples(tmp_path, monkeypatch, cells)
+
+    def annotate_clonotypes(frame, **kwargs):
+        result = frame.copy()
+        mart1 = result.CDR3_alpha.eq("CAVSDGGSQGNLIF")
+        result["db_epitope"] = np.where(mart1, "EAAGIGILTV", "NLVPMVATV")
+        result["is_viral"] = ~mart1
+        return result
+
+    monkeypatch.setattr(annotate, "annotate_clonotypes", annotate_clonotypes)
+    options = ["--exclude-known-viral"] if exclude_viral else []
+    main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic", *options])
+    candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
+    audit = pd.read_csv(tmp_path / "all_scored_clones.csv")
+    assert len(candidates) == expected
+    mart1 = audit[audit.known_mart1_match]
+    assert len(mart1) == 1 and not mart1.selected_for_review.any()
+    assert mart1.excluded_reason.tolist() == ["known_MART1"]
+    if not exclude_viral:
+        assert candidates.known_viral_match.all()
+
+
+def test_short_cdr3_is_audited_and_excluded(tmp_path, monkeypatch):
+    cells = _til_cells()[:6].copy()
+    cells.obs.loc[cells.obs.CDR3_alpha.eq("CAVSDGGSQGNLIF"), "CDR3_alpha"] = "CAVF"
+    sheet = _mock_samples(tmp_path, monkeypatch, cells)
+    main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic",
+          "--min-alpha-cdr3-length", "8"])
+    audit = pd.read_csv(tmp_path / "all_scored_clones.csv")
+    short = audit[audit.alpha_cdr3_length == 4]
+    assert len(short) == 1
+    assert short.excluded_reason.tolist() == ["short_alpha_cdr3"]
+    assert not short.selected_for_review.any()
+    assert len(pd.read_csv(tmp_path / "candidate_clones.csv")) == 1

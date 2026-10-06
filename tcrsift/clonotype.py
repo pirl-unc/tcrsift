@@ -761,7 +761,7 @@ def calculate_clone_frequencies(
     return clonotypes
 
 
-def build_clone_sample_long(adata: ad.AnnData, attribution=None) -> pd.DataFrame:
+def build_clone_sample_long(adata: ad.AnnData, attribution=None, *, min_umi: int = 2) -> pd.DataFrame:
     """Build a long-format (clone, sample) DataFrame from adata.obs.
 
     One row per (CDR3ab, sample) pair where the clone has at least one
@@ -773,7 +773,7 @@ def build_clone_sample_long(adata: ad.AnnData, attribution=None) -> pd.DataFrame
 
     Both the per-clone cell count (numerator) and the frequency
     denominator are restricted to complete-clone cells (both CDR3s
-    present and both chains >=2 UMI), mirroring the convention used by
+    present and both chains >=min_umi UMI, default 2), mirroring the convention used by
     ``max_frequency`` in ``aggregate_clonotypes`` so the two are directly
     comparable. Consequently per-sample frequencies sum to 1.0 and
     single-chain clones do not appear in the table (#175).
@@ -782,6 +782,7 @@ def build_clone_sample_long(adata: ad.AnnData, attribution=None) -> pd.DataFrame
     users were previously reconstructing by parsing the semicolon-
     delimited ``samples`` string on ``clonotypes.csv``.
     """
+    validate_numeric_param(min_umi, "min_umi", min_value=0)
     rehydrate_obs(adata)
     obs = adata.obs.copy()
 
@@ -827,11 +828,11 @@ def build_clone_sample_long(adata: ad.AnnData, attribution=None) -> pd.DataFrame
         return col in valid.columns
 
     tra_pass_umi = (
-        valid["TRA_1_umis"].fillna(0).astype(float) >= 2
+        valid["TRA_1_umis"].fillna(0).astype(float) >= min_umi
         if _has("TRA_1_umis") else pd.Series(True, index=valid.index)
     )
     trb_pass_umi = (
-        valid["TRB_1_umis"].fillna(0).astype(float) >= 2
+        valid["TRB_1_umis"].fillna(0).astype(float) >= min_umi
         if _has("TRB_1_umis") else pd.Series(True, index=valid.index)
     )
     if _has("CDR3_alpha") and _has("CDR3_beta"):
@@ -862,7 +863,7 @@ def build_clone_sample_long(adata: ad.AnnData, attribution=None) -> pd.DataFrame
         # complete clones. Per-sample weighted frequencies still sum to 1.0.
         from .attribution import attribute_cells
 
-        long_table, _, _ = attribute_cells(obs, attribution, "CDR3ab", min_umi=2)
+        long_table, _, _ = attribute_cells(obs, attribution, "CDR3ab", min_umi=min_umi)
         if len(long_table) == 0:
             out = pd.DataFrame(columns=["CDR3ab", "sample", "cells", "frequency"])
         else:
