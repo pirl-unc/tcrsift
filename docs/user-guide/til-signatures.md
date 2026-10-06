@@ -14,7 +14,7 @@ functional-avidity, and off-target testing.
 | Design | Path | What it does |
 | --- | --- | --- |
 | Two or more ordered/longitudinal TIL samples in the legacy per-timepoint layout | [`tcrsift til-select`](cli.md#tcrsift-til-select) | Harmonizes clones, scores compact TIL programs, and adds frequency-change branches. |
-| Multiple standard CellRanger VDJ + GEX sample directories | [`examples/multi_sample_til.py`](https://github.com/pirl-unc/tcrsift/blob/main/examples/multi_sample_til.py) | Loads a sample sheet, scores several published/curated signatures within each sample, annotates publicness, and writes an auditable shortlist. |
+| Multiple standard CellRanger VDJ + GEX sample directories | [`tcrsift til-prioritize`](cli.md#tcrsift-til-prioritize) | Loads a sample sheet, scores several published/curated signatures within each sample, annotates publicness, and writes an auditable shortlist. |
 
 Do not interpret an arbitrary ordering of independent samples as an expansion
 trajectory. For independent tumors, rank by within-sample frequency and
@@ -52,11 +52,18 @@ samples:
     gex_dir: /data/patient2_pre/gex
 ```
 
-From a source checkout (or after downloading the linked script), run the
-example with one or more curated TCR databases:
+After installing TCRsift, run:
 
 ```bash
-python examples/multi_sample_til.py til_samples.yaml \
+tcrsift til-prioritize til_samples.yaml -o til_candidates/
+```
+
+The command requires at least two named samples with paired VDJ + GEX data.
+It includes CD4 and CD8 cells. For known-specificity annotations and exclusions,
+optionally supply one or more curated TCR databases:
+
+```bash
+tcrsift til-prioritize til_samples.yaml \
   -o til_candidates/ \
   --vdjdb /references/vdjdb.txt \
   --iedb /references/iedb.tsv \
@@ -76,13 +83,16 @@ The three outputs serve different purposes:
 
 Scores are computed separately within each sample after log1p(CP10K)
 normalization. This prevents a high-depth or high-baseline sample from winning
-simply because it has larger expression values. The example stops with a clear
+simply because it has larger expression values. The command stops with a clear
 error if a required signature gene is absent rather than silently scoring a
 different, partial signature.
 
+The previous `python examples/multi_sample_til.py ...` invocation remains a
+compatibility wrapper for the installed command, with the same options.
+
 ## Evidence used
 
-The example requires observed abundance plus at least one signature in the
+The command requires observed abundance plus at least one signature in the
 configured top quantile. It includes:
 
 | Score | Intended evidence | Important limit |
@@ -95,18 +105,18 @@ configured top quantile. It includes:
 
 The published registries and their exact scoring methods are documented in
 [Signatures](../api/signatures.md). NeoTCR_PBL is available in the API but is
-deliberately absent from this TIL example because it was derived for
+deliberately absent from this TIL workflow because it was derived for
 circulating blood cells.
 
 ## Viral, MART-1, and public-receptor filters
 
-The example separates facts from heuristics:
+The command separates facts from heuristics:
 
 - `known_viral_match` is a public-database annotation. Known viral matches are
   excluded by default. A missing match means **unknown**, not non-viral.
 - `known_mart1_match` is a database match to MART-1/Melan-A/MLANA or the common
   EAAGIGILTV/AAGIGILTV or altered ELAGIGILTV epitope forms. These matches are
-  excluded by default in this example.
+  excluded by default in this command.
 - `uses_trav12_2` is only a germline-bias flag. TRAV12-2 is strongly enriched
   among HLA-A*02:01/MART-1 receptors, but it is also used by other
   specificities. It is not excluded unless `--exclude-trav12-2` is explicitly
@@ -120,7 +130,7 @@ The example separates facts from heuristics:
 For an aggressive HLA-A*02:01 melanoma screen:
 
 ```bash
-python examples/multi_sample_til.py til_samples.yaml \
+tcrsift til-prioritize til_samples.yaml \
   -o til_candidates_strict/ \
   --vdjdb /references/vdjdb.txt \
   --iedb /references/iedb.tsv \
@@ -148,5 +158,5 @@ phenotypically with tumor-specific T cells.
 For MART-1 specifically, TRAV12-2 bias has a structural and repertoire basis,
 but it is not exclusive to MART-1
 ([Madura et al.](https://pmc.ncbi.nlm.nih.gov/articles/PMC2785656/)).
-That is why the example exposes the V-gene flag separately from exact
+That is why the command exposes the V-gene flag separately from exact
 database matches and publicness scores.

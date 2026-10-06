@@ -134,7 +134,7 @@ tcrsift match-til -i annotated.csv -o matched.csv \
 
 This identifies culture clones that are also present in tumor. It cannot emit a
 TIL-only clone that is absent from the input culture table; use
-`til-clonotype` or the multi-sample TIL workflow to enumerate those.
+`til-clonotype` to enumerate those, or `til-prioritize` to select them by expression signatures and abundance.
 
 TIL samples are excluded from culture aggregation/filtering and only used for matching.
 

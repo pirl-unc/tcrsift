@@ -43,8 +43,8 @@ tcrsift run --sample-sheet samples.yaml --output-dir results/
 The result directory contains per-cell data, clonotype tables, plots, and
 configuration provenance. See [CellRanger Requirements](#cellranger-requirements)
 for the expected files. `source` defaults to `culture`. TIL-only analyses use
-`source: "til"` and the [multi-sample TIL workflow](examples/multi_sample_til.py),
-not this culture-oriented `run` command.
+`source: "til"` with `tcrsift til-prioritize`; see the
+[TIL guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/).
 
 ## Contents
 
@@ -65,7 +65,7 @@ not this culture-oriented `run` command.
 | Starting data | Recommended path |
 |---|---|
 | Antigen-stimulated culture, optionally with matched TIL | `tcrsift run` |
-| Multiple standard CellRanger VDJ + GEX TIL samples | [`examples/multi_sample_til.py`](examples/multi_sample_til.py) and the [TIL guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/) |
+| Multiple standard CellRanger VDJ + GEX TIL samples | `tcrsift til-prioritize` and the [TIL guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/) |
 | Two or more ordered TIL samples in the legacy per-timepoint layout | `tcrsift til-select` |
 | A single-cell atlas needing QC, embedding, and cell typing | `tcrsift cells` or the Python atlas API |
 
@@ -76,7 +76,7 @@ CellRanger VDJ + GEX  -->  tcrsift run  -->  clonotypes.csv
                               |
         load -> phenotype -> clonotype -> filter -> annotate -> assemble
 
-Supplementary: load-sct, annotate-gex, match-til, til-clonotype, til-select, unify
+Supplementary: load-sct, annotate-gex, match-til, til-clonotype, til-prioritize, til-select, unify
 ```
 
 ### Key Data Structures
@@ -546,7 +546,29 @@ This creates a harmonized clonotype table with:
 - `til_cell_count` and `til_frequency` (combined across all TIL samples)
 - `til_cell_count.{sample}` and `til_frequency.{sample}` (per-sample columns)
 
-### TIL-Only Clone Prioritization (`til-select`)
+### TIL Signature Prioritization (`til-prioritize`)
+
+For two or more standard CellRanger VDJ + GEX TIL samples, run:
+
+```bash
+tcrsift til-prioritize samples.yaml -o candidates/
+```
+
+The sample sheet supplies each sample's `vdj_dir`, `gex_dir`, and (for
+multi-patient studies) `patient_id`. The command scores TumorReactive,
+Cytolytic, Differentiated, MANAscore, NeoTCR8, and NeoTCR4 within each sample,
+then combines samples within each patient. Defaults require at least two
+cells, a within-sample clone frequency of at least 0.001, and a top-decile
+score in at least one signature.
+
+Outputs are `candidate_clones.csv`, `all_scored_clones.csv`, and
+`clone_sample_scores.csv`. Optional `--vdjdb`, `--iedb`, and `--cedar` inputs
+provide known-specificity annotations. Run `tcrsift til-prioritize --help`
+for thresholds and exclusion options, and see the
+[TIL guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/)
+for a complete sample sheet and interpretation.
+
+### Ordered TIL Clone Prioritization (`til-select`)
 
 For two or more ordered 10x VDJ + GEX tumor samples/timepoints, use
 `til-select` to prioritize clones with a CD8/non-viral base mask plus
@@ -665,7 +687,8 @@ tcrsift unify \
 |----------|-----|
 | One patient, culture + TIL in same sample sheet | `run` (TIL auto-detected) |
 | One patient, culture + TIL processed separately | `match-til` |
-| TIL-only, two or more ordered tumor samples/timepoints (10x VDJ+GEX) | `til-select` |
+| TIL-only, multiple standard CellRanger VDJ + GEX samples | `til-prioritize` |
+| TIL-only, two or more ordered tumor samples/timepoints in the legacy layout | `til-select` |
 | Multiple patients or experiments | `unify` |
 | Comparing results across different data sources | `unify` |
 
