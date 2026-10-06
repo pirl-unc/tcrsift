@@ -913,16 +913,24 @@ class TestDetectNovelAlleles:
         assert row["verdict"] == "novel_allele_candidate"
 
     def test_low_freq_classified_as_artifact(self):
+        # Meet the V-gene/sample thresholds so low frequency alone makes
+        # the four divergent clones (2% of 200) an artifact.
         df = self._make_cohort(
-            n_clones=200, n_v_genes=1, n_samples=1,
+            n_clones=200, n_v_genes=4, n_samples=2,
             divergent_fraction=0.02,  # only 2% — below threshold
         )
         result = detect_novel_alleles(df, min_pct=0.05, min_v_spread=3, min_samples=2)
-        if result.empty:
-            # No detected divergence; that's fine — 2% × 1 V-gene
-            # may register as a single artifact row.
-            return
-        assert all(result["verdict"] == "likely_artifact")
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["chain"] == "alpha"
+        assert row["gene"] == "TRAC"
+        assert row["variant_description"] == "p3N>K"
+        assert row["n_clones"] == 4
+        assert row["n_observed_at_position"] == 200
+        assert row["pct_observed_at_position"] == 0.02
+        assert row["n_v_genes"] == 4
+        assert row["n_samples"] == 2
+        assert row["verdict"] == "likely_artifact"
 
     def test_v_concentrated_high_freq_is_artifact(self):
         # 50% divergence but all in ONE V-gene → artifact.
