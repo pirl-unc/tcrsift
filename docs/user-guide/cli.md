@@ -313,6 +313,50 @@ tcrsift til-clonotype -o til_clonotypes.csv \
 
 ---
 
+### `tcrsift til-prioritize`
+
+Prioritize clones from two or more standard CellRanger VDJ + GEX TIL samples
+using within-sample expression signatures and clone abundance. Install with
+`pip install tcrsift`; no repository checkout is needed.
+
+```bash
+tcrsift til-prioritize samples.yaml -o candidates/
+```
+
+The YAML/CSV sample sheet supplies `sample`, `vdj_dir`, and `gex_dir` for each
+sample. Supply `patient_id` for every sample when analyzing multiple patients.
+Samples from the same patient are combined; clones from different patients
+remain separate. Both CD4 and CD8 cells are included.
+
+| Option | Description |
+|--------|-------------|
+| `sample_sheet` | Positional YAML/CSV sample sheet (required) |
+| `-o`, `--output-dir` | Directory for the three CSV outputs (required) |
+| `--min-cells` | Minimum clone cell count across a patient's samples (default: 2) |
+| `--min-frequency` | Minimum frequency in at least one sample (default: 0.001) |
+| `--signature-quantile` | Minimum within-sample signature percentile (default: 0.90) |
+| `--min-signature-support` | Minimum qualifying signatures, 1–6 (default: 1) |
+| `--vdjdb`, `--iedb`, `--cedar` | Optional known-specificity annotation files |
+| `--database-match` | `strict_ab`, `ab_with_partial` (default), or `b_only` |
+| `--[no-]exclude-known-viral` | Exclude known viral matches (default: enabled) |
+| `--[no-]exclude-known-mart1` | Exclude known MART-1 matches (default: enabled) |
+| `--exclude-trav12-2` | Optional V-gene heuristic exclusion (default: disabled) |
+| `--exclude-public-quantile` | Optional cohort publicness percentile cutoff (default: disabled) |
+| `--verbose` | Verbose logs and error tracebacks |
+
+Outputs:
+
+- `candidate_clones.csv`: selected clones.
+- `all_scored_clones.csv`: every clone, scores, risk flags, and exclusion reasons.
+- `clone_sample_scores.csv`: per-clone, per-sample scores and frequencies.
+
+The signature registry is TumorReactive, Cytolytic, Differentiated, MANAscore,
+NeoTCR8, and NeoTCR4. See [Multi-sample TIL Prioritization](til-signatures.md)
+for scoring details, a sample sheet, and interpretation. The old
+`python examples/multi_sample_til.py ...` entry point delegates to this command.
+
+---
+
 ### `tcrsift til-select`
 
 Select promising TIL clonotypes from two or more ordered 10x VDJ+GEX tumor

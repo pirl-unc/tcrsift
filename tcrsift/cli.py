@@ -561,8 +561,17 @@ def cmd_til_clonotype(args):
 
 
 # =============================================================================
-# TIL-Select Command
+# TIL Prioritization Commands
 # =============================================================================
+
+
+def cmd_til_prioritize(args):
+    """Prioritize TIL clones from a standard VDJ+GEX sample sheet."""
+    from .til_prioritize import run_til_prioritize
+
+    setup_logging(args.verbose)
+    _, candidates = run_til_prioritize(args)
+    print(f"Wrote {len(candidates)} candidates and the full audit table to {args.output_dir}")
 
 
 def cmd_til_select(args):
@@ -2716,6 +2725,7 @@ def cmd_cells_annotate(args):
 def create_parser():
     """Create the argument parser."""
     from .signatures import AIM_GENES_HGNC, EXHAUSTION_GENES_HGNC, MARKER_PANEL_HGNC
+    from .til_prioritize import add_cli_args as add_til_prioritize_args
 
     parser = argparse.ArgumentParser(
         prog="tcrsift",
@@ -3480,8 +3490,22 @@ TIL DATA SOURCE (provide ONE of the following):
     p_til_clono.set_defaults(func=cmd_til_clonotype)
 
     # -------------------------------------------------------------------------
-    # TIL-Select command
+    # Sample-sheet TIL prioritization command
     # -------------------------------------------------------------------------
+    p_til_prioritize = subparsers.add_parser(
+        "til-prioritize",
+        help="Prioritize TIL clones by expression signatures and abundance from a sample sheet",
+        description=(
+            "Prioritize clonotypes from two or more paired CellRanger VDJ + GEX TIL samples. "
+            "Score expression signatures within each sample, combine samples within each "
+            "patient, and write candidate_clones.csv, all_scored_clones.csv, and "
+            "clone_sample_scores.csv."
+        ),
+    )
+    add_til_prioritize_args(p_til_prioritize)
+    p_til_prioritize.set_defaults(func=cmd_til_prioritize)
+
+    # Legacy ordered/timepoint TIL selection command
     p_til_select = subparsers.add_parser(
         "til-select",
         help="Select promising TIL clonotypes from 2+ ordered VDJ+GEX samples",
