@@ -313,47 +313,38 @@ tcrsift til-clonotype -o til_clonotypes.csv \
 
 ---
 
-### `tcrsift til-prioritize`
+### `tcrsift prioritize`
 
-Prioritize clones from two or more standard CellRanger VDJ + GEX TIL samples
-using within-sample expression signatures and clone abundance. Install with
-`pip install tcrsift`; no repository checkout is needed.
+Select a per-patient shortlist by taking turns across signature/sample/lineage
+rankings. Defaults: CD8, 100 clones per patient, MART-1 exclusion on, viral
+exclusion off. One or more paired CellRanger VDJ + GEX samples are supported.
 
 ```bash
-tcrsift til-prioritize samples.yaml -o candidates/
+tcrsift prioritize samples.yaml -o candidates/ --context blood
 ```
 
-The YAML/CSV sample sheet supplies `sample`, `vdj_dir`, and `gex_dir` for each
-sample. Supply `patient_id` for every sample when analyzing multiple patients.
-Samples from the same patient are combined; clones from different patients
-remain separate. Both CD4 and CD8 cells are included.
+| Option | Meaning |
+| --- | --- |
+| `--context` | `generic` (default), `blood`, `blood-tumor`, `solid-tumor`, `mpe`, `heme` |
+| `--tcell-type` | `cd8` (default), `cd4`, `both` |
+| `--signatures NAME ...` | Replace preset signatures |
+| `--exclude-signatures NAME ...` | Remove signatures |
+| `--max-clones N` | Per-patient budget; default 100, 0 = unlimited |
+| `--signature-quantile` | Optional percentile floor; default 0 (disabled) |
+| `--min-signature-support` | Minimum qualifying signatures; default 1 |
+| `--min-cells`, `--min-frequency` | Abundance floors; default 2, 0.001 |
+| `--exclude-known-viral` | Opt-in viral database-match exclusion |
+| `--no-exclude-known-mart1` | Disable the default MART-1 exclusion |
 
-| Option | Description |
-|--------|-------------|
-| `sample_sheet` | Positional YAML/CSV sample sheet (required) |
-| `-o`, `--output-dir` | Directory for the three CSV outputs (required) |
-| `--min-cells` | Minimum clone cell count across a patient's samples (default: 2) |
-| `--min-frequency` | Minimum frequency in at least one sample (default: 0.001) |
-| `--signature-quantile` | Minimum within-sample signature percentile (default: 0.90) |
-| `--min-signature-support` | Minimum qualifying signatures, 1–6 (default: 1) |
-| `--vdjdb`, `--iedb`, `--cedar` | Optional known-specificity annotation files |
-| `--database-match` | `strict_ab`, `ab_with_partial` (default), or `b_only` |
-| `--[no-]exclude-known-viral` | Exclude known viral matches (default: enabled) |
-| `--[no-]exclude-known-mart1` | Exclude known MART-1 matches (default: enabled) |
-| `--exclude-trav12-2` | Optional V-gene heuristic exclusion (default: disabled) |
-| `--exclude-public-quantile` | Optional cohort publicness percentile cutoff (default: disabled) |
-| `--verbose` | Verbose logs and error tracebacks |
+The [prioritization guide](til-signatures.md) lists exact presets, lineage rules,
+all gene/count/read/UMI/expression/CDR3 filters, database options, output schemas,
+and changes from 3.22. `tcrsift prioritize --help` lists every flag.
 
-Outputs:
+### `tcrsift til-prioritize`
 
-- `candidate_clones.csv`: selected clones.
-- `all_scored_clones.csv`: every clone, scores, risk flags, and exclusion reasons.
-- `clone_sample_scores.csv`: per-clone, per-sample scores and frequencies.
-
-The signature registry is TumorReactive, Cytolytic, Differentiated, MANAscore,
-NeoTCR8, and NeoTCR4. See [Multi-sample TIL Prioritization](til-signatures.md)
-for scoring details, a sample sheet, and interpretation. The old
-`python examples/multi_sample_til.py ...` entry point delegates to this command.
+The same command with `--context solid-tumor` as its default. All options and
+selection rules above apply. The old `python examples/multi_sample_til.py ...`
+script remains a wrapper for this entry point.
 
 ---
 

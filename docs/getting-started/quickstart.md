@@ -129,4 +129,4 @@ The output CSV files contain:
 - [Sample Sheet Format](sample-sheets.md) - Detailed sample sheet options
 - [Pipeline Overview](../user-guide/pipeline.md) - Understanding each step
 - [Filtering Strategies](../user-guide/filtering.md) - Customizing filters
-- [Multi-sample TIL Prioritization](../user-guide/til-signatures.md) - `til-prioritize` for TIL-only VDJ+GEX
+- [Clone Prioritization](../user-guide/til-signatures.md) - `prioritize` for blood, TIL, MPE, and heme VDJ+GEX

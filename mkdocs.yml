@@ -67,7 +67,7 @@ nav:
     - Sample Sheets: getting-started/sample-sheets.md
   - User Guide:
     - Pipeline Overview: user-guide/pipeline.md
-    - Multi-sample TIL Prioritization: user-guide/til-signatures.md
+    - Clone Prioritization: user-guide/til-signatures.md
     - Single-Cell Atlas Path: user-guide/atlas.md
     - CLI Reference: user-guide/cli.md
     - Filtering Strategies: user-guide/filtering.md

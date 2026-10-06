@@ -65,7 +65,7 @@ for the expected files. `source` defaults to `culture`. TIL-only analyses use
 | Starting data | Recommended path |
 |---|---|
 | Antigen-stimulated culture, optionally with matched TIL | `tcrsift run` |
-| Multiple standard CellRanger VDJ + GEX TIL samples | `tcrsift til-prioritize` and the [TIL guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/) |
+| Paired CellRanger VDJ + GEX from blood, TIL, MPE, or heme studies | `tcrsift prioritize --context ...` and the [prioritization guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/) |
 | Two or more ordered TIL samples in the legacy per-timepoint layout | `tcrsift til-select` |
 | A single-cell atlas needing QC, embedding, and cell typing | `tcrsift cells` or the Python atlas API |
 
@@ -546,27 +546,32 @@ This creates a harmonized clonotype table with:
 - `til_cell_count` and `til_frequency` (combined across all TIL samples)
 - `til_cell_count.{sample}` and `til_frequency.{sample}` (per-sample columns)
 
-### TIL Signature Prioritization (`til-prioritize`)
+### Expression-State Clone Prioritization (`prioritize`)
 
-For two or more standard CellRanger VDJ + GEX TIL samples, run:
+For paired CellRanger VDJ + GEX, select clones across signature lists:
 
 ```bash
-tcrsift til-prioritize samples.yaml -o candidates/
+tcrsift prioritize samples.yaml -o candidates/ --context blood
 ```
 
-The sample sheet supplies each sample's `vdj_dir`, `gex_dir`, and (for
-multi-patient studies) `patient_id`. The command scores TumorReactive,
-Cytolytic, Differentiated, MANAscore, NeoTCR8, and NeoTCR4 within each sample,
-then combines samples within each patient. Defaults require at least two
-cells, a within-sample clone frequency of at least 0.001, and a top-decile
-score in at least one signature.
+Contexts: `generic`, `blood` (including vaccine studies), `blood-tumor`,
+`solid-tumor`, `mpe`, and `heme` (including AML). `til-prioritize` is the same
+workflow with `solid-tumor` as its default context.
 
-Outputs are `candidate_clones.csv`, `all_scored_clones.csv`, and
-`clone_sample_scores.csv`. Optional `--vdjdb`, `--iedb`, and `--cedar` inputs
-provide known-specificity annotations. Run `tcrsift til-prioritize --help`
-for thresholds and exclusion options, and see the
-[TIL guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/)
-for a complete sample sheet and interpretation.
+Defaults select **CD8**, up to **100 unique clones per patient**, taking turns
+across the top of each signature/sample list. Known MART-1 matches are excluded;
+viral matches are retained unless `--exclude-known-viral` is set. Reference
+files (`--vdjdb`, `--iedb`, `--cedar`) are needed to identify known matches.
+
+Use `--tcell-type cd4|cd8|both`, `--max-clones`, `--signatures`, and
+`--exclude-signatures` to override defaults. QC, expression, V/J gene, VDJ
+read/UMI, and CDR3 length filters are configurable. The sample sheet should
+include `patient_id` for multi-patient studies.
+
+Outputs: `candidate_clones.csv`, `all_scored_clones.csv`,
+`clone_sample_scores.csv`, and `prioritization.json`. See the
+[prioritization guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/)
+for exact presets, the round-robin rule, filter units, and biological limits.
 
 ### Ordered TIL Clone Prioritization (`til-select`)
 

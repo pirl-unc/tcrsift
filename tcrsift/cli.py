@@ -566,7 +566,7 @@ def cmd_til_clonotype(args):
 
 
 def cmd_til_prioritize(args):
-    """Prioritize TIL clones from a standard VDJ+GEX sample sheet."""
+    """Prioritize clones from a standard VDJ+GEX sample sheet."""
     from .til_prioritize import run_til_prioritize
 
     setup_logging(args.verbose)
@@ -3490,20 +3490,21 @@ TIL DATA SOURCE (provide ONE of the following):
     p_til_clono.set_defaults(func=cmd_til_clonotype)
 
     # -------------------------------------------------------------------------
-    # Sample-sheet TIL prioritization command
+    # Sample-sheet clone prioritization commands share one implementation.
     # -------------------------------------------------------------------------
-    p_til_prioritize = subparsers.add_parser(
-        "til-prioritize",
-        help="Prioritize TIL clones by expression signatures and abundance from a sample sheet",
-        description=(
-            "Prioritize clonotypes from two or more paired CellRanger VDJ + GEX TIL samples. "
-            "Score expression signatures within each sample, combine samples within each "
-            "patient, and write candidate_clones.csv, all_scored_clones.csv, and "
-            "clone_sample_scores.csv."
-        ),
-    )
-    add_til_prioritize_args(p_til_prioritize)
-    p_til_prioritize.set_defaults(func=cmd_til_prioritize)
+    for command, context in (("prioritize", "generic"), ("til-prioritize", "solid-tumor")):
+        p_prioritize = subparsers.add_parser(
+            command,
+            help=f"Select clones across expression signatures (default context: {context})",
+            description=(
+                "Prioritize paired CellRanger VDJ + GEX clones. Score within sample and "
+                "CD4/CD8 lineage, then select round-robin from each signature/sample list "
+                "with a per-patient clone budget. Writes candidate_clones.csv, "
+                "all_scored_clones.csv, clone_sample_scores.csv, and prioritization.json."
+            ),
+        )
+        add_til_prioritize_args(p_prioritize, context=context)
+        p_prioritize.set_defaults(func=cmd_til_prioritize)
 
     # Legacy ordered/timepoint TIL selection command
     p_til_select = subparsers.add_parser(
