@@ -133,7 +133,7 @@ def _til_cells():
 
 @pytest.mark.parametrize("entrypoint", ["cli", "example"])
 def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsys, entrypoint):
-    import tcrsift
+    from tcrsift import loader
 
     # Loading is covered by loader tests. Exercise the actual scoring,
     # clone aggregation, publicness, annotation, filtering, and CSV writes.
@@ -143,7 +143,7 @@ def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsy
         assert path == Path("samples.yaml")
         return cells.copy()
 
-    monkeypatch.setattr(tcrsift, "load_samples", load_samples)
+    monkeypatch.setattr(loader, "load_samples", load_samples)
     argv = ["samples.yaml", "-o", str(tmp_path), "--min-cells", "3"]
     if entrypoint == "cli":
         main(["til-prioritize", *argv])
@@ -173,12 +173,12 @@ def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsy
     ("--exclude-public-quantile", "0"),
 ])
 def test_invalid_threshold_fails_before_loading(tmp_path, monkeypatch, caplog, option, value):
-    import tcrsift
+    from tcrsift import loader
 
     def unexpected_load(*args, **kwargs):
         pytest.fail("Invalid thresholds must fail before loading data")
 
-    monkeypatch.setattr(tcrsift, "load_samples", unexpected_load)
+    monkeypatch.setattr(loader, "load_samples", unexpected_load)
     with pytest.raises(SystemExit) as error:
         main(["til-prioritize", "samples.yaml", "-o", str(tmp_path), option, value])
     assert error.value.code == 1
@@ -186,10 +186,10 @@ def test_invalid_threshold_fails_before_loading(tmp_path, monkeypatch, caplog, o
 
 
 def test_single_sample_has_clear_error(tmp_path, monkeypatch, caplog):
-    import tcrsift
+    from tcrsift import loader
 
     cells = _til_cells()[:6].copy()
-    monkeypatch.setattr(tcrsift, "load_samples", lambda path: cells)
+    monkeypatch.setattr(loader, "load_samples", lambda path: cells)
     with pytest.raises(SystemExit) as error:
         main(["til-prioritize", "samples.yaml", "-o", str(tmp_path)])
     assert error.value.code == 1

@@ -23,7 +23,7 @@ signature scores; use increase flags only for true longitudinal data.
 ## End-to-end example
 
 Create a normal TCRsift sample sheet. All samples may have `source: til`; this
-Python workflow does not remove them as the culture-oriented `tcrsift run`
+command does not remove them as the culture-oriented `tcrsift run`
 command does. Populate `patient_id` for every sample in a multi-patient
 analysis: samples from one patient are combined, while the same public CDR3
 pair remains a separate candidate in different patients.

@@ -50,7 +50,7 @@ MART1_PATTERN = re.compile(
 
 def _score_within_samples(adata, name: str) -> np.ndarray:
     """Score one signature separately within each sample."""
-    from tcrsift import score_by_name
+    from .signature_methods import score_by_name
 
     scores = np.full(adata.n_obs, np.nan, dtype=float)
     samples = adata.obs["sample"].astype(str).to_numpy()
@@ -168,16 +168,11 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
 
     import scanpy as sc
 
-    from tcrsift import (
-        add_paired_ppost,
-        add_pgen_ppost,
-        aggregate_clonotypes,
-        annotate_clonotypes,
-        build_clone_sample_long,
-        load_samples,
-        phenotype_cells,
-    )
-    from tcrsift.annotate_tcrs import add_pairing_promiscuity
+    from .annotate import annotate_clonotypes
+    from .annotate_tcrs import add_paired_ppost, add_pairing_promiscuity, add_pgen_ppost
+    from .clonotype import aggregate_clonotypes, build_clone_sample_long
+    from .loader import load_samples
+    from .phenotype import phenotype_cells
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
