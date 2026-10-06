@@ -59,18 +59,22 @@ def test_sct_yes_no_aggregation(text_series, column):
     pd.testing.assert_frame_equal(frame, original)
 
 
-def test_resolve_text_cell_values(text_series):
-    atlas = _atlas(text_series(["CD4", "CD8"]), "cell_type")
+@pytest.mark.parametrize("labels", [["CD4", "CD8"], ["1", "2"]])
+def test_resolve_text_cell_values(text_series, labels):
+    atlas = _atlas(text_series(labels), "cell_type")
     values, kind, label = _resolve_cell_values(atlas, "cell_type")
     assert kind == "categorical"
     assert label == "cell_type"
-    assert values.tolist() == ["CD4", "CD8"]
+    assert values.tolist() == labels
     assert values.index.equals(atlas.obs_names)
 
 
 @pytest.mark.parametrize("facets", [False, True])
-def test_public_umap_preserves_text_labels(text_series, facets):
-    atlas = _atlas(text_series(["CD4", "CD8", "CD4", "CD8"]), "cell_type")
+@pytest.mark.parametrize("missing", [False, True])
+def test_public_umap_preserves_text_labels(text_series, facets, missing):
+    labels = ["CD4", "CD8", None if missing else "CD4", "CD8"]
+    expected = {"CD4", "CD8", "nan"} if missing else {"CD4", "CD8"}
+    atlas = _atlas(text_series(labels), "cell_type")
     atlas.obs["sample"] = ["T1", "T1", "T2", "T2"]
     if facets:
         fig = plot_umap_facets(atlas, "sample", "cell_type")
@@ -81,11 +85,39 @@ def test_public_umap_preserves_text_labels(text_series, facets):
         fig, legend, axes = ax.figure, ax.get_legend(), [ax]
     try:
         assert legend is not None
-        assert {t.get_text() for t in legend.get_texts()} == {"CD4", "CD8"}
+        assert {t.get_text() for t in legend.get_texts()} == expected
         assert sum(len(c.get_offsets()) for c in axes[0].collections) == 4
-        assert {t.get_text() for t in axes[0].texts} >= {"CD4", "CD8"}
+        assert {t.get_text() for t in axes[0].texts} >= expected
     finally:
         plt.close(fig)
+
+
+def test_missing_facet_labels_keep_cells(text_series):
+    atlas = _atlas(text_series(["T1", None, "T2"]), "sample")
+    atlas.obs["cell_type"] = "CD8"
+    fig = plot_umap_facets(atlas, "sample", "cell_type", include_integrated=False)
+    try:
+        assert len(fig.axes) == 3
+        assert [sum(len(c.get_offsets()) for c in ax.collections) for ax in fig.axes] == [1, 1, 1]
+        assert {t.get_text() for ax in fig.axes for t in ax.texts} >= {"(T1)", "(T2)", "(nan)"}
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.parametrize("dtype", ["int64", "float64"])
+def test_numeric_cell_values_stay_continuous(dtype):
+    atlas = _atlas(pd.Series([1, 2], dtype=dtype), "score")
+    values, kind, _ = _resolve_cell_values(atlas, "score")
+    assert kind == "continuous"
+    assert values.tolist() == [1, 2]
+
+
+@pytest.mark.parametrize("dtype", ["bool", "boolean", "category"])
+def test_boolean_and_categorical_cell_values_stay_categorical(dtype):
+    atlas = _atlas(pd.Series([True, False], dtype=dtype), "flag")
+    values, kind, _ = _resolve_cell_values(atlas, "flag")
+    assert kind == "categorical"
+    assert values.tolist() == ["True", "False"]
 
 
 def test_missing_peptides_are_not_assigned(text_series):
