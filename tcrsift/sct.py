@@ -251,7 +251,7 @@ def aggregate_sct(
     for col in boolean_cols:
         if col in df.columns:
             # Convert Yes/No to boolean if needed
-            if df[col].dtype == "object":
+            if pd.api.types.is_string_dtype(df[col].dtype):
                 df[f"{col}_bool"] = df[col].map(
                     {"Yes": True, "No": False, True: True, False: False}
                 )

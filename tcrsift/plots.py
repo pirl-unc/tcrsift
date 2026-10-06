@@ -2251,13 +2251,20 @@ def _resolve_cell_values(
     ``key`` is looked up first in ``adata.obs`` (a phenotype/leiden category or
     a continuous signature-score column), then in ``adata.var_names`` (mean
     log1p expression of that one gene). ``kind`` is ``"categorical"`` for
-    object/category/bool obs columns and ``"continuous"`` for numeric columns
-    or a gene. ``label`` is a display string.
+    object/string/category/bool obs columns and ``"continuous"`` for numeric columns
+    or a gene. Missing categorical values use the display label ``"nan"``.
+    ``label`` is a display string.
     """
     if key in adata.obs.columns:
         s = adata.obs[key]
-        if isinstance(s.dtype, pd.CategoricalDtype) or s.dtype == object or s.dtype == bool:
-            return s.astype(str), "categorical", key
+        if (
+            isinstance(s.dtype, pd.CategoricalDtype)
+            or pd.api.types.is_string_dtype(s.dtype)
+            or pd.api.types.is_bool_dtype(s.dtype)
+        ):
+            # astype(str) preserves missing values under pandas 3, which would
+            # silently drop those cells when matching the string color keys.
+            return s.astype("string").fillna("nan"), "categorical", key
         return pd.to_numeric(s, errors="coerce"), "continuous", key
     if key in adata.var_names:
         vec = _per_cell_signature(adata, [key])
@@ -2319,8 +2326,9 @@ def _resolve_subset_mask(
     if by is not None:
         if by not in adata.obs.columns:
             raise ValueError(f"by column {by!r} not in adata.obs")
-        vals = adata.obs[by].astype(str)
-        return ~vals.isin(["", "nan", "None", "NaN", "<NA>"]).to_numpy()
+        vals = adata.obs[by]
+        assigned = vals.notna() & ~vals.astype(str).isin(["", "nan", "None", "NaN", "<NA>"])
+        return assigned.to_numpy(dtype=bool)
     raise ValueError(
         "plot needs a subset: pass subset=<bool obs column> or by=<obs column>"
     )
@@ -2527,8 +2535,9 @@ def plot_umap_facets(
     """
     if facet_col not in adata.obs.columns:
         raise ValueError(f"facet_col {facet_col!r} not in adata.obs")
-    groups = [str(g) for g in sorted(adata.obs[facet_col].astype(str).unique())]
-    fvals = adata.obs[facet_col].astype(str)
+    # Keep missing annotations as a visible facet, just like missing colors.
+    fvals = adata.obs[facet_col].astype("string").fillna("nan")
+    groups = sorted(fvals.unique())
 
     kind = color_map = centroids = vrange = ordered = None
     if shared_layout or shared_vrange:
