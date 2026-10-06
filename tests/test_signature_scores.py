@@ -88,7 +88,8 @@ class TestComputeSignatureScores:
 
     def test_cd8_only_restriction_active_by_default(self):
         """A clone with mixed CD4/CD8 cells should only count the
-        CD8+ cell's expression when ``cd8_only=True`` (the default)."""
+        CD8+ cell's expression when ``cd8_only`` is omitted (the None
+        sentinel behaves as True)."""
         df = _per_cell([
             # CD4 cell (CD8A=0) with high signature.
             {"CDR3_pair": "A", "gex.TNFRSF9": 100.0, "gex.MKI67": 100.0, "gex.CD8A": 0},
@@ -179,18 +180,6 @@ class TestZscoreOption:
 class TestCd8OnlySentinel:
     """#313: cd8_only default is a sentinel (None) that behaves as True for
     back-compat but is meant to be passed explicitly (it drops CD4)."""
-
-    def test_default_still_restricts_to_cd8(self):
-        df = _per_cell([
-            {"CDR3_pair": "A", "gex.TNFRSF9": 100.0, "gex.MKI67": 100.0, "gex.CD8A": 0},
-            {"CDR3_pair": "A", "gex.TNFRSF9": 0.0,   "gex.MKI67": 0.0,   "gex.CD8A": 1},
-        ])
-        sigs = {"antigen_response": ("TNFRSF9", "MKI67")}
-        # No cd8_only passed → sentinel None → behaves as True → CD4 dropped.
-        result = compute_signature_scores_per_clonotype(
-            df, signatures=sigs, verbose=False
-        )
-        assert result["signature_antigen_response"].iloc[0] == 0
 
     def test_sentinel_warns_when_verbose(self, caplog):
         import logging
