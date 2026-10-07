@@ -322,6 +322,10 @@ The default stopping rule now uses a size-matched empirical background floor
 instead of score > 0. The total cap remains 200 and the rank gate remains the
 top decile. Use `--signature-cutoff legacy` for the previous score rule. This
 can substantially reduce shortlists, especially with very small samples.
+NeoTCR module scores now explicitly read normalized `.X` even when `.raw`
+exists. Their registry metadata and descriptions correctly identify log-space
+control subtraction; the bare-DataFrame proxy follows the other signatures'
+default `log1p` transform (pass `log1p=False` for already logged frames).
 
 ## Changes in 3.23.1
 

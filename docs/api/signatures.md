@@ -50,6 +50,10 @@ expression, **not the papers' scGSEA scores**. The scorer explicitly uses `.X`,
 even if `.raw` exists. A bare DataFrame cannot supply the full universe for
 matched controls, so TCRsift warns and falls back to a mean-z proxy. Registry
 input units are `log1p`, not ranks. Numeric thresholds from scGSEA do not transfer.
+For the bare-DataFrame proxy, the default now applies `log1p` before per-gene
+standardization, consistently with other signatures. Pass `log1p=False` when
+the DataFrame already contains log-normalized values. AnnData module scoring
+expects `.X` to already be log-normalized and does not apply another logarithm.
 
 ## Usage
 

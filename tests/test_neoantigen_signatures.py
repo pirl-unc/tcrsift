@@ -118,10 +118,13 @@ class TestScoreByName:
     def test_geneset_enrichment_frame_fallback(self, caplog):
         # On a bare frame (no full gene universe) geneset_enrichment falls back
         # to a mean-z proxy and warns — it must not raise.
-        expr = pd.DataFrame({"CXCL13": [0.0, 5.0], "GZMB": [1.0, 9.0]})
+        expr = pd.DataFrame({"CXCL13": [0.0, 2.0, 50.0], "GZMB": [1.0, 4.0, 9.0]})
         with caplog.at_level(logging.WARNING):
             got = sm.score_by_name(expr, "NeoTCR8", on_missing="ignore")
-        assert len(got) == 2
+        logged = np.log1p(expr)
+        expected = ((logged - logged.mean()) / logged.std(ddof=0)).mean(axis=1)
+        np.testing.assert_allclose(got, expected)
+        np.testing.assert_allclose(sm.score_by_name(logged, "NeoTCR8", log1p=False, on_missing="ignore"), expected)
         assert any("mean-z proxy" in r.message for r in caplog.records)
 
     def test_weighted_z_ignores_missing_down_gene(self):
