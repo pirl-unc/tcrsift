@@ -70,11 +70,11 @@ class TestRegistryStructure:
         assert "39900903" in reg["MANAscore"].citation  # PMID
         for name in ("NeoTCR8", "NeoTCR4"):
             assert reg[name].method == "geneset_enrichment"
-            assert reg[name].units == "ranks"
+            assert reg[name].units == "log1p"
             assert "35113651" in reg[name].citation
         # NeoTCR_PBL is a geneset too, but from the Yossef Cancer Cell 2023 paper.
         assert reg["NeoTCR_PBL"].method == "geneset_enrichment"
-        assert reg["NeoTCR_PBL"].units == "ranks"
+        assert reg["NeoTCR_PBL"].units == "log1p"
         assert "38039963" in reg["NeoTCR_PBL"].citation
 
     def test_signature_defaults_backward_compatible(self):
@@ -118,10 +118,13 @@ class TestScoreByName:
     def test_geneset_enrichment_frame_fallback(self, caplog):
         # On a bare frame (no full gene universe) geneset_enrichment falls back
         # to a mean-z proxy and warns — it must not raise.
-        expr = pd.DataFrame({"CXCL13": [0.0, 5.0], "GZMB": [1.0, 9.0]})
+        expr = pd.DataFrame({"CXCL13": [0.0, 2.0, 50.0], "GZMB": [1.0, 4.0, 9.0]})
         with caplog.at_level(logging.WARNING):
             got = sm.score_by_name(expr, "NeoTCR8", on_missing="ignore")
-        assert len(got) == 2
+        logged = np.log1p(expr)
+        expected = ((logged - logged.mean()) / logged.std(ddof=0)).mean(axis=1)
+        np.testing.assert_allclose(got, expected)
+        np.testing.assert_allclose(sm.score_by_name(logged, "NeoTCR8", log1p=False, on_missing="ignore"), expected)
         assert any("mean-z proxy" in r.message for r in caplog.records)
 
     def test_weighted_z_ignores_missing_down_gene(self):
@@ -130,3 +133,18 @@ class TestScoreByName:
         got = sm.score_by_name(expr, "manascore", on_missing="ignore")
         assert np.isfinite(got.to_numpy()).all()
         assert got.iloc[1] > got.iloc[0]
+
+    def test_geneset_uses_log_normalized_x_even_when_raw_exists(self):
+        import scanpy as sc
+
+        from tests.test_til_prioritize import _til_cells
+
+        cells = _til_cells()
+        sc.pp.normalize_total(cells, target_sum=10000)
+        sc.pp.log1p(cells)
+        expected = sm.score_by_name(cells, "NeoTCR8")
+        assert expected.std() > 0
+        raw = cells.copy()
+        raw.X = np.zeros_like(raw.X)
+        cells.raw = raw
+        pd.testing.assert_series_equal(sm.score_by_name(cells, "NeoTCR8"), expected)

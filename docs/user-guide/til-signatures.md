@@ -31,10 +31,10 @@ layout; independent samples should not be interpreted as a time series.
    expression gates. Use this same cell population for counts and scores.
 2. Score each enabled signature separately within each **sample and lineage**,
    using log1p(CP10K). Average scores over cells of each clone in that stratum.
-3. Keep only the informative head of each signature/sample/lineage list:
-   by default **percentile ≥ 0.90 and score > 0**. A numerically flat list
-   supplies no clones. Cutoffs are evaluated on all scored clones in that
-   stratum, before abundance/database exclusions or selection.
+3. Keep clones with **percentile ≥ 0.90 and score above a size-matched
+   background floor** (details below). A numerically flat list supplies no
+   clones. Calibration uses all retained cells in that stratum, before clone
+   abundance/database exclusions or selection.
 4. Remove clones failing abundance or explicit exclusion filters. Rank each
    remaining list by score, then frequency, cell count, and CDR3 sequence.
 5. Take the next unused clone from each list in turn. When a list runs out of
@@ -60,28 +60,89 @@ budget can end partway through a round. Overlapping signatures are correlated
 views, not independent votes. Duplicate selections are skipped before taking
 the next qualifying clone from the same list.
 
-The cutoff is a **transparent ranking heuristic**, not a significance test or
-proof of antigen specificity. Positive scores and a varying list avoid taking
-zero/flat programs just to fill the budget; the percentile floor limits each
-list to its strongest relative scores. A noisy signature can still pass.
+## Per-signature background floors
+
+The default `--signature-cutoff background` estimates a separate floor for
+each **signature, patient, sample, lineage, and clone cell count**:
+
+1. For a clone represented by `n` cells in that sample/lineage, draw random
+   groups of `n` retained cells from the same patient/sample/lineage, uniformly
+   **without replacement within a draw**. All retained cells, including the
+   candidate clone, are part of this reference population.
+2. Average the already computed per-cell scores in each random group, exactly
+   as for the real clone. Use 2,000 draws, shared across signatures. Enumerate
+   all possible groups when there are fewer; singleton references use all cells.
+3. Require the clone mean to **exceed the 99th percentile** of those reference
+   means, using the higher observed order statistic and treating numerical ties
+   as failures. The top-decile rank gate is an additional requirement.
+
+This preserves the observed score distribution, including skew, dropout and
+correlated genes, without assuming Gaussian scores or inventing a universal
+native-unit cutoff. A clone with two cells is compared with two-cell groups;
+a clone with twenty cells is compared with twenty-cell groups. Larger clones
+usually have narrower reference distributions. Seed 0, stable cell identifiers,
+and sorted strata make repeated runs deterministic within a software environment.
+
+**Interpretation:** this is a competitive expression-enrichment reference:
+"higher than random groups of T cells in this sample." It does not estimate
+pure technical noise or establish antigen experience, vaccine induction, or
+antigen specificity. Cell exchangeability within a sample/lineage is an
+assumption; remaining cell-state, quality and batch effects can drive enrichment.
+A uniformly activated population has no contrast to itself. Including truly
+activated clones in the reference can make the rule conservative. An extremely
+small sample may supply no clones even when its top clone looks distinctive.
+
+The 99th percentile is a **configurable operating choice**, not a validated
+biological boundary. Noise can still pass. The exported one-sided background
+tail probability includes ties and uses `(exceedances + 1) / (draws + 1)` for
+Monte Carlo sampling (the exact fraction for enumeration). These probabilities
+are **unadjusted across clones/signatures/samples**; the shortlist has no claimed
+false-discovery-rate control. Stable identifiers and the recorded package
+version, seed, draw count and floor table support reproduction.
+
+### What the papers support
+
+| Source | Published approach | Consequence for TCRsift |
+| --- | --- | --- |
+| [Zeng et al., MANAscore, 2025](https://www.nature.com/articles/s41467-024-55059-3) | Patient-specific last troughs of the imputed and non-imputed trained ensemble score distributions; clone calls required at least five MANAscore-high cells. | Supports adapting thresholds to a population. Neither the numeric thresholds nor the fitted probability scale transfer to TCRsift's three-gene signed-z **proxy**. |
+| [Lowery et al., NeoTCR4/8, 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC8996692/) | scGSEA scores, validated against experimentally tested TCRs; figures highlight the 95th percentile. | A percentile is not a universal noise boundary. TCRsift uses the published gene sets with a different scoring implementation. |
+| [Yossef et al., NeoTCR_PBL, 2023](https://pmc.ncbi.nlm.nih.gov/articles/PMC10843665/) | A circulating tumor-reactive gene signature with functional validation in cancer patients. | Blood-specific biological support does not calibrate thresholds for generic blood, vaccine or heme samples. |
+
+TCRsift's NeoTCR AnnData scores use [Scanpy `score_genes`](https://scanpy.readthedocs.io/en/stable/generated/scanpy.tl.score_genes.html):
+mean signature-gene expression minus expression-matched control-gene expression.
+This is **not scGSEA or a rank-based enrichment statistic**. No paper-derived
+numeric cutoff is imported into this different scale. The resampling rule above
+is TCRsift's implementation choice, not a reproduction of those papers' methods.
 
 Adjust the stopping rule explicitly:
 
 ```bash
-# Broaden each list to its top 20%, retaining the positive-score requirement.
+# Broaden the rank gate while keeping the default background floor.
 tcrsift prioritize samples.yaml -o candidates/ --context blood \
-  --max-clones 200 --signature-quantile 0.80 --min-signature-score 0
+  --max-clones 200 --signature-quantile 0.80
+
+# More conservative background tail, with more draws for resolution.
+tcrsift prioritize samples.yaml -o candidates/ --context blood \
+  --signature-background-quantile 0.995 --signature-background-draws 4000
+
+# Explicitly reproduce the 3.23.1 cutoff behavior.
+tcrsift prioritize samples.yaml -o candidates/ --context blood \
+  --signature-cutoff legacy --signature-quantile 0.90 --min-signature-score 0
 ```
 
-`--signature-quantile 0` disables only the percentile gate. The score cutoff
-is strict (`score > --min-signature-score`), accepts finite negative values
-for an intentional relaxation, and is applied within each signature's native
-score units. Flat and single-clone strata are always skipped because they
+`--signature-quantile 0` disables only the percentile gate.
+`--min-signature-score VALUE` adds a strict native-unit floor on top of the
+background floor. There is no default universal zero cutoff in background mode;
+a negative score can exceed a more-negative reference floor. In `legacy` mode,
+the minimum replaces the default zero floor and accepts finite negative values.
+`--signature-background-seed` changes the random seed. Draw count must be at
+least 1,000 and leave at least ten expected draws above the requested quantile.
+Flat and single-clone strata are always skipped because they
 provide no within-stratum ranking contrast. Tied scores use average percentile
 ranks, so a tied top group can fall below a high percentile cutoff.
 
 `--min-signature-support 2` optionally requires two distinct signatures passing
-**both** cutoffs. Each supporting signature must pass both in the same
+**all** cutoffs. Each supporting signature must pass them in the same
 sample/lineage; different signatures may qualify in different strata. A clone
 can be taken only from a list where it passes that list's cutoffs.
 
@@ -160,10 +221,15 @@ omitted: its legacy pipeline enum is not a tissue or prioritization setting.
   `eligible_for_review`, `selected_for_review`, risk flags, and `excluded_reason`.
   An eligible clone can be unselected because of the clone budget.
 - `clone_sample_scores.csv`: clone/sample/lineage scores, percentiles, counts,
-  and frequencies. Each `signature_NAME_passes_cutoff` column records
+  and frequencies. In background mode, `signature_NAME_noise_floor` and
+  `signature_NAME_background_tail_probability` record the native-unit floor
+  and unadjusted competitive tail probability. Each `signature_NAME_passes_cutoff` column records
   qualification before clone exclusions and budgeting. Frequencies here use retained paired cells of that lineage
   in that sample. Clone-level `max_frequency` uses all retained requested
   lineages in the sample; these coincide when only one lineage is selected.
+- `signature_background.csv` (background mode): one calibration record per
+  signature/patient/sample/lineage/clone-size, including background cell count,
+  floor, quantile, actual draw count, exact versus Monte Carlo method, and status.
 - `prioritization.json`: version, arguments, resolved signature set, sequential
   cell-filter counts, retained counts per sample, and database availability.
   Counts start after GEX QC; loader logs report GEX QC losses.
@@ -250,10 +316,21 @@ publicness exclusions remain opt-in.
   and [Stitchr](https://pmc.ncbi.nlm.nih.gov/articles/PMC9262623/): context for
   distinguishing germline V-gene bias, CDR3 length, and junctional diversity.
 
-## Changes from 3.23.0
+## Changes in 3.24.0
+
+The default stopping rule now uses a size-matched empirical background floor
+instead of score > 0. The total cap remains 200 and the rank gate remains the
+top decile. Use `--signature-cutoff legacy` for the previous score rule. This
+can substantially reduce shortlists, especially with very small samples.
+NeoTCR module scores now explicitly read normalized `.X` even when `.raw`
+exists. Their registry metadata and descriptions correctly identify log-space
+control subtraction; the bare-DataFrame proxy follows the other signatures'
+default `log1p` transform (pass `log1p=False` for already logged frames).
+
+## Changes in 3.23.1
 
 The cap is now **200 total**, replacing 100 per patient. Selection ranks are
-global. The default cutoff is percentile ≥ 0.90 and score > 0; numerically flat
+global. That release used percentile ≥ 0.90 and score > 0; numerically flat
 lists are excluded. Exhausted lists yield their turns to the remaining lists.
 There is no fallback below these cutoffs to fill the budget.
 

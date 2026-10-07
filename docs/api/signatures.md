@@ -44,8 +44,16 @@ instead of treating unlike signatures as interchangeable weighted sums.
 | `NeoTCR_PBL` | Yossef/Rosenberg, Cancer Cell 2023 (PMID 38039963) | Published 151-gene circulating CD8 set, unweighted gene-set enrichment; use for blood, not as the default TIL signature |
 
 For `NeoTCR4`, `NeoTCR8`, and `NeoTCR_PBL`, pass an AnnData object containing
-the full log-normalized gene universe. A bare DataFrame cannot reproduce
-rank-enrichment controls, so TCRsift warns and falls back to a mean-z proxy.
+the full log-normalized gene universe in `.X`. These are Scanpy `score_genes`
+module scores: mean signature expression minus expression-matched control-gene
+expression, **not the papers' scGSEA scores**. The scorer explicitly uses `.X`,
+even if `.raw` exists. A bare DataFrame cannot supply the full universe for
+matched controls, so TCRsift warns and falls back to a mean-z proxy. Registry
+input units are `log1p`, not ranks. Numeric thresholds from scGSEA do not transfer.
+For the bare-DataFrame proxy, the default now applies `log1p` before per-gene
+standardization, consistently with other signatures. Pass `log1p=False` when
+the DataFrame already contains log-normalized values. AnnData module scoring
+expects `.X` to already be log-normalized and does not apply another logarithm.
 
 ## Usage
 
