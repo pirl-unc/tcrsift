@@ -168,28 +168,33 @@ def gene_filter_mask(clones, include, exclude, segment):
     return allowed
 
 
-def signature_pass_mask(scores, signature, quantile=0.9, min_score=0.0):
-    """Qualify one list's informative head before clone exclusions or budgeting.
-
-    The percentile is relative to all scored clones in the same stratum.
-    A positive score and a non-flat list avoid filling with zero/constant
-    programs. These are transparent selection heuristics, not significance tests.
-    """
+def signature_pass_mask(scores, signature, quantile=0.9, min_score=None, cutoff="background"):
+    """Apply the background floor (or explicit legacy rule) and rank gate."""
     col = f"signature_{signature}"
     values = scores[col].where(np.isfinite(scores[col]))
+    if cutoff == "background":
+        floor = scores[f"{col}_noise_floor"]
+        above_floor = values.gt(floor) & ~np.isclose(values, floor, rtol=1e-9, atol=1e-12)
+    elif cutoff == "legacy":
+        above_floor = values.gt(0 if min_score is None else min_score)
+    else:
+        raise ValueError(f"Unknown signature cutoff {cutoff!r}")
+    if min_score is not None:
+        above_floor &= values.gt(min_score)
     groups = [scores[key] for key in ("donor", "sample", "lineage")]
     grouped = values.groupby(groups, observed=True)
     low, high = grouped.transform("min"), grouped.transform("max")
     varying = ~np.isclose(low, high, rtol=1e-9, atol=1e-12)
-    return (values.gt(min_score) & scores[f"{col}_percentile"].ge(quantile) & varying).fillna(False)
+    return (above_floor & scores[f"{col}_percentile"].ge(quantile) & varying).fillna(False)
 
 
-def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9, min_score=0.0):
+def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
+                       min_score=None, cutoff="background"):
     """Take one unseen clone per (signature, sample, lineage) list each round.
 
     One budget covers the entire run. Clone identity includes the donor;
     shared sequences in different patients remain separate candidate rows.
-    Only the informative head of each list participates. Exhausted lists
+    Only the qualifying head of each list participates. Exhausted lists
     contribute no more turns; other lists continue without quota limits.
     """
     result = clones.copy()
@@ -201,7 +206,7 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
     lists = []
     for signature in signatures:
         col = f"signature_{signature}"
-        passing = scores[signature_pass_mask(scores, signature, quantile, min_score)]
+        passing = scores[signature_pass_mask(scores, signature, quantile, min_score, cutoff)]
         for (donor, sample, lineage), group in passing.groupby(
             ["donor", "sample", "lineage"], sort=True, observed=True,
         ):

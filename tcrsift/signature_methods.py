@@ -76,7 +76,7 @@ class Signature:
 
     ``units``, ``method`` and ``citation`` (#309) record how a *published*
     signature is meant to be scored, so heterogeneous signatures
-    (MANAscore-style signed-z proxies vs. unweighted rank-enrichment gene
+    (MANAscore-style signed-z proxies vs. unweighted control-subtracted gene
     sets) can live in one registry and be dispatched correctly by
     :func:`score_by_name` rather than all being treated as weighted sums:
 
@@ -85,8 +85,8 @@ class Signature:
     - ``method`` — the scoring rule: ``"zscore"`` (mean of per-gene
       z-scores, the default and what :func:`score_signature` computes),
       ``"weighted_z"`` (signed-sum of per-gene z-scores / ``sqrt(n)`` — the
-      transparent MANAscore proxy), or ``"geneset_enrichment"`` (rank-based
-      set score for unweighted published sets like NeoTCR4/8).
+      transparent MANAscore proxy), or ``"geneset_enrichment"`` (Scanpy
+      control-subtracted module score for published sets like NeoTCR4/8).
     - ``citation`` — the source paper (free text, incl. PMID).
 
     Defaults keep every pre-existing signature a plain ``zscore`` /
@@ -661,7 +661,7 @@ def build_signature_methods(
 # --------------------------------------------------------------------------- #
 # The published neoantigen-reactivity signatures are NOT interchangeable
 # weighted gene sums — MANAscore is a signed 3-gene model, NeoTCR4/8 are
-# unweighted rank-enrichment gene sets. The registry records each one's true
+# unweighted gene sets. The registry records TCRsift's scoring
 # structure (genes, sign, input units, scoring method, citation); the
 # dispatcher below routes each to the matching scorer so a caller can just say
 # ``score_by_name(adata, "manascore")`` and get the right thing.
@@ -695,33 +695,36 @@ NEOANTIGEN_SIGNATURES: dict[str, Signature] = {
         "NeoTCR8",
         NEOTCR8_GENES_HGNC,
         panel="broad",
-        units="ranks",
+        units="log1p",
         method="geneset_enrichment",
         citation="Lowery/Rosenberg, Science 2022 (PMID 35113651)",
         description="243-gene CD8 neoantigen-reactive set (Table S10). An "
-        "UNWEIGHTED gene set scored by rank enrichment (scGSEA/score_genes) — "
-        "'per-gene weight' is not a meaningful question for it.",
+        "unweighted gene set scored here with Scanpy's expression-matched "
+        "control subtraction. This is not the paper's scGSEA implementation "
+        "and does not inherit its thresholds.",
     ),
     "NeoTCR4": Signature(
         "NeoTCR4",
         NEOTCR4_GENES_HGNC,
         panel="broad",
-        units="ranks",
+        units="log1p",
         method="geneset_enrichment",
         citation="Lowery/Rosenberg, Science 2022 (PMID 35113651)",
         description="40-gene CD4 neoantigen-reactive set (Table S10). An "
-        "UNWEIGHTED gene set scored by rank enrichment (scGSEA/score_genes).",
+        "unweighted gene set scored here with Scanpy's expression-matched "
+        "control subtraction, not the paper's scGSEA implementation.",
     ),
     "NeoTCR_PBL": Signature(
         "NeoTCR_PBL",
         NEOTCRPBL_GENES_HGNC,
         panel="broad",
-        units="ranks",
+        units="log1p",
         method="geneset_enrichment",
         citation="Yossef/Rosenberg, Cancer Cell 2023 (PMID 38039963)",
         description="151-gene signature of circulating (peripheral-blood) "
         "neoantigen-reactive CD8 T cells (cluster C9, avg_log2FC>=0.5; Table "
-        "S2D). An UNWEIGHTED gene set scored by rank enrichment. Distinct from "
+        "S2D). An unweighted gene set scored here with Scanpy's expression-matched "
+        "control subtraction. Distinct from "
         "Lowery's TIL-derived NeoTCR8/4 — a separate blood-derived signature.",
     ),
 }
@@ -783,7 +786,7 @@ def score_weighted_z(
 
 
 def _score_genes_adata(adata, genes, *, on_missing: str = "warn") -> pd.Series:
-    """Faithful rank-enrichment for an unweighted set via scanpy score_genes.
+    """Control-subtracted module score via Scanpy (not scGSEA/rank enrichment).
 
     Robust to Ensembl ``var_names``: signature symbols are mapped to the
     matrix's actual var names via the shared symbol resolver before scoring.
@@ -809,7 +812,7 @@ def _score_genes_adata(adata, genes, *, on_missing: str = "warn") -> pd.Series:
     if not picked:
         return pd.Series(0.0, index=index)
     tmp_key = "_tcrsift_geneset_score_tmp"
-    sc.tl.score_genes(adata, picked, score_name=tmp_key, ctrl_size=50)
+    sc.tl.score_genes(adata, picked, score_name=tmp_key, ctrl_size=50, use_raw=False)
     out = pd.Series(np.asarray(adata.obs[tmp_key]), index=index)
     del adata.obs[tmp_key]
     return out
@@ -832,12 +835,12 @@ def _score_frame(
             log1p=log1p, background=background, groups=groups, on_missing=on_missing,
         )
     if signature.method == "geneset_enrichment":
-        # No AnnData here → no full gene universe for a true rank enrichment.
+        # No AnnData here → no full gene universe for matched controls.
         # Score the (unweighted) present genes as a mean-of-z proxy and say so.
         logger.warning(
             "score_by_name[%s]: geneset_enrichment on a bare frame falls back "
-            "to a mean-z proxy (pass the AnnData for faithful score_genes "
-            "rank enrichment).",
+            "to a mean-z proxy (pass the AnnData for the score_genes "
+            "control-subtracted module score).",
             signature.name,
         )
         proxy = Signature(signature.name, signature.all_genes)  # all-up, zscore
@@ -871,8 +874,8 @@ def score_by_name(
 
     - ``weighted_z`` → :func:`score_weighted_z` (MANAscore-style signed-z),
     - ``zscore`` / ``mean`` → :func:`score_signature`,
-    - ``geneset_enrichment`` → scanpy ``score_genes`` on an AnnData (faithful
-      rank enrichment), or a mean-z proxy on a bare frame.
+    - ``geneset_enrichment`` → scanpy ``score_genes`` on an AnnData
+      (control-subtracted module score), or a mean-z proxy on a bare frame.
 
     ``log1p`` defaults from the signature's ``units`` (applied for
     ``log1p``/``cp10k`` inputs, skipped for ``scaled``/``ranks``); pass a bool

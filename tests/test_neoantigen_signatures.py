@@ -70,11 +70,11 @@ class TestRegistryStructure:
         assert "39900903" in reg["MANAscore"].citation  # PMID
         for name in ("NeoTCR8", "NeoTCR4"):
             assert reg[name].method == "geneset_enrichment"
-            assert reg[name].units == "ranks"
+            assert reg[name].units == "log1p"
             assert "35113651" in reg[name].citation
         # NeoTCR_PBL is a geneset too, but from the Yossef Cancer Cell 2023 paper.
         assert reg["NeoTCR_PBL"].method == "geneset_enrichment"
-        assert reg["NeoTCR_PBL"].units == "ranks"
+        assert reg["NeoTCR_PBL"].units == "log1p"
         assert "38039963" in reg["NeoTCR_PBL"].citation
 
     def test_signature_defaults_backward_compatible(self):
@@ -130,3 +130,18 @@ class TestScoreByName:
         got = sm.score_by_name(expr, "manascore", on_missing="ignore")
         assert np.isfinite(got.to_numpy()).all()
         assert got.iloc[1] > got.iloc[0]
+
+    def test_geneset_uses_log_normalized_x_even_when_raw_exists(self):
+        import scanpy as sc
+
+        from tests.test_til_prioritize import _til_cells
+
+        cells = _til_cells()
+        sc.pp.normalize_total(cells, target_sum=10000)
+        sc.pp.log1p(cells)
+        expected = sm.score_by_name(cells, "NeoTCR8")
+        assert expected.std() > 0
+        raw = cells.copy()
+        raw.X = np.zeros_like(raw.X)
+        cells.raw = raw
+        pd.testing.assert_series_equal(sm.score_by_name(cells, "NeoTCR8"), expected)

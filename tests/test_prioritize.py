@@ -58,6 +58,7 @@ def _ranking_tables():
                 rows.append({"donor": donor, "sample": sample, "lineage": "cd8", "CDR3ab": clone,
                              "signature_X": x if sample == "s1" else y, "signature_Y": y,
                              "signature_X_percentile": 0.9, "signature_Y_percentile": 0.9,
+                             "signature_X_noise_floor": 0, "signature_Y_noise_floor": 0,
                              "cells": 2, "frequency": 0.25})
     return clones, pd.DataFrame(rows)
 
@@ -98,6 +99,7 @@ def test_default_budget_is_200_across_patients():
     scores = clones.assign(sample="s", lineage="cd8", cells=2, frequency=1/1000,
                            signature_X=list(range(1, 1001)) * 2)
     scores["signature_X_percentile"] = scores.groupby("donor").signature_X.rank(pct=True)
+    scores["signature_X_noise_floor"] = 0
     selected = select_round_robin(clones, scores, ["X"])
     assert selected.selected_for_review.sum() == 200
     assert selected[selected.selected_for_review].groupby("donor").size().to_dict() == {"p1": 100, "p2": 100}
@@ -110,6 +112,7 @@ def test_exhausted_signature_yields_to_remaining_lists_without_padding():
                            signature_X=[5, 0, -1, -2, -3], signature_Y=[1, 5, 4, 3, -1])
     for name in ("X", "Y"):
         scores[f"signature_{name}_percentile"] = scores[f"signature_{name}"].rank(pct=True)
+        scores[f"signature_{name}_noise_floor"] = 0
     selected = select_round_robin(clones, scores, ["X", "Y"], 200, quantile=0)
     chosen = selected[selected.selected_for_review]
     assert chosen.CDR3ab.tolist() == list("ABCD")
@@ -123,7 +126,7 @@ def test_cutoff_rejects_flat_nonfinite_negative_and_singleton_lists():
     assert not signature_pass_mask(scores, "X", quantile=0).any()
     scores["signature_X"] = [-1, -2, np.nan, -3] * 4
     assert not signature_pass_mask(scores, "X", quantile=0).any()
-    assert signature_pass_mask(scores, "X", quantile=0, min_score=-2).sum() == 4
+    assert signature_pass_mask(scores, "X", quantile=0, min_score=-2, cutoff="legacy").sum() == 4
     singleton = scores.iloc[:1].copy()
     singleton["signature_X"] = 8.0
     assert not signature_pass_mask(singleton, "X", quantile=0).any()
@@ -134,7 +137,8 @@ def test_cutoff_rejects_flat_nonfinite_negative_and_singleton_lists():
 def test_score_and_percentile_must_qualify_in_the_same_stratum():
     scores = pd.DataFrame({"donor": "p", "sample": ["s1", "s1", "s2", "s2"], "lineage": "cd8",
                            "CDR3ab": ["A", "B", "A", "B"],
-                           "signature_X": [-1, -2, 1, 2], "signature_X_percentile": [1, .5, .5, 1]})
+                           "signature_X": [-1, -2, 1, 2], "signature_X_percentile": [1, .5, .5, 1],
+                           "signature_X_noise_floor": 0})
     assert signature_pass_mask(scores, "X").tolist() == [False, False, False, True]
 
 

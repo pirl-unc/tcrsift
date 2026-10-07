@@ -169,8 +169,12 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
     names = resolve_signatures(args.context, args.tcell_type, args.signatures, args.exclude_signatures)
     if not 0 <= args.signature_quantile <= 1:
         raise ValueError("--signature-quantile must be in [0, 1]")
-    if not np.isfinite(args.min_signature_score):
+    if args.min_signature_score is not None and not np.isfinite(args.min_signature_score):
         raise ValueError("--min-signature-score must be finite")
+    from .signature_background import calibrate_signature_background, validate_background_parameters
+
+    validate_background_parameters(args.signature_background_quantile,
+                                   args.signature_background_draws, args.signature_background_seed)
     if args.exclude_public_quantile is not None and not (0 < args.exclude_public_quantile <= 1):
         raise ValueError("--exclude-public-quantile must be in (0, 1]")
     if not 0 <= args.min_frequency <= 1:
@@ -244,7 +248,8 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         scored_adata.obs[col] = _score_within_samples(scored_adata, name)
         signature_cols.append(col)
 
-    per_cell_scores = scored_adata.obs[["CDR3ab", "sample", "lineage", *signature_cols]].dropna(
+    scored_adata.obs["donor"] = _analysis_units(scored_adata)
+    per_cell_scores = scored_adata.obs[["donor", "CDR3ab", "sample", "lineage", *signature_cols]].dropna(
         subset=["CDR3ab"]
     )
     per_sample_scores = (
@@ -266,11 +271,21 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
             observed=True,
         )[col].rank(method="average", pct=True)
         signature_percentile_cols.append(percentile_col)
+    if args.signature_cutoff == "background":
+        clone_sample, calibration = calibrate_signature_background(
+            clone_sample, per_cell_scores, names, quantile=args.signature_background_quantile,
+            draws=args.signature_background_draws, seed=args.signature_background_seed,
+        )
+        calibration.to_csv(args.output_dir / "signature_background.csv", index=False)
+    else:
+        # A rerun in the same output directory must not leave a previous run's
+        # calibration table looking like evidence for this legacy selection.
+        (args.output_dir / "signature_background.csv").unlink(missing_ok=True)
     pass_cols = []
     for name in names:
         col = f"signature_{name}_passes_cutoff"
         clone_sample[col] = signature_pass_mask(
-            clone_sample, name, args.signature_quantile, args.min_signature_score,
+            clone_sample, name, args.signature_quantile, args.min_signature_score, args.signature_cutoff,
         )
         pass_cols.append(col)
     clone_sample.to_csv(args.output_dir / "clone_sample_scores.csv", index=False)
@@ -370,7 +385,8 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         & ~excluded
     )
     clonotypes = select_round_robin(
-        clonotypes, clone_sample, names, args.max_clones, args.signature_quantile, args.min_signature_score,
+        clonotypes, clone_sample, names, args.max_clones, args.signature_quantile,
+        args.min_signature_score, args.signature_cutoff,
     )
     candidates = clonotypes[clonotypes["selected_for_review"]].copy()
 
@@ -383,7 +399,14 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         "resolved_signatures": names, "signature_lineages": SIGNATURE_LINEAGE,
         "cell_filters": cell_filters, "sample_cell_counts": sample_counts,
         "selection": "one total budget; round-robin over signature/patient/sample/lineage lists",
-        "signature_cutoff": "score > min_signature_score AND percentile >= signature_quantile; flat lists excluded",
+        "signature_cutoff": {
+            "method": args.signature_cutoff,
+            "rule": ("score > background floor AND optional minimum score" if args.signature_cutoff == "background"
+                     else "score > explicit minimum score, defaulting to 0")
+                    + "; percentile gate; flat lists excluded",
+            "background": "uniform cell subsets without replacement within patient/sample/lineage, matched to clone cell count",
+            "interpretation": "competitive expression enrichment; not technical-noise estimation, antigen specificity, or FDR control",
+        },
         "database_annotation_available": bool(args.vdjdb or args.iedb or args.cedar),
         "candidate_count": len(candidates),
     }
@@ -414,10 +437,18 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
                         help="Minimum clone frequency in at least one sample (default: 0.001)")
     parser.add_argument("--signature-quantile", type=float, default=0.9,
                         help="Within-sample/lineage percentile floor in [0, 1] (default: 0.9; 0 disables percentile gate)")
-    parser.add_argument("--min-signature-score", type=float, default=0.0,
-                        help="Strict lower score cutoff for each list (default: 0); flat lists always excluded")
+    parser.add_argument("--signature-cutoff", choices=("background", "legacy"), default="background",
+                        help="Size-matched empirical background floor (default), or legacy positive-score gate")
+    parser.add_argument("--signature-background-quantile", type=float, default=0.99,
+                        help="Random cell-group score quantile to exceed (default: 0.99)")
+    parser.add_argument("--signature-background-draws", type=int, default=2000,
+                        help="Background draws per clone size (default: 2000; exact enumeration when smaller)")
+    parser.add_argument("--signature-background-seed", type=int, default=0,
+                        help="Reproducible background sampling seed (default: 0)")
+    parser.add_argument("--min-signature-score", type=float,
+                        help="Optional additional strict score floor; legacy mode defaults to 0")
     parser.add_argument("--min-signature-support", type=int, default=1,
-                        help="Minimum signatures passing both score and percentile cutoffs (default: 1)")
+                        help="Minimum signatures passing all score and percentile cutoffs (default: 1)")
     parser.add_argument(
         "--exclude-known-viral",
         action=argparse.BooleanOptionalAction,

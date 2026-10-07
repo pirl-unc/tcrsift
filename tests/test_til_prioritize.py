@@ -87,7 +87,11 @@ def test_parser_defaults_keep_heuristic_filters_auditable(tmp_path):
     assert args.context == "solid-tumor"
     assert args.max_clones == 200
     assert args.signature_quantile == 0.9
-    assert args.min_signature_score == 0.0
+    assert args.min_signature_score is None
+    assert args.signature_cutoff == "background"
+    assert args.signature_background_quantile == 0.99
+    assert args.signature_background_draws == 2000
+    assert args.signature_background_seed == 0
 
 
 def test_parser_accepts_example_options(tmp_path):
@@ -162,7 +166,8 @@ def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsy
     cells = _til_cells()
 
     sheet = _mock_samples(tmp_path, monkeypatch, cells)
-    argv = [sheet, "-o", str(tmp_path), "--min-cells", "3", "--tcell-type", "both"]
+    argv = [sheet, "-o", str(tmp_path), "--min-cells", "3", "--tcell-type", "both",
+            "--signature-cutoff", "legacy"]
     if entrypoint == "cli":
         main(["til-prioritize", *argv])
     else:
@@ -200,6 +205,9 @@ def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsy
     ("--max-clones", "-1"), ("--min-expression", "GZMB=nan"),
     ("--min-vdj-reads", "-1"), ("--min-alpha-cdr3-length", "-1"),
     ("--min-signature-score", "nan"), ("--min-signature-score", "inf"),
+    ("--signature-background-quantile", "1"), ("--signature-background-quantile", "0.5"),
+    ("--signature-background-quantile", "nan"), ("--signature-background-draws", "999"),
+    ("--signature-background-seed", "-1"),
 ])
 def test_invalid_threshold_fails_before_loading(tmp_path, monkeypatch, caplog, option, value):
     from tcrsift import loader
@@ -217,7 +225,7 @@ def test_invalid_threshold_fails_before_loading(tmp_path, monkeypatch, caplog, o
 def test_single_sample_and_default_cd8_are_supported(tmp_path, monkeypatch):
     cells = _til_cells()[:6].copy()
     sheet = _mock_samples(tmp_path, monkeypatch, cells)
-    main(["prioritize", sheet, "-o", str(tmp_path), "--max-clones", "1"])
+    main(["prioritize", sheet, "-o", str(tmp_path), "--max-clones", "1", "--signature-cutoff", "legacy"])
     candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
     assert len(candidates) == 1
     assert candidates.Tcell_type_consensus.str.contains("CD8").all()
@@ -239,7 +247,7 @@ def test_mart1_excluded_by_default_and_viral_opt_in(tmp_path, monkeypatch, exclu
         return result
 
     monkeypatch.setattr(annotate, "annotate_clonotypes", annotate_clonotypes)
-    options = ["--exclude-known-viral"] if exclude_viral else []
+    options = ["--signature-cutoff", "legacy"] + (["--exclude-known-viral"] if exclude_viral else [])
     main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic",
           "--signature-quantile", "0", "--min-signature-score", "-100", *options])
     candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
@@ -257,7 +265,8 @@ def test_short_cdr3_is_audited_and_excluded(tmp_path, monkeypatch):
     cells.obs.loc[cells.obs.CDR3_alpha.eq("CAVSDGGSQGNLIF"), "CDR3_alpha"] = "CAVF"
     sheet = _mock_samples(tmp_path, monkeypatch, cells)
     main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic",
-          "--min-alpha-cdr3-length", "8", "--signature-quantile", "0", "--min-signature-score", "-100"])
+          "--min-alpha-cdr3-length", "8", "--signature-quantile", "0", "--min-signature-score", "-100",
+          "--signature-cutoff", "legacy"])
     audit = pd.read_csv(tmp_path / "all_scored_clones.csv")
     short = audit[audit.alpha_cdr3_length == 4]
     assert len(short) == 1
@@ -268,9 +277,56 @@ def test_short_cdr3_is_audited_and_excluded(tmp_path, monkeypatch):
 
 def test_cli_budget_is_total_even_with_multiple_patients(tmp_path, monkeypatch):
     sheet = _mock_samples(tmp_path, monkeypatch, _til_cells())
-    main(["prioritize", sheet, "-o", str(tmp_path), "--tcell-type", "both", "--max-clones", "1"])
+    main(["prioritize", sheet, "-o", str(tmp_path), "--tcell-type", "both", "--max-clones", "1",
+          "--signature-cutoff", "legacy"])
     candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
     audit = pd.read_csv(tmp_path / "all_scored_clones.csv")
     assert len(candidates) == 1
     assert candidates.selection_rank.tolist() == [1]
     assert audit.eligible_for_review.sum() > len(candidates)
+
+
+def test_background_workflow_selects_signal_and_exports_its_floor(tmp_path, monkeypatch):
+    import itertools
+
+    original = _til_cells()
+    parts = [original]
+    # Add many low-expression control clones in each sample. The original
+    # expanded clone's four concordant cells now have a meaningful reference.
+    for start in (4, 10):
+        for i, pair in enumerate(itertools.islice(itertools.product("ACDEFGHIKLMNPQRSTVWY", repeat=2), 50)):
+            extra = original[start:start + 2].copy()
+            extra.obs_names = [f"control_{start}_{i}_{j}" for j in range(2)]
+            extra.obs["CDR3_alpha"] = "CAV" + "".join(pair) + "GNLIF"
+            parts.append(extra)
+    cells = ad.concat(parts)
+    sheet = _mock_samples(tmp_path, monkeypatch, cells)
+    main(["prioritize", sheet, "-o", str(tmp_path), "--tcell-type", "both",
+          "--signatures", "Cytolytic", "--max-clones", "1"])
+    candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
+    scores = pd.read_csv(tmp_path / "clone_sample_scores.csv")
+    audit = pd.read_csv(tmp_path / "signature_background.csv")
+    config = json.loads((tmp_path / "prioritization.json").read_text())
+    assert config["signature_cutoff"]["method"] == "background"
+    assert len(candidates) == 1
+    assert candidates.CDR3ab.tolist() == ["CAVSDGGSQGNLIF_CASSLGQAYEQYF"]
+    passing = scores[scores.signature_Cytolytic_passes_cutoff]
+    assert len(passing) == 2
+    assert passing.signature_Cytolytic.gt(passing.signature_Cytolytic_noise_floor).all()
+    assert passing.signature_Cytolytic_background_tail_probability.le(.01).all()
+    assert set(audit.clone_cells) == {2, 4}
+    assert audit.background_cells.eq(106).all()
+
+
+def test_background_workflow_can_return_no_candidates_in_small_sample(tmp_path, monkeypatch):
+    sheet = _mock_samples(tmp_path, monkeypatch, _til_cells()[:6].copy())
+    main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic"])
+    assert pd.read_csv(tmp_path / "candidate_clones.csv").empty
+    assert len(pd.read_csv(tmp_path / "all_scored_clones.csv")) == 2
+    audit = pd.read_csv(tmp_path / "signature_background.csv")
+    assert audit.method.eq("exact").all()
+    assert audit.draws.eq(15).all()
+    main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic",
+          "--signature-cutoff", "legacy"])
+    assert not (tmp_path / "signature_background.csv").exists()
+    assert len(pd.read_csv(tmp_path / "candidate_clones.csv")) == 1
