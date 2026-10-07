@@ -315,8 +315,8 @@ tcrsift til-clonotype -o til_clonotypes.csv \
 
 ### `tcrsift prioritize`
 
-Select a per-patient shortlist by taking turns across signature/sample/lineage
-rankings. Defaults: CD8, 100 clones per patient, MART-1 exclusion on, viral
+Select one shortlist for the entire run by taking turns across signature/sample/lineage
+rankings. Defaults: CD8, at most 200 total clones, MART-1 exclusion on, viral
 exclusion off. One or more paired CellRanger VDJ + GEX samples are supported.
 
 ```bash
@@ -329,9 +329,10 @@ tcrsift prioritize samples.yaml -o candidates/ --context blood
 | `--tcell-type` | `cd8` (default), `cd4`, `both` |
 | `--signatures NAME ...` | Replace preset signatures |
 | `--exclude-signatures NAME ...` | Remove signatures |
-| `--max-clones N` | Per-patient budget; default 100, 0 = unlimited |
-| `--signature-quantile` | Optional percentile floor; default 0 (disabled) |
-| `--min-signature-support` | Minimum qualifying signatures; default 1 |
+| `--max-clones N` | Total run-wide cap; default 200, 0 = unlimited (cutoffs still apply) |
+| `--signature-quantile` | Per-list percentile floor; default 0.90 |
+| `--min-signature-score` | Strict lower score cutoff; default 0; flat lists always excluded |
+| `--min-signature-support` | Minimum signatures passing both cutoffs; default 1 |
 | `--min-cells`, `--min-frequency` | Abundance floors; default 2, 0.001 |
 | `--exclude-known-viral` | Opt-in viral database-match exclusion |
 | `--no-exclude-known-mart1` | Disable the default MART-1 exclusion |

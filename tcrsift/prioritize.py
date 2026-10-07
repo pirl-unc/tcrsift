@@ -168,50 +168,67 @@ def gene_filter_mask(clones, include, exclude, segment):
     return allowed
 
 
-def select_round_robin(clones, scores, signatures, max_clones, quantile=0.0):
+def signature_pass_mask(scores, signature, quantile=0.9, min_score=0.0):
+    """Qualify one list's informative head before clone exclusions or budgeting.
+
+    The percentile is relative to all scored clones in the same stratum.
+    A positive score and a non-flat list avoid filling with zero/constant
+    programs. These are transparent selection heuristics, not significance tests.
+    """
+    col = f"signature_{signature}"
+    values = scores[col].where(np.isfinite(scores[col]))
+    groups = [scores[key] for key in ("donor", "sample", "lineage")]
+    grouped = values.groupby(groups, observed=True)
+    low, high = grouped.transform("min"), grouped.transform("max")
+    varying = ~np.isclose(low, high, rtol=1e-9, atol=1e-12)
+    return (values.gt(min_score) & scores[f"{col}_percentile"].ge(quantile) & varying).fillna(False)
+
+
+def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9, min_score=0.0):
     """Take one unseen clone per (signature, sample, lineage) list each round.
 
-    Budgets are per donor. Fixed signature order then lexical sample/lineage
-    order makes both ties and a partially filled final round reproducible.
+    One budget covers the entire run. Clone identity includes the donor;
+    shared sequences in different patients remain separate candidate rows.
+    Only the informative head of each list participates. Exhausted lists
+    contribute no more turns; other lists continue without quota limits.
     """
     result = clones.copy()
     result["selection_rank"] = pd.Series(pd.NA, index=result.index, dtype="Int64")
     for col in ("selected_signature", "selected_sample", "selected_lineage"):
         result[col] = ""
-    for donor, donor_clones in result.groupby("donor", sort=True, observed=True):
-        eligible = donor_clones[donor_clones.eligible_for_review]
-        if eligible.empty:
-            continue
-        by_clone = dict(zip(eligible.CDR3ab, eligible.index))
-        lists = []
-        donor_scores = scores[(scores.donor == donor) & scores.CDR3ab.isin(by_clone)]
-        for signature in signatures:
-            col = f"signature_{signature}"
-            for (sample, lineage), group in donor_scores.groupby(["sample", "lineage"], sort=True, observed=True):
-                group = group[np.isfinite(group[col]) & group[f"{col}_percentile"].ge(quantile)]
-                ranked = group.sort_values(
-                    [col, "frequency", "cells", "CDR3ab"], ascending=[False, False, False, True],
-                )
-                if not ranked.empty:
-                    lists.append((signature, sample, lineage, deque(ranked.CDR3ab)))
-        selected = set()
-        limit = max_clones if max_clones else len(eligible)
-        while len(selected) < limit:
-            before = len(selected)
-            for signature, sample, lineage, queue in lists:
-                while queue and queue[0] in selected:
-                    queue.popleft()
-                if not queue:
-                    continue
-                clone = queue.popleft()
-                selected.add(clone)
-                idx = by_clone[clone]
-                result.loc[idx, ["selection_rank", "selected_signature", "selected_sample", "selected_lineage"]] = [
-                    len(selected), signature, sample, lineage,
-                ]
-                if len(selected) == limit:
-                    break
-            if len(selected) == before:
+    eligible = result[result.eligible_for_review]
+    by_clone = dict(zip(zip(eligible.donor, eligible.CDR3ab), eligible.index))
+    lists = []
+    for signature in signatures:
+        col = f"signature_{signature}"
+        passing = scores[signature_pass_mask(scores, signature, quantile, min_score)]
+        for (donor, sample, lineage), group in passing.groupby(
+            ["donor", "sample", "lineage"], sort=True, observed=True,
+        ):
+            ranked = group.sort_values(
+                [col, "frequency", "cells", "CDR3ab"], ascending=[False, False, False, True],
+            )
+            queue = deque((donor, clone) for clone in ranked.CDR3ab if (donor, clone) in by_clone)
+            if queue:
+                lists.append((signature, sample, lineage, queue))
+    selected = set()
+    limit = max_clones if max_clones else len(eligible)
+    while len(selected) < limit:
+        before = len(selected)
+        for signature, sample, lineage, queue in lists:
+            while queue and queue[0] in selected:
+                queue.popleft()
+            if not queue:
+                continue
+            clone = queue.popleft()
+            selected.add(clone)
+            idx = by_clone[clone]
+            result.loc[idx, ["selection_rank", "selected_signature", "selected_sample", "selected_lineage"]] = [
+                len(selected), signature, sample, lineage,
+            ]
+            if len(selected) == limit:
                 break
+        if len(selected) == before:
+            break
     result["selected_for_review"] = result.selection_rank.notna()
-    return result.sort_values(["donor", "selection_rank", "CDR3ab"], na_position="last")
+    return result.sort_values(["selection_rank", "donor", "CDR3ab"], na_position="last")
