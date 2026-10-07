@@ -92,6 +92,11 @@ def test_parser_defaults_keep_heuristic_filters_auditable(tmp_path):
     assert args.signature_background_quantile == 0.99
     assert args.signature_background_draws == 2000
     assert args.signature_background_seed == 0
+    assert args.signature_evidence is None  # resolves to either in background mode
+    assert args.signature_high_quantile == .9
+    assert args.min_signature_high_cells == 5
+    assert args.min_signature_high_fraction == 0
+    assert args.signature_subset_pvalue == .01
 
 
 def test_parser_accepts_example_options(tmp_path):
@@ -208,6 +213,10 @@ def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsy
     ("--signature-background-quantile", "1"), ("--signature-background-quantile", "0.5"),
     ("--signature-background-quantile", "nan"), ("--signature-background-draws", "999"),
     ("--signature-background-seed", "-1"),
+    ("--signature-high-quantile", "0"), ("--signature-high-quantile", "1"),
+    ("--signature-high-quantile", "nan"), ("--min-signature-high-cells", "0"),
+    ("--min-signature-high-fraction", "1.1"), ("--min-signature-high-fraction", "nan"),
+    ("--signature-subset-pvalue", "0"), ("--signature-subset-pvalue", "nan"),
 ])
 def test_invalid_threshold_fails_before_loading(tmp_path, monkeypatch, caplog, option, value):
     from tcrsift import loader
@@ -302,18 +311,22 @@ def test_background_workflow_selects_signal_and_exports_its_floor(tmp_path, monk
     cells = ad.concat(parts)
     sheet = _mock_samples(tmp_path, monkeypatch, cells)
     main(["prioritize", sheet, "-o", str(tmp_path), "--tcell-type", "both",
-          "--signatures", "Cytolytic", "--max-clones", "1"])
+          "--signatures", "Cytolytic", "--max-clones", "1", "--min-signature-high-cells", "3"])
     candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
     scores = pd.read_csv(tmp_path / "clone_sample_scores.csv")
     audit = pd.read_csv(tmp_path / "signature_background.csv")
     config = json.loads((tmp_path / "prioritization.json").read_text())
     assert config["signature_cutoff"]["method"] == "background"
+    assert config["signature_cutoff"]["evidence"] == "either"
     assert len(candidates) == 1
     assert candidates.CDR3ab.tolist() == ["CAVSDGGSQGNLIF_CASSLGQAYEQYF"]
+    assert candidates.selected_evidence.tolist() == ["mean"]
+    assert candidates.signature_support_count.tolist() == [1]
     passing = scores[scores.signature_Cytolytic_passes_cutoff]
     assert len(passing) == 2
     assert passing.signature_Cytolytic.gt(passing.signature_Cytolytic_noise_floor).all()
     assert passing.signature_Cytolytic_background_tail_probability.le(.01).all()
+    assert passing.signature_Cytolytic_subset_passes_cutoff.all()
     assert set(audit.clone_cells) == {2, 4}
     assert audit.background_cells.eq(106).all()
 
@@ -330,3 +343,47 @@ def test_background_workflow_can_return_no_candidates_in_small_sample(tmp_path, 
           "--signature-cutoff", "legacy"])
     assert not (tmp_path / "signature_background.csv").exists()
     assert len(pd.read_csv(tmp_path / "candidate_clones.csv")) == 1
+
+
+@pytest.mark.parametrize("evidence", ["either", "subset", "mean"])
+def test_cli_subset_retains_ten_of_twenty_five_and_reports_support(tmp_path, monkeypatch, evidence):
+    import itertools
+
+    # Scoring itself is tested above with real GEX. Here fixed cell scores
+    # isolate the complete aggregation/calibration/selection/export behavior.
+    base = _til_cells()[:1].copy()
+    pairs = list(itertools.islice(itertools.product("ACDEFGHIKLMNPQRSTVWY", repeat=2), 101))
+    labels = ["CAV" + "".join(pair) + "GNLIF" for pair in pairs]
+    cells = base[np.zeros(1025, dtype=int)].copy()
+    cells.obs_names = [f"cell_{i}" for i in range(1025)]
+    cells.obs["CDR3_alpha"] = [labels[0]] * 25 + list(np.repeat(labels[1:], 10))
+    cell_scores = np.random.default_rng(12).normal(size=1025)
+    cell_scores[:25] = [10] * 10 + [-10] * 15
+    monkeypatch.setattr(til_prioritize, "_score_within_samples", lambda adata, name: cell_scores.copy())
+    sheet = _mock_samples(tmp_path, monkeypatch, cells)
+    main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic",
+          "--signature-evidence", evidence])
+    candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
+    audit = pd.read_csv(tmp_path / "all_scored_clones.csv")
+    scores = pd.read_csv(tmp_path / "clone_sample_scores.csv")
+    clone = labels[0] + "_CASSLGQAYEQYF"
+    row = scores.loc[scores.CDR3ab.eq(clone)].iloc[0]
+    assert not row.signature_Cytolytic_mean_passes_cutoff
+    assert row.signature_Cytolytic_subset_passes_cutoff
+    target = candidates[candidates.CDR3ab.eq(clone)]
+    if evidence == "mean":
+        assert target.empty
+    else:
+        assert len(target) == 1
+        assert target.selected_evidence.tolist() == ["subset"]
+        assert target.selected_cells.tolist() == [25]
+        assert target.selected_high_cells.tolist() == [10]
+        assert target.selected_high_fraction.tolist() == [.4]
+    assert audit.loc[audit.CDR3ab.eq(clone), "signature_support_count"].tolist() == [int(evidence != "mean")]
+
+
+def test_subset_and_legacy_combination_is_rejected_before_loading(tmp_path, caplog):
+    with pytest.raises(SystemExit):
+        main(["prioritize", "missing.yaml", "-o", str(tmp_path),
+              "--signature-cutoff", "legacy", "--signature-evidence", "subset"])
+    assert "--signature-evidence" in caplog.text

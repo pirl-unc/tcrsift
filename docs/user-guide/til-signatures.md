@@ -31,12 +31,14 @@ layout; independent samples should not be interpreted as a time series.
    expression gates. Use this same cell population for counts and scores.
 2. Score each enabled signature separately within each **sample and lineage**,
    using log1p(CP10K). Average scores over cells of each clone in that stratum.
-3. Keep clones with **percentile ≥ 0.90 and score above a size-matched
-   background floor** (details below). A numerically flat list supplies no
-   clones. Calibration uses all retained cells in that stratum, before clone
-   abundance/database exclusions or selection.
-4. Remove clones failing abundance or explicit exclusion filters. Rank each
-   remaining list by score, then frequency, cell count, and CDR3 sequence.
+3. Keep clones with **mean evidence OR high-cell subset evidence** (details
+   below). Each route has its own top-decile rank gate. Calibration uses all
+   retained cells in that stratum, before clone abundance/database exclusions
+   or selection. Neither route requires every cell to score highly.
+4. Remove clones failing abundance or explicit exclusion filters. Rank the mean
+   list by score, then frequency, cell count, and CDR3 sequence. Rank the subset
+   list by increasing tail probability, then decreasing high-cell fraction and
+   cell count, then CDR3 sequence.
 5. Take the next unused clone from each list in turn. When a list runs out of
    qualifying clones, skip it and keep taking from the others. Stop at
    **200 candidate rows total across the entire run**, or when every list is
@@ -44,7 +46,7 @@ layout; independent samples should not be interpreted as a time series.
 
 `--max-clones N` changes the total cap; `0` removes the cap but keeps the
 signature cutoffs. This is one shared budget across patients, samples,
-signatures, and lineages. A clone shared between samples occupies one slot
+signatures, evidence routes, and lineages. A clone shared between samples occupies one slot
 within a patient; the same sequence in two patients remains two separate rows,
 both counted toward the total cap.
 
@@ -55,14 +57,28 @@ qualifying clones. If only 137 distinct candidates qualify overall, the result
 has 137 rows, even with a cap of 200.
 
 Lists are visited in signature order (preset order below, or your
-`--signatures` order), then lexical patient, sample, and lineage order. A small
+`--signatures` order), then mean and subset evidence, then lexical patient,
+sample, and lineage order. A small
 budget can end partway through a round. Overlapping signatures are correlated
 views, not independent votes. Duplicate selections are skipped before taking
 the next qualifying clone from the same list.
 
-## Per-signature background floors
+## Two complementary evidence routes
 
-The default `--signature-cutoff background` estimates a separate floor for
+By default, background mode uses `--signature-evidence either`: a clone can
+qualify through an elevated mean **or** an enriched subset of high-scoring
+cells. This preserves candidates whose expression state varies among cells.
+Each route has a separate ranked list, so a low clone mean cannot bury a
+candidate supported by its high-cell subset. A clone qualifying by both routes
+uses one budget slot, and the signature counts once toward signature support.
+
+Use `--signature-evidence mean` to retain the 3.24.0 behavior, or `subset` to
+use only the new route. `--signature-cutoff legacy` defaults to mean evidence
+and rejects an explicitly requested subset/either combination.
+
+### Mean evidence: per-signature background floors
+
+The mean route in `--signature-cutoff background` estimates a separate floor for
 each **signature, patient, sample, lineage, and clone cell count**:
 
 1. For a clone represented by `n` cells in that sample/lineage, draw random
@@ -100,6 +116,51 @@ are **unadjusted across clones/signatures/samples**; the shortlist has no claime
 false-discovery-rate control. Stable identifiers and the recorded package
 version, seed, draw count and floor table support reproduction.
 
+### Subset evidence: high-cell counts and fractions
+
+For each signature within each patient/sample/lineage:
+
+1. Label a cell **high-scoring** when its score strictly exceeds the observed
+   90th-percentile cell score (`--signature-high-quantile 0.90`). Use the higher
+   order statistic; numerical ties are excluded, so the high fraction may be
+   less than 10% and a flat program labels no cells high. This is a relative
+   expression label, not a validated antigen-reactivity call.
+2. Record `k` high cells among the clone's `n` observed cells and the fraction
+   `k/n`. By default require **at least 5 high cells**, with no minimum fraction
+   or majority requirement. `--min-signature-high-cells` and
+   `--min-signature-high-fraction` change those requirements.
+3. With `K` high cells among `N` retained cells in the stratum, calculate
+   `P(X >= k)` for `X ~ Hypergeometric(N, K, n)`. This is the exact probability
+   of obtaining at least as many high cells in an equally sized random group
+   drawn without replacement. It uses the same competitive reference as the
+   mean route, including the candidate's cells; no Monte Carlo draws are needed.
+4. Require the unadjusted tail probability to be **≤ 0.01**
+   (`--signature-subset-pvalue`) and rank in the top decile by that probability.
+   The subset rank gate uses all clones in the stratum and is independent of
+   their mean-score ranks. `--signature-quantile` adjusts both routes' rank gates.
+
+Thus **10/25 high-scoring cells (40%) can qualify even when the other 15 cells
+make the clone mean low**. Qualification still depends on the cell threshold
+and the surrounding population: 10/25 is much more surprising against a 10%
+high-cell reference than against a 40% reference. Exported counts and fractions
+refer to the same sample and lineage, not a pool across different samples.
+
+This is a standard [hypergeometric enrichment calculation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.hypergeom.html),
+but the cell quantile, minimum count, and tail cutoff are configurable TCRsift
+choices. [Zeng et al.](https://www.nature.com/articles/s41467-024-55059-3) used
+at least five MANAscore-high cells per clone and reported substantial
+within-clone state heterogeneity; they also noted that the minimum count depends
+on sequencing depth. Our percentile labels and enrichment test do **not**
+reproduce their trained-model positivity calls. The rationale for a subset
+route is literature-supported; this exact implementation is an extension.
+
+Both routes retain the same exchangeability and population-reference limits.
+The tail probabilities are unadjusted; enabling either route adds opportunities
+to qualify and does not confer false-discovery-rate control. A high-scoring
+subset can reflect a shared state or technical effect rather than antigen
+recognition. The full mean, high-cell count, fraction, and reference prevalence
+are available for review.
+
 ### What the papers support
 
 | Source | Published approach | Consequence for TCRsift |
@@ -132,19 +193,33 @@ tcrsift prioritize samples.yaml -o candidates/ --context blood \
 
 `--signature-quantile 0` disables only the percentile gate.
 `--min-signature-score VALUE` adds a strict native-unit floor on top of the
-background floor. There is no default universal zero cutoff in background mode;
+background floor. When supplied, it also requires a subset candidate's **clone
+mean** to exceed that value, so it can intentionally exclude a diluted subset.
+There is no default universal zero cutoff in background mode;
 a negative score can exceed a more-negative reference floor. In `legacy` mode,
 the minimum replaces the default zero floor and accepts finite negative values.
 `--signature-background-seed` changes the random seed. Draw count must be at
 least 1,000 and leave at least ten expected draws above the requested quantile.
 Flat and single-clone strata are always skipped because they
-provide no within-stratum ranking contrast. Tied scores use average percentile
+provide no within-stratum ranking contrast. For subset evidence, flat cell
+scores produce no high cells and a single clone cannot enrich against itself.
+Tied scores use average percentile
 ranks, so a tied top group can fall below a high percentile cutoff.
 
 `--min-signature-support 2` optionally requires two distinct signatures passing
 **all** cutoffs. Each supporting signature must pass them in the same
 sample/lineage; different signatures may qualify in different strata. A clone
 can be taken only from a list where it passes that list's cutoffs.
+
+```bash
+# Retain either a high mean or an enriched high-scoring subset (the default).
+tcrsift prioritize samples.yaml -o candidates/ --context blood \
+  --signature-evidence either
+
+# Require at least 5 high cells and at least 20% of a clone for the subset route.
+tcrsift prioritize samples.yaml -o candidates/ --context blood \
+  --min-signature-high-cells 5 --min-signature-high-fraction 0.20
+```
 
 ## Context presets
 
@@ -216,7 +291,10 @@ omitted: its legacy pipeline enum is not a tissue or prioritization setting.
 
 - `candidate_clones.csv`: the shortlist, with global `selection_rank` and
   the `selected_signature`, `selected_sample`, and `selected_lineage` that
-  supplied each selection.
+  supplied each selection. `selected_evidence` identifies mean or subset;
+  `selected_cells`, `selected_mean_score`, `selected_high_cells`, and
+  `selected_high_fraction` report the measurements from that exact selection
+  stratum. In legacy mode the high-cell fields are unavailable.
 - `all_scored_clones.csv`: all clones after cell filtering, their scores,
   `eligible_for_review`, `selected_for_review`, risk flags, and `excluded_reason`.
   An eligible clone can be unselected because of the clone budget.
@@ -227,9 +305,17 @@ omitted: its legacy pipeline enum is not a tissue or prioritization setting.
   qualification before clone exclusions and budgeting. Frequencies here use retained paired cells of that lineage
   in that sample. Clone-level `max_frequency` uses all retained requested
   lineages in the sample; these coincide when only one lineage is selected.
+  Background mode also exports `signature_NAME_high_cell_threshold`,
+  `high_cells`, `high_fraction`, `subset_tail_probability`, and
+  `subset_percentile` (each with the same signature prefix). Separate
+  `signature_NAME_mean_passes_cutoff` and `signature_NAME_subset_passes_cutoff`
+  columns show the evidence even when only one route is enabled; the combined
+  `passes_cutoff` column uses only the enabled route(s).
 - `signature_background.csv` (background mode): one calibration record per
   signature/patient/sample/lineage/clone-size, including background cell count,
   floor, quantile, actual draw count, exact versus Monte Carlo method, and status.
+  It also records the high-cell score threshold, reference high-cell count,
+  and the exact hypergeometric method for subset evidence.
 - `prioritization.json`: version, arguments, resolved signature set, sequential
   cell-filter counts, retained counts per sample, and database availability.
   Counts start after GEX QC; loader logs report GEX QC losses.
@@ -315,6 +401,14 @@ publicness exclusions remain opt-in.
 - [MART-1 germline recognition study](https://pmc.ncbi.nlm.nih.gov/articles/PMC2785656/)
   and [Stitchr](https://pmc.ncbi.nlm.nih.gov/articles/PMC9262623/): context for
   distinguishing germline V-gene bias, CDR3 length, and junctional diversity.
+
+## Changes in 3.25.0
+
+Background selection now defaults to either mean or high-cell subset evidence,
+with separate ranked lists inside the same 200-total budget. Exports include
+high-cell counts, fractions, exact enrichment tails, and the evidence route
+that supplied each candidate. `--signature-evidence mean` restores the 3.24.0
+selection rule; legacy mode retains its previous behavior.
 
 ## Changes in 3.24.0
 

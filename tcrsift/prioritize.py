@@ -168,17 +168,35 @@ def gene_filter_mask(clones, include, exclude, segment):
     return allowed
 
 
-def signature_pass_mask(scores, signature, quantile=0.9, min_score=None, cutoff="background"):
-    """Apply the background floor (or explicit legacy rule) and rank gate."""
+def signature_pass_mask(scores, signature, quantile=0.9, min_score=None, cutoff="background",
+                        evidence="mean", min_high_cells=5, min_high_fraction=0.0, max_subset_p=0.01):
+    """Qualify mean or high-cell subset evidence within the same stratum."""
+    if cutoff not in ("background", "legacy"):
+        raise ValueError(f"Unknown signature cutoff {cutoff!r}")
+    if evidence not in ("mean", "subset", "either"):
+        raise ValueError(f"Unknown signature evidence {evidence!r}")
+    if cutoff == "legacy" and evidence != "mean":
+        raise ValueError("Subset evidence requires --signature-cutoff background")
+    if evidence == "either":
+        return signature_pass_mask(scores, signature, quantile, min_score, cutoff) | signature_pass_mask(
+            scores, signature, quantile, min_score, cutoff, "subset",
+            min_high_cells, min_high_fraction, max_subset_p,
+        )
     col = f"signature_{signature}"
     values = scores[col].where(np.isfinite(scores[col]))
+    if evidence == "subset":
+        tail = scores[f"{col}_subset_tail_probability"]
+        passing = (tail.between(0, max_subset_p) & scores[f"{col}_high_cells"].ge(min_high_cells)
+                   & scores[f"{col}_high_fraction"].ge(min_high_fraction)
+                   & scores[f"{col}_subset_percentile"].ge(quantile) & values.notna())
+        if min_score is not None:
+            passing &= values.gt(min_score)
+        return passing.fillna(False)
     if cutoff == "background":
         floor = scores[f"{col}_noise_floor"]
         above_floor = values.gt(floor) & ~np.isclose(values, floor, rtol=1e-9, atol=1e-12)
-    elif cutoff == "legacy":
+    else:  # legacy; other values were rejected above
         above_floor = values.gt(0 if min_score is None else min_score)
-    else:
-        raise ValueError(f"Unknown signature cutoff {cutoff!r}")
     if min_score is not None:
         above_floor &= values.gt(min_score)
     groups = [scores[key] for key in ("donor", "sample", "lineage")]
@@ -189,7 +207,8 @@ def signature_pass_mask(scores, signature, quantile=0.9, min_score=None, cutoff=
 
 
 def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
-                       min_score=None, cutoff="background"):
+                       min_score=None, cutoff="background", evidence="mean",
+                       min_high_cells=5, min_high_fraction=0.0, max_subset_p=0.01):
     """Take one unseen clone per (signature, sample, lineage) list each round.
 
     One budget covers the entire run. Clone identity includes the donor;
@@ -197,43 +216,59 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
     Only the qualifying head of each list participates. Exhausted lists
     contribute no more turns; other lists continue without quota limits.
     """
+    scores = scores.reset_index(drop=True)
     result = clones.copy()
     result["selection_rank"] = pd.Series(pd.NA, index=result.index, dtype="Int64")
-    for col in ("selected_signature", "selected_sample", "selected_lineage"):
+    for col in ("selected_signature", "selected_sample", "selected_lineage", "selected_evidence"):
         result[col] = ""
+    for col in ("selected_cells", "selected_mean_score", "selected_high_cells", "selected_high_fraction"):
+        result[col] = np.nan
     eligible = result[result.eligible_for_review]
     by_clone = dict(zip(zip(eligible.donor, eligible.CDR3ab), eligible.index))
     lists = []
     for signature in signatures:
         col = f"signature_{signature}"
-        passing = scores[signature_pass_mask(scores, signature, quantile, min_score, cutoff)]
-        for (donor, sample, lineage), group in passing.groupby(
-            ["donor", "sample", "lineage"], sort=True, observed=True,
-        ):
-            ranked = group.sort_values(
-                [col, "frequency", "cells", "CDR3ab"], ascending=[False, False, False, True],
-            )
-            queue = deque((donor, clone) for clone in ranked.CDR3ab if (donor, clone) in by_clone)
-            if queue:
-                lists.append((signature, sample, lineage, queue))
+        for route in (("mean", "subset") if evidence == "either" else (evidence,)):
+            passing = scores[signature_pass_mask(
+                scores, signature, quantile, min_score, cutoff, route,
+                min_high_cells, min_high_fraction, max_subset_p,
+            )]
+            for (donor, sample, lineage), group in passing.groupby(
+                ["donor", "sample", "lineage"], sort=True, observed=True,
+            ):
+                sort_cols = ([col, "frequency", "cells", "CDR3ab"] if route == "mean" else
+                             [f"{col}_subset_tail_probability", f"{col}_high_fraction", "cells", "CDR3ab"])
+                ranked = group.sort_values(sort_cols, ascending=[route == "subset", False, False, True])
+                queue = deque((donor, row.CDR3ab, row_id) for row_id, row in ranked.iterrows()
+                              if (donor, row.CDR3ab) in by_clone)
+                if queue:
+                    lists.append((signature, sample, lineage, route, queue))
     selected = set()
     limit = max_clones if max_clones else len(eligible)
     while len(selected) < limit:
         before = len(selected)
-        for signature, sample, lineage, queue in lists:
-            while queue and queue[0] in selected:
+        for signature, sample, lineage, route, queue in lists:
+            while queue and queue[0][:2] in selected:
                 queue.popleft()
             if not queue:
                 continue
-            clone = queue.popleft()
+            donor, cdr3, row_id = queue.popleft()
+            clone = (donor, cdr3)
             selected.add(clone)
             idx = by_clone[clone]
-            result.loc[idx, ["selection_rank", "selected_signature", "selected_sample", "selected_lineage"]] = [
-                len(selected), signature, sample, lineage,
+            result.loc[idx, ["selection_rank", "selected_signature", "selected_sample", "selected_lineage", "selected_evidence"]] = [
+                len(selected), signature, sample, lineage, route,
+            ]
+            row = scores.loc[row_id]
+            result.loc[idx, ["selected_cells", "selected_mean_score", "selected_high_cells", "selected_high_fraction"]] = [
+                row.cells, row[f"signature_{signature}"], row.get(f"signature_{signature}_high_cells", np.nan),
+                row.get(f"signature_{signature}_high_fraction", np.nan),
             ]
             if len(selected) == limit:
                 break
         if len(selected) == before:
             break
     result["selected_for_review"] = result.selection_rank.notna()
+    for col in ("selected_cells", "selected_high_cells"):
+        result[col] = result[col].astype("Int64")
     return result.sort_values(["selection_rank", "donor", "CDR3ab"], na_position="last")
