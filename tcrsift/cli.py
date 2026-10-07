@@ -3499,7 +3499,7 @@ TIL DATA SOURCE (provide ONE of the following):
             description=(
                 "Prioritize paired CellRanger VDJ + GEX clones. Score within sample and "
                 "CD4/CD8 lineage, then select round-robin from each signature/sample list "
-                "with a per-patient clone budget. Writes candidate_clones.csv, "
+                "with one total clone budget and per-list score cutoffs. Writes candidate_clones.csv, "
                 "all_scored_clones.csv, clone_sample_scores.csv, and prioritization.json."
             ),
         )

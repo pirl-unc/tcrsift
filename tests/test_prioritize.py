@@ -13,6 +13,7 @@ from tcrsift.prioritize import (
     gene_filter_mask,
     resolve_signatures,
     select_round_robin,
+    signature_pass_mask,
 )
 from tests.test_til_prioritize import _til_cells
 
@@ -61,30 +62,80 @@ def _ranking_tables():
     return clones, pd.DataFrame(rows)
 
 
-def test_round_robin_covers_samples_deduplicates_and_budgets_per_patient():
+def test_round_robin_covers_samples_deduplicates_and_uses_one_total_budget():
     clones, scores = _ranking_tables()
-    out = select_round_robin(clones, scores, ["X", "Y"], 2)
+    out = select_round_robin(clones, scores, ["X", "Y"], 4)
     selected = out[out.selected_for_review]
     assert selected.groupby("donor").CDR3ab.agg(list).to_dict() == {"p1": ["A", "C"], "p2": ["A", "C"]}
     assert selected.selected_sample.tolist() == ["s1", "s2"] * 2
-    assert selected.selection_rank.tolist() == [1, 2] * 2
+    assert selected.selection_rank.tolist() == [1, 2, 3, 4]
     # Input row order never breaks ties or changes selection.
-    shuffled = select_round_robin(clones, scores.sample(frac=1, random_state=7), ["X", "Y"], 2)
+    shuffled = select_round_robin(clones, scores.sample(frac=1, random_state=7), ["X", "Y"], 4)
     pd.testing.assert_frame_equal(out, shuffled)
     unlimited = select_round_robin(clones, scores, ["X", "Y"], 0)
     assert unlimited[unlimited.selected_for_review].groupby("donor").CDR3ab.agg(list).tolist() == [list("ACB")] * 2
+    capped = select_round_robin(clones, scores, ["X", "Y"], 3)
+    assert capped.selected_for_review.sum() == 3
+    assert capped[capped.selected_for_review].donor.tolist() == ["p1", "p1", "p2"]
 
 
 def test_round_robin_takes_top_of_distinct_signatures_and_handles_empty_lists():
     clones, scores = _ranking_tables()
     scores = scores[scores["sample"] == "s1"].copy()
-    selected = select_round_robin(clones, scores, ["X", "Y"], 2)
-    assert selected[selected.selected_for_review].selected_signature.tolist() == ["X", "Y"] * 2
+    selected = select_round_robin(clones, scores, ["X", "Y"], 4)
+    assert selected[selected.selected_for_review].selected_signature.tolist() == ["X", "X", "Y", "Y"]
     scores["signature_X"] = np.nan
-    selected = select_round_robin(clones, scores, ["X", "Y"], 1)
+    selected = select_round_robin(clones, scores, ["X", "Y"], 2)
     assert selected[selected.selected_for_review].CDR3ab.tolist() == ["C", "C"]
     selected = select_round_robin(clones, scores, ["X", "Y"], 10, quantile=0.95)
     assert not selected.selected_for_review.any()
+
+
+def test_default_budget_is_200_across_patients():
+    clones = pd.DataFrame({"donor": np.repeat(["p1", "p2"], 1000),
+                           "CDR3ab": [str(i) for i in range(1000)] * 2,
+                           "eligible_for_review": True})
+    scores = clones.assign(sample="s", lineage="cd8", cells=2, frequency=1/1000,
+                           signature_X=list(range(1, 1001)) * 2)
+    scores["signature_X_percentile"] = scores.groupby("donor").signature_X.rank(pct=True)
+    selected = select_round_robin(clones, scores, ["X"])
+    assert selected.selected_for_review.sum() == 200
+    assert selected[selected.selected_for_review].groupby("donor").size().to_dict() == {"p1": 100, "p2": 100}
+    assert selected[selected.selected_for_review].selection_rank.tolist() == list(range(1, 201))
+
+
+def test_exhausted_signature_yields_to_remaining_lists_without_padding():
+    clones = pd.DataFrame({"donor": "p1", "CDR3ab": list("ABCDE"), "eligible_for_review": True})
+    scores = clones.assign(sample="s", lineage="cd8", cells=2, frequency=0.2,
+                           signature_X=[5, 0, -1, -2, -3], signature_Y=[1, 5, 4, 3, -1])
+    for name in ("X", "Y"):
+        scores[f"signature_{name}_percentile"] = scores[f"signature_{name}"].rank(pct=True)
+    selected = select_round_robin(clones, scores, ["X", "Y"], 200, quantile=0)
+    chosen = selected[selected.selected_for_review]
+    assert chosen.CDR3ab.tolist() == list("ABCD")
+    assert chosen.selected_signature.tolist() == ["X", "Y", "Y", "Y"]
+    assert selected.loc[selected.CDR3ab.eq("E"), "selected_for_review"].tolist() == [False]
+
+
+def test_cutoff_rejects_flat_nonfinite_negative_and_singleton_lists():
+    clones, scores = _ranking_tables()
+    scores["signature_X"] = 5.0
+    assert not signature_pass_mask(scores, "X", quantile=0).any()
+    scores["signature_X"] = [-1, -2, np.nan, -3] * 4
+    assert not signature_pass_mask(scores, "X", quantile=0).any()
+    assert signature_pass_mask(scores, "X", quantile=0, min_score=-2).sum() == 4
+    singleton = scores.iloc[:1].copy()
+    singleton["signature_X"] = 8.0
+    assert not signature_pass_mask(singleton, "X", quantile=0).any()
+    scores["signature_X"] = np.inf
+    assert not signature_pass_mask(scores, "X", quantile=0).any()
+
+
+def test_score_and_percentile_must_qualify_in_the_same_stratum():
+    scores = pd.DataFrame({"donor": "p", "sample": ["s1", "s1", "s2", "s2"], "lineage": "cd8",
+                           "CDR3ab": ["A", "B", "A", "B"],
+                           "signature_X": [-1, -2, 1, 2], "signature_X_percentile": [1, .5, .5, 1]})
+    assert signature_pass_mask(scores, "X").tolist() == [False, False, False, True]
 
 
 def _args(*extra):

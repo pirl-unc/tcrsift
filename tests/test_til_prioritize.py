@@ -85,7 +85,9 @@ def test_parser_defaults_keep_heuristic_filters_auditable(tmp_path):
     assert args.exclude_public_quantile is None
     assert args.tcell_type == "cd8"
     assert args.context == "solid-tumor"
-    assert args.max_clones == 100
+    assert args.max_clones == 200
+    assert args.signature_quantile == 0.9
+    assert args.min_signature_score == 0.0
 
 
 def test_parser_accepts_example_options(tmp_path):
@@ -176,6 +178,7 @@ def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsy
     assert candidates["CDR3ab"].tolist() == ["CAVSDGGSQGNLIF_CASSLGQAYEQYF"] * 2
     assert candidates["cell_count"].tolist() == [4, 4]
     assert candidates["selected_for_review"].all()
+    assert candidates.selection_rank.tolist() == [1, 2]
     assert len(audit) == len(scores) == 4
     assert audit["selected_for_review"].sum() == 2
     config = json.loads((tmp_path / "prioritization.json").read_text())
@@ -184,6 +187,9 @@ def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsy
         valid = scores.lineage.eq(SIGNATURE_LINEAGE[name]) if name in SIGNATURE_LINEAGE else np.ones(len(scores), bool)
         assert np.isfinite(scores.loc[valid, f"signature_{name}"]).all()
         assert scores.loc[~valid, f"signature_{name}"].isna().all()
+    pass_cols = [f"signature_{name}_passes_cutoff" for name in config["resolved_signatures"]]
+    support = scores.groupby(["donor", "CDR3ab"])[pass_cols].max().sum(axis=1)
+    assert audit.set_index(["donor", "CDR3ab"]).signature_support_count.to_dict() == support.to_dict()
     assert "Wrote 2 candidates" in capsys.readouterr().out
 
 
@@ -193,6 +199,7 @@ def test_workflow_writes_scored_and_selected_clones(tmp_path, monkeypatch, capsy
     ("--exclude-public-quantile", "0"),
     ("--max-clones", "-1"), ("--min-expression", "GZMB=nan"),
     ("--min-vdj-reads", "-1"), ("--min-alpha-cdr3-length", "-1"),
+    ("--min-signature-score", "nan"), ("--min-signature-score", "inf"),
 ])
 def test_invalid_threshold_fails_before_loading(tmp_path, monkeypatch, caplog, option, value):
     from tcrsift import loader
@@ -233,7 +240,8 @@ def test_mart1_excluded_by_default_and_viral_opt_in(tmp_path, monkeypatch, exclu
 
     monkeypatch.setattr(annotate, "annotate_clonotypes", annotate_clonotypes)
     options = ["--exclude-known-viral"] if exclude_viral else []
-    main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic", *options])
+    main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic",
+          "--signature-quantile", "0", "--min-signature-score", "-100", *options])
     candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
     audit = pd.read_csv(tmp_path / "all_scored_clones.csv")
     assert len(candidates) == expected
@@ -249,10 +257,20 @@ def test_short_cdr3_is_audited_and_excluded(tmp_path, monkeypatch):
     cells.obs.loc[cells.obs.CDR3_alpha.eq("CAVSDGGSQGNLIF"), "CDR3_alpha"] = "CAVF"
     sheet = _mock_samples(tmp_path, monkeypatch, cells)
     main(["prioritize", sheet, "-o", str(tmp_path), "--signatures", "Cytolytic",
-          "--min-alpha-cdr3-length", "8"])
+          "--min-alpha-cdr3-length", "8", "--signature-quantile", "0", "--min-signature-score", "-100"])
     audit = pd.read_csv(tmp_path / "all_scored_clones.csv")
     short = audit[audit.alpha_cdr3_length == 4]
     assert len(short) == 1
     assert short.excluded_reason.tolist() == ["short_alpha_cdr3"]
     assert not short.selected_for_review.any()
     assert len(pd.read_csv(tmp_path / "candidate_clones.csv")) == 1
+
+
+def test_cli_budget_is_total_even_with_multiple_patients(tmp_path, monkeypatch):
+    sheet = _mock_samples(tmp_path, monkeypatch, _til_cells())
+    main(["prioritize", sheet, "-o", str(tmp_path), "--tcell-type", "both", "--max-clones", "1"])
+    candidates = pd.read_csv(tmp_path / "candidate_clones.csv")
+    audit = pd.read_csv(tmp_path / "all_scored_clones.csv")
+    assert len(candidates) == 1
+    assert candidates.selection_rank.tolist() == [1]
+    assert audit.eligible_for_review.sum() > len(candidates)

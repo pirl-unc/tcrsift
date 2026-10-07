@@ -558,8 +558,10 @@ Contexts: `generic`, `blood` (including vaccine studies), `blood-tumor`,
 `solid-tumor`, `mpe`, and `heme` (including AML). `til-prioritize` is the same
 workflow with `solid-tumor` as its default context.
 
-Defaults select **CD8**, up to **100 unique clones per patient**, taking turns
-across the top of each signature/sample list. Known MART-1 matches are excluded;
+Defaults select **CD8**, up to **200 candidate rows total**, taking turns
+across each signature/sample list while its scores exceed zero and meet the
+top-decile cutoff. Flat or exhausted lists stop supplying clones; the others
+continue until the total cap or exhaustion. Known MART-1 matches are excluded;
 viral matches are retained unless `--exclude-known-viral` is set. Reference
 files (`--vdjdb`, `--iedb`, `--cedar`) are needed to identify known matches.
 

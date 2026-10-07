@@ -43,6 +43,7 @@ from .prioritize import (
     parse_expression_limits,
     resolve_signatures,
     select_round_robin,
+    signature_pass_mask,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,6 +169,8 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
     names = resolve_signatures(args.context, args.tcell_type, args.signatures, args.exclude_signatures)
     if not 0 <= args.signature_quantile <= 1:
         raise ValueError("--signature-quantile must be in [0, 1]")
+    if not np.isfinite(args.min_signature_score):
+        raise ValueError("--min-signature-score must be finite")
     if args.exclude_public_quantile is not None and not (0 < args.exclude_public_quantile <= 1):
         raise ValueError("--exclude-public-quantile must be in (0, 1]")
     if not 0 <= args.min_frequency <= 1:
@@ -263,13 +266,20 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
             observed=True,
         )[col].rank(method="average", pct=True)
         signature_percentile_cols.append(percentile_col)
+    pass_cols = []
+    for name in names:
+        col = f"signature_{name}_passes_cutoff"
+        clone_sample[col] = signature_pass_mask(
+            clone_sample, name, args.signature_quantile, args.min_signature_score,
+        )
+        pass_cols.append(col)
     clone_sample.to_csv(args.output_dir / "clone_sample_scores.csv", index=False)
 
     # A strong signal in any sample is retained in the clone-level review table;
     # the long table above shows which sample supplied it.
     signature_max = (
         clone_sample.groupby(["donor", "CDR3ab"], observed=True)[
-            [*signature_cols, *signature_percentile_cols]
+            [*signature_cols, *signature_percentile_cols, *pass_cols]
         ]
         .max()
         .add_suffix("_max")
@@ -309,9 +319,8 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
             clonotypes["publicness_percentile"] >= args.exclude_public_quantile
         ).fillna(False)
 
-    percentile_cols = [f"{col}_max" for col in signature_percentile_cols]
     clonotypes["signature_support_count"] = (
-        clonotypes[percentile_cols].ge(args.signature_quantile).sum(axis=1)
+        clonotypes[[f"{col}_max" for col in pass_cols]].sum(axis=1)
     )
     clonotypes["meets_abundance"] = clonotypes["cell_count"].ge(args.min_cells) & clonotypes[
         "max_frequency"
@@ -361,7 +370,7 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         & ~excluded
     )
     clonotypes = select_round_robin(
-        clonotypes, clone_sample, names, args.max_clones, args.signature_quantile,
+        clonotypes, clone_sample, names, args.max_clones, args.signature_quantile, args.min_signature_score,
     )
     candidates = clonotypes[clonotypes["selected_for_review"]].copy()
 
@@ -373,7 +382,8 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         "version": __version__, "arguments": vars(args) | {"func": args.func.__name__},
         "resolved_signatures": names, "signature_lineages": SIGNATURE_LINEAGE,
         "cell_filters": cell_filters, "sample_cell_counts": sample_counts,
-        "selection": "round-robin per patient over signature/sample/lineage lists",
+        "selection": "one total budget; round-robin over signature/patient/sample/lineage lists",
+        "signature_cutoff": "score > min_signature_score AND percentile >= signature_quantile; flat lists excluded",
         "database_annotation_available": bool(args.vdjdb or args.iedb or args.cedar),
         "candidate_count": len(candidates),
     }
@@ -402,10 +412,12 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
                         help="Minimum clone cell count across a patient's samples (default: 2)")
     parser.add_argument("--min-frequency", type=float, default=0.001,
                         help="Minimum clone frequency in at least one sample (default: 0.001)")
-    parser.add_argument("--signature-quantile", type=float, default=0.0,
-                        help="Optional within-sample/lineage percentile floor in [0, 1] (default: 0, disabled)")
+    parser.add_argument("--signature-quantile", type=float, default=0.9,
+                        help="Within-sample/lineage percentile floor in [0, 1] (default: 0.9; 0 disables percentile gate)")
+    parser.add_argument("--min-signature-score", type=float, default=0.0,
+                        help="Strict lower score cutoff for each list (default: 0); flat lists always excluded")
     parser.add_argument("--min-signature-support", type=int, default=1,
-                        help="Minimum signatures meeting the percentile floor (default: 1)")
+                        help="Minimum signatures passing both score and percentile cutoffs (default: 1)")
     parser.add_argument(
         "--exclude-known-viral",
         action=argparse.BooleanOptionalAction,
@@ -437,8 +449,8 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
                         help="Retain classified CD8, CD4, or both (default: cd8); unknown cells are excluded")
     parser.add_argument("--signatures", nargs="+", help="Replace the preset with named signatures in this order")
     parser.add_argument("--exclude-signatures", nargs="+", help="Remove named signatures from the selected set")
-    parser.add_argument("--max-clones", type=int, default=100,
-                        help="Maximum unique clones per patient, selected round-robin (default: 100; 0 = unlimited)")
+    parser.add_argument("--max-clones", type=int, default=200,
+                        help="Maximum candidate rows across the entire run (default: 200; 0 = unlimited); never pad below cutoffs")
     for key, default in QC_DEFAULTS.items():
         parser.add_argument(f"--{key.replace('_', '-')}", type=type(default), default=default,
                             help=f"Per-cell GEX QC (default: {default})")

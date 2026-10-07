@@ -31,26 +31,59 @@ layout; independent samples should not be interpreted as a time series.
    expression gates. Use this same cell population for counts and scores.
 2. Score each enabled signature separately within each **sample and lineage**,
    using log1p(CP10K). Average scores over cells of each clone in that stratum.
-3. Remove clones failing abundance or explicit exclusion filters. Rank each
-   signature/sample/lineage list by score, then frequency, cell count, and CDR3
-   sequence to break ties deterministically.
-4. Take the next unused clone from each list in turn, skipping previously
-   selected clones. Repeat until the patient has **100 unique clones** or the
-   lists are exhausted. `--max-clones N` changes that budget; `0` removes it.
+3. Keep only the informative head of each signature/sample/lineage list:
+   by default **percentile ≥ 0.90 and score > 0**. A numerically flat list
+   supplies no clones. Cutoffs are evaluated on all scored clones in that
+   stratum, before abundance/database exclusions or selection.
+4. Remove clones failing abundance or explicit exclusion filters. Rank each
+   remaining list by score, then frequency, cell count, and CDR3 sequence.
+5. Take the next unused clone from each list in turn. When a list runs out of
+   qualifying clones, skip it and keep taking from the others. Stop at
+   **200 candidate rows total across the entire run**, or when every list is
+   exhausted. Never pad the shortlist with below-cutoff clones.
 
-Every signature gets a turn; there is no weighted composite or fitted ranking
-model. Lists are visited in the signature order below (or your `--signatures`
-order), then lexical sample and lineage order. A small budget can end partway
-through a round. Overlapping signatures are correlated views, not independent
-votes. A clone shared between samples occupies one slot within a patient; the
-same sequence in two patients occupies a slot for each patient.
+`--max-clones N` changes the total cap; `0` removes the cap but keeps the
+signature cutoffs. This is one shared budget across patients, samples,
+signatures, and lineages. A clone shared between samples occupies one slot
+within a patient; the same sequence in two patients remains two separate rows,
+both counted toward the total cap.
 
-There is **no percentile cutoff by default**: this is top-of-list sampling.
-Use `--signature-quantile 0.90` to restrict lists to their top decile, optionally
-with `--min-signature-support 2`. Support counts distinct signatures with at
-least one qualifying sample/lineage; it does not require them in the same cell.
-Tied scores use average percentile ranks. Small or constant-score strata can
-therefore have no clone above a requested percentile cutoff.
+Every active list gets a turn; there are no fixed signature quotas or weighted
+composite scores. For example, if one list has only 8 qualifying clones, it
+stops after those 8; another can supply the remaining slots while it still has
+qualifying clones. If only 137 distinct candidates qualify overall, the result
+has 137 rows, even with a cap of 200.
+
+Lists are visited in signature order (preset order below, or your
+`--signatures` order), then lexical patient, sample, and lineage order. A small
+budget can end partway through a round. Overlapping signatures are correlated
+views, not independent votes. Duplicate selections are skipped before taking
+the next qualifying clone from the same list.
+
+The cutoff is a **transparent ranking heuristic**, not a significance test or
+proof of antigen specificity. Positive scores and a varying list avoid taking
+zero/flat programs just to fill the budget; the percentile floor limits each
+list to its strongest relative scores. A noisy signature can still pass.
+
+Adjust the stopping rule explicitly:
+
+```bash
+# Broaden each list to its top 20%, retaining the positive-score requirement.
+tcrsift prioritize samples.yaml -o candidates/ --context blood \
+  --max-clones 200 --signature-quantile 0.80 --min-signature-score 0
+```
+
+`--signature-quantile 0` disables only the percentile gate. The score cutoff
+is strict (`score > --min-signature-score`), accepts finite negative values
+for an intentional relaxation, and is applied within each signature's native
+score units. Flat and single-clone strata are always skipped because they
+provide no within-stratum ranking contrast. Tied scores use average percentile
+ranks, so a tied top group can fall below a high percentile cutoff.
+
+`--min-signature-support 2` optionally requires two distinct signatures passing
+**both** cutoffs. Each supporting signature must pass both in the same
+sample/lineage; different signatures may qualify in different strata. A clone
+can be taken only from a list where it passes that list's cutoffs.
 
 ## Context presets
 
@@ -120,14 +153,15 @@ sample. If omitted entirely, all samples are treated as one patient/cohort.
 `tissue` is descriptive; `--context blood` chooses the preset. `source` can be
 omitted: its legacy pipeline enum is not a tissue or prioritization setting.
 
-- `candidate_clones.csv`: the shortlist, with per-patient `selection_rank` and
+- `candidate_clones.csv`: the shortlist, with global `selection_rank` and
   the `selected_signature`, `selected_sample`, and `selected_lineage` that
   supplied each selection.
 - `all_scored_clones.csv`: all clones after cell filtering, their scores,
   `eligible_for_review`, `selected_for_review`, risk flags, and `excluded_reason`.
   An eligible clone can be unselected because of the clone budget.
 - `clone_sample_scores.csv`: clone/sample/lineage scores, percentiles, counts,
-  and frequencies. Frequencies here use retained paired cells of that lineage
+  and frequencies. Each `signature_NAME_passes_cutoff` column records
+  qualification before clone exclusions and budgeting. Frequencies here use retained paired cells of that lineage
   in that sample. Clone-level `max_frequency` uses all retained requested
   lineages in the sample; these coincide when only one lineage is selected.
 - `prioritization.json`: version, arguments, resolved signature set, sequential
@@ -216,13 +250,18 @@ publicness exclusions remain opt-in.
   and [Stitchr](https://pmc.ncbi.nlm.nih.gov/articles/PMC9262623/): context for
   distinguishing germline V-gene bias, CDR3 length, and junctional diversity.
 
+## Changes from 3.23.0
+
+The cap is now **200 total**, replacing 100 per patient. Selection ranks are
+global. The default cutoff is percentile ≥ 0.90 and score > 0; numerically flat
+lists are excluded. Exhausted lists yield their turns to the remaining lists.
+There is no fallback below these cutoffs to fill the budget.
+
 ## Changes from 3.22
 
-Both command names now use stratification, default CD8 selection, a 100-clone
-per-patient budget, viral exclusion off, and a disabled mitochondrial floor.
-MART-1 exclusion remains on. One sample is now sufficient. The signature sets
-are context-dependent and the default top-decile requirement is removed.
-These changes intentionally change shortlists from the original TIL example;
-`--tcell-type both --max-clones 0 --signature-quantile 0.90` restores those
-individual controls but does not restore the old ranking algorithm. Use the
-recorded configuration and package version when reproducing a prior analysis.
+Both command names now use context-dependent stratification, default CD8
+selection, viral exclusion off, and a disabled mitochondrial floor. MART-1
+exclusion remains on. One sample is sufficient. These changes intentionally
+change shortlists from the original TIL example; the old ranking algorithm
+is not restored by adjusting thresholds. Use the recorded configuration and
+package version when reproducing a prior analysis.
