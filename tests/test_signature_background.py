@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tcrsift.prioritize import signature_pass_mask
+from tcrsift.prioritize import select_round_robin, signature_pass_mask
 from tcrsift.signature_background import calibrate_signature_background
 
 
@@ -109,3 +109,76 @@ def test_background_floor_can_be_negative_and_manual_floor_is_additional():
     assert signature_pass_mask(result, "X").sum() == 1
     assert not signature_pass_mask(result, "X", min_score=0).any()
     assert not signature_pass_mask(result, "X", cutoff="legacy").any()
+
+
+def test_ten_of_twenty_five_high_cells_qualify_despite_low_clone_mean():
+    values = np.random.default_rng(52).normal(size=2500)
+    values[:25] = 2  # a clone with a uniformly raised mean
+    values[25:50] = [10] * 10 + [-10] * 15  # strong subset diluted in the mean
+    scores, cells = _tables(values, size=25)
+    result, _ = calibrate_signature_background(scores, cells, ["X"])
+    mixed = result.CDR3ab.eq("1")
+    assert result.loc[mixed, "signature_X_high_cells"].tolist() == [10]
+    assert result.loc[mixed, "signature_X_high_fraction"].tolist() == [.4]
+    assert not signature_pass_mask(result, "X")[mixed].any()
+    assert signature_pass_mask(result, "X", evidence="subset")[mixed].all()
+    assert signature_pass_mask(result, "X", evidence="either")[mixed].all()
+    assert not signature_pass_mask(result, "X", evidence="subset", min_high_fraction=.5)[mixed].any()
+    assert not signature_pass_mask(result, "X", evidence="subset", min_high_cells=11)[mixed].any()
+    assert not signature_pass_mask(result, "X", evidence="subset", min_score=0)[mixed].any()
+    clones = result[["donor", "CDR3ab"]].assign(eligible_for_review=True)
+    selected = select_round_robin(clones, result.assign(frequency=.01), ["X"], 2, evidence="either")
+    chosen = selected[selected.selected_for_review]
+    assert chosen.CDR3ab.tolist() == ["0", "1"]
+    assert chosen.selected_evidence.tolist() == ["mean", "subset"]
+    assert chosen.iloc[1].selected_cells == 25
+    assert chosen.iloc[1].selected_high_cells == 10
+    assert chosen.iloc[1].selected_high_fraction == .4
+    pd.testing.assert_frame_equal(selected, select_round_robin(
+        clones, result.assign(frequency=.01).sample(frac=1, random_state=4), ["X"], 2, evidence="either",
+    ))
+
+
+def test_subset_tail_matches_exact_combinatorial_probability():
+    from math import comb
+
+    scores, cells = _tables(np.arange(20), size=5)
+    result, audit = calibrate_signature_background(scores, cells, ["X"], high_quantile=.5)
+    row = result.loc[result.CDR3ab.eq("3")].iloc[0]
+    assert row.signature_X_high_cells == 5
+    assert audit.background_high_cells.tolist() == [9]
+    expected = comb(9, 5) / comb(20, 5)
+    assert row.signature_X_subset_tail_probability == pytest.approx(expected)
+    assert signature_pass_mask(result, "X", evidence="subset").sum() == 1
+
+
+def test_subset_requires_several_high_cells_and_no_majority_is_required():
+    values = np.random.default_rng(92).normal(size=1000)
+    values[:10] = [100] + [-100] * 9
+    scores, cells = _tables(values)
+    result, _ = calibrate_signature_background(scores, cells, ["X"])
+    assert result.loc[result.CDR3ab.eq("0"), "signature_X_high_cells"].tolist() == [1]
+    assert not signature_pass_mask(result, "X", evidence="subset")[result.CDR3ab.eq("0")].any()
+
+
+@pytest.mark.parametrize("value", [0., .1, np.nan, np.inf])
+def test_flat_unavailable_subset_cannot_qualify(value):
+    scores, cells = _tables(np.repeat(value, 100), size=10)
+    result, _ = calibrate_signature_background(scores, cells, ["X"])
+    assert not signature_pass_mask(result, "X", evidence="either", quantile=0).any()
+
+
+def test_subset_evidence_cannot_silently_fall_back_to_legacy():
+    scores, _ = _tables(np.arange(20), size=5)
+    with pytest.raises(ValueError, match="Subset evidence requires"):
+        signature_pass_mask(scores, "X", cutoff="legacy", evidence="either")
+
+
+def test_subset_support_cannot_combine_count_and_enrichment_from_different_samples():
+    scores = pd.DataFrame({
+        "donor": "p", "sample": ["a", "b"], "lineage": "cd8", "CDR3ab": "A",
+        "signature_X": [1, 2], "signature_X_high_cells": [10, 1],
+        "signature_X_high_fraction": [.4, .1], "signature_X_subset_percentile": 1.,
+        "signature_X_subset_tail_probability": [.2, .0001],
+    })
+    assert not signature_pass_mask(scores, "X", evidence="subset").any()

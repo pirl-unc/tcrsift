@@ -167,6 +167,17 @@ def _join_flags(df: pd.DataFrame, columns: list[tuple[str, str]]) -> pd.Series:
 def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Score and prioritize clones from a standard CellRanger sample sheet."""
     names = resolve_signatures(args.context, args.tcell_type, args.signatures, args.exclude_signatures)
+    evidence = args.signature_evidence or ("either" if args.signature_cutoff == "background" else "mean")
+    if args.signature_cutoff == "legacy" and evidence != "mean":
+        raise ValueError("--signature-evidence subset/either requires --signature-cutoff background")
+    if not 0 < args.signature_high_quantile < 1:
+        raise ValueError("--signature-high-quantile must be between 0 and 1 (exclusive)")
+    if args.min_signature_high_cells < 1:
+        raise ValueError("--min-signature-high-cells must be >= 1")
+    if not 0 <= args.min_signature_high_fraction <= 1:
+        raise ValueError("--min-signature-high-fraction must be in [0, 1]")
+    if not 0 < args.signature_subset_pvalue < 1:
+        raise ValueError("--signature-subset-pvalue must be between 0 and 1 (exclusive)")
     if not 0 <= args.signature_quantile <= 1:
         raise ValueError("--signature-quantile must be in [0, 1]")
     if args.min_signature_score is not None and not np.isfinite(args.min_signature_score):
@@ -275,18 +286,27 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         clone_sample, calibration = calibrate_signature_background(
             clone_sample, per_cell_scores, names, quantile=args.signature_background_quantile,
             draws=args.signature_background_draws, seed=args.signature_background_seed,
+            high_quantile=args.signature_high_quantile,
         )
         calibration.to_csv(args.output_dir / "signature_background.csv", index=False)
     else:
         # A rerun in the same output directory must not leave a previous run's
         # calibration table looking like evidence for this legacy selection.
         (args.output_dir / "signature_background.csv").unlink(missing_ok=True)
-    pass_cols = []
+    pass_cols, evidence_cols = [], []
     for name in names:
+        for route in ("mean", "subset"):
+            route_col = f"signature_{name}_{route}_passes_cutoff"
+            clone_sample[route_col] = False
+            if route == "mean" or args.signature_cutoff == "background":
+                clone_sample[route_col] = signature_pass_mask(
+                    clone_sample, name, args.signature_quantile, args.min_signature_score, args.signature_cutoff,
+                    route, args.min_signature_high_cells, args.min_signature_high_fraction, args.signature_subset_pvalue,
+                )
+            evidence_cols.append(route_col)
         col = f"signature_{name}_passes_cutoff"
-        clone_sample[col] = signature_pass_mask(
-            clone_sample, name, args.signature_quantile, args.min_signature_score, args.signature_cutoff,
-        )
+        routes = ("mean", "subset") if evidence == "either" else (evidence,)
+        clone_sample[col] = clone_sample[[f"signature_{name}_{route}_passes_cutoff" for route in routes]].any(axis=1)
         pass_cols.append(col)
     clone_sample.to_csv(args.output_dir / "clone_sample_scores.csv", index=False)
 
@@ -294,7 +314,7 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
     # the long table above shows which sample supplied it.
     signature_max = (
         clone_sample.groupby(["donor", "CDR3ab"], observed=True)[
-            [*signature_cols, *signature_percentile_cols, *pass_cols]
+            [*signature_cols, *signature_percentile_cols, *pass_cols, *evidence_cols]
         ]
         .max()
         .add_suffix("_max")
@@ -387,6 +407,7 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
     clonotypes = select_round_robin(
         clonotypes, clone_sample, names, args.max_clones, args.signature_quantile,
         args.min_signature_score, args.signature_cutoff,
+        evidence, args.min_signature_high_cells, args.min_signature_high_fraction, args.signature_subset_pvalue,
     )
     candidates = clonotypes[clonotypes["selected_for_review"]].copy()
 
@@ -398,12 +419,16 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         "version": __version__, "arguments": vars(args) | {"func": args.func.__name__},
         "resolved_signatures": names, "signature_lineages": SIGNATURE_LINEAGE,
         "cell_filters": cell_filters, "sample_cell_counts": sample_counts,
-        "selection": "one total budget; round-robin over signature/patient/sample/lineage lists",
+        "selection": "one total budget; round-robin over signature/evidence/patient/sample/lineage lists",
         "signature_cutoff": {
             "method": args.signature_cutoff,
-            "rule": ("score > background floor AND optional minimum score" if args.signature_cutoff == "background"
-                     else "score > explicit minimum score, defaulting to 0")
-                    + "; percentile gate; flat lists excluded",
+            "evidence": evidence,
+            "rule": "pass all thresholds for any enabled evidence route within the same sample/lineage",
+            "mean_rule": ("score > background floor AND optional minimum score" if args.signature_cutoff == "background"
+                          else "score > explicit minimum score, defaulting to 0")
+                         + "; mean percentile gate; flat lists excluded",
+            "subset_rule": "high-cell count and fraction floors; exact hypergeometric tail <= pvalue; subset percentile gate; optional mean score floor",
+            "high_cells": "score strictly above within-patient/sample/lineage cell quantile; ties excluded",
             "background": "uniform cell subsets without replacement within patient/sample/lineage, matched to clone cell count",
             "interpretation": "competitive expression enrichment; not technical-noise estimation, antigen specificity, or FDR control",
         },
@@ -439,6 +464,16 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
                         help="Within-sample/lineage percentile floor in [0, 1] (default: 0.9; 0 disables percentile gate)")
     parser.add_argument("--signature-cutoff", choices=("background", "legacy"), default="background",
                         help="Size-matched empirical background floor (default), or legacy positive-score gate")
+    parser.add_argument("--signature-evidence", choices=("mean", "subset", "either"),
+                        help="Evidence used for selection (default: either for background; mean for legacy)")
+    parser.add_argument("--signature-high-quantile", type=float, default=0.9,
+                        help="Cell-score quantile to exceed for the high-cell label (default: 0.9)")
+    parser.add_argument("--min-signature-high-cells", type=int, default=5,
+                        help="Minimum high-scoring cells for subset evidence (default: 5)")
+    parser.add_argument("--min-signature-high-fraction", type=float, default=0.0,
+                        help="Optional minimum within-clone high-cell fraction (default: 0; no majority required)")
+    parser.add_argument("--signature-subset-pvalue", type=float, default=0.01,
+                        help="Maximum unadjusted hypergeometric tail for subset evidence (default: 0.01)")
     parser.add_argument("--signature-background-quantile", type=float, default=0.99,
                         help="Random cell-group score quantile to exceed (default: 0.99)")
     parser.add_argument("--signature-background-draws", type=int, default=2000,
