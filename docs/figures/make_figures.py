@@ -66,7 +66,8 @@ def background_floor():
     nulls = {n: _background_means(matrix, n, 2000, seed=n)[0][:, 0] for n in sizes}
     floors = {n: float(np.quantile(nulls[n], 0.99, method="higher")) for n in sizes}
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.9), constrained_layout=True)
+    fig1, ax1 = plt.subplots(figsize=(6.4, 3.9), constrained_layout=True)
+    fig2, ax2 = plt.subplots(figsize=(6.4, 3.9), constrained_layout=True)
     bins = np.linspace(-1.0, 2.4, 70)
     ax1.hist(cells, bins=bins, color=NEUTRAL, density=True, label="single cells")
     for n, color in ((2, BLUE), (20, ORANGE)):
@@ -98,7 +99,8 @@ def background_floor():
             xlabel="cells in clone (n)", ylabel="clone mean score")
     ax2.grid(axis="y", lw=0.6)
     ax2.legend(frameon=False, fontsize=8.5, loc="upper right")
-    save(fig, "background_floor")
+    save(fig1, "background_reference")
+    save(fig2, "background_floor")
 
 
 def subset_evidence():
@@ -114,7 +116,8 @@ def subset_evidence():
                               0.99, method="higher"))
     tail = hypergeom.sf(k - 1, total, total_high, n)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.9), constrained_layout=True)
+    fig1, ax1 = plt.subplots(figsize=(6.4, 3.9), constrained_layout=True)
+    fig2, ax2 = plt.subplots(figsize=(6.4, 3.9), constrained_layout=True)
     jitter = rng.uniform(-0.28, 0.28, n)
     high = clone > threshold
     ax1.scatter(clone[~high], jitter[~high], s=42, color=NEUTRAL, edgecolor=SURFACE,
@@ -150,7 +153,8 @@ def subset_evidence():
             xlabel=f"high-scoring cells among {n}", ylabel="probability")
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
-    save(fig, "subset_evidence")
+    save(fig1, "subset_cells")
+    save(fig2, "subset_probability")
 
 
 def round_robin():

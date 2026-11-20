@@ -127,7 +127,9 @@ Each clone gets a percentile for each signature within its own sample. The
 AUROC is the probability that a random positive clone outranks a random
 negative one; 0.5 is chance.
 
-![AUROC by signature](assets/figures/benchmark_auroc.svg)
+![AUROC by signature, pancreatic](assets/figures/benchmark_auroc_pancreatic.svg)
+
+![AUROC by signature, lung](assets/figures/benchmark_auroc_lung.svg)
 
 | Signature | Pancreatic (94 vs 55) | Lung tumor (10 vs 9) | Head and neck (48 vs 376 unlabelled) |
 | --- | --- | --- | --- |
@@ -167,7 +169,9 @@ node alone is weaker for TumorReactive (0.61, 0.35 to 0.85).
 
 Pancreatic data, every setting at its default:
 
-![Cutoff pass rates](assets/figures/benchmark_cutoffs.svg)
+![Clones passing any cutoff](assets/figures/benchmark_cutoffs_any.svg)
+
+![Pass rate by signature](assets/figures/benchmark_cutoffs_by_signature.svg)
 
 69 of 94 reactive clones (73%) pass at least one signature's cutoff. So do 17
 of 55 non-reactive clones (31%) and 355 of 5,582 untested clones (6%). Among
@@ -190,7 +194,9 @@ contributes little.
 
 **Where the thresholds sit.**
 
-![Threshold sweeps](assets/figures/benchmark_thresholds.svg)
+![Rank gate sweep](assets/figures/benchmark_threshold_rank.svg)
+
+![Background floor sweep](assets/figures/benchmark_threshold_background.svg)
 
 The default rank gate (0.9) sits at a corner: loosening it to 0.8 admits 3 more
 reactive and 7 more non-reactive clones. Loosening the background floor from
@@ -205,7 +211,9 @@ clone from each qualifying list in turn until the budget is spent. Here it is
 compared with simpler ways of choosing the same number of clones, among
 pancreatic clones with at least two cells.
 
-![Selection by budget](assets/figures/benchmark_selection.svg)
+![Tumor-reactive clones chosen by budget](assets/figures/benchmark_selection_reactive.svg)
+
+![Non-reactive clones chosen by budget](assets/figures/benchmark_selection_nonreactive.svg)
 
 | Clones chosen | Preset round-robin | Three tumor signatures, round-robin | Top TumorReactive score | Largest clones |
 | --- | --- | --- | --- | --- |
@@ -252,7 +260,9 @@ counts removes 72% of the CD8 cells that remain.
 That floor is a raw count, so it behaves as a sequencing-depth filter. Lower
 settings keep more cells but rank validated clones worse:
 
-![CD3 floor](assets/figures/benchmark_cd3_gate.svg)
+![Cells kept by CD3 floor](assets/figures/benchmark_cd3_cells.svg)
+
+![Ranking by CD3 floor](assets/figures/benchmark_cd3_ranking.svg)
 
 | `--min-cd3` | CD8 cells kept | Labelled clonotypes scored | TumorReactive AUROC | NeoTCR8 AUROC | Shortlisted (neoantigen, viral) |
 | --- | --- | --- | --- | --- | --- |
