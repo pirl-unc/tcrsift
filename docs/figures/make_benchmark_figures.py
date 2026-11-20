@@ -15,6 +15,7 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.patches
 import matplotlib.pyplot as plt
 import pandas as pd
 from make_figures import BLUE, INK, INK2, NEUTRAL, ORANGE, SURFACE, save
@@ -214,7 +215,56 @@ def cd3_gate():
     save(fig, "benchmark_cd3_gate")
 
 
+def dataset_designs():
+    """Schematic of the three source studies: who, what was sequenced, how
+    specificity was established, and which labels the benchmark uses.
+    Drawn here from each paper's abstract and deposit; not a paper figure."""
+    columns = ["Patients", "Sequenced", "How specificity was established", "Labels used here"]
+    rows = [
+        ("Meng 2023\npancreatic", [
+            "9 patients with\npancreatic ductal\nadenocarcinoma",
+            "Single-cell RNA + TCR\nof tumor-infiltrating\nCD8 T cells",
+            "TCRs tested for\nreactivity against the\npatient's own tumor cells",
+            "94 reactive and\n55 non-reactive\nclonotypes"]),
+        ("Caushi 2021\nlung", [
+            "8 of 16 patients with\nlung cancer treated with\nanti-PD-1 before surgery",
+            "Single-cell RNA + TCR\nof T cells from tumor,\nlymph node, normal lung",
+            "MANAFEST: T cells\nexpanded with neoantigen\nor viral peptides",
+            "Neoantigen-specific vs\nvirus-specific\nbeta chains"]),
+        ("Eberhardt 2021\nhead and neck", [
+            "3 of 6 patients with\nHPV-positive head\nand neck cancer",
+            "Single-cell RNA + TCR\nof tetramer-sorted and\nbulk PD-1+ CD8 TIL",
+            "MHC class I tetramers\nloaded with HPV E2\npeptides",
+            "Tetramer-positive\nbeta chains;\nno negatives"]),
+    ]
+    fig, ax = plt.subplots(figsize=(11, 4.6), constrained_layout=True)
+    width, height, x0, dx, dy = 2.25, 1.0, 1.75, 2.6, 1.35
+    for c, name in enumerate(columns):
+        ax.text(x0 + c * dx + width / 2, 0.42, name, ha="center", va="center", fontsize=9.5,
+                fontweight="bold", color=INK)
+    for r, (study, cells) in enumerate(rows):
+        y = -r * dy - 0.25
+        ax.text(1.5, y - height / 2, study, ha="right", va="center", fontsize=9.5, fontweight="bold", color=INK)
+        for c, words in enumerate(cells):
+            x = x0 + c * dx
+            last = c == len(cells) - 1
+            ax.add_patch(matplotlib.patches.FancyBboxPatch(
+                (x, y - height), width, height, boxstyle="round,pad=0,rounding_size=0.08",
+                facecolor=BLUE if last else SURFACE, edgecolor=BLUE if last else NEUTRAL, linewidth=1.3,
+                alpha=1.0))
+            ax.text(x + width / 2, y - height / 2, words, ha="center", va="center", fontsize=8.6,
+                    color=SURFACE if last else INK, linespacing=1.25)
+            if not last:
+                ax.annotate("", xy=(x + dx - 0.04, y - height / 2), xytext=(x + width + 0.04, y - height / 2),
+                            arrowprops={"arrowstyle": "->", "color": INK2, "lw": 1.1})
+    ax.set_xlim(0, x0 + 3 * dx + width + 0.1)
+    ax.set_ylim(-2 * dy - height - 0.4, 0.7)
+    ax.axis("off")
+    save(fig, "benchmark_datasets")
+
+
 if __name__ == "__main__":
+    dataset_designs()
     signature_auroc()
     cutoff_pass_rates()
     selection_by_budget()

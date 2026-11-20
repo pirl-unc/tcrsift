@@ -29,7 +29,15 @@ the exercise changed in TCRsift.
 Everything here was run with TCRsift 3.25.5 from `benchmarks/public_til/`
 ([how to reproduce](#reproducing)). Nothing was tuned to these labels.
 
-## Data
+## The source studies
+
+Each dataset comes from a study that sequenced tumor-infiltrating T cells one
+cell at a time and then established, by experiment, what some of their
+receptors recognize. The benchmark borrows those experimental labels.
+
+![Study designs](assets/figures/benchmark_datasets.svg)
+
+*Schematic drawn for this page from each paper's abstract and data deposit.*
 
 | | Meng et al. 2023 | Caushi et al. 2021 | Eberhardt et al. 2021 |
 | --- | --- | --- | --- |
@@ -40,20 +48,77 @@ Everything here was run with TCRsift 3.25.5 from `benchmarks/public_til/`
 | Negatives | 55 clones tested non-reactive | Virus-specific beta chains | None; compared with all unlabelled clones |
 | How TCRsift ran | Scoring, cutoff and selection functions on the authors' cells | The unmodified `prioritize` command | The unmodified `prioritize` command |
 
-What each dataset can and cannot support:
+### Meng et al. 2023: pancreatic cancer
 
-- **Meng** has real tested negatives and the most labels, but GEO has no TCR
-  contig files for it, only a per-cell clonotype id. The loader, lineage
-  classification and paired-chain gates are not exercised there.
-- **Caushi** runs the whole command. Its negatives are virus-specific clones,
-  not clones tested against tumor, and few labelled clones are present in the
-  tumor samples. **MANAscore was derived from this dataset**, so its score here
-  is circular.
-- **Eberhardt** has no negatives. Its bulk samples were depleted of
+[Transcriptome-based identification of tumor-reactive and bystander CD8+ T cell
+receptor clonotypes in human pancreatic cancer](https://doi.org/10.1126/scitranslmed.adh9562),
+*Science Translational Medicine* 15:eadh9562.
+
+- **What they did.** They profiled CD8 T cells from nine pancreatic tumors by
+  single-cell RNA and TCR sequencing, then tested individual receptors for
+  reactivity against each patient's own tumor cells. Receptors that responded
+  are "tumor-reactive"; those that did not are "bystanders". From these they
+  derived their own gene signature.
+- **What the data is.** Cell Ranger expression matrices and a metadata table
+  giving, for 14,396 CD8 cells, a clonotype id and a reactive / non-reactive
+  call. The deposit labels 94 reactive and 55 non-reactive clonotypes (the
+  abstract reports 93 and 65).
+- **Why it is the best test here.** The negatives were tested and failed, and
+  none of TCRsift's signatures was derived from it.
+- **Limits.** GEO has no TCR contig files, only clonotype ids, so the loader,
+  lineage classification and paired-chain gates are not exercised. The authors
+  chose which clones to test.
+
+### Caushi et al. 2021: lung cancer after anti-PD-1
+
+[Transcriptional programs of neoantigen-specific TIL in anti-PD-1-treated lung
+cancers](https://doi.org/10.1038/s41586-021-03752-4), *Nature* 596:126-132
+(open access).
+
+- **What they did.** In patients given anti-PD-1 before surgery, they found
+  T-cell clones specific for mutation-associated neoantigens (MANA) with the
+  MANAFEST assay, which expands T cells against candidate peptides and reads
+  out which receptors respond. They found virus-specific clones (influenza,
+  EBV, CMV) the same way, then used each receptor as a barcode to locate those
+  clones in single-cell RNA and TCR data from tumor, lymph node and normal lung.
+- **What the data is.** Per-sample Cell Ranger matrices and filtered contig
+  tables for 16 patients; a supplementary table of 74 neoantigen-specific and
+  82 virus-specific beta chains. This benchmark uses all 57 samples of the 8
+  patients that have labelled clones.
+- **Why it is useful.** It is the only dataset here on which the whole
+  `prioritize` command runs from raw Cell Ranger output with real negatives.
+- **Limits.** The negatives are virus-specific, not tested against tumor. Few
+  labelled clones are present in the tumor samples. Labels are beta chains
+  only. **MANAscore was derived from this dataset**, so its score here is
+  circular. Some neoantigen-specific receptors were chosen for cloning because
+  of their expression profile.
+
+### Eberhardt et al. 2021: HPV-positive head and neck cancer
+
+[Functional HPV-specific PD-1+ stem-like CD8 T cells in head and neck
+cancer](https://doi.org/10.1038/s41586-021-03862-z), *Nature* 597:279-284
+([free full text](https://pmc.ncbi.nlm.nih.gov/articles/PMC10201342/)).
+
+- **What they did.** They identified HPV epitopes and used MHC class I
+  tetramers to sort HPV-specific CD8 T cells out of tumors, then sequenced the
+  sorted cells and the remaining bulk PD-1+ CD8 TIL. They report that
+  HPV-specific cells fall into three states: stem-like (TCF7+), transitory, and
+  terminally differentiated.
+- **What the data is.** Cell Ranger matrices and unfiltered contig tables for
+  tetramer-sorted and bulk samples. Three patients have both. A beta chain
+  counts as HPV-specific here when at least five tetramer-sorted cells carry
+  it and it is at least as frequent in the sort as in the bulk sample.
+- **Why it is included.** A third tumor type, and a virus-driven one.
+- **Limits.** There are no tested negatives. The bulk samples were depleted of
   tetramer-binding cells before sequencing, so the positives that remain are
-  the ones the sort missed, and the samples were pre-gated on PD-1.
+  the ones the sort missed. The bulk cells were pre-gated on PD-1. And the
+  paper's own finding, that many HPV-specific cells are stem-like rather than
+  exhausted, means an exhaustion-leaning signature should not be expected to
+  find all of them.
 
-Other labelled cohorts could not be used. Lowery 2022, Hanada 2022, Oliveira
+### Cohorts that could not be used
+
+Lowery 2022, Hanada 2022, Oliveira
 2021 and Zheng 2022 keep single-cell data under controlled access. The TRACE
 melanoma donor on Zenodo ships expression data without the reactivity labels.
 Pétremand 2024 has open data but no per-clone label table.
