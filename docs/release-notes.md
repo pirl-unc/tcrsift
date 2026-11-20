@@ -7,41 +7,23 @@ current release. The complete per-release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
-## 3.25.4
+## 3.26.0
 
-When a sample has only `all_contig_annotations.csv`, the loader now keeps
-called cells and high-confidence contigs, as Cell Ranger's filtered table does,
-and drops contigs with no chain call. Previously every row was used and the
-run stopped with "Missing TRA_1_umis". Samples with
-`filtered_contig_annotations.csv` are unaffected.
+Fixes found by running on public data ([evaluation](benchmarks.md)). None
+changes scores or shortlists for inputs that already ran.
 
-## 3.25.3
-
-The command now warns when any single cell filter other than lineage removes
-more than half of the remaining cells. The default `--min-cd3 10` is unchanged.
-It is a raw-count floor, so it behaves as a sequencing-depth filter: in public
-lung-tumor data (GSE176021, about 3,600 UMIs per cell) it removed 72% of
-CD8-classified cells. Lowering it to 3 kept 86% of them but ranked validated
-neoantigen-specific clones worse (TumorReactive AUROC 0.69 against 0.97, with
-10 to 18 positive clones), so the stricter default stays and the loss is made
-visible instead.
-
-## 3.25.2
-
-Signature genes are now matched across reference-annotation renames. NeoTCR8
-lists PLA2G16 and CARS, which Cell Ranger 2020-A and later references call
-PLAAT3 and CARS1, so `--context solid-tumor` stopped with a missing-gene error
-on current references. A gene with no synonym present is still an error.
-Scores do not change for inputs that already ran.
-
-## 3.25.1
-
-Multi-sample runs that read `filtered_feature_bc_matrix/` directories now keep
-the gene symbols supplied with the matrices. Previously the symbols were lost
-when samples were combined and looked up in a different Ensembl release, so
-`--context solid-tumor` could stop with "genes absent from matrix" (NeoTCR8)
-for genes the matrices contained. Single-sample and `.h5` inputs were not
-affected. Found by the [public benchmark](benchmarks.md).
+- Multi-sample runs that read `filtered_feature_bc_matrix/` directories keep
+  the gene symbols supplied with the matrices. Previously
+  `--context solid-tumor` could stop with "genes absent from matrix".
+- Signature genes are matched across reference-annotation renames through a
+  small synonym table (for example PLA2G16/PLAAT3 and CARS/CARS1), so NeoTCR8,
+  NeoTCR4 and NeoTCR_PBL score on current Cell Ranger references. A gene with
+  no synonym present is still an error.
+- When a sample has only `all_contig_annotations.csv`, the loader keeps called
+  cells and high-confidence contigs and drops contigs with no chain call.
+- The command warns when any single cell filter other than lineage removes
+  more than half of the remaining cells. The default `--min-cd3 10` is
+  unchanged.
 
 ## 3.25.0
 

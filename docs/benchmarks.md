@@ -1,9 +1,8 @@
 # Benchmark on public TIL data
 
-This page asks whether `tcrsift prioritize --context solid-tumor` finds the
-clones that experiments later showed to be tumor-reactive. It uses three public
-datasets, 20 patients in all, and reports what worked, what did not, and what
-the exercise changed in TCRsift.
+This page evaluates whether `tcrsift prioritize --context solid-tumor` finds
+the clones that experiments showed to be tumor-reactive. It uses three public
+datasets, 20 patients in all, and reports what works and what does not.
 
 ## Summary
 
@@ -22,11 +21,10 @@ the exercise changed in TCRsift.
   signatures take turns with the three tumor-reactivity signatures. At a
   50-clone budget the preset picked 12 reactive and 3 non-reactive clones;
   the three tumor signatures alone picked 28 and 2.
-- **The CD3 floor matters and should stay.** It discards 72% of CD8 cells in
-  the lung data, yet the clones that remain are ranked far better.
-- **Four bugs** surfaced and are fixed in 3.25.1 to 3.25.4.
+- **The CD3 floor earns its cost.** It discards 72% of CD8 cells in the lung
+  data, yet the clones that remain are ranked far better.
 
-Everything here was run with TCRsift 3.25.5 from `benchmarks/public_til/`
+All results are from TCRsift 3.26.0, run from `benchmarks/public_til/`
 ([how to reproduce](#reproducing)). Nothing was tuned to these labels.
 
 ## The source studies
@@ -251,8 +249,8 @@ With defaults on the 33 lung tumor samples, 19,335 of 248,332 cells are
 retained (8%). The CD8 classification removes 58%, and the floor of ten CD3
 counts removes 72% of the CD8 cells that remain.
 
-That floor is a raw count, so it behaves as a sequencing-depth filter. The
-obvious fix is to lower it. The benchmark says not to:
+That floor is a raw count, so it behaves as a sequencing-depth filter. Lower
+settings keep more cells but rank validated clones worse:
 
 ![CD3 floor](assets/figures/benchmark_cd3_gate.svg)
 
@@ -265,8 +263,9 @@ obvious fix is to lower it. The benchmark says not to:
 
 Lower floors keep more cells and more labelled clones, and rank them worse. A
 plain depth filter that keeps a similar number of cells lands in between, with
-too few labels to say more. The default therefore stays at 10, and since 3.25.3
-the command warns when any single gate removes more than half of the cells.
+too few labels to say more. The command warns when any single gate removes
+more than half of the cells; the `cell_filters` block of `prioritization.json`
+records what each gate removed.
 
 The head and neck run shows the same attrition: 3,647 of 32,735 cells retained.
 
@@ -290,18 +289,13 @@ with 32 GB of memory.
 - **Tuned settings.** Nothing was fitted here, and these labels should not be
   used to tune cutoffs or presets without a held-out cohort.
 
-## What the benchmark changed in TCRsift
+## Open questions
 
-| Release | Problem found on public data | Status |
-| --- | --- | --- |
-| 3.25.1 | Loading two or more matrix-directory samples lost the gene symbols, and `--context solid-tumor` stopped with "genes absent from matrix". | Fixed |
-| 3.25.2 | NeoTCR8 failed on current Cell Ranger references because PLA2G16 is now PLAAT3 (similar renames affect NeoTCR4 and NeoTCR_PBL). | Fixed with a gene-synonym table |
-| 3.25.3 | The CD3 floor silently removed most cells. | Warning added; default kept, for the reason shown above |
-| 3.25.4 | With only `all_contig_annotations.csv`, non-cell and unannotated contigs were loaded and the run stopped. | Fixed |
-
-Still open: whether the preset should lead with the tumor-reactivity
-signatures, and whether a depth-normalized quality gate can replace the raw CD3
-count.
+- Should the `solid-tumor` preset lead with, or be limited to, the three
+  tumor-reactivity signatures? The pancreatic result argues for it; a second
+  dataset with tested negatives is needed before changing a default.
+- Can a depth-normalized quality gate replace the raw CD3 count without
+  discarding most cells?
 
 ## Reproducing
 
