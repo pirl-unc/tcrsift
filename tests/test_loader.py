@@ -498,6 +498,40 @@ class TestLoadSamplesWithSampleSheet:
         assert adata.X is not None
         assert set(adata.obs["sample"]) == {"S1", "S2"}
 
+    def test_load_samples_keeps_gene_symbols_across_samples(
+        self, mock_cellranger_vdj_dir, monkeypatch
+    ):
+        """Matrix-directory inputs carry the reference's symbols in
+        ``var["gene_symbols"]``. Concatenation used to drop them, so a
+        multi-sample run resolved symbols from a different Ensembl release and
+        signature scoring failed on genes the matrices contained."""
+        from tcrsift import loader as loader_module
+        from tcrsift.genes import adata_symbol_array
+
+        symbols = {"ENSG00000110619": "CARS", "ENSG00000176485": "PLA2G16", "ENSG99999999999": "S2ONLY"}
+
+        def fake_load_sample(sample, **_kwargs):
+            ids = list(symbols)[: 2 if sample.sample == "S1" else 3]
+            a = ad.AnnData(X=sp.csr_matrix(np.ones((4, len(ids)))))
+            a.var_names = ids
+            a.var["gene_symbols"] = [symbols[i] for i in ids]
+            a.obs_names = [f"{sample.sample}_cell{i}" for i in range(4)]
+            a.obs["sample"] = sample.sample
+            return a
+
+        monkeypatch.setattr(loader_module, "load_sample", fake_load_sample)
+        sheet = SampleSheet(
+            samples=[
+                Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir)),
+                Sample(sample="S2", vdj_dir=str(mock_cellranger_vdj_dir)),
+            ]
+        )
+
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert dict(zip(adata.var_names, adata.var["gene_symbols"])) == symbols
+        assert set(adata_symbol_array(adata)) == {"CARS", "PLA2G16", "S2ONLY"}
+
     @pytest.mark.parametrize(
         "x_format",
         # Production data hits us in formats that synthetic CSR-only tests

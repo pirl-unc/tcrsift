@@ -808,6 +808,7 @@ def load_samples(
         )
 
     sample_keys: list[str] = []
+    gene_symbols: dict[str, str] = {}
     spill_paths: list[Path] = []
     total_cells = 0
 
@@ -850,6 +851,8 @@ def load_samples(
 
             _ensure_x(adata)
             sample_keys.append(adata.obs["sample"].iloc[0])
+            if "gene_symbols" in adata.var.columns:
+                gene_symbols.update(zip(adata.var_names, adata.var["gene_symbols"].astype(str)))
             total_cells += adata.n_obs
 
             # Number files by the load order of successful samples (skipped
@@ -889,6 +892,15 @@ def load_samples(
                 )
                 combined = ad.read_h5ad(out_path)
             pbar.update(1)
+
+        # The concatenation drops per-gene annotations. Matrix-directory inputs
+        # index genes by Ensembl id and carry the reference's own symbols in
+        # ``var["gene_symbols"]``; restore them so symbol lookups use the
+        # sample's reference rather than a different Ensembl release (which
+        # renames or lacks some genes and made multi-sample signature scoring
+        # fail on symbols the matrices do contain).
+        if gene_symbols:
+            combined.var["gene_symbols"] = [gene_symbols.get(name, name) for name in combined.var_names]
 
     # Tempdir is cleaned up here; `combined` is fully in-memory.
     # Inverse of `_ensure_x`: an all-VDJ-only sheet produces n_vars == 0,
