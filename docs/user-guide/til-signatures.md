@@ -332,7 +332,7 @@ are cohort-relative; the shortlist is for experimental review.
 | `--min-counts`, `--max-counts` | 500–100,000 total GEX UMI counts per cell, not sequencing reads. |
 | `--min-mito-pct`, `--max-mito-pct` | 0–8% mitochondrial counts; no mitochondrial floor by default. |
 | `--min-vdj-umis`, `--min-vdj-reads` | At least 2 UMIs in each primary alpha/beta chain; read gate disabled (0). |
-| `--min-cd3` | At least 3 summed CD3D/E/G raw GEX counts per cell; 0 disables. A raw-count floor scales with sequencing depth, so check `cell_filters` in `prioritization.json`. |
+| `--min-cd3` | At least 10 summed CD3D/E/G raw GEX counts per cell; 0 disables. A raw-count floor scales with sequencing depth and can remove most cells of a shallow library; the command warns when it does. |
 | `--min-expression GENE=VALUE`, `--max-expression GENE=VALUE` | Optional per-cell log1p(CP10K) thresholds. Repeat for AND conditions. Missing genes are errors. |
 | `--include-v-gene`, `--exclude-v-gene` | Optional exact V calls in either chain, ignoring allele suffix and case. Repeat for multiple genes. |
 | `--include-j-gene`, `--exclude-j-gene` | Corresponding J-gene gates. Inclusion requires at least one listed gene; exclusion rejects any listed gene. Missing calls fail active gene filters. |
@@ -402,16 +402,16 @@ publicness exclusions remain opt-in.
   and [Stitchr](https://pmc.ncbi.nlm.nih.gov/articles/PMC9262623/): context for
   distinguishing germline V-gene bias, CDR3 length, and junctional diversity.
 
-## Changes in 3.26.0
+## Changes in 3.25.3
 
-The default `--min-cd3` is now **3** summed CD3D/E/G counts instead of 10,
-matching the floor the rest of TCRsift uses. A fixed count floor acts as a
-sequencing-depth filter: in six public lung-tumor samples (GSE176021, about
-3,600 UMIs per cell), 10 counts removed 65% of cells that carried a productive
-paired TCR, and between 39% and 91% depending on the sample. A floor of 3
-removes 9%. More cells are retained, so shortlists change; pass `--min-cd3 10`
-to reproduce 3.25 results. The command now also warns when any single cell
-filter other than lineage removes more than half of the remaining cells.
+The command now warns when any single cell filter other than lineage removes
+more than half of the remaining cells. The default `--min-cd3 10` is unchanged.
+It is a raw-count floor, so it behaves as a sequencing-depth filter: in public
+lung-tumor data (GSE176021, about 3,600 UMIs per cell) it removed 72% of
+CD8-classified cells. Lowering it to 3 kept 86% of them but ranked validated
+neoantigen-specific clones worse (TumorReactive AUROC 0.69 against 0.97, with
+10 to 18 positive clones), so the stricter default stays and the loss is made
+visible instead.
 
 ## Changes in 3.25.0
 
