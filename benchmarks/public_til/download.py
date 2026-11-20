@@ -3,7 +3,7 @@
 
     python benchmarks/public_til/download.py --data-dir /path/to/cache
 
-About 1.4 GB. Nothing here needs controlled access:
+About 2.5 GB. Nothing here needs controlled access:
 
 * Caushi et al., Nature 2021 (NSCLC, anti-PD-1): GEO GSE176021 per-sample
   Cell Ranger matrices + ``filtered_contig_annotations.csv``; antigen labels
@@ -18,24 +18,19 @@ from __future__ import annotations
 import argparse
 import gzip
 import io
+import re
 import tarfile
 import urllib.request
 from pathlib import Path
 
 GEO = "https://ftp.ncbi.nlm.nih.gov/geo"
 
-# Tumor (and metastasis) samples of the five patients whose MANA-specific
-# clonotypes appear in tumor single-cell data. (GSM, sample name).
-CAUSHI_SAMPLES = [
-    ("GSM5352889", "MD01-004_tumor_1"),
-    *[(f"GSM53528{n}", f"MD043-011_mettumor_{i}") for n, i in ((93, 1), (95, 2), (96, 3), (97, 4), (98, 5))],
-    *[(f"GSM5352{897 + i}", f"MD043-011_tumor_{i}") for i in (2, 3, 4, 5)],
-    *[(f"GSM53529{26 + i}", f"NY016-014_tumor_{i}") for i in (1, 2, 3)],
-    *[(f"GSM53529{42 + i}", f"NY016-025_tumor_{i}") for i in (1, 2, 3, 4)],
-    *[(f"GSM53529{58 + i}", f"MD01-005_tumor_{i}") for i in range(2, 10)],
-]
-# GEO misspells one archive's suffix.
-VDJ_SUFFIX = {"NY016-025_tumor_3": "vdt"}
+# Every sample (tumor, metastasis, lymph node, adjacent normal lung) of the
+# eight patients with antigen-labelled clonotypes in Supplementary Table 8.
+CAUSHI_SERIES = f"{GEO}/series/GSE176nnn/GSE176021/suppl"
+CAUSHI_PATIENTS = ("MD01-004", "MD01-005", "MD043-003", "MD043-008",
+                   "MD043-011", "NY016-007", "NY016-014", "NY016-025")
+ARCHIVE = re.compile(r"(GSM\d+)_(([A-Z0-9]+-\d+)_[A-Za-z]+_\d+)\.(vd[a-z]\.)?tar\.gz")
 CAUSHI_LABELS = ("https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-021-03752-4/"
                  "MediaObjects/41586_2021_3752_MOESM8_ESM.xlsx")
 
@@ -79,15 +74,21 @@ def main() -> None:
 
     print("Caushi 2021 (GSE176021)")
     fetch(CAUSHI_LABELS, root / "caushi" / "supplementary_tables.xlsx")
-    for gsm, name in CAUSHI_SAMPLES:
-        base = f"{GEO}/samples/{gsm[:7]}nnn/{gsm}/suppl/{gsm}_{name}"
-        raw = root / "caushi" / "raw"
-        gex = fetch(f"{base}.tar.gz", raw / f"{name}.tar.gz")
-        vdj = fetch(f"{base}.{VDJ_SUFFIX.get(name, 'vdj')}.tar.gz", raw / f"{name}.vdj.tar.gz")
+    listing = fetch(f"{CAUSHI_SERIES}/filelist.txt", root / "caushi" / "filelist.txt").read_text()
+    archives = {}  # sample name -> {"gex": url, "vdj": url}; GEO misspells one ".vdj" suffix
+    for gsm, name, patient, vdj in ARCHIVE.findall(listing):
+        if patient in CAUSHI_PATIENTS:
+            url = f"{GEO}/samples/{gsm[:7]}nnn/{gsm}/suppl/{gsm}_{name}.{vdj}tar.gz"
+            archives.setdefault(name, {})["vdj" if vdj else "gex"] = url
+    raw = root / "caushi" / "raw"
+    for name, urls in sorted(archives.items()):
+        if set(urls) != {"gex", "vdj"}:
+            continue  # prioritization needs both
         sample = root / "caushi" / "samples" / name
-        extract_flat(gex, sample / "gex" / "filtered_feature_bc_matrix",
+        extract_flat(fetch(urls["gex"], raw / f"{name}.tar.gz"), sample / "gex" / "filtered_feature_bc_matrix",
                      ("matrix.mtx.gz", "barcodes.tsv.gz", "features.tsv.gz"))
-        extract_flat(vdj, sample / "vdj", ("filtered_contig_annotations.csv",))
+        extract_flat(fetch(urls["vdj"], raw / f"{name}.vdj.tar.gz"), sample / "vdj",
+                     ("filtered_contig_annotations.csv",))
 
     print("Meng 2023 (GSE254250)")
     for name in MENG_FILES:
