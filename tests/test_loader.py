@@ -498,6 +498,70 @@ class TestLoadSamplesWithSampleSheet:
         assert adata.X is not None
         assert set(adata.obs["sample"]) == {"S1", "S2"}
 
+    def test_load_samples_keeps_gene_symbols_across_samples(
+        self, mock_cellranger_vdj_dir, monkeypatch
+    ):
+        """Matrix-directory inputs carry the reference's symbols in
+        ``var["gene_symbols"]``. Concatenation used to drop them, so a
+        multi-sample run resolved symbols from a different Ensembl release and
+        signature scoring failed on genes the matrices contained."""
+        from tcrsift import loader as loader_module
+        from tcrsift.genes import adata_symbol_array
+
+        symbols = {"ENSG00000110619": "CARS", "ENSG00000176485": "PLA2G16", "ENSG99999999999": "S2ONLY"}
+
+        def fake_load_sample(sample, **_kwargs):
+            ids = list(symbols)[: 2 if sample.sample == "S1" else 3]
+            a = ad.AnnData(X=sp.csr_matrix(np.ones((4, len(ids)))))
+            a.var_names = ids
+            a.var["gene_symbols"] = [symbols[i] for i in ids]
+            a.obs_names = [f"{sample.sample}_cell{i}" for i in range(4)]
+            a.obs["sample"] = sample.sample
+            return a
+
+        monkeypatch.setattr(loader_module, "load_sample", fake_load_sample)
+        sheet = SampleSheet(
+            samples=[
+                Sample(sample="S1", vdj_dir=str(mock_cellranger_vdj_dir)),
+                Sample(sample="S2", vdj_dir=str(mock_cellranger_vdj_dir)),
+            ]
+        )
+
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert dict(zip(adata.var_names, adata.var["gene_symbols"])) == symbols
+        assert set(adata_symbol_array(adata)) == {"CARS", "PLA2G16", "S2ONLY"}
+    def test_unfiltered_contig_fallback_matches_filtered_semantics(self, temp_dir):
+        """With only all_contig_annotations.csv present, keep called cells and
+        high-confidence contigs and drop contigs with no chain call. Those rows
+        used to pass through, and the missing chain produced ``TRA_1.0_*``
+        columns that every later step failed to find."""
+        vdj_dir = temp_dir / "vdj_unfiltered"
+        vdj_dir.mkdir()
+        rows = [
+            # barcode, is_cell, high_confidence, chain, cdr3, productive, umis
+            ("CELL1-1", "True", "True", "TRA", "CAVRDSNYQLIW", "True", 5),
+            ("CELL1-1", "True", "True", "TRB", "CASSLGQAYEQYF", "True", 9),
+            ("CELL1-1", "True", "True", "None", "None", "None", 2),
+            ("CELL1-1", "True", "False", "TRB", "CASSLOWCONFF", "True", 1),
+            ("EMPTY1-1", "False", "True", "TRB", "CASSNOTACELLF", "True", 3),
+        ]
+        cols = ["barcode", "is_cell", "high_confidence", "chain", "cdr3", "productive", "umis"]
+        df = pd.DataFrame(rows, columns=cols)
+        df["contig_id"] = [f"{b}_contig_{i}" for i, b in enumerate(df.barcode, 1)]
+        df["reads"] = 100
+        for gene in ("v_gene", "d_gene", "j_gene", "c_gene"):
+            df[gene] = "None"
+        df.to_csv(vdj_dir / "all_contig_annotations.csv", index=False)
+
+        sheet = SampleSheet(samples=[Sample(sample="S1", vdj_dir=str(vdj_dir))])
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert list(adata.obs_names) == ["CELL1-1"]
+        assert adata.obs["TRA_1_cdr3"].item() == "CAVRDSNYQLIW"
+        assert adata.obs["TRB_1_cdr3"].item() == "CASSLGQAYEQYF"
+        assert not [c for c in adata.obs.columns if "1.0" in c or c.startswith("TRB_2")]
+
     @pytest.mark.parametrize(
         "x_format",
         # Production data hits us in formats that synthetic CSR-only tests

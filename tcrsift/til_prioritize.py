@@ -523,7 +523,7 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
     for option, default, help_text in (
         ("min-vdj-umis", 2, "Minimum UMIs in EACH primary VDJ chain per cell"),
         ("min-vdj-reads", 0, "Minimum reads in EACH primary VDJ chain per cell"),
-        ("min-cd3", 10, "Minimum summed CD3D/E/G raw GEX counts per cell"),
+        ("min-cd3", 10, "Minimum summed CD3D/E/G raw GEX counts per cell; 0 disables"),
         ("min-alpha-cdr3-length", 0, "Minimum alpha CDR3 amino-acid length, including anchors"),
         ("min-beta-cdr3-length", 0, "Minimum beta CDR3 amino-acid length, including anchors"),
     ):

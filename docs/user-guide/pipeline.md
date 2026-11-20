@@ -4,45 +4,15 @@ TCRsift processes single-cell TCR data through a series of steps, each building 
 
 ## Pipeline Steps
 
-```
-┌─────────────────┐
-│  Sample Sheet   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Load Data     │  ← CellRanger VDJ + GEX
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Phenotype     │  ← CD4/CD8 classification
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Clonotype     │  ← Aggregate by CDR3
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│    Filter       │  ← Tiered selection
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Annotate      │  ← VDJdb, IEDB, CEDAR
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Match TIL     │  ← Optional TIL matching
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Assemble      │  ← Full-length sequences
-└─────────────────┘
+```mermaid
+flowchart TD
+    S[Sample sheet] --> L["Load<br/>Cell Ranger VDJ + GEX"]
+    L --> P["Phenotype<br/>CD4 / CD8 classification"]
+    P --> C["Clonotype<br/>aggregate cells by CDR3"]
+    C --> F["Filter<br/>tiered abundance selection"]
+    F --> A["Annotate<br/>VDJdb, IEDB, CEDAR"]
+    A --> T["Match TIL<br/>optional"]
+    T --> X["Assemble<br/>full-length sequences"]
 ```
 
 ## 1. Load Data

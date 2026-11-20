@@ -186,3 +186,18 @@ def test_exact_gene_gates_handle_alleles_and_missing_calls():
                            "beta_v_gene": ["TRBV1", "TRBV1", "TRBV1"]})
     assert gene_filter_mask(clones, [], ["trav12-2"], "v").tolist() == [False, True, False]
     assert gene_filter_mask(clones, ["TRAV12-2"], [], "v").tolist() == [True, False, False]
+
+
+def test_majority_cell_loss_from_one_filter_is_reported(caplog):
+    """A raw CD3 count floor scales with depth; a gate that removes most of the
+    remaining cells says so instead of shrinking the analysis silently."""
+    cells = phenotype_cells(_til_cells())
+    cells.obs["CD3"] = 20
+    with caplog.at_level("WARNING", logger="tcrsift.prioritize"):
+        kept, counts, _ = filter_cells(cells, _args())
+        cd3 = next(c for c in counts if c["filter"] == "cd3")
+        assert cd3["after"] == cd3["before"] == kept.n_obs
+        assert "Cell filter" not in caplog.text
+        cells.obs.loc[cells.obs_names != kept.obs_names[0], "CD3"] = 0
+        filter_cells(cells, _args())
+    assert f"Cell filter 'cd3' removed {kept.n_obs - 1} of {kept.n_obs} remaining cells" in caplog.text

@@ -1,6 +1,6 @@
 site_name: TCRsift
 site_description: T-cell receptor clonotype prioritization from antigen-enrichment cultures and single-cell VDJ and gene-expression data
-site_url: https://pirl-unc.github.io/tcrsift/
+site_url: https://pirl.unc.edu/tcrsift/
 repo_url: https://github.com/pirl-unc/tcrsift
 repo_name: pirl-unc/tcrsift
 
@@ -50,7 +50,11 @@ markdown_extensions:
       anchor_linenums: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - admonition
@@ -65,28 +69,35 @@ nav:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
     - Sample Sheets: getting-started/sample-sheets.md
-  - User Guide:
-    - Pipeline Overview: user-guide/pipeline.md
+  - How It Works: how-it-works.md
+  - Benchmarks: benchmarks.md
+  - Workflows:
+    - Culture Pipeline: user-guide/pipeline.md
+    - Filtering Strategies: user-guide/filtering.md
     - Clone Prioritization: user-guide/til-signatures.md
     - Single-Cell Atlas Path: user-guide/atlas.md
-    - CLI Reference: user-guide/cli.md
-    - Filtering Strategies: user-guide/filtering.md
     - Signature Reproducibility Map: reproducibility_map.md
-  - API Reference:
-    - Sample Sheet: api/sample_sheet.md
-    - Loading: api/loader.md
-    - Phenotyping: api/phenotype.md
-    - Clonotyping: api/clonotype.md
-    - Filtering: api/filter.md
-    - Annotation: api/annotate.md
-    - Pgen / Publicness: api/pgen.md
-    - Sequence probability (k-mer/TCRpeg): api/seqprob.md
-    - TCR annotation + PRISM: api/annotate_tcrs.md
-    - In-silico filter: api/insilico_filter.md
-    - Signatures: api/signatures.md
-    - Candidate Selection: api/candidate.md
-    - TIL Matching: api/til.md
-    - TIL Selection: api/til_select.md
-    - Assembly: api/assemble.md
-    - Display Formatting: api/format.md
+  - Reference:
+    - CLI Reference: user-guide/cli.md
+    - Prioritization Release Notes: release-notes.md
+    - Loading and cells:
+      - Sample Sheet: api/sample_sheet.md
+      - Loading: api/loader.md
+      - Phenotyping: api/phenotype.md
+      - Clonotyping: api/clonotype.md
+    - Selection:
+      - Filtering: api/filter.md
+      - Signatures: api/signatures.md
+      - Candidate Selection: api/candidate.md
+      - TIL Matching: api/til.md
+      - TIL Selection: api/til_select.md
+    - Sequence annotation:
+      - Annotation: api/annotate.md
+      - Pgen / Publicness: api/pgen.md
+      - Sequence probability (k-mer/TCRpeg): api/seqprob.md
+      - TCR annotation + PRISM: api/annotate_tcrs.md
+      - In-silico filter: api/insilico_filter.md
+    - Sequence output:
+      - Assembly: api/assemble.md
+      - Display Formatting: api/format.md
   - Contributing: contributing.md

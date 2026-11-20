@@ -116,6 +116,13 @@ are **unadjusted across clones/signatures/samples**; the shortlist has no claime
 false-discovery-rate control. Stable identifiers and the recorded package
 version, seed, draw count and floor table support reproduction.
 
+![Size-matched background floor](../assets/figures/background_floor.svg)
+
+*Simulated scores. Left: means of random 2-cell groups spread much wider than
+means of random 20-cell groups, so their 99th percentiles differ. Right: the
+resulting floor by clone size; the same mean of 0.42 fails for a 5-cell clone
+(B) and passes for a 20-cell clone (C).*
+
 ### Subset evidence: high-cell counts and fractions
 
 For each signature within each patient/sample/lineage:
@@ -144,6 +151,11 @@ make the clone mean low**. Qualification still depends on the cell threshold
 and the surrounding population: 10/25 is much more surprising against a 10%
 high-cell reference than against a 40% reference. Exported counts and fractions
 refer to the same sample and lineage, not a pool across different samples.
+
+![Subset evidence](../assets/figures/subset_evidence.svg)
+
+*Simulated scores. The clone mean (0.22) is below its 25-cell floor (0.30),
+but 10 high-scoring cells is far more than a random 25-cell group would hold.*
 
 This is a standard [hypergeometric enrichment calculation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.hypergeom.html),
 but the cell quantile, minimum count, and tail cutoff are configurable TCRsift
@@ -261,7 +273,10 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor \
 
 Names are case-insensitive. Other registered panels, including `Broad` variants,
 can be selected explicitly. Required genes missing from the expression matrix
-cause an error; signatures are not silently shortened. The [signature registry](../api/signatures.md)
+cause an error; signatures are not silently shortened. A gene that the reference
+lists under a different identifier is still found: a short table of synonyms
+(for example PLA2G16/PLAAT3 and CARS/CARS1) maps the published symbol to the
+same gene in newer or older annotations, and the log names each match. The [signature registry](../api/signatures.md)
 documents gene sets and scoring methods. In particular, MANAscore is TCRsift's
 transparent signed-z **proxy**, not the original trained predictor.
 
@@ -332,7 +347,7 @@ are cohort-relative; the shortlist is for experimental review.
 | `--min-counts`, `--max-counts` | 500–100,000 total GEX UMI counts per cell, not sequencing reads. |
 | `--min-mito-pct`, `--max-mito-pct` | 0–8% mitochondrial counts; no mitochondrial floor by default. |
 | `--min-vdj-umis`, `--min-vdj-reads` | At least 2 UMIs in each primary alpha/beta chain; read gate disabled (0). |
-| `--min-cd3` | At least 10 summed CD3D/E/G raw GEX counts per cell; 0 disables. |
+| `--min-cd3` | At least 10 summed CD3D/E/G raw GEX counts per cell; 0 disables. A raw-count floor scales with sequencing depth and can remove most cells of a shallow library; the command warns when it does. |
 | `--min-expression GENE=VALUE`, `--max-expression GENE=VALUE` | Optional per-cell log1p(CP10K) thresholds. Repeat for AND conditions. Missing genes are errors. |
 | `--include-v-gene`, `--exclude-v-gene` | Optional exact V calls in either chain, ignoring allele suffix and case. Repeat for multiple genes. |
 | `--include-j-gene`, `--exclude-j-gene` | Corresponding J-gene gates. Inclusion requires at least one listed gene; exclusion rejects any listed gene. Missing calls fail active gene filters. |
@@ -402,37 +417,7 @@ publicness exclusions remain opt-in.
   and [Stitchr](https://pmc.ncbi.nlm.nih.gov/articles/PMC9262623/): context for
   distinguishing germline V-gene bias, CDR3 length, and junctional diversity.
 
-## Changes in 3.25.0
+## Release notes
 
-Background selection now defaults to either mean or high-cell subset evidence,
-with separate ranked lists inside the same 200-total budget. Exports include
-high-cell counts, fractions, exact enrichment tails, and the evidence route
-that supplied each candidate. `--signature-evidence mean` restores the 3.24.0
-selection rule; legacy mode retains its previous behavior.
-
-## Changes in 3.24.0
-
-The default stopping rule now uses a size-matched empirical background floor
-instead of score > 0. The total cap remains 200 and the rank gate remains the
-top decile. Use `--signature-cutoff legacy` for the previous score rule. This
-can substantially reduce shortlists, especially with very small samples.
-NeoTCR module scores now explicitly read normalized `.X` even when `.raw`
-exists. Their registry metadata and descriptions correctly identify log-space
-control subtraction; the bare-DataFrame proxy follows the other signatures'
-default `log1p` transform (pass `log1p=False` for already logged frames).
-
-## Changes in 3.23.1
-
-The cap is now **200 total**, replacing 100 per patient. Selection ranks are
-global. That release used percentile ≥ 0.90 and score > 0; numerically flat
-lists are excluded. Exhausted lists yield their turns to the remaining lists.
-There is no fallback below these cutoffs to fill the budget.
-
-## Changes from 3.22
-
-Both command names now use context-dependent stratification, default CD8
-selection, viral exclusion off, and a disabled mitochondrial floor. MART-1
-exclusion remains on. One sample is sufficient. These changes intentionally
-change shortlists from the original TIL example; the old ranking algorithm
-is not restored by adjusting thresholds. Use the recorded configuration and
-package version when reproducing a prior analysis.
+Behavior changes to this command between versions are listed in the
+[prioritization release notes](../release-notes.md).

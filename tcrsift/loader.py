@@ -116,11 +116,13 @@ def load_cellranger_vdj(
     annotations_path = vdj_dir / annotations_filename
     clonotypes_path = vdj_dir / clonotypes_filename
 
+    unfiltered = False
     if not annotations_path.exists():
         # Try alternative filename
         alt_path = vdj_dir / "all_contig_annotations.csv"
         if alt_path.exists():
             annotations_path = alt_path
+            unfiltered = True
             if verbose:
                 logger.info("  Using all_contig_annotations.csv (filtered not found)")
         else:
@@ -148,6 +150,32 @@ def load_cellranger_vdj(
             f"VDJ annotations missing required columns: {missing_cols}",
             hint=f"Available columns: {list(df.columns)[:15]}. "
             "This doesn't look like a CellRanger VDJ output file.",
+        )
+
+    # all_contig_annotations.csv also lists contigs from barcodes that were not
+    # called as cells and low-confidence contigs. Apply Cell Ranger's own
+    # definition of the filtered table so the fallback means the same thing.
+    if unfiltered:
+        keep = pd.Series(True, index=df.index)
+        for flag in ("is_cell", "high_confidence"):
+            if flag in df.columns:
+                keep &= df[flag].astype(str).str.lower().eq("true")
+        if verbose and not keep.all():
+            logger.info(f"  Kept {int(keep.sum()):,} of {len(df):,} contigs (called cells, high confidence)")
+        df = df[keep]
+    # A contig with no chain call (read as missing) cannot be assigned to a
+    # receptor chain. Left in, it turned the per-chain entry numbers into
+    # floats and produced columns such as ``TRA_1.0_cdr3``.
+    no_chain = df["chain"].isna() | df["chain"].astype(str).str.lower().isin(["none", ""])
+    if no_chain.any():
+        if verbose:
+            logger.info(f"  Dropped {int(no_chain.sum()):,} contigs with no chain call")
+        df = df[~no_chain]
+    df = df.copy()
+    if len(df) == 0:
+        raise TCRsiftValidationError(
+            f"No usable contigs in: {annotations_path}",
+            hint="Every contig was from a non-cell barcode, low confidence, or had no chain call.",
         )
 
     # Log summary statistics
@@ -808,6 +836,7 @@ def load_samples(
         )
 
     sample_keys: list[str] = []
+    gene_symbols: dict[str, str] = {}
     spill_paths: list[Path] = []
     total_cells = 0
 
@@ -850,6 +879,8 @@ def load_samples(
 
             _ensure_x(adata)
             sample_keys.append(adata.obs["sample"].iloc[0])
+            if "gene_symbols" in adata.var.columns:
+                gene_symbols.update(zip(adata.var_names, adata.var["gene_symbols"].astype(str)))
             total_cells += adata.n_obs
 
             # Number files by the load order of successful samples (skipped
@@ -889,6 +920,15 @@ def load_samples(
                 )
                 combined = ad.read_h5ad(out_path)
             pbar.update(1)
+
+        # The concatenation drops per-gene annotations. Matrix-directory inputs
+        # index genes by Ensembl id and carry the reference's own symbols in
+        # ``var["gene_symbols"]``; restore them so symbol lookups use the
+        # sample's reference rather than a different Ensembl release (which
+        # renames or lacks some genes and made multi-sample signature scoring
+        # fail on symbols the matrices do contain).
+        if gene_symbols:
+            combined.var["gene_symbols"] = [gene_symbols.get(name, name) for name in combined.var_names]
 
     # Tempdir is cleaned up here; `combined` is fully in-memory.
     # Inverse of `_ensure_x`: an all-VDJ-only sheet produces n_vars == 0,
