@@ -1,12 +1,12 @@
 # Public TIL prioritization benchmark
 
 Scores `tcrsift prioritize --context solid-tumor` against experimentally
-validated clones in two open datasets (Caushi 2021, GSE176021; Meng 2023,
-GSE254250). Results and caveats are written up in `docs/benchmarks.md`.
+labelled clones in three open datasets (Meng 2023, GSE254250; Caushi 2021,
+GSE176021; Eberhardt 2021, GSE180268). Results and caveats are written up in `docs/benchmarks.md`.
 
 ```bash
 pip install openpyxl                      # to read the Caushi label table
-python benchmarks/public_til/download.py --data-dir bench_data   # about 1.4 GB
+python benchmarks/public_til/download.py --data-dir bench_data   # about 2.8 GB
 python benchmarks/public_til/run.py --data-dir bench_data --work-dir bench_data/runs
 python docs/figures/make_benchmark_figures.py
 ```

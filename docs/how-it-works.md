@@ -98,10 +98,11 @@ probabilities are in the [prioritization guide](user-guide/til-signatures.md).
 The cutoffs above are transparent operating choices, not thresholds fitted to
 experimentally confirmed receptors. Two sets of measurements exist:
 
-- [Benchmark on public TIL data](benchmarks.md): on 149 experimentally tested
-  clones from pancreatic tumors, the tumor-reactivity signatures separate
-  reactive from non-reactive clones with AUROC about 0.80, and 73% of reactive
-  clones pass a default cutoff against 31% of non-reactive ones.
+- [Benchmark on public TIL data](benchmarks.md): three public tumor datasets
+  with experimentally labelled clones. The tumor-reactivity signatures rank
+  reactive clones well in pancreatic and lung tumors (AUROC about 0.8 to 0.97)
+  and show no enrichment in a head and neck dataset. The same page shows that
+  short lists improve when only those three signatures are used.
 - [Signature reproducibility map](reproducibility_map.md): which signatures
   held up across two donors in an in-vitro MART-1 expansion pilot.
 
