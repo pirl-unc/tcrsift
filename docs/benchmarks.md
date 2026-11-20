@@ -134,14 +134,27 @@ Each clone gets a percentile for each signature within its own sample. The
 AUROC is the probability that a random positive clone outranks a random
 negative one; 0.5 is chance.
 
-Where each signature came from decides whether a result is an independent
-test:
+These are the nine signatures the `solid-tumor` preset scores for CD8 cells.
+Where each came from decides whether a result is an independent test.
 
-| Signature | Derived from | Independent of the data here? |
-| --- | --- | --- |
-| MANAscore proxy (CXCL13, ENTPD1, IL7R) | A model trained on the **Caushi 2021** lung data (Zeng et al. 2025) | **No for lung: circular.** Yes for pancreatic and head and neck. |
-| NeoTCR8 | Lowery et al. 2022, metastatic gastrointestinal cancers | Yes, for all three |
-| TumorReactive and the six general state signatures | Marker panels curated from the literature, not fitted to data | Yes, for all three |
+| Signature | Genes | Source | Independent of the data here? |
+| --- | --- | --- | --- |
+| TumorReactive | CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE | Literature-curated exhaustion and tissue-residency markers | Yes |
+| MANAscore proxy | CXCL13 and ENTPD1 up, IL7R down | Genes from a model trained on the **Caushi 2021** lung data (Zeng et al. 2025) | **No for lung: circular.** Yes for the other two. |
+| NeoTCR8 | 243 genes, including GZMB, ENTPD1 and KIR2DL4 | Lowery et al. 2022, metastatic gastrointestinal cancers | Yes |
+| Differentiated | IFNG, GZMB, PRF1, GNLY, NKG7 up; TCF7, LEF1, CCR7, SELL down | Curated effector-versus-naive contrast | Yes |
+| AntigenExperienced | IFNG, GZMB, PRF1, GNLY, NKG7 | Curated effector markers | Yes |
+| Cytolytic | PRF1, GZMB | Curated | Yes |
+| AcuteActivation | TNFRSF9, MKI67 | Curated | Yes |
+| AIM | TNFRSF9, TNFRSF4 | Curated activation-induced markers | Yes |
+| Proliferation | MKI67 | Curated | Yes |
+
+The first three are the "tumor-reactivity signatures" referred to throughout;
+the other six are the "general state signatures". Several overlap: CXCL13 and
+ENTPD1 are in all three tumor-reactivity signatures, and GZMB and PRF1 recur in
+the state signatures, so they are correlated views, not independent votes. Gene
+lists, scoring methods and citations are in the
+[signature reference](api/signatures.md).
 
 In the lung figure the circular row is drawn hollow, in orange, and starred.
 

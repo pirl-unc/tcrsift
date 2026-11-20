@@ -31,6 +31,27 @@ All symbols are HGNC human gene names.
 `MARKER_PANEL_HGNC` is the union extracted by `til-select`; it is a display and
 scoring panel, not another biological signature.
 
+## Named signatures used by `prioritize`
+
+`tcrsift prioritize` selects signatures by these names (`--signatures`,
+`--context`). They are defined in `tcrsift.signature_methods.SIGNATURES` and
+are scored as the mean of z-scored up genes minus down genes, per sample.
+
+| Name | Up | Down |
+| --- | --- | --- |
+| `Differentiated` | IFNG, GZMB, PRF1, GNLY, NKG7 | TCF7, LEF1, CCR7, SELL |
+| `AntigenExperienced` | IFNG, GZMB, PRF1, GNLY, NKG7 | |
+| `Cytolytic` | PRF1, GZMB | |
+| `AcuteActivation` | TNFRSF9, MKI67 | |
+| `Proliferation` | MKI67 | |
+| `AIM` | TNFRSF9, TNFRSF4 | |
+| `TumorReactive` | CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE | |
+
+`TumorReactive` here is broader than the two-gene `tumor_reactive` panel in
+the table above. `Broad` variants and `CirculatingMemory` are also registered.
+How these perform against experimentally labelled clones is reported in the
+[evaluation on public data](../benchmarks.md).
+
 ## Published neoantigen-reactivity registry
 
 `score_by_name` dispatches each entry according to its registered method
