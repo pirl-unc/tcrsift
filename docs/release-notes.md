@@ -7,16 +7,16 @@ current release. The complete per-release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
-## 3.26.0
+## 3.25.3
 
-The default `--min-cd3` is now **3** summed CD3D/E/G counts instead of 10,
-matching the floor the rest of TCRsift uses. A fixed count floor acts as a
-sequencing-depth filter: in six public lung-tumor samples (GSE176021, about
-3,600 UMIs per cell), 10 counts removed 65% of cells that carried a productive
-paired TCR, and between 39% and 91% depending on the sample. A floor of 3
-removes 9%. More cells are retained, so shortlists change; pass `--min-cd3 10`
-to reproduce 3.25 results. The command now also warns when any single cell
-filter other than lineage removes more than half of the remaining cells.
+The command now warns when any single cell filter other than lineage removes
+more than half of the remaining cells. The default `--min-cd3 10` is unchanged.
+It is a raw-count floor, so it behaves as a sequencing-depth filter: in public
+lung-tumor data (GSE176021, about 3,600 UMIs per cell) it removed 72% of
+CD8-classified cells. Lowering it to 3 kept 86% of them but ranked validated
+neoantigen-specific clones worse (TumorReactive AUROC 0.69 against 0.97, with
+10 to 18 positive clones), so the stricter default stays and the loss is made
+visible instead.
 
 ## 3.25.2
 
