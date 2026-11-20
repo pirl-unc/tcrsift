@@ -116,12 +116,15 @@ are **unadjusted across clones/signatures/samples**; the shortlist has no claime
 false-discovery-rate control. Stable identifiers and the recorded package
 version, seed, draw count and floor table support reproduction.
 
+![Random groups set the reference](../assets/figures/background_reference.svg)
+
+*Simulated scores. Means of random 2-cell groups spread much wider than means
+of random 20-cell groups, so their 99th percentiles differ.*
+
 ![Size-matched background floor](../assets/figures/background_floor.svg)
 
-*Simulated scores. Left: means of random 2-cell groups spread much wider than
-means of random 20-cell groups, so their 99th percentiles differ. Right: the
-resulting floor by clone size; the same mean of 0.42 fails for a 5-cell clone
-(B) and passes for a 20-cell clone (C).*
+*The resulting floor by clone size; the same mean of 0.42 fails for a 5-cell
+clone (B) and passes for a 20-cell clone (C).*
 
 ### Subset evidence: high-cell counts and fractions
 
@@ -152,10 +155,13 @@ and the surrounding population: 10/25 is much more surprising against a 10%
 high-cell reference than against a 40% reference. Exported counts and fractions
 refer to the same sample and lineage, not a pool across different samples.
 
-![Subset evidence](../assets/figures/subset_evidence.svg)
+![One clone's cells](../assets/figures/subset_cells.svg)
 
-*Simulated scores. The clone mean (0.22) is below its 25-cell floor (0.30),
-but 10 high-scoring cells is far more than a random 25-cell group would hold.*
+*Simulated scores. The clone mean (0.22) is below its 25-cell floor (0.30).*
+
+![Chance of that many high cells](../assets/figures/subset_probability.svg)
+
+*Ten high-scoring cells is far more than a random 25-cell group would hold.*
 
 This is a standard [hypergeometric enrichment calculation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.hypergeom.html),
 but the cell quantile, minimum count, and tail cutoff are configurable TCRsift

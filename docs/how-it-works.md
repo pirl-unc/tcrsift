@@ -58,9 +58,14 @@ TCRsift instead draws random groups of *n* cells from the same sample and
 lineage and requires the clone mean to exceed the 99th percentile of those
 group means.
 
+![Random groups set the reference](assets/figures/background_reference.svg)
+
+Means of random 2-cell groups spread much wider than means of random 20-cell
+groups, so the 99th percentile a clone must beat depends on its size.
+
 ![Size-matched background floor](assets/figures/background_floor.svg)
 
-On the right, clones B and C have the same mean score. B has 5 cells and falls
+Clones B and C have the same mean score. B has 5 cells and falls
 below its floor; C has 20 cells and clears it.
 
 ### 2. A subset of high-scoring cells can also qualify a clone
@@ -70,11 +75,13 @@ unremarkable can still hold many more high-scoring cells than chance allows.
 TCRsift labels the top-decile cells in the sample as high-scoring and asks how
 likely a random group of the same size would be to contain at least as many.
 
-![Subset evidence](assets/figures/subset_evidence.svg)
+![One clone's cells](assets/figures/subset_cells.svg)
 
 Here the clone mean (0.22) is below the 25-cell floor (0.30), so the mean route
 rejects it. Ten of its 25 cells are high-scoring, against two or three expected,
 so the subset route keeps it.
+
+![Chance of that many high cells](assets/figures/subset_probability.svg)
 
 ### 3. Lists take turns until the budget is spent
 

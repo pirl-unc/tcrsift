@@ -24,17 +24,26 @@ RESULTS = Path(__file__).resolve().parents[2] / "benchmarks" / "public_til" / "r
 LABELS = {"clone_size": "Clone size (baseline)", "MANAscore": "MANAscore proxy"}
 
 
-def auroc_forest(ax, rows, title, note=None):
+def auroc_forest(ax, rows, title, note=None, circular=()):
+    """Dot and interval per signature. ``circular`` names signatures that were
+    derived from the dataset being plotted: drawn hollow, in orange, and
+    labelled, because their score there is not an independent test."""
     rows = rows.sort_values("auroc")
     y = range(len(rows))
     for i, row in zip(y, rows.itertuples()):
-        baseline = row.signature == "clone_size"
-        color = NEUTRAL if baseline else BLUE
-        ax.plot([row.auroc_low, row.auroc_high], [i, i], color=color, lw=2, solid_capstyle="round")
-        ax.scatter([row.auroc], [i], s=55, color=color, edgecolor=SURFACE, linewidth=1.5, zorder=3)
-        ax.text(1.03, i, f"{row.auroc:.2f}", va="center", fontsize=9, color=INK)
+        baseline, tainted = row.signature == "clone_size", row.signature in circular
+        color = NEUTRAL if baseline else ORANGE if tainted else BLUE
+        ax.plot([row.auroc_low, row.auroc_high], [i, i], color=color, lw=2, solid_capstyle="round",
+                ls=(0, (2, 2)) if tainted else "-")
+        ax.scatter([row.auroc], [i], s=55, color=SURFACE if tainted else color,
+                   edgecolor=color if tainted else SURFACE, linewidth=1.8 if tainted else 1.5, zorder=3)
+        ax.text(1.03, i, f"{row.auroc:.2f}" + ("  circular" if tainted else ""), va="center", fontsize=9,
+                color=INK)
     ax.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))
-    ax.set_yticks(list(y), [LABELS.get(s, s) for s in rows.signature])
+    ax.set_yticks(list(y), [LABELS.get(s, s) + (" *" if s in circular else "") for s in rows.signature])
+    if circular:
+        ax.text(0.0, -0.2, "* derived from this dataset, so not an independent test", transform=ax.transAxes,
+                fontsize=8.5, color=INK2, va="top")
     ax.set_xlim(0.1, 1.0)
     ax.set_xlabel("AUROC (95% bootstrap interval)")
     ax.set_title(title)
@@ -51,13 +60,15 @@ def signature_auroc():
     table = pd.read_csv(RESULTS / "signature_auroc.csv")
     meng = table[table.dataset.eq("meng")]
     caushi = table[table.dataset.eq("caushi") & table.run.eq("tumor_default") & table.tissue.eq("all")]
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.4), constrained_layout=True)
+    fig1, ax1 = plt.subplots(figsize=(6.6, 4.4), constrained_layout=True)
+    fig2, ax2 = plt.subplots(figsize=(7.2, 4.7), constrained_layout=True)
     m, c = meng.iloc[0], caushi.iloc[0]
     auroc_forest(ax1, meng, f"PDAC (Meng 2023): {m.n_positive} reactive vs "
                             f"{m.n_negative} non-reactive clones", note=True)
     auroc_forest(ax2, caushi, f"NSCLC (Caushi 2021): {c.n_positive} neoantigen vs "
-                              f"{c.n_negative} viral clones", note=True)
-    save(fig, "benchmark_auroc")
+                              f"{c.n_negative} viral clones", note=True, circular=("MANAscore",))
+    save(fig1, "benchmark_auroc_pancreatic")
+    save(fig2, "benchmark_auroc_lung")
 
 
 def percent_axis(ax, axis="x"):
@@ -75,8 +86,8 @@ def cutoff_pass_rates():
     by_signature["ntr"] = by_signature.NTR_pass / by_signature.NTR_total
     by_signature = by_signature.sort_values("tr")
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.2), constrained_layout=True,
-                                   gridspec_kw={"width_ratios": [1, 1.5]})
+    fig1, ax1 = plt.subplots(figsize=(5.4, 4.2), constrained_layout=True)
+    fig2, ax2 = plt.subplots(figsize=(7.0, 4.2), constrained_layout=True)
     for i, (key, label, color) in enumerate(groups):
         passed, total = preset[f"{key}_pass"], preset[f"{key}_total"]
         ax1.bar(i, passed / total, width=0.6, color=color)
@@ -108,39 +119,35 @@ def cutoff_pass_rates():
     handles = [plt.Rectangle((0, 0), 1, 1, color=BLUE), plt.Rectangle((0, 0), 1, 1, color=ORANGE)]
     ax2.legend(handles, ["Tumor-reactive", "Tested, non-reactive"], frameon=False, fontsize=9,
                loc="lower right")
-    save(fig, "benchmark_cutoffs")
+    save(fig1, "benchmark_cutoffs_any")
+    save(fig2, "benchmark_cutoffs_by_signature")
 
 
 def selection_by_budget():
-    """What each way of picking N clones puts on the list (tested clones only)."""
+    """Tested clones on the list as the budget grows, for each way of choosing."""
     table = pd.read_csv(RESULTS / "meng_selection.csv")
-    names = {"TCRsift round-robin": "Round-robin, solid-tumor preset",
-             "TCRsift round-robin, tumor-reactivity signatures only": "Round-robin, 3 tumor signatures",
-             "TumorReactive score only": "Top TumorReactive score",
-             "largest clones": "Largest clones",
-             "random abundant clones (mean of 500)": "Random clones"}
-    budgets = ["25", "50", "100", "200"]
-    fig, axes = plt.subplots(1, 4, figsize=(11.5, 3.6), constrained_layout=True, sharey=True)
-    limit = table[table.budget.astype(str).isin(budgets)][["TR", "NTR"]].to_numpy().max() * 1.18
-    height = 0.36
-    for ax, budget in zip(axes, budgets):
-        rows = table[table.budget.astype(str).eq(budget)].set_index("method").loc[list(names)][::-1]
-        for i, row in enumerate(rows.itertuples()):
-            ax.barh(i + height / 2 + 0.02, row.TR, height=height, color=BLUE)
-            ax.barh(i - height / 2 - 0.02, row.NTR, height=height, color=ORANGE)
-            ax.text(row.TR + limit * 0.02, i + height / 2 + 0.02, f"{row.TR:.0f}", va="center", fontsize=8.5, color=INK)
-            ax.text(row.NTR + limit * 0.02, i - height / 2 - 0.02, f"{row.NTR:.0f}", va="center", fontsize=8.5, color=INK)
-        ax.set_yticks(range(len(rows)), [names[m] for m in rows.index])
-        ax.set_xlim(0, limit)
-        ax.set_title(f"{budget} clones chosen", fontsize=10)
-        ax.tick_params(axis="y", length=0)
-        ax.spines["left"].set_visible(False)
-        ax.grid(axis="x", lw=0.6)
+    table = table[table.budget.astype(str).isin(["25", "50", "100", "200"])].assign(
+        budget=lambda d: d.budget.astype(int))
+    methods = [("TCRsift round-robin", "Round-robin, solid-tumor preset", BLUE, "-"),
+               ("TCRsift round-robin, tumor-reactivity signatures only", "Round-robin, 3 tumor signatures", BLUE, "--"),
+               ("TumorReactive score only", "Top TumorReactive score", ORANGE, "-"),
+               ("largest clones", "Largest clones", INK2, "-"),
+               ("random abundant clones (mean of 500)", "Random clones", NEUTRAL, "-")]
+    panels = [("TR", "Tumor-reactive clones chosen", "benchmark_selection_reactive"),
+              ("NTR", "Tested non-reactive clones chosen", "benchmark_selection_nonreactive")]
+    for column, title, name in panels:
+        fig, ax = plt.subplots(figsize=(7.4, 4.2), constrained_layout=True)
+        for method, label, color, style in methods:
+            rows = table[table.method.eq(method)].sort_values("budget")
+            ax.plot(rows.budget, rows[column], color=color, ls=style, lw=2, marker="o", ms=5, label=label)
+        ax.set_xticks([25, 50, 100, 200])
+        ax.set_ylim(0, table[["TR", "NTR"]].to_numpy().max() * 1.08)
+        ax.set_xlabel("clones chosen (budget)")
+        ax.set_title(title)
+        ax.grid(axis="y", lw=0.6)
         ax.set_axisbelow(True)
-    handles = [plt.Rectangle((0, 0), 1, 1, color=BLUE), plt.Rectangle((0, 0), 1, 1, color=ORANGE)]
-    fig.legend(handles, ["Tumor-reactive clones chosen", "Tested non-reactive clones chosen"], frameon=False,
-               fontsize=9, loc="outside lower center", ncol=2)
-    save(fig, "benchmark_selection")
+        ax.legend(frameon=False, fontsize=9, loc="upper left")
+        save(fig, name)
 
 
 def threshold_sweeps():
@@ -148,8 +155,9 @@ def threshold_sweeps():
     cutoffs = pd.read_csv(RESULTS / "meng_cutoffs.csv")
     panels = [("rank_gate", "Rank gate (--signature-quantile)", 0.9),
               ("background_quantile", "Background floor (--signature-background-quantile)", 0.99)]
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.2), constrained_layout=True, sharex=True, sharey=True)
-    for ax, (comparison, title, default) in zip(axes, panels):
+    names = ["benchmark_threshold_rank", "benchmark_threshold_background"]
+    for name, (comparison, title, default) in zip(names, panels):
+        fig, ax = plt.subplots(figsize=(6.2, 4.2), constrained_layout=True)
         rows = cutoffs[cutoffs.comparison.eq(comparison)].copy()
         rows["setting"] = rows.setting.astype(float)
         rows["tr"], rows["ntr"] = rows.TR_pass / rows.TR_total, rows.NTR_pass / rows.NTR_total
@@ -170,8 +178,8 @@ def threshold_sweeps():
         ax.set_title(title, fontsize=10)
         ax.grid(lw=0.6)
         ax.set_axisbelow(True)
-    axes[0].set_ylabel("tumor-reactive clones passing")
-    save(fig, "benchmark_thresholds")
+        ax.set_ylabel("tumor-reactive clones passing")
+        save(fig, name)
 
 
 def cd3_gate():
@@ -181,7 +189,8 @@ def cd3_gate():
     aurocs = aurocs[aurocs.dataset.eq("caushi") & aurocs.tissue.eq("all") & aurocs.signature.eq("TumorReactive")]
     order = [("tumor_cd3_0", "No floor"), ("tumor_cd3_3", "3 counts"), ("tumor_default", "10 counts (default)")]
     labels = [label for _, label in reversed(order)]
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 3.2), constrained_layout=True)
+    fig1, ax1 = plt.subplots(figsize=(6.6, 3.0), constrained_layout=True)
+    fig2, ax2 = plt.subplots(figsize=(7.4, 3.2), constrained_layout=True)
     for i, (key, _) in enumerate(order):
         run = runs[key]
         lineage = next(f["after"] for f in run["cell_filters"] if f["filter"] == "lineage")
@@ -212,7 +221,8 @@ def cd3_gate():
     ax2.set_axisbelow(True)
     ax2.set_xlabel("TumorReactive AUROC, neoantigen vs viral clones")
     ax2.set_title("Ranking of validated clones", fontsize=10)
-    save(fig, "benchmark_cd3_gate")
+    save(fig1, "benchmark_cd3_cells")
+    save(fig2, "benchmark_cd3_ranking")
 
 
 def dataset_designs():
