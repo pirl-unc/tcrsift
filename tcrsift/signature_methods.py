@@ -321,9 +321,9 @@ def expression_frame_from_adata(
     """
     from scipy.sparse import issparse
 
-    from .genes import adata_symbol_array
+    from .genes import adata_symbol_array, harmonize_gene_symbols
 
-    sym_upper = adata_symbol_array(adata)
+    sym_upper = harmonize_gene_symbols(adata_symbol_array(adata), genes)
 
     X = adata.layers[layer] if layer is not None else adata.X
     cols: dict[str, np.ndarray] = {}
@@ -794,9 +794,9 @@ def _score_genes_adata(adata, genes, *, on_missing: str = "warn") -> pd.Series:
     """
     import scanpy as sc
 
-    from .genes import adata_symbol_array
+    from .genes import adata_symbol_array, harmonize_gene_symbols
 
-    sym = adata_symbol_array(adata)
+    sym = harmonize_gene_symbols(adata_symbol_array(adata), genes)
     var_names = list(adata.var_names)
     want = {str(g).upper() for g in genes}
     present_syms = set(sym)

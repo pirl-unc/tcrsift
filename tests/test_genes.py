@@ -12,6 +12,7 @@
 
 """Tests for genes module."""
 
+import numpy as np
 import pytest
 
 from tcrsift.genes import (
@@ -260,3 +261,57 @@ class TestCanonicalizeGene:
         from tcrsift.genes import canonicalize_gene
         assert canonicalize_gene("") is None
         assert canonicalize_gene(None) is None
+
+
+class TestHarmonizeGeneSymbols:
+    """Signature genes are matched across reference-annotation renames."""
+
+    def test_newer_symbol_is_matched_to_published_name(self):
+        from tcrsift.genes import harmonize_gene_symbols
+
+        out = harmonize_gene_symbols(np.array(["CD8A", "PLAAT3", "CARS1"]), ["PLA2G16", "CARS", "CD8A"])
+        assert list(out) == ["CD8A", "PLA2G16", "CARS"]
+
+    def test_older_symbol_is_matched_to_newer_name(self):
+        from tcrsift.genes import harmonize_gene_symbols
+
+        assert list(harmonize_gene_symbols(np.array(["FAM129A"]), ["NIBAN1"])) == ["NIBAN1"]
+
+    def test_gene_without_symbol_is_matched_by_ensembl_id(self):
+        from tcrsift.genes import harmonize_gene_symbols
+
+        out = harmonize_gene_symbols(np.array(["ENSG00000267364"]), ["AC022706.1"])
+        assert list(out) == ["AC022706.1"]
+
+    def test_present_and_unknown_genes_are_untouched(self):
+        from tcrsift.genes import harmonize_gene_symbols
+
+        symbols = np.array(["PLA2G16", "PLAAT3", "GZMB"])
+        out = harmonize_gene_symbols(symbols, ["PLA2G16", "NOT_A_GENE"])
+        assert list(out) == ["PLA2G16", "PLAAT3", "GZMB"]
+        assert out is not symbols
+
+    def test_every_synonym_names_one_gene(self):
+        from tcrsift.genes import GENE_SYNONYMS
+
+        names = [name for group in GENE_SYNONYMS for name in group]
+        assert len(names) == len(set(names))
+        assert all(group[0].startswith("ENSG") and len(group) >= 2 for group in GENE_SYNONYMS)
+
+
+def test_neotcr8_scores_on_reference_with_renamed_genes():
+    """NeoTCR8 lists PLA2G16/CARS; a 2020-A or later matrix has PLAAT3/CARS1."""
+    import anndata as ad
+    import scipy.sparse as sp
+
+    from tcrsift.signature_methods import NEOTCR8_GENES_HGNC, score_by_name
+
+    renamed = {"PLA2G16": "PLAAT3", "CARS": "CARS1", "AC022706.1": "ENSG00000267364"}
+    genes = [renamed.get(g, g) for g in NEOTCR8_GENES_HGNC] + [f"FILL{i}" for i in range(400)]
+    rng = np.random.default_rng(0)
+    adata = ad.AnnData(X=sp.csr_matrix(np.log1p(rng.poisson(rng.integers(1, 30, len(genes)), (60, len(genes))))))
+    adata.var_names = genes
+
+    scores = score_by_name(adata, "NeoTCR8", log1p=False, on_missing="error")
+
+    assert len(scores) == 60 and np.isfinite(scores).all()

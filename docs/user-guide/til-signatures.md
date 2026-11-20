@@ -273,7 +273,10 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor \
 
 Names are case-insensitive. Other registered panels, including `Broad` variants,
 can be selected explicitly. Required genes missing from the expression matrix
-cause an error; signatures are not silently shortened. The [signature registry](../api/signatures.md)
+cause an error; signatures are not silently shortened. A gene that the reference
+lists under a different identifier is still found: a short table of synonyms
+(for example PLA2G16/PLAAT3 and CARS/CARS1) maps the published symbol to the
+same gene in newer or older annotations, and the log names each match. The [signature registry](../api/signatures.md)
 documents gene sets and scoring methods. In particular, MANAscore is TCRsift's
 transparent signed-z **proxy**, not the original trained predictor.
 

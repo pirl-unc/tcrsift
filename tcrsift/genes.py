@@ -301,6 +301,61 @@ def ensembl_ids_to_symbols(
     return out
 
 
+# Signature genes whose identifier differs between reference annotations.
+# Each row is ONE gene: its Ensembl id followed by every symbol it has carried.
+# The id is listed because a reference with no symbol for a gene prints the id
+# in its place (the three AC* lncRNAs lose their clone-based names after
+# GENCODE v32 / Cell Ranger 2020-A). Published signatures keep the symbols of
+# the reference they were derived on, so without this table a gene that is
+# present under a newer or older name looks absent.
+GENE_SYNONYMS: tuple[tuple[str, ...], ...] = (
+    ("ENSG00000176485", "PLA2G16", "PLAAT3"),
+    ("ENSG00000110619", "CARS", "CARS1"),
+    ("ENSG00000184584", "TMEM173", "STING1"),
+    ("ENSG00000119979", "FAM45A", "DENND10"),
+    ("ENSG00000104964", "AES", "TLE5"),
+    ("ENSG00000135842", "FAM129A", "NIBAN1"),
+    ("ENSG00000265206", "AC004687.1", "MIR142HG"),
+    ("ENSG00000267364", "AC022706.1"),
+    ("ENSG00000263264", "AC119396.1"),
+    ("ENSG00000268027", "AC243960.1"),
+)
+_SYNONYMS_OF = {name: group for group in GENE_SYNONYMS for name in group}
+
+
+def harmonize_gene_symbols(symbols, wanted):
+    """Rename matrix symbols to the synonym a signature asks for.
+
+    ``symbols`` is the uppercase per-gene array from :func:`adata_symbol_array`;
+    ``wanted`` the signature's genes. For each wanted gene that is absent under
+    its own name but present under another identifier of the SAME gene
+    (:data:`GENE_SYNONYMS`), the matrix entry is relabelled to the wanted name.
+    Genes present under their own name, and genes with no known synonym, are
+    left alone, so a truly unmeasured gene is still reported as missing.
+
+    Returns a new array; the input is not modified.
+    """
+    import logging
+
+    import numpy as np
+
+    symbols = np.asarray(symbols, dtype=object).copy()
+    present = set(symbols)
+    renamed = {}
+    for gene in {str(g).upper() for g in wanted} - present:
+        for other in _SYNONYMS_OF.get(gene, ()):
+            if other != gene and other in present:
+                symbols[symbols == other] = gene
+                renamed[other] = gene
+                break
+    if renamed:
+        logging.getLogger(__name__).info(
+            "Matched signature genes by synonym: %s",
+            ", ".join(f"{new} (as {old})" for old, new in sorted(renamed.items())),
+        )
+    return symbols
+
+
 def adata_symbol_array(adata, *, release: int = 110, use_pyensembl: bool = True):
     """Per-``var`` HGNC symbol (UPPERCASE) for an AnnData — the shared resolver.
 
