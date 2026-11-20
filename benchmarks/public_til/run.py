@@ -9,6 +9,10 @@ Datasets and how TCRsift is exercised on each:
 * Caushi 2021 (NSCLC, GSE176021): the unmodified ``tcrsift prioritize
   --context solid-tumor`` command on sample sheets. Labels are CDR3-beta
   sequences shown to be neoantigen (MANA) specific or virus specific.
+* Eberhardt 2021 (HPV+ head and neck, GSE180268): the same command on bulk
+  PD-1+ CD8 TIL. Positives are beta chains found in HPV-tetramer-sorted cells
+  of the same patient; there are no tested negatives, so they are compared
+  with every other (unlabelled) clone.
 * Meng 2023 (PDAC, GSE254250): GEO has no VDJ contigs, only a per-cell
   clonotype id, so the same scoring, background calibration, cutoff and
   round-robin functions are called on the authors' CD8 cells. Labels are
@@ -42,8 +46,11 @@ TUMOR_TISSUES = ("tumor", "mettumor")
 # (run name, tissues, extra arguments). The first is the default command.
 CAUSHI_RUNS = [
     ("tumor_default", TUMOR_TISSUES, []),
-    ("tumor_cd3_10", TUMOR_TISSUES, ["--min-cd3", "10"]),
+    ("tumor_cd3_3", TUMOR_TISSUES, ["--min-cd3", "3"]),
     ("tumor_cd3_0", TUMOR_TISSUES, ["--min-cd3", "0"]),
+    # Is the CD3 floor special, or is any depth filter as good? No CD3 floor,
+    # but require 4,000 UMIs per cell instead of 500.
+    ("tumor_depth_gate", TUMOR_TISSUES, ["--min-cd3", "0", "--min-counts", "4000"]),
     ("other_tissue_default", ("LN", "normal"), []),
 ]
 TUMOR_SIGNATURES = ("TumorReactive", "MANAscore", "NeoTCR8")
@@ -181,6 +188,78 @@ def run_caushi(data_dir, work_dir):
         }
     published = {str(k): int(v) for k, v in labels.label.value_counts().items()}
     return aurocs, pd.concat(clone_tables, ignore_index=True), {"labels_published": published, "runs": facts}
+
+
+# ------------------------------------------------------------- Eberhardt 2021
+
+def top_beta_per_cell(contigs_csv):
+    """Each cell's productive beta CDR3 with the most UMIs."""
+    contigs = pd.read_csv(contigs_csv, keep_default_na=False)
+    beta = contigs[contigs.chain.eq("TRB") & contigs.productive.eq("True") & contigs.cdr3.ne("None")]
+    return beta.sort_values("umis", ascending=False).drop_duplicates("barcode").set_index("barcode").cdr3
+
+
+def eberhardt_labels(samples):
+    """Beta chains with >= 5 cells in a patient's tetramer sorts, at least as
+    frequent there as in that patient's bulk sample (drops sort carry-over)."""
+    rows = []
+    for patient in sorted({s.name.split("_")[0] for s in samples}):
+        mine = [s for s in samples if s.name.split("_")[0] == patient]
+        betas = {s.name: top_beta_per_cell(s / "vdj" / "filtered_contig_annotations.csv") for s in mine}
+        sorts = [n for n in betas if "PD1pos" not in n]
+        bulks = [n for n in betas if "PD1pos" in n]
+        cells = pd.concat([betas[n] for n in sorts]).value_counts()
+        sort_frac = pd.concat([betas[n].value_counts(normalize=True) for n in sorts], axis=1).max(axis=1)
+        bulk_frac = pd.concat([betas[n].value_counts(normalize=True) for n in bulks], axis=1).max(axis=1)
+        keep = cells[cells.ge(5)].index
+        keep = [b for b in keep if sort_frac[b] >= bulk_frac.get(b, 0)]
+        rows += [{"donor": patient, "CDR3_beta": b, "label": "HPV", "tetramer_cells": int(cells[b])} for b in keep]
+    return pd.DataFrame(rows)
+
+
+def run_eberhardt(data_dir, work_dir):
+    from tcrsift.cli import main as tcrsift_main
+
+    samples = sorted((data_dir / "eberhardt" / "samples").iterdir())
+    labels = eberhardt_labels(samples)
+    bulk = [s for s in samples if "PD1pos" in s.name]
+    sheet = work_dir / "eberhardt_bulk.csv"
+    lines = ["sample,patient_id,tissue,vdj_dir,gex_dir"]
+    lines += [f"{s.name},{s.name.split('_')[0]},{s.name.split('_')[2]},{s / 'vdj'},{s / 'gex'}" for s in bulk]
+    sheet.write_text("\n".join(lines) + "\n")
+    out = work_dir / "eberhardt_default"
+    if not (out / "prioritization.json").exists():
+        tcrsift_main(["prioritize", str(sheet), "-o", str(out), "--context", "solid-tumor"])
+    config = json.loads((out / "prioritization.json").read_text())
+    signatures = config["resolved_signatures"]
+    sig_cols = [f"signature_{n}{s}" for n in signatures for s in ("_percentile", "_passes_cutoff")]
+    clones = pd.read_csv(out / "all_scored_clones.csv", low_memory=False)
+    clones["size_percentile"] = clones.groupby("donor").cell_count.rank(pct=True)
+    clones = clones.merge(labels[["donor", "CDR3_beta", "label"]], on=["donor", "CDR3_beta"], how="left")
+    clones["label"] = clones.label.fillna("untested")
+    clones = clones.rename(columns={f"{c}_max": c for c in sig_cols})
+    any_cols = ["eligible_for_review", "selected_for_review", *[c for c in sig_cols if c.endswith("cutoff")]]
+    keep = ["donor", "CDR3_beta", "CDR3_alpha", "label", "cell_count", "size_percentile",
+            "eligible_for_review", "selected_for_review", "selection_rank", "selected_signature", *sig_cols]
+    table = collapse_by_beta(clones[keep], any_cols)
+    # Positives against all unlabelled clones, among clones the command can
+    # select (two or more cells), so singletons do not dominate the negatives.
+    expanded = table[table.cell_count.ge(2)]
+    aurocs = auroc_rows(expanded, signatures, "HPV", "untested", dataset="eberhardt", run="default", tissue="all")
+    by_patient = {}
+    for patient, group in table.groupby("donor"):
+        by_patient[patient] = {"scored": counts(group), "min2_cells": counts(group, group.cell_count.ge(2)),
+                               "selected": counts(group, group.selected_for_review)}
+    filters = config["cell_filters"]
+    facts = {
+        "samples": len(bulk), "patients": int(clones.donor.nunique()),
+        "tetramer_positive_betas": {str(k): int(v) for k, v in labels.donor.value_counts().items()},
+        "cells_after_gex_qc": filters[0]["before"], "cells_retained": filters[-1]["after"], "cell_filters": filters,
+        "clones_scored": len(clones), "candidates": int(clones.selected_for_review.sum()),
+        "labelled_scored": counts(table), "labelled_min2_cells": counts(table, table.cell_count.ge(2)),
+        "labelled_selected": counts(table, table.selected_for_review), "by_patient": by_patient,
+    }
+    return aurocs, table[table.label.ne("untested")], facts
 
 
 # ------------------------------------------------------------------ Meng 2023
@@ -346,15 +425,18 @@ def main():
 
     meng_auroc, meng_table, meng_facts, meng_patients, meng_cutoffs, meng_selection = run_meng(args.data_dir)
     caushi_auroc, caushi_table, caushi_facts = run_caushi(args.data_dir, args.work_dir)
+    hpv_auroc, hpv_table, hpv_facts = run_eberhardt(args.data_dir, args.work_dir)
     out = args.out_dir
-    pd.DataFrame(caushi_auroc + meng_auroc).to_csv(out / "signature_auroc.csv", index=False)
+    pd.DataFrame(caushi_auroc + meng_auroc + hpv_auroc).to_csv(out / "signature_auroc.csv", index=False)
     caushi_table.to_csv(out / "caushi_labelled_clones.csv", index=False)
+    hpv_table.to_csv(out / "eberhardt_labelled_clones.csv", index=False)
     meng_table.to_csv(out / "meng_labelled_clones.csv", index=False)
     meng_patients.to_csv(out / "meng_per_patient_auroc.csv", index=False)
     meng_cutoffs.to_csv(out / "meng_cutoffs.csv", index=False)
     meng_selection.to_csv(out / "meng_selection.csv", index=False)
     (out / "summary.json").write_text(json.dumps(
-        {"tcrsift_version": __version__, "caushi": caushi_facts, "meng": meng_facts}, indent=2) + "\n")
+        {"tcrsift_version": __version__, "caushi": caushi_facts, "meng": meng_facts,
+         "eberhardt": hpv_facts}, indent=2) + "\n")
     print(f"wrote {out}")
 
 

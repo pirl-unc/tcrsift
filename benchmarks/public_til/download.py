@@ -3,11 +3,13 @@
 
     python benchmarks/public_til/download.py --data-dir /path/to/cache
 
-About 2.5 GB. Nothing here needs controlled access:
+About 2.8 GB. Nothing here needs controlled access:
 
 * Caushi et al., Nature 2021 (NSCLC, anti-PD-1): GEO GSE176021 per-sample
   Cell Ranger matrices + ``filtered_contig_annotations.csv``; antigen labels
   from the paper's Supplementary Table 8 (Springer, open).
+* Eberhardt et al., Nature 2021 (HPV+ head and neck cancer): GEO GSE180268
+  matrices and contig tables for HPV-tetramer-sorted and bulk PD-1+ CD8 TIL.
 * Meng et al., Sci Transl Med 2023 (PDAC): GEO GSE254250 Cell Ranger h5
   matrices plus the CD8 metadata table carrying per-cell clonotype ids and
   tumor-reactive / non-reactive calls.
@@ -33,6 +35,13 @@ CAUSHI_PATIENTS = ("MD01-004", "MD01-005", "MD043-003", "MD043-008",
 ARCHIVE = re.compile(r"(GSM\d+)_(([A-Z0-9]+-\d+)_[A-Za-z]+_\d+)\.(vd[a-z]\.)?tar\.gz")
 CAUSHI_LABELS = ("https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-021-03752-4/"
                  "MediaObjects/41586_2021_3752_MOESM8_ESM.xlsx")
+
+# Eberhardt 2021: the three patients with a bulk PD-1+ CD8 TIL sample next to
+# their HPV-tetramer-sorted samples.
+EBERHARDT_SERIES = f"{GEO}/series/GSE180nnn/GSE180268/suppl"
+EBERHARDT_PATIENTS = ("HPV7", "HPV34", "HPV51")
+EBERHARDT_FILE = re.compile(
+    r"(GSM\d+)_((HPV\d+)_\w+?)_(barcodes\.tsv|features\.tsv|matrix\.mtx|all_contig_annotations\.csv)\.gz")
 
 MENG = f"{GEO}/series/GSE254nnn/GSE254250/suppl"
 MENG_FILES = [f"GSE254250_{s}_GEX_filtered_feature_bc_matrix.h5"
@@ -89,6 +98,32 @@ def main() -> None:
                      ("matrix.mtx.gz", "barcodes.tsv.gz", "features.tsv.gz"))
         extract_flat(fetch(urls["vdj"], raw / f"{name}.vdj.tar.gz"), sample / "vdj",
                      ("filtered_contig_annotations.csv",))
+
+    print("Eberhardt 2021 (GSE180268)")
+    listing = fetch(f"{EBERHARDT_SERIES}/filelist.txt", root / "eberhardt" / "filelist.txt").read_text()
+    for gsm, name, patient, kind in EBERHARDT_FILE.findall(listing):
+        if patient not in EBERHARDT_PATIENTS:
+            continue
+        filename = f"{gsm}_{name}_{kind}.gz"
+        archive = fetch(f"{GEO}/samples/{gsm[:7]}nnn/{gsm}/suppl/{filename}", root / "eberhardt" / "raw" / filename)
+        sample = root / "eberhardt" / "samples" / name
+        if kind.startswith("all_contig"):
+            # GEO has the unfiltered contig table; apply Cell Ranger's own
+            # definition of the filtered one (called cells, confident contigs).
+            target = sample / "vdj" / "filtered_contig_annotations.csv"
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                lines = gzip.decompress(archive.read_bytes()).decode().splitlines()
+                header = lines[0].split(",")
+                cell, confident = header.index("is_cell"), header.index("high_confidence")
+                kept = [line for line in lines[1:]
+                        if line.split(",")[cell] == "True" and line.split(",")[confident] == "True"]
+                target.write_text("\n".join([lines[0], *kept]) + "\n")
+        else:
+            target = sample / "gex" / "filtered_feature_bc_matrix" / f"{kind}.gz"
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read_bytes())
 
     print("Meng 2023 (GSE254250)")
     for name in MENG_FILES:
