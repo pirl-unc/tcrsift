@@ -33,7 +33,9 @@ dependencies = [
     # core dep (previously optional, which left the PDF silently skipped
     # when not installed — including on CI). pypdf concatenates the per-run
     # vector figure PDFs into the `tcrsift report bundle` cohort PDF (#123).
-    "reportlab>=4.0.0,<6.0.0",
+    "reportlab>=4.0.0,<6.0.0; python_version >= '3.10'",
+    # reportlab 5.1 raises at import on Python 3.9 despite declaring support.
+    "reportlab>=4.0.0,<5.1.0; python_version < '3.10'",
     "pypdf>=4.0.0,<7.0.0",
     # Core, not extras (one library, shared deps): pyensembl is the shared
     # Ensembl↔HGNC mapping behind tcrsift.genes (used by all expression
@@ -71,7 +73,9 @@ docs = [
     "pymdown-extensions>=10.0.0",
 ]
 reports = [
-    "reportlab>=4.0.0,<6.0.0",
+    "reportlab>=4.0.0,<6.0.0; python_version >= '3.10'",
+    # reportlab 5.1 raises at import on Python 3.9 despite declaring support.
+    "reportlab>=4.0.0,<5.1.0; python_version < '3.10'",
     "pdfkit",
 ]
 # Optional N-way set-overlap (UpSet) plots (#208). Without it, plot_set_overlap
@@ -89,7 +93,9 @@ atlas = [
     "leidenalg>=0.9",
 ]
 full = [
-    "reportlab>=4.0.0,<6.0.0",
+    "reportlab>=4.0.0,<6.0.0; python_version >= '3.10'",
+    # reportlab 5.1 raises at import on Python 3.9 despite declaring support.
+    "reportlab>=4.0.0,<5.1.0; python_version < '3.10'",
     "pdfkit",
     "upsetplot>=0.8",
     "harmonypy>=0.0.9",
