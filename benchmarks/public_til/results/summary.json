@@ -1,0 +1,141 @@
+{
+  "tcrsift_version": "3.25.1",
+  "caushi": {
+    "default": {
+      "samples": 25,
+      "patients": 5,
+      "cells_after_gex_qc": 207761,
+      "cells_retained": 16218,
+      "cell_filters": [
+        {
+          "filter": "lineage",
+          "before": 207761,
+          "after": 84338
+        },
+        {
+          "filter": "cd3",
+          "before": 84338,
+          "after": 24220
+        },
+        {
+          "filter": "alpha_cdr3",
+          "before": 24220,
+          "after": 18479
+        },
+        {
+          "filter": "beta_cdr3",
+          "before": 18479,
+          "after": 17773
+        },
+        {
+          "filter": "TRA_1_umis",
+          "before": 17773,
+          "after": 16267
+        },
+        {
+          "filter": "TRB_1_umis",
+          "before": 16267,
+          "after": 16218
+        }
+      ],
+      "clones_scored": 4157,
+      "candidates": 186,
+      "labelled_clones_scored": {
+        "untested": 4126,
+        "MANA": 10,
+        "viral": 7
+      },
+      "labelled_clones_published": {
+        "viral": 82,
+        "MANA": 74
+      },
+      "selected": {
+        "untested": 180,
+        "MANA": 6
+      },
+      "eligible": {
+        "untested": 180,
+        "MANA": 6
+      }
+    },
+    "no_cd3_gate": {
+      "samples": 25,
+      "patients": 5,
+      "cells_after_gex_qc": 207761,
+      "cells_retained": 38753,
+      "cell_filters": [
+        {
+          "filter": "lineage",
+          "before": 207761,
+          "after": 84338
+        },
+        {
+          "filter": "alpha_cdr3",
+          "before": 84338,
+          "after": 51626
+        },
+        {
+          "filter": "beta_cdr3",
+          "before": 51626,
+          "after": 48704
+        },
+        {
+          "filter": "TRA_1_umis",
+          "before": 48704,
+          "after": 39237
+        },
+        {
+          "filter": "TRB_1_umis",
+          "before": 39237,
+          "after": 38753
+        }
+      ],
+      "clones_scored": 9139,
+      "candidates": 200,
+      "labelled_clones_scored": {
+        "untested": 9095,
+        "MANA": 16,
+        "viral": 8
+      },
+      "labelled_clones_published": {
+        "viral": 82,
+        "MANA": 74
+      },
+      "selected": {
+        "untested": 196,
+        "MANA": 3,
+        "viral": 1
+      },
+      "eligible": {
+        "untested": 333,
+        "MANA": 4,
+        "viral": 1
+      }
+    }
+  },
+  "meng": {
+    "patients": 9,
+    "cells": 14396,
+    "clones_scored": 5731,
+    "labelled_clones": {
+      "untested": 5582,
+      "TR": 94,
+      "NTR": 55
+    },
+    "passes_any_default_cutoff": {
+      "untested": 355,
+      "TR": 69,
+      "NTR": 17
+    },
+    "passes_any_default_cutoff_min2_cells": {
+      "untested": 178,
+      "TR": 62,
+      "NTR": 13
+    },
+    "min2_cells": {
+      "untested": 1136,
+      "TR": 72,
+      "NTR": 46
+    }
+  }
+}

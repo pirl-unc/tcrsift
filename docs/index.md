@@ -28,6 +28,9 @@ VDJ-only workflows are also supported when expression-based analyses are not
 needed. See [Input requirements](getting-started/sample-sheets.md) for the
 expected files and sample-sheet fields.
 
+For a picture of the data flow and the selection rule, see
+[How TCRsift works](how-it-works.md).
+
 ## Quick example
 
 Install TCRsift and create a minimal sample sheet pointing to the Cell Ranger
@@ -76,6 +79,8 @@ source installation.
 
 ## Next Steps
 
+- [How TCRsift works](how-it-works.md)
+- [Benchmark on public TIL data](benchmarks.md)
 - [Quick Start Guide](getting-started/quickstart.md)
 - [Multi-sample TIL Prioritization](user-guide/til-signatures.md)
 - [Sample Sheet Format](getting-started/sample-sheets.md)

@@ -116,6 +116,13 @@ are **unadjusted across clones/signatures/samples**; the shortlist has no claime
 false-discovery-rate control. Stable identifiers and the recorded package
 version, seed, draw count and floor table support reproduction.
 
+![Size-matched background floor](../assets/figures/background_floor.svg)
+
+*Simulated scores. Left: means of random 2-cell groups spread much wider than
+means of random 20-cell groups, so their 99th percentiles differ. Right: the
+resulting floor by clone size; the same mean of 0.42 fails for a 5-cell clone
+(B) and passes for a 20-cell clone (C).*
+
 ### Subset evidence: high-cell counts and fractions
 
 For each signature within each patient/sample/lineage:
@@ -144,6 +151,11 @@ make the clone mean low**. Qualification still depends on the cell threshold
 and the surrounding population: 10/25 is much more surprising against a 10%
 high-cell reference than against a 40% reference. Exported counts and fractions
 refer to the same sample and lineage, not a pool across different samples.
+
+![Subset evidence](../assets/figures/subset_evidence.svg)
+
+*Simulated scores. The clone mean (0.22) is below its 25-cell floor (0.30),
+but 10 high-scoring cells is far more than a random 25-cell group would hold.*
 
 This is a standard [hypergeometric enrichment calculation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.hypergeom.html),
 but the cell quantile, minimum count, and tail cutoff are configurable TCRsift
@@ -402,37 +414,7 @@ publicness exclusions remain opt-in.
   and [Stitchr](https://pmc.ncbi.nlm.nih.gov/articles/PMC9262623/): context for
   distinguishing germline V-gene bias, CDR3 length, and junctional diversity.
 
-## Changes in 3.25.0
+## Release notes
 
-Background selection now defaults to either mean or high-cell subset evidence,
-with separate ranked lists inside the same 200-total budget. Exports include
-high-cell counts, fractions, exact enrichment tails, and the evidence route
-that supplied each candidate. `--signature-evidence mean` restores the 3.24.0
-selection rule; legacy mode retains its previous behavior.
-
-## Changes in 3.24.0
-
-The default stopping rule now uses a size-matched empirical background floor
-instead of score > 0. The total cap remains 200 and the rank gate remains the
-top decile. Use `--signature-cutoff legacy` for the previous score rule. This
-can substantially reduce shortlists, especially with very small samples.
-NeoTCR module scores now explicitly read normalized `.X` even when `.raw`
-exists. Their registry metadata and descriptions correctly identify log-space
-control subtraction; the bare-DataFrame proxy follows the other signatures'
-default `log1p` transform (pass `log1p=False` for already logged frames).
-
-## Changes in 3.23.1
-
-The cap is now **200 total**, replacing 100 per patient. Selection ranks are
-global. That release used percentile ≥ 0.90 and score > 0; numerically flat
-lists are excluded. Exhausted lists yield their turns to the remaining lists.
-There is no fallback below these cutoffs to fill the budget.
-
-## Changes from 3.22
-
-Both command names now use context-dependent stratification, default CD8
-selection, viral exclusion off, and a disabled mitochondrial floor. MART-1
-exclusion remains on. One sample is sufficient. These changes intentionally
-change shortlists from the original TIL example; the old ranking algorithm
-is not restored by adjusting thresholds. Use the recorded configuration and
-package version when reproducing a prior analysis.
+Behavior changes to this command between versions are listed in the
+[prioritization release notes](../release-notes.md).
