@@ -8,8 +8,8 @@ datasets, 20 patients in all, and reports what works and what does not.
 
 - **Ranking works in two of three datasets.** In pancreatic cancer (149 tested
   clones) the tumor-reactivity signatures separate reactive from non-reactive
-  clones with AUROC 0.79 to 0.81. In lung cancer the same signatures reach 0.87
-  to 0.97, on only 19 labelled clones.
+  clones with AUROC 0.79 to 0.81. In lung cancer the two independent ones,
+  NeoTCR8 and TumorReactive, reach 0.87 and 0.97 on only 19 labelled clones.
 - **It does not work in the third.** In HPV-positive head and neck cancer,
   clones known to bind HPV tetramers scored no higher than other clones (AUROC
   0.39 to 0.50). That dataset has design problems described below, but it is
@@ -24,7 +24,14 @@ datasets, 20 patients in all, and reports what works and what does not.
 - **The CD3 floor earns its cost.** It discards 72% of CD8 cells in the lung
   data, yet the clones that remain are ranked far better.
 
-All results are from TCRsift 3.26.0, run from `benchmarks/public_til/`
+!!! warning "One result is circular"
+    TCRsift's **MANAscore** proxy uses genes taken from a model that was trained
+    on the Caushi lung data. Scoring MANAscore on that same data is not an
+    independent test, so every lung MANAscore number below is marked
+    **circular** and should be ignored when judging the tool. No other
+    signature was derived from a dataset used here.
+
+All results are from TCRsift 3.26.1, run from `benchmarks/public_til/`
 ([how to reproduce](#reproducing)). Nothing was tuned to these labels.
 
 ## The source studies
@@ -127,6 +134,17 @@ Each clone gets a percentile for each signature within its own sample. The
 AUROC is the probability that a random positive clone outranks a random
 negative one; 0.5 is chance.
 
+Where each signature came from decides whether a result is an independent
+test:
+
+| Signature | Derived from | Independent of the data here? |
+| --- | --- | --- |
+| MANAscore proxy (CXCL13, ENTPD1, IL7R) | A model trained on the **Caushi 2021** lung data (Zeng et al. 2025) | **No for lung: circular.** Yes for pancreatic and head and neck. |
+| NeoTCR8 | Lowery et al. 2022, metastatic gastrointestinal cancers | Yes, for all three |
+| TumorReactive and the six general state signatures | Marker panels curated from the literature, not fitted to data | Yes, for all three |
+
+In the lung figure the circular row is drawn hollow, in orange, and starred.
+
 ![AUROC by signature, pancreatic](assets/figures/benchmark_auroc_pancreatic.svg)
 
 ![AUROC by signature, lung](assets/figures/benchmark_auroc_lung.svg)
@@ -134,7 +152,7 @@ negative one; 0.5 is chance.
 | Signature | Pancreatic (94 vs 55) | Lung tumor (10 vs 9) | Head and neck (48 vs 376 unlabelled) |
 | --- | --- | --- | --- |
 | TumorReactive | 0.81 (0.74 to 0.89) | 0.97 (0.87 to 1.00) | 0.50 (0.43 to 0.58) |
-| MANAscore proxy | 0.80 (0.72 to 0.87) | 0.94, circular | 0.39 (0.31 to 0.48) |
+| MANAscore proxy | 0.80 (0.72 to 0.87) | **circular** (0.94) | 0.39 (0.31 to 0.48) |
 | NeoTCR8 | 0.79 (0.71 to 0.87) | 0.87 (0.67 to 1.00) | 0.40 (0.32 to 0.48) |
 | AcuteActivation | 0.70 (0.62 to 0.79) | 0.90 (0.72 to 1.00) | 0.44 (0.36 to 0.52) |
 | Differentiated | 0.70 (0.61 to 0.80) | 0.77 (0.52 to 0.94) | 0.32 (0.25 to 0.39) |
@@ -246,7 +264,8 @@ coverage of several cell states.
 
 On the lung tumors the full command, with its default 200-clone budget,
 shortlisted 5 of 10 neoantigen-specific clonotypes and 1 of 9 virus-specific
-ones, in a list holding 4% of all scored clones. In lymph node and normal lung
+ones, in a list holding 4% of all scored clones. The preset includes the
+circular MANAscore list, but none of those six clonotypes was supplied by it. In lymph node and normal lung
 it shortlisted 3 of 12 and 1 of 21. In head and neck it shortlisted 4 of 48
 tetramer-positive clonotypes with two or more cells (8%), against 59 of 376
 unlabelled ones (16%).

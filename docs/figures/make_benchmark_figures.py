@@ -24,17 +24,26 @@ RESULTS = Path(__file__).resolve().parents[2] / "benchmarks" / "public_til" / "r
 LABELS = {"clone_size": "Clone size (baseline)", "MANAscore": "MANAscore proxy"}
 
 
-def auroc_forest(ax, rows, title, note=None):
+def auroc_forest(ax, rows, title, note=None, circular=()):
+    """Dot and interval per signature. ``circular`` names signatures that were
+    derived from the dataset being plotted: drawn hollow, in orange, and
+    labelled, because their score there is not an independent test."""
     rows = rows.sort_values("auroc")
     y = range(len(rows))
     for i, row in zip(y, rows.itertuples()):
-        baseline = row.signature == "clone_size"
-        color = NEUTRAL if baseline else BLUE
-        ax.plot([row.auroc_low, row.auroc_high], [i, i], color=color, lw=2, solid_capstyle="round")
-        ax.scatter([row.auroc], [i], s=55, color=color, edgecolor=SURFACE, linewidth=1.5, zorder=3)
-        ax.text(1.03, i, f"{row.auroc:.2f}", va="center", fontsize=9, color=INK)
+        baseline, tainted = row.signature == "clone_size", row.signature in circular
+        color = NEUTRAL if baseline else ORANGE if tainted else BLUE
+        ax.plot([row.auroc_low, row.auroc_high], [i, i], color=color, lw=2, solid_capstyle="round",
+                ls=(0, (2, 2)) if tainted else "-")
+        ax.scatter([row.auroc], [i], s=55, color=SURFACE if tainted else color,
+                   edgecolor=color if tainted else SURFACE, linewidth=1.8 if tainted else 1.5, zorder=3)
+        ax.text(1.03, i, f"{row.auroc:.2f}" + ("  circular" if tainted else ""), va="center", fontsize=9,
+                color=INK)
     ax.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))
-    ax.set_yticks(list(y), [LABELS.get(s, s) for s in rows.signature])
+    ax.set_yticks(list(y), [LABELS.get(s, s) + (" *" if s in circular else "") for s in rows.signature])
+    if circular:
+        ax.text(0.0, -0.2, "* derived from this dataset, so not an independent test", transform=ax.transAxes,
+                fontsize=8.5, color=INK2, va="top")
     ax.set_xlim(0.1, 1.0)
     ax.set_xlabel("AUROC (95% bootstrap interval)")
     ax.set_title(title)
@@ -52,12 +61,12 @@ def signature_auroc():
     meng = table[table.dataset.eq("meng")]
     caushi = table[table.dataset.eq("caushi") & table.run.eq("tumor_default") & table.tissue.eq("all")]
     fig1, ax1 = plt.subplots(figsize=(6.6, 4.4), constrained_layout=True)
-    fig2, ax2 = plt.subplots(figsize=(6.6, 4.4), constrained_layout=True)
+    fig2, ax2 = plt.subplots(figsize=(7.2, 4.7), constrained_layout=True)
     m, c = meng.iloc[0], caushi.iloc[0]
     auroc_forest(ax1, meng, f"PDAC (Meng 2023): {m.n_positive} reactive vs "
                             f"{m.n_negative} non-reactive clones", note=True)
     auroc_forest(ax2, caushi, f"NSCLC (Caushi 2021): {c.n_positive} neoantigen vs "
-                              f"{c.n_negative} viral clones", note=True)
+                              f"{c.n_negative} viral clones", note=True, circular=("MANAscore",))
     save(fig1, "benchmark_auroc_pancreatic")
     save(fig2, "benchmark_auroc_lung")
 
