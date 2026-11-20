@@ -123,10 +123,17 @@ cancer](https://doi.org/10.1038/s41586-021-03862-z), *Nature* 597:279-284
 
 ### Cohorts that could not be used
 
-Lowery 2022, Hanada 2022, Oliveira
-2021 and Zheng 2022 keep single-cell data under controlled access. The TRACE
-melanoma donor on Zenodo ships expression data without the reactivity labels.
-Pétremand 2024 has open data but no per-clone label table.
+Other studies with experimentally labelled clones were considered and set
+aside, each for a specific reason.
+
+| Study | Why it is not used |
+| --- | --- |
+| Lowery et al. 2022, [Molecular signatures of antitumor neoantigen-reactive T cells from metastatic human cancers](https://doi.org/10.1126/science.abl5447), *Science*. Source of NeoTCR8 and NeoTCR4. | Single-cell data are under controlled access (dbGaP phs002748). |
+| Hanada et al. 2022, [A phenotypic signature that identifies neoantigen-reactive T cells in fresh human lung cancers](https://doi.org/10.1016/j.ccell.2022.03.012), *Cancer Cell*. | Controlled access (dbGaP phs002792). |
+| Oliveira et al. 2021, [Phenotype, specificity and avidity of antitumour CD8+ T cells in melanoma](https://doi.org/10.1038/s41586-021-03704-y), *Nature*. | Controlled access (dbGaP phs001451). |
+| Zheng et al. 2022, [Transcriptomic profiles of neoantigen-reactive T cells in human gastrointestinal cancers](https://doi.org/10.1016/j.ccell.2022.03.005), *Cancer Cell*. | Controlled access (dbGaP phs002765); the open portion has no TCR contig files. |
+| Pétremand et al. 2025, [Identification of clinically relevant T cell receptors for personalized T cell therapy using combinatorial algorithms](https://doi.org/10.1038/s41587-024-02232-0), *Nature Biotechnology*. | Data are open ([GSE222448](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE222448)), but no per-clone table of reactive and non-reactive receptors is published. |
+| Monteiro et al. 2026, [Tumor reactivity assessment using clonal expression reveals tumor reactive CD8+ T cell heterogeneity across solid tumors](https://doi.org/10.3389/fimmu.2026.1815974), *Frontiers in Immunology* (the TRACE model). | The melanoma donor on [Zenodo](https://doi.org/10.5281/zenodo.19096905) has expression data and clone ids, without the reactivity labels or receptor sequences. |
 
 ## 1. Do the signatures rank reactive clones higher?
 
@@ -134,14 +141,27 @@ Each clone gets a percentile for each signature within its own sample. The
 AUROC is the probability that a random positive clone outranks a random
 negative one; 0.5 is chance.
 
-Where each signature came from decides whether a result is an independent
-test:
+These are the nine signatures the `solid-tumor` preset scores for CD8 cells.
+Where each came from decides whether a result is an independent test.
 
-| Signature | Derived from | Independent of the data here? |
-| --- | --- | --- |
-| MANAscore proxy (CXCL13, ENTPD1, IL7R) | A model trained on the **Caushi 2021** lung data (Zeng et al. 2025) | **No for lung: circular.** Yes for pancreatic and head and neck. |
-| NeoTCR8 | Lowery et al. 2022, metastatic gastrointestinal cancers | Yes, for all three |
-| TumorReactive and the six general state signatures | Marker panels curated from the literature, not fitted to data | Yes, for all three |
+| Signature | Genes | Source | Independent of the data here? |
+| --- | --- | --- | --- |
+| TumorReactive | CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE | Literature-curated exhaustion and tissue-residency markers | Yes |
+| MANAscore proxy | CXCL13 and ENTPD1 up, IL7R down | Genes from a model trained on the **Caushi 2021** lung data ([Zeng et al. 2025](https://doi.org/10.1038/s41467-024-55059-3)) | **No for lung: circular.** Yes for the other two. |
+| NeoTCR8 | 243 genes, including GZMB, ENTPD1 and KIR2DL4 | [Lowery et al. 2022](https://doi.org/10.1126/science.abl5447), metastatic gastrointestinal cancers | Yes |
+| Differentiated | IFNG, GZMB, PRF1, GNLY, NKG7 up; TCF7, LEF1, CCR7, SELL down | Curated effector-versus-naive contrast | Yes |
+| AntigenExperienced | IFNG, GZMB, PRF1, GNLY, NKG7 | Curated effector markers | Yes |
+| Cytolytic | PRF1, GZMB | Curated | Yes |
+| AcuteActivation | TNFRSF9, MKI67 | Curated | Yes |
+| AIM | TNFRSF9, TNFRSF4 | Curated activation-induced markers | Yes |
+| Proliferation | MKI67 | Curated | Yes |
+
+The first three are the "tumor-reactivity signatures" referred to throughout;
+the other six are the "general state signatures". Several overlap: CXCL13 and
+ENTPD1 are in all three tumor-reactivity signatures, and GZMB and PRF1 recur in
+the state signatures, so they are correlated views, not independent votes. Gene
+lists, scoring methods and citations are in the
+[signature reference](api/signatures.md).
 
 In the lung figure the circular row is drawn hollow, in orange, and starred.
 
@@ -344,13 +364,22 @@ per patient, represented by the largest alpha-beta clone carrying that beta.
 
 ## Sources
 
-- Meng Z, et al. *Sci Transl Med* 2023 (tumor-reactive and bystander CD8 TCR
-  clonotypes in pancreatic cancer). [PMID 37967201](https://pubmed.ncbi.nlm.nih.gov/37967201/)
-- Caushi JX, et al. Transcriptional programs of neoantigen-specific TIL in
-  anti-PD-1-treated lung cancers. *Nature* 2021.
-  [PMID 34290408](https://pubmed.ncbi.nlm.nih.gov/34290408/)
-- Eberhardt CS, et al. Functional HPV-specific PD-1+ stem-like CD8 T cells in
-  head and neck cancer. *Nature* 2021. [GSE180268](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE180268)
-- Lowery FJ, et al. Molecular signatures of antitumor neoantigen-reactive T
-  cells from metastatic human cancers. *Science* 2022.
-  [PMID 35113651](https://pubmed.ncbi.nlm.nih.gov/35113651/)
+Datasets evaluated:
+
+- Meng Z, et al. [Transcriptome-based identification of tumor-reactive and
+  bystander CD8+ T cell receptor clonotypes in human pancreatic
+  cancer](https://doi.org/10.1126/scitranslmed.adh9562). *Sci Transl Med* 2023.
+- Caushi JX, et al. [Transcriptional programs of neoantigen-specific TIL in
+  anti-PD-1-treated lung cancers](https://doi.org/10.1038/s41586-021-03752-4).
+  *Nature* 2021.
+- Eberhardt CS, et al. [Functional HPV-specific PD-1+ stem-like CD8 T cells in
+  head and neck cancer](https://doi.org/10.1038/s41586-021-03862-z). *Nature* 2021.
+
+Signature sources:
+
+- Lowery FJ, et al. [Molecular signatures of antitumor neoantigen-reactive T
+  cells from metastatic human cancers](https://doi.org/10.1126/science.abl5447).
+  *Science* 2022. NeoTCR8.
+- Zeng Z, et al. [A minimal gene set characterizes TIL specific for diverse
+  tumor antigens across different cancer
+  types](https://doi.org/10.1038/s41467-024-55059-3). *Nat Commun* 2025. MANAscore.
