@@ -18,12 +18,15 @@ See docs/user-guide/til-signatures.md for their rationale and limitations.
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 
 import numpy as np
 import pandas as pd
 
 from .signature_methods import NEOANTIGEN_SIGNATURES, SIGNATURES
+
+logger = logging.getLogger(__name__)
 
 REGISTRY = {**SIGNATURES, **NEOANTIGEN_SIGNATURES}
 CORE_SIGNATURES = (
@@ -134,6 +137,16 @@ def filter_cells(adata, args):
         before = int(keep.sum())
         keep &= np.asarray(mask, dtype=bool)
         counts.append({"filter": label, "before": before, "after": int(keep.sum())})
+        # Lineage selection is expected to remove many cells; any other single
+        # gate taking more than half usually means a threshold does not suit
+        # this dataset (a raw-count floor on a shallow library, for example).
+        removed = before - int(keep.sum())
+        if label != "lineage" and before and removed > before / 2:
+            logger.warning(
+                "Cell filter '%s' removed %s of %s remaining cells (%.0f%%). Check that "
+                "its threshold suits this dataset before relying on the shortlist.",
+                label, f"{removed:,}", f"{before:,}", 100 * removed / before,
+            )
     counts_by_sample = (
         obs.assign(retained=keep).groupby("sample", observed=True).retained
         .agg(["size", "sum"]).rename(columns={"size": "after_gex_qc", "sum": "retained"})

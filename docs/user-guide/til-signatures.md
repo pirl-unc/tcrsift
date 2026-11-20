@@ -347,7 +347,7 @@ are cohort-relative; the shortlist is for experimental review.
 | `--min-counts`, `--max-counts` | 500–100,000 total GEX UMI counts per cell, not sequencing reads. |
 | `--min-mito-pct`, `--max-mito-pct` | 0–8% mitochondrial counts; no mitochondrial floor by default. |
 | `--min-vdj-umis`, `--min-vdj-reads` | At least 2 UMIs in each primary alpha/beta chain; read gate disabled (0). |
-| `--min-cd3` | At least 10 summed CD3D/E/G raw GEX counts per cell; 0 disables. |
+| `--min-cd3` | At least 3 summed CD3D/E/G raw GEX counts per cell; 0 disables. A raw-count floor scales with sequencing depth, so check `cell_filters` in `prioritization.json`. |
 | `--min-expression GENE=VALUE`, `--max-expression GENE=VALUE` | Optional per-cell log1p(CP10K) thresholds. Repeat for AND conditions. Missing genes are errors. |
 | `--include-v-gene`, `--exclude-v-gene` | Optional exact V calls in either chain, ignoring allele suffix and case. Repeat for multiple genes. |
 | `--include-j-gene`, `--exclude-j-gene` | Corresponding J-gene gates. Inclusion requires at least one listed gene; exclusion rejects any listed gene. Missing calls fail active gene filters. |

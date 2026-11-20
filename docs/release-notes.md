@@ -7,6 +7,25 @@ current release. The complete per-release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.26.0
+
+The default `--min-cd3` is now **3** summed CD3D/E/G counts instead of 10,
+matching the floor the rest of TCRsift uses. A fixed count floor acts as a
+sequencing-depth filter: in six public lung-tumor samples (GSE176021, about
+3,600 UMIs per cell), 10 counts removed 65% of cells that carried a productive
+paired TCR, and between 39% and 91% depending on the sample. A floor of 3
+removes 9%. More cells are retained, so shortlists change; pass `--min-cd3 10`
+to reproduce 3.25 results. The command now also warns when any single cell
+filter other than lineage removes more than half of the remaining cells.
+
+## 3.25.2
+
+Signature genes are now matched across reference-annotation renames. NeoTCR8
+lists PLA2G16 and CARS, which Cell Ranger 2020-A and later references call
+PLAAT3 and CARS1, so `--context solid-tumor` stopped with a missing-gene error
+on current references. A gene with no synonym present is still an error.
+Scores do not change for inputs that already ran.
+
 ## 3.25.1
 
 Multi-sample runs that read `filtered_feature_bc_matrix/` directories now keep
