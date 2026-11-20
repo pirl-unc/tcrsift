@@ -7,6 +7,14 @@ current release. The complete per-release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.25.4
+
+When a sample has only `all_contig_annotations.csv`, the loader now keeps
+called cells and high-confidence contigs, as Cell Ranger's filtered table does,
+and drops contigs with no chain call. Previously every row was used and the
+run stopped with "Missing TRA_1_umis". Samples with
+`filtered_contig_annotations.csv` are unaffected.
+
 ## 3.25.3
 
 The command now warns when any single cell filter other than lineage removes

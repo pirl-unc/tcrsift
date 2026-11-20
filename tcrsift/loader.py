@@ -116,11 +116,13 @@ def load_cellranger_vdj(
     annotations_path = vdj_dir / annotations_filename
     clonotypes_path = vdj_dir / clonotypes_filename
 
+    unfiltered = False
     if not annotations_path.exists():
         # Try alternative filename
         alt_path = vdj_dir / "all_contig_annotations.csv"
         if alt_path.exists():
             annotations_path = alt_path
+            unfiltered = True
             if verbose:
                 logger.info("  Using all_contig_annotations.csv (filtered not found)")
         else:
@@ -148,6 +150,32 @@ def load_cellranger_vdj(
             f"VDJ annotations missing required columns: {missing_cols}",
             hint=f"Available columns: {list(df.columns)[:15]}. "
             "This doesn't look like a CellRanger VDJ output file.",
+        )
+
+    # all_contig_annotations.csv also lists contigs from barcodes that were not
+    # called as cells and low-confidence contigs. Apply Cell Ranger's own
+    # definition of the filtered table so the fallback means the same thing.
+    if unfiltered:
+        keep = pd.Series(True, index=df.index)
+        for flag in ("is_cell", "high_confidence"):
+            if flag in df.columns:
+                keep &= df[flag].astype(str).str.lower().eq("true")
+        if verbose and not keep.all():
+            logger.info(f"  Kept {int(keep.sum()):,} of {len(df):,} contigs (called cells, high confidence)")
+        df = df[keep]
+    # A contig with no chain call (read as missing) cannot be assigned to a
+    # receptor chain. Left in, it turned the per-chain entry numbers into
+    # floats and produced columns such as ``TRA_1.0_cdr3``.
+    no_chain = df["chain"].isna() | df["chain"].astype(str).str.lower().isin(["none", ""])
+    if no_chain.any():
+        if verbose:
+            logger.info(f"  Dropped {int(no_chain.sum()):,} contigs with no chain call")
+        df = df[~no_chain]
+    df = df.copy()
+    if len(df) == 0:
+        raise TCRsiftValidationError(
+            f"No usable contigs in: {annotations_path}",
+            hint="Every contig was from a non-cell barcode, low confidence, or had no chain call.",
         )
 
     # Log summary statistics
