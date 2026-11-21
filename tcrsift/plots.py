@@ -3076,7 +3076,15 @@ def plot_set_overlap(
             save_figure(fig, output_path, dpi=150)
         return
     except ImportError:
-        pass
+        fallback_note = " (install 'upsetplot' for UpSet view)"
+    except Exception as error:  # noqa: BLE001 - any failure inside the optional library
+        # upsetplot 0.9.0 fills missing dot styles with chained in-place
+        # ``fillna``, which pandas 3 ignores, so its matrix reaches matplotlib
+        # with NaN colors. Draw the bar chart instead of failing the report.
+        plt.close("all")
+        logger.warning("UpSet plot failed (%s: %s); drawing a bar chart of overlaps instead",
+                       type(error).__name__, error)
+        fallback_note = ""
 
     # Fallback: bar chart of the top intersection patterns.
     from .clonotype import set_overlap_table
@@ -3092,7 +3100,7 @@ def plot_set_overlap(
     ax.set_xticks(range(len(table)))
     ax.set_xticklabels(labels, rotation=60, ha="right", fontsize=8)
     ax.set_ylabel("clones")
-    ax.set_title(f"{title} (install 'upsetplot' for UpSet view)")
+    ax.set_title(f"{title}{fallback_note}")
     for i, n in enumerate(table["n_clones"].values):
         ax.text(i, n, str(int(n)), ha="center", va="bottom", fontsize=8)
     fig.tight_layout()
