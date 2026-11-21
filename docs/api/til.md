@@ -1,6 +1,7 @@
 # TIL Matching API
 
-Module for matching clonotypes against tumor-infiltrating lymphocyte data.
+Load tumor-infiltrating lymphocyte (TIL) repertoires from CSV, `.h5ad`, or Cell
+Ranger VDJ outputs and cross-reference them against culture clonotypes.
 
 ::: tcrsift.til
     options:

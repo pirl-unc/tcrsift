@@ -1,10 +1,11 @@
 # How TCRsift works
 
-TCRsift turns Cell Ranger single-cell output into a short, auditable list of
-T-cell receptor clonotypes worth testing. It ranks clones by observable
-evidence (abundance, cell state, database matches, sequence publicness). It
-does not predict which antigen a receptor binds; that still takes an
-experiment.
+TCRsift turns 10x Genomics Cell Ranger single-cell output into a short,
+auditable list of T-cell receptor clonotypes for experimental testing. It ranks
+clones using observable signals: clonal abundance, CD4/CD8 lineage, gene
+expression programs, public TCR database matches, and sequence generation
+probability. None of these signals predicts which epitope a receptor binds;
+confirming specificity still requires a functional assay.
 
 ## From Cell Ranger output to candidates
 
@@ -23,97 +24,104 @@ flowchart LR
     ANN --> OUT["Candidate tables<br/>+ full-length sequences"]
 ```
 
-Every workflow shares the first three steps and then diverges by study design:
+All three primary commands share loading and cell QC, then branch according to
+study design:
 
-| Workflow | Question it answers | Main evidence | Guide |
+| Command | Question answered | Primary evidence | Guide |
 | --- | --- | --- | --- |
-| `tcrsift run` | Which clones expanded in an antigen-stimulated culture? | Clone frequency and cell count, CD4/CD8 match to the antigen, optional match to tumor | [Culture pipeline](user-guide/pipeline.md), [Filtering](user-guide/filtering.md) |
-| `tcrsift prioritize` | Which clones in blood, TIL, effusion or marrow sit in an informative expression state? | Per-clone gene-signature scores against a size-matched background | [Clone prioritization](user-guide/til-signatures.md) |
-| `tcrsift cells` | What cell types and states are in this sample? | Per-cell QC, embedding, cluster annotation | [Atlas path](user-guide/atlas.md) |
+| `tcrsift run` | Which clones expanded in an antigen-stimulated culture? | Clone cell count and frequency, CD4/CD8 match to the stimulus, optional overlap with matched TIL | [Culture pipeline](user-guide/pipeline.md), [Filtering](user-guide/filtering.md) |
+| `tcrsift prioritize` | Which clones in blood, TIL, pleural effusion, or marrow express an activation or tumor-reactivity program? | Per-clone gene-signature scores calibrated against random cell groups from the same sample | [Clone prioritization](user-guide/til-signatures.md) |
+| `tcrsift cells` | What cell types and states make up this sample? | Per-cell QC, Harmony/UMAP/Leiden embedding, cluster-level marker scoring | [Single-cell atlas](user-guide/atlas.md) |
 
-## The evidence TCRsift uses
+## Evidence sources and their limits
 
-| Signal | Where it comes from | What it can and cannot tell you |
+| Signal | Source | What it measures and its limits |
 | --- | --- | --- |
-| Clonal expansion | Cells per clone and frequency within a sample | Expansion after stimulation is the most direct evidence in culture. In fresh tissue it reflects history, not a specific antigen. |
-| Lineage | CD4/CD8 expression per cell | Lets signatures and thresholds be applied within the right lineage. |
-| Expression state | Published and compact gene signatures scored per cell, averaged per clone | Describes state (activated, exhausted, proliferating). The [reproducibility map](reproducibility_map.md) records which signatures held up across donors and which did not. |
-| Database matches | VDJdb, IEDB, CEDAR | Flags known viral or MART-1 receptors. No match means unknown, not novel. |
-| Publicness | Bundled sequence-probability models | Highlights receptors that are easy to generate and therefore often shared; an optional exclusion, not a specificity call. |
+| Clonal abundance | Cell count and within-sample frequency | Strong evidence of response after in-vitro peptide stimulation; in fresh tissue, expansion reflects cumulative history rather than reactivity to a specific target. |
+| Lineage | Per-cell `CD4`, `CD8A`, and `CD8B` counts | Restricts signature scoring and abundance ranking to the intended T-cell compartment. |
+| Expression state | Gene signatures scored per cell and summarized per clone | Captures transcriptional state (activated, cytolytic, exhausted, proliferating). See the [reproducibility map](reproducibility_map.md) for cross-donor behavior in stimulated cultures. |
+| Database matches | VDJdb, IEDB, CEDAR | Flags receptors matching cataloged viral or MART-1 specificities. Absence of a match means uncataloged, not tumor-specific. |
+| Sequence publicness | Bundled k-mer and TCRpeg probability models | Estimates how readily a CDR3 sequence is generated and shared across donors; useful for deprioritizing common bystander sequences, not for calling antigen specificity. |
 
-## How `prioritize` picks clones
+## How `prioritize` selects clones
 
-The prioritization command is the part of TCRsift with the most moving pieces.
-The three figures below use **simulated scores** to show the rule; they are
-illustrations of the method, not performance measurements. They are generated
-by `docs/figures/make_figures.py` with the same resampling helper and
-hypergeometric calculation the command uses.
+Unlike culture experiments with unstimulated controls, fresh tissue or blood
+cohorts must rank clones within each sample and lineage without pooling raw
+scores across samples. The four figures below use **simulated cell scores**
+(`docs/figures/make_figures.py`) to illustrate the exact resampling and
+enrichment rules implemented in `tcrsift prioritize`.
 
-### 1. A clone's mean must beat random groups of the same size
+### 1. Mean route: a clone's mean must beat size-matched random cell groups
 
-Each signature is scored per cell within one sample and lineage, then averaged
-over a clone's cells. A two-cell clone can reach a high mean by chance far more
-easily than a twenty-cell clone, so a single cutoff would favor tiny clones.
-TCRsift instead draws random groups of *n* cells from the same sample and
-lineage and requires the clone mean to exceed the 99th percentile of those
-group means.
+Each signature is scored per cell on `log1p(CP10K)` within a single sample and
+lineage, then averaged across the cells of each clone. Because a two-cell clone
+produces extreme means by chance much more often than a twenty-cell clone, a
+flat score threshold would systematically favor tiny clones. Instead, for each
+observed clone size *n*, TCRsift draws random groups of *n* cells without
+replacement from the same sample and lineage and requires the clone's mean to
+exceed the 99th percentile of those random-group means (as well as the top
+decile of clone means in that sample).
 
 ![Random groups set the reference](assets/figures/background_reference.svg)
 
-Means of random 2-cell groups spread much wider than means of random 20-cell
-groups, so the 99th percentile a clone must beat depends on its size.
+Means of random 2-cell groups spread far wider than means of random 20-cell
+groups, so the 99th-percentile floor drops as clone size grows:
 
 ![Size-matched background floor](assets/figures/background_floor.svg)
 
-Clones B and C have the same mean score. B has 5 cells and falls
-below its floor; C has 20 cells and clears it.
+Clones B and C share the same mean score (0.42): B has 5 cells and falls below
+its size-matched floor, whereas C has 20 cells and clears it.
 
-### 2. A subset of high-scoring cells can also qualify a clone
+### 2. Subset route: an enriched fraction of high-scoring cells can also qualify
 
-Cells of one clone are not always in the same state. A clone whose mean is
-unremarkable can still hold many more high-scoring cells than chance allows.
-TCRsift labels the top-decile cells in the sample as high-scoring and asks how
-likely a random group of the same size would be to contain at least as many.
+Cells of a single clone often span multiple transcriptional states, diluting the
+clone mean even when a subset of cells strongly expresses a signature. TCRsift
+marks cells above the sample's 90th percentile as high-scoring and computes the
+exact hypergeometric tail probability that a random group of *n* cells from the
+same sample and lineage would contain at least *k* high-scoring cells,
+requiring at least 5 high-scoring cells, a tail probability ≤ 0.01, and a
+top-decile clone rank in that sample.
 
 ![One clone's cells](assets/figures/subset_cells.svg)
 
-Here the clone mean (0.22) is below the 25-cell floor (0.30), so the mean route
-rejects it. Ten of its 25 cells are high-scoring, against two or three expected,
-so the subset route keeps it.
+Here, the 25-cell clone's mean (0.22) sits below the 25-cell mean floor (0.30),
+so the mean route rejects it. However, 10 of its 25 cells are high-scoring
+(versus 2–3 expected by chance), so the subset route retains it:
 
 ![Chance of that many high cells](assets/figures/subset_probability.svg)
 
-### 3. Lists take turns until the budget is spent
+### 3. Round-robin selection across qualifying lists
 
-Every signature, evidence route, sample and lineage produces its own ranked list
-of qualifying clones. TCRsift visits the lists in a fixed order and takes the
-best unused clone from each, skipping clones another list already supplied.
-Lists that run out simply stop; the shortlist is never padded with clones below
-the cutoffs.
+Each combination of signature, evidence route (mean or subset), sample, and
+lineage produces its own ranked list of clones that cleared both cutoffs.
+TCRsift steps through those lists in rounds, taking the highest-ranked unused
+clone from each list and skipping clones already chosen by an earlier list. If
+the clone budget ends partway through a round, the remaining slots go to the
+signatures and samples with the fewest picks in that round. Exhausted lists drop
+out, and the shortlist is never padded with clones that missed the cutoffs.
 
 ![Round-robin selection](assets/figures/round_robin.svg)
 
-There are no weighted composite scores, so each candidate can be traced to the
-one list that supplied it (`selected_signature`, `selected_evidence`,
-`selected_sample` in `candidate_clones.csv`).
+Avoiding weighted composite scores keeps every pick auditable:
+`candidate_clones.csv` records the exact list (`selected_signature`,
+`selected_evidence`, `selected_sample`, `selected_lineage`) that contributed
+each candidate. Full details, CLI flags, and statistical assumptions are in the
+[prioritization guide](user-guide/til-signatures.md).
 
-The full rule, every option, and the caveats on interpreting the tail
-probabilities are in the [prioritization guide](user-guide/til-signatures.md).
+## Empirical validation
 
-## What has and has not been validated
+Default cutoffs are fixed operating choices rather than parameters fitted to
+labeled training data. Two empirical evaluations are documented:
 
-The cutoffs above are transparent operating choices, not thresholds fitted to
-experimentally confirmed receptors. Two sets of measurements exist:
+- [Benchmark on public TIL data](benchmarks.md): evaluation of `tcrsift
+  prioritize --context solid-tumor` across five public tumor cohorts (33
+  patients) with experimentally tested clones. TumorReactive separates reactive
+  from non-reactive clones in pancreatic cancer (AUROC 0.81) and melanoma
+  (0.78), more weakly in lung cancer (0.69 across 31 labeled clones), and shows
+  no enrichment for virus-multimer-binding clones in two virus-driven tumors.
+- [Signature reproducibility map](reproducibility_map.md): cross-donor behavior
+  of expression signatures versus TCR sequence probability in an in-vitro
+  MART-1 peptide-expansion pilot.
 
-- [Benchmark on public TIL data](benchmarks.md): five public tumor datasets
-  with experimentally labelled clones. The TumorReactive signature ranks
-  reactive clones above non-reactive ones in pancreatic cancer and melanoma
-  (AUROC 0.81 and 0.78), more weakly in lung cancer (0.69, on few labelled
-  clones), and shows no enrichment for virus-specific clones in two
-  virus-driven tumors. The default cutoffs enrich for reactive clones strongly
-  in pancreatic cancer and weakly in melanoma.
-- [Signature reproducibility map](reproducibility_map.md): which signatures
-  held up across two donors in an in-vitro MART-1 expansion pilot.
-
-Neither establishes antigen specificity, and neither covers the blood,
-effusion or hematologic presets.
+Neither evaluation establishes epitope specificity, and neither tests the
+`blood`, `blood-tumor`, `mpe`, or `heme` context presets.

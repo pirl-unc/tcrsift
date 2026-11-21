@@ -1,31 +1,27 @@
 # Display Formatting API
 
-Helpers for rendering sample-sheet enrichment-method strings in
-figures. The raw method names tcrsift accepts (`AIMpos`,
-`CTYneg_tetpos`) are pipeline-friendly but ugly in plot axes.
-`tcrsift.format` translates them to display-friendly forms:
+`tcrsift.format` converts machine-friendly sample and `enrichment_method`
+identifiers into compact plot labels with Unicode superscripts:
 
-| Raw | Pretty |
-| --- | --- |
-| `AIMpos` | `AIM⁺` |
-| `CTYneg` | `CTY⁻` |
-| `AIMpos_CTYneg` | `AIM⁺CTY⁻` |
-| `CTYneg_tetpos` | `tet⁺CTY⁻` (CTY reorder) |
-| `AIMpos_CTYneg-2` | `AIM⁺CTY⁻` (donor suffix dropped) |
+| Raw string | Formatted label | Rule applied |
+| --- | --- | --- |
+| `AIMpos` | `AIM⁺` | `pos` → `⁺` |
+| `CTYneg` | `CTY⁻` | `neg` → `⁻` |
+| `AIMpos_CTYneg` | `AIM⁺CTY⁻` | Underscore separator removed |
+| `CTYneg_tetpos` | `tet⁺CTY⁻` | Baseline marker (`CTY`) moved last |
+| `AIMpos_CTYneg-2` | `AIM⁺CTY⁻` | Trailing donor/replicate suffix stripped |
 
-Applied automatically by tcrsift's built-in plots (method × method
-overlap heatmap, per-method recovery panels, per-sample scatter
-titles). Call directly when adding labels to custom plots.
+Built-in overlap heatmaps, method-recovery bar charts, and per-sample scatter
+plots apply these helpers automatically; call them directly when labeling
+custom figures.
 
 ## Usage
 
 ```python
 from tcrsift.format import pretty_method, pretty_samples
 
-pretty_method("AIMpos_CTYneg")   # "AIM⁺CTY⁻"
-pretty_method("CTYneg_tetpos")   # "tet⁺CTY⁻"
-
-# Map over a list / Series of names.
+pretty_method("AIMpos_CTYneg")            # "AIM⁺CTY⁻"
+pretty_method("CTYneg_tetpos")            # "tet⁺CTY⁻"
 pretty_samples(["AIMpos-1", "tetpos-1"])  # ["AIM⁺", "tet⁺"]
 ```
 

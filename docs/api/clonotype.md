@@ -1,8 +1,7 @@
 # Clonotyping API
 
-Module for clonotype aggregation and the long-format views downstream
-analyses consume (selection-route heatmaps, per-method ranking, sample
-overlap, etc.).
+Aggregate paired single-cell VDJ calls into clonotypes and construct long-format
+sample, method, overlap, and recovery tables.
 
 ::: tcrsift.clonotype
     options:

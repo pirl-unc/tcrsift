@@ -1,70 +1,62 @@
-# Sequence probability: Pgen and Ppost
+# Sequence Probability (`tcrsift.seqprob`)
 
-Sequence-background scores provide a **precursor-frequency/publicness axis**:
+`tcrsift.seqprob` scores CDR3 amino-acid sequences under pre-fitted repertoire
+background models to estimate precursor frequency and sequence publicness:
 
-- Pgen asks how probable a CDR3 is under a generated-repertoire background.
-- Ppost asks how common it is under an observed healthy-repertoire background.
+- **`Pgen`:** generation probability under an OLGA-simulated naive repertoire.
+- **`Ppost`:** observation probability under a pooled healthy-donor PBMC
+  repertoire.
 
-Both are ranking proxies, not specificity or avidity measurements. The shipped
-k-mer scores are natural-log probabilities; lower (more negative) values mean
-a rarer/private sequence.
+Both scores are cohort-ranking signals rather than antigen-specificity or
+avidity measurements. Returned values are natural-log probabilities (`ln P`);
+more negative values indicate rarer, more private sequences.
 
-## Backends and shipped models
+## Backends and packaged models
 
 Both backends implement `SequenceProbabilityModel` (`fit`, `log_prob`, `save`,
-and `load`):
+`load`) and are included in the standard `pip install tcrsift` installation:
 
-| Backend | Notes |
+| Backend | Description |
 | --- | --- |
-| `KmerProbabilityModel` (default) | Fast order-k Markov model over CDR3 amino acids, with length represented by an end symbol and optional V/J marginals |
-| `TCRpegProbabilityModel` | Autoregressive PyTorch model; heavier and useful when trained on a sufficiently large reference |
+| `KmerProbabilityModel` (default) | Order-`k` amino-acid Markov model with explicit stop symbol (encoding CDR3 length) and optional V/J marginals |
+| `TCRpegProbabilityModel` | Autoregressive PyTorch model for training on larger custom repertoires |
 
-TCRpeg and PyTorch are core dependencies. No `tcrsift[tcrpeg]` extra is
-required.
+Packaged k-mer parameter files cover both roles and chains:
 
-Packaged files are role- and chain-specific:
-
-- `kmer_pgen_alpha.npz`, `kmer_pgen_beta.npz`
-- `kmer_ppost_alpha.npz`, `kmer_ppost_beta.npz`
-
-Pgen references were generated offline with OLGA; tcrsift does not import OLGA
-at runtime. Ppost references come from pooled observed healthy PBMC
-repertoires. See `tcrsift/refseqs/PROVENANCE.md` in the source distribution for
-the exact data and calibration notes.
+- `kmer_pgen_alpha.npz`, `kmer_pgen_beta.npz` (fitted offline on 500,000
+  OLGA-generated sequences per chain; OLGA is not imported at runtime)
+- `kmer_ppost_alpha.npz`, `kmer_ppost_beta.npz` (fitted on pooled 10x Genomics
+  healthy-donor PBMC datasets; see `tcrsift/refseqs/PROVENANCE.md`)
 
 ## Usage
 
-Add both roles per chain:
+Score both roles on α and β chains:
 
 ```python
 from tcrsift import add_pgen_ppost
 
 clones = add_pgen_ppost(clones, backend="kmer")
-# pgen_alpha, ppost_alpha, pgen_beta, ppost_beta are ln(probability)
+# Columns added: pgen_alpha, ppost_alpha, log_q_alpha, pgen_beta, ppost_beta, log_q_beta
 ```
 
-Score only one role:
+Score a single chain and role:
 
 ```python
 from tcrsift.seqprob import score_log_prob
 
-clones["log_ppost_beta"] = score_log_prob(
-    clones,
-    chain="beta",
-    role="ppost",
-)
+clones["log_ppost_beta"] = score_log_prob(clones, chain="beta", role="ppost")
 ```
 
-CLI:
+Command line:
 
 ```bash
 tcrsift pgen annotate clones.csv -o clones_probability.csv --chain both
 ```
 
-Use Ppost as a cohort-relative ranking signal or through
-`select_specificity_candidates`; do not copy a threshold calibrated on a
-different model/reference without validation. Ppost also partly reflects CDR3
-length, so review length and V/J usage alongside it.
+Use `Ppost` as a relative rank within a cohort (for example via PRISM or
+`--exclude-public-quantile`), rather than applying fixed numeric cutoffs across
+different models. Because log sequence probability correlates strongly with CDR3
+length, inspect CDR3 length and V/J usage alongside `Ppost`.
 
 ::: tcrsift.seqprob
     options:

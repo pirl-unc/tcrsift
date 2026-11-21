@@ -1,72 +1,57 @@
-# Generation Probability (Pgen) API
+# Heuristic Generation Probability (`tcrsift.pgen`)
 
-Lightweight generation-probability estimator for TCR β/α CDR3
-sequences. Used to flag likely-public CDR3s so DB matches against
-them can be appropriately discounted (#58).
+`tcrsift.pgen` implements a fast, dependency-free generation-probability
+heuristic over CDR3 amino-acid length, V/J gene marginals, and estimated
+junctional N-insertions, used by `annotate_clonotypes(add_publicness=True)` to
+flag likely public CDR3s when reviewing database matches.
 
-This is the older, interpretable V/J/length/insertion heuristic behind
-`annotate_clonotypes(add_publicness=True)`. New selection workflows normally
-use the externally fitted Pgen/Ppost backgrounds in
-[Sequence probability](seqprob.md), especially observed-repertoire Ppost.
-Their numerical scales are different; do not transfer thresholds between
-them.
+For new ranking workflows, prefer the fitted k-mer and TCRpeg models in
+[`tcrsift.seqprob`](seqprob.md) (especially observed-repertoire `Ppost`). Do
+not transfer numeric cutoffs between `tcrsift.pgen` and `tcrsift.seqprob`, as
+their log-probability scales differ.
 
-## Why a proxy, not OLGA
+## Rationale and decomposition
 
-The gold-standard tool is **OLGA** (Sethna 2019), which fits explicit
-V/D/J/insertion models and computes Pgen by dynamic programming.
-OLGA gives the right answer but ships ~30 MB of pre-trained model
-files plus a runtime dependency chain.
-
-Most tcrsift use cases (publicness discounting, ranking convergent
-vs. private sequences) just need the **rank order**, not numerically
-calibrated Pgens. This module provides that proxy in ~250 lines
-with no runtime dependency beyond numpy.
-
-## Decomposition
+Exact V(D)J dynamic programming in OLGA (Sethna et al., 2019) requires ~30 MB
+of model tables and a GPL runtime dependency. When only approximate rank order
+between germline-like public CDR3s and high-insertion private CDR3s is needed,
+`tcrsift.pgen` decomposes base-10 log probability (`log10_pgen`) as:
 
 ```
-log Pgen(CDR3, V, J, chain)
-  ≈ log P(V)             # V-gene usage marginal
-  + log P(J)             # J-gene usage marginal
-  + log P(length)        # CDR3 AA length, per chain
-  + log P(n_inserted)    # total non-templated nt
-  + log P(CDR3 | length) # uniform-AA composition baseline
+log10 Pgen(CDR3, V, J, chain)
+  ≈ log10 P(V)              # V-gene marginal
+  + log10 P(J)              # J-gene marginal
+  + log10 P(length)         # Chain-specific CDR3 AA length
+  + log10 P(n_inserted)     # Geometric N-insertion model (1 junction in α, 2 in β)
+  + log10 P(CDR3 | length)  # Uniform 20-amino-acid baseline
 ```
 
-The **N-insertion term** is the largest contributor to publicness:
-sequences with 0 non-templated nucleotides are convergently
-generatable across donors and dominate public-match noise. We model
-N-insertion length as geometric per junction (β has two junctions,
-α has one); the total N-insertion count is estimated from observed
-CDR3 nt length minus a typical templated V+J+D contribution.
+Estimated non-templated nucleotide insertions (`n_inserted`, inferred from CDR3
+length minus typical germline V/D/J contribution) carry the largest weight, as
+zero-insertion rearrangements arise convergently across donors.
 
-## Calibration
+## Scale and calibration
 
-The estimator runs ~10 log units lower than real OLGA Pgens because
-of the uniform-over-20 AA composition baseline. Default
-`publicness_score` cutoffs are calibrated to **this estimator's
-scale** (`-30 / -18`); pass OLGA cutoffs (`-20 / -8`) if feeding in
-real OLGA values, or use `auto_quantile=True` for distribution-based
-auto-calibration.
+Because of the uniform amino-acid baseline, scores sit roughly 10 `log10` units
+(orders of magnitude) below exact OLGA `log10 Pgen`. Default `publicness_score`
+bounds (`-30` / `-18`) are calibrated to this module's `log10` scale; pass
+`-20` / `-8` when scoring exact OLGA `log10 Pgen` outputs, or set
+`auto_quantile=True` for cohort-quantile scaling.
 
 ## Usage
 
 ```python
+from tcrsift import annotate_clonotypes
 from tcrsift.pgen import annotate_publicness
 
 clones = annotate_publicness(clones)
 public = clones[clones["publicness"] >= 0.5]
-print(f"{len(public)} likely-public clones; DB matches should be discounted")
-```
 
-Wired into `annotate_clonotypes`:
-
-```python
-from tcrsift import annotate_clonotypes
-
+# Or enable directly during database annotation:
 annotated = annotate_clonotypes(
-    clones, vdjdb_path="vdjdb.tsv", add_publicness=True,
+    clones,
+    vdjdb_path="vdjdb.tsv",
+    add_publicness=True,
 )
 ```
 

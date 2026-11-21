@@ -1,132 +1,122 @@
 # Quick Start
 
-This guide walks you through a typical TCRsift workflow.
+This walkthrough runs `tcrsift run` on an antigen-stimulated T-cell culture
+with a matched TIL sample. If you are starting from fresh tumor, blood,
+effusion, or marrow single-cell VDJ + GEX samples without in-vitro culture, go
+to [Clone Prioritization](../user-guide/til-signatures.md) (`tcrsift
+prioritize`) instead.
 
-## Step 1: Prepare Your Sample Sheet
+## 1. Create a sample sheet
 
-Create a YAML file describing your samples:
+List your Cell Ranger output directories and sample metadata in YAML (or CSV):
 
 ```yaml title="samples.yaml"
 samples:
   - sample: "Patient1_CMV"
+    patient_id: "Patient1"
     vdj_dir: "/data/patient1/vdj"
     gex_dir: "/data/patient1/gex"
     antigen_type: "short_peptide"
-    antigen_description: "CMV pp65"
+    antigen_name: "CMV pp65 495-503"
+    epitope_sequence: "NLVPMVATV"
+    mhc_allele: "HLA-A*02:01"
     source: "culture"
 
   - sample: "Patient1_TIL"
+    patient_id: "Patient1"
     vdj_dir: "/data/patient1_til/vdj"
     source: "til"
 ```
 
-## Step 2: Run the Pipeline
+## 2. Run the pipeline
 
-### Command Line (Recommended)
-
-Run the complete pipeline with a single command:
+### Command line
 
 ```bash
+# Optional one-time step: download VDJdb, IEDB, CEDAR, and IMGT V-region references
+tcrsift data download
+
 tcrsift run \
     --sample-sheet samples.yaml \
-    --output-dir results/ \
-    --vdjdb /path/to/vdjdb
+    --output-dir results/
 ```
 
-This will:
+`tcrsift run` executes seven stages:
 
-1. Load all samples
-2. Phenotype cells as CD4+ or CD8+
-3. Aggregate clonotypes
-4. Apply tiered filtering
-5. Annotate with VDJdb
-6. Match TIL samples when present
-7. Assemble sequences and generate a summary report
+1. Load Cell Ranger VDJ and GEX data (`loaded.h5ad`)
+2. Classify CD4+ and CD8+ T cells (`phenotyped.h5ad`)
+3. Collapse cells into paired α/β clonotypes and score `Pgen`/`Ppost` (`clonotypes.csv`)
+4. Assign abundance tiers (`filtered_tier1.csv`–`filtered_tier5.csv`)
+5. Flag public-database matches in VDJdb/IEDB/CEDAR (`annotated.csv`)
+6. Cross-reference culture clones against `source: til` samples (`til_matched.csv`)
+7. Assemble full-length constructs (`full_sequences.csv`) and summary plots/PDFs
 
 ### Python API
 
 ```python
 import tcrsift
 
-# Load sample sheet
 sample_sheet = tcrsift.load_sample_sheet("samples.yaml")
-
-# Load all samples into AnnData
 adata = tcrsift.load_samples(sample_sheet)
-
-# Phenotype cells
 adata = tcrsift.phenotype_cells(adata, cd4_cd8_ratio=3.0)
-
-# Aggregate clonotypes
 clonotypes = tcrsift.aggregate_clonotypes(adata, group_by="CDR3ab")
 
-# Filter clonotypes (default: CD8+ with threshold method)
 filtered = tcrsift.filter_clonotypes(
     clonotypes,
     method="threshold",
     tcell_type="cd8",
 )
 
-# Annotate with public databases
 annotated = tcrsift.annotate_clonotypes(
     filtered,
     vdjdb_path="/path/to/vdjdb",
     exclude_viral=True,
 )
-
-# Save results
 annotated.to_csv("results/annotated_clonotypes.csv", index=False)
 ```
 
-## Step 3: Explore Results
-
-### Output Files
-
-The pipeline always writes the loaded/phenotyped data, clonotypes, resolved
-configuration, and provenance. Annotation, TIL, assembly, and report outputs
-appear only when those steps are enabled and have the required inputs.
+## 3. Inspect outputs
 
 ```
 results/
 ├── data/
-│   ├── loaded.h5ad           # Raw loaded data
-│   ├── phenotyped.h5ad       # With CD4/CD8 classification
-│   ├── clonotypes.csv        # All clonotypes
-│   ├── filtered_tier1.csv    # Highest confidence clones
+│   ├── loaded.h5ad
+│   ├── phenotyped.h5ad
+│   ├── clonotypes.csv
+│   ├── filtered_tier1.csv    # Strictest abundance tier (≥10 cells, ≥1% freq)
 │   ├── filtered_tier2.csv
 │   ├── filtered_tier3.csv
 │   ├── filtered_tier4.csv
 │   ├── filtered_tier5.csv
-│   ├── annotated.csv         # With database annotations (if provided)
-│   ├── til_matched.csv       # TIL matching results (if TIL samples provided)
-│   └── full_sequences.csv    # Assembled sequences (if assembly enabled)
+│   ├── annotated.csv         # Written when reference databases are available
+│   ├── til_matched.csv       # Written when TIL samples are supplied
+│   └── full_sequences.csv    # Assembled α, β, and β-2A-α sequences
 ├── plots/
-│   ├── *.png                 # QC/selection figures
-│   └── all-figures.pdf       # Summary bundle (if PDF reporting is enabled)
-├── config.yaml               # Resolved config used for the run
-├── provenance.json
+│   ├── *.png
+│   └── all-figures.pdf
+├── config.yaml               # Resolved configuration for the run
+├── provenance.json           # Package and dependency versions
 └── provenance.txt
 ```
 
-### Key Columns
-
-The output CSV files contain:
+Core clonotype columns:
 
 | Column | Description |
-|--------|-------------|
-| `CDR3ab` | Unique identifier (CDR3_alpha_CDR3_beta) |
-| `CDR3_alpha` | Alpha chain CDR3 sequence |
-| `CDR3_beta` | Beta chain CDR3 sequence |
-| `cell_count` | Number of cells |
-| `max_frequency` | Maximum frequency |
-| `tier` | Quality tier (1 = best) |
-| `Tcell_type_consensus` | CD4+ or CD8+ |
-| `db_match` | Matched in public database |
-| `is_viral` | Known viral public-database match |
+| --- | --- |
+| `CDR3ab` | Paired identifier (`CDR3_alpha` + `_` + `CDR3_beta`) |
+| `CDR3_alpha`, `CDR3_beta` | Chain CDR3 amino-acid sequences |
+| `cell_count` | Total cells carrying this clonotype |
+| `max_frequency` | Highest within-sample frequency |
+| `tier` | Strictest abundance tier cleared (`tier1` = highest) |
+| `Tcell_type_consensus` | Majority cell phenotype (`Confident CD8+`, etc.) |
+| `db_match`, `is_viral` | Public TCR database hit and viral-epitope flag |
 
-## Next Steps
+## Next steps
 
-- [Sample Sheet Format](sample-sheets.md) - Detailed sample sheet options
-- [Pipeline Overview](../user-guide/pipeline.md) - Understanding each step
-- [Filtering Strategies](../user-guide/filtering.md) - Customizing filters
-- [Clone Prioritization](../user-guide/til-signatures.md) - `prioritize` for blood, TIL, MPE, and heme VDJ+GEX
+- [Sample Sheets](sample-sheets.md): all donor, enrichment-method, antigen, and
+  path fields
+- [Culture Pipeline](../user-guide/pipeline.md): stage-by-stage options
+- [Filtering Strategies](../user-guide/filtering.md): custom tiers, FDR scope,
+  and viral exclusion
+- [Clone Prioritization](../user-guide/til-signatures.md): expression-state
+  shortlisting with `tcrsift prioritize`

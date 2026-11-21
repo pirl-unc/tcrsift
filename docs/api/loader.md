@@ -1,6 +1,7 @@
 # Data Loading API
 
-Module for loading CellRanger VDJ and GEX outputs.
+Load 10x Genomics Cell Ranger VDJ and GEX directories into paired `AnnData`
+objects.
 
 ::: tcrsift.loader
     options:

@@ -1,44 +1,47 @@
 # TCRsift
 
-Prioritize T-cell receptor clonotypes from paired single-cell VDJ and gene
-expression data.
+Prioritize T-cell receptor clonotypes from paired 10x Genomics single-cell VDJ
+and gene-expression data.
 
 ## Overview
 
-TCRsift combines observed clonal expansion, T-cell phenotype and expression
-state, public-database annotation, sequence publicness, and optional TIL
-matching. These are prioritization signals: antigen specificity still requires
-experimental validation.
+TCRsift ranks candidate TCR clonotypes using clonal abundance, CD4/CD8
+phenotype, gene-expression signatures, public-database matches (VDJdb, IEDB,
+CEDAR), sequence generation probability, and optional overlap with matched
+tumor-infiltrating lymphocytes (TIL). Output tables and full-length receptor
+constructs are intended to narrow candidates for functional testing; TCRsift
+does not predict epitope specificity from sequence or expression alone.
 
-TCRsift takes standard 10x Genomics Cell Ranger outputs as input:
+Standard 10x Genomics Cell Ranger directories serve as input:
 
-- **VDJ output** from `cellranger vdj`, containing TCR contigs and clonotypes
-- **Matching GEX output** from `cellranger count`, when the workflow uses
-  CD4/CD8 phenotyping or gene-expression signatures
+- **VDJ output** (`cellranger vdj`): productive α/β contig annotations, CDR3
+  sequences, and optional FASTA contigs for leader and constant-region assembly.
+- **Gene-expression output** (`cellranger count`): feature-barcode count
+  matrices for CD4/CD8 phenotyping, signature scoring, and cell-type annotation
+  (optional for VDJ-only workflows).
 
-Using those inputs, it can:
+For an overview of the data flow and selection algorithms, see
+[How TCRsift works](how-it-works.md), and for empirical performance on five
+public tumor datasets, see [Benchmark on public TIL data](benchmarks.md).
 
-- prioritize expanded clonotypes with biology-aware filtering
-- score T-cell phenotype and published expression signatures
-- annotate known database matches and sequence publicness
-- find culture-enriched TCRs in matched tumor samples
-- assemble full-length TCR sequences for selected candidates
+## Choose a workflow
 
-VDJ-only workflows are also supported when expression-based analyses are not
-needed. See [Input requirements](getting-started/sample-sheets.md) for the
-expected files and sample-sheet fields.
-
-For a picture of the data flow and the selection rule, see
-[How TCRsift works](how-it-works.md).
+| Study design | Command | Guide |
+| --- | --- | --- |
+| Antigen-stimulated T-cell culture (with optional matched TIL) | `tcrsift run` | [Quick Start](getting-started/quickstart.md), [Culture Pipeline](user-guide/pipeline.md) |
+| Fresh TIL, blood, pleural effusion, or marrow (paired VDJ + GEX) | `tcrsift prioritize --context ...` | [Clone Prioritization](user-guide/til-signatures.md) |
+| Longitudinal TIL samples in the legacy v2 file layout | `tcrsift til-select` | [CLI Reference](user-guide/cli.md#tcrsift-til-select) |
+| Single-cell GEX QC, batch-integrated embedding, and cell typing | `tcrsift cells` | [Single-Cell Atlas](user-guide/atlas.md) |
 
 ## Quick example
 
-Install TCRsift and create a minimal sample sheet pointing to the Cell Ranger
-output directories:
+Install TCRsift from PyPI:
 
 ```bash
 pip install tcrsift
 ```
+
+Create a sample sheet pointing to your Cell Ranger output directories:
 
 ```yaml title="samples.yaml"
 samples:
@@ -47,42 +50,19 @@ samples:
     gex_dir: "/data/patient1/gex"
 ```
 
-Run the pipeline:
+Run the culture expansion pipeline:
 
 ```bash
 tcrsift run --sample-sheet samples.yaml --output-dir results/
 ```
 
-The result directory contains per-cell data, clonotype tables, plots, and a
-record of the resolved configuration. Database annotation and sequence assembly
-outputs appear when their optional inputs are provided. `source` defaults to
-`culture`. TIL-only analyses use `source: "til"` and the
-[multi-sample TIL workflow](user-guide/til-signatures.md), not this
-culture-oriented `run` command.
+Or prioritize clones by expression state in a fresh tumor sample sheet:
 
-See the [Quick Start](getting-started/quickstart.md) for a complete example or
-the [Python API](user-guide/pipeline.md) for step-by-step control.
+```bash
+tcrsift prioritize til_samples.yaml -o candidates/ --context solid-tumor
+```
 
-## Choose a workflow
-
-| Starting data | Start here |
-| --- | --- |
-| Antigen-stimulated culture, optionally with matched TIL | [Quick Start](getting-started/quickstart.md) |
-| Multiple TIL VDJ + GEX samples | [Multi-sample TIL Prioritization](user-guide/til-signatures.md) |
-| A single-cell atlas that needs QC, embedding, and cell typing | [Single-Cell Atlas Path](user-guide/atlas.md) |
-
-## Installation
-
-The quick example uses the core PyPI package. See
-[Installation](getting-started/installation.md) for optional dependencies and
-source installation.
-
-## Next Steps
-
-- [How TCRsift works](how-it-works.md)
-- [Benchmark on public TIL data](benchmarks.md)
-- [Quick Start Guide](getting-started/quickstart.md)
-- [Multi-sample TIL Prioritization](user-guide/til-signatures.md)
-- [Sample Sheet Format](getting-started/sample-sheets.md)
-- [Pipeline Overview](user-guide/pipeline.md)
-- [API Reference](api/sample_sheet.md)
+See [Installation](getting-started/installation.md) for optional extras,
+[Sample Sheets](getting-started/sample-sheets.md) for all metadata fields, and
+the [CLI Reference](user-guide/cli.md) or [API Reference](api/sample_sheet.md)
+for individual commands and Python functions.

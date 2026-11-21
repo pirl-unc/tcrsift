@@ -1,6 +1,7 @@
 # Filtering API
 
-Module for clonotype filtering and tier assignment.
+Assign clonotypes to confidence tiers (`tier1`–`tier5`) using fixed abundance
+thresholds or logistic FDR estimation.
 
 ::: tcrsift.filter
     options:
