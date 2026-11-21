@@ -37,15 +37,19 @@ scoring panel, not another biological signature.
 `--context`). They are defined in `tcrsift.signature_methods.SIGNATURES` and
 are scored as the mean of z-scored up genes minus down genes, per sample.
 
-| Name | Up | Down |
-| --- | --- | --- |
-| `Differentiated` | IFNG, GZMB, PRF1, GNLY, NKG7 | TCF7, LEF1, CCR7, SELL |
-| `AntigenExperienced` | IFNG, GZMB, PRF1, GNLY, NKG7 | |
-| `Cytolytic` | PRF1, GZMB | |
-| `AcuteActivation` | TNFRSF9, MKI67 | |
-| `Proliferation` | MKI67 | |
-| `AIM` | TNFRSF9, TNFRSF4 | |
-| `TumorReactive` | CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE | |
+| Name | Up | Down | Where the gene list comes from |
+| --- | --- | --- | --- |
+| `Differentiated` | IFNG, GZMB, PRF1, GNLY, NKG7 | TCF7, LEF1, CCR7, SELL | TCRsift's authors, from textbook effector and naive markers; composition settled on the in-vitro MART-1 pilot ([reproducibility map](../reproducibility_map.md)) |
+| `AntigenExperienced` | IFNG, GZMB, PRF1, GNLY, NKG7 | | TCRsift's authors: the "up" half of `Differentiated` |
+| `Cytolytic` | PRF1, GZMB | | TCRsift's authors: perforin and granzyme B, as used in [Caushi 2021](https://doi.org/10.1038/s41586-021-03752-4), [Krishna 2020](https://doi.org/10.1126/science.abb9847) and [Hanada 2022](https://doi.org/10.1016/j.ccell.2022.03.012) |
+| `AcuteActivation` | TNFRSF9, MKI67 | | TCRsift's authors: 4-1BB and Ki-67, split out of `AntigenExperienced` after the same pilot |
+| `Proliferation` | MKI67 | | TCRsift's authors: Ki-67 alone |
+| `AIM` | TNFRSF9, TNFRSF4 | | TCRsift's authors: transcripts of the 4-1BB and OX40 markers read by activation-induced-marker assays |
+| `TumorReactive` | CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE | | TCRsift's authors: CD39 and CD103 after [Simoni 2018](https://doi.org/10.1038/s41586-018-0130-2) and [Duhen 2018](https://doi.org/10.1038/s41467-018-05072-0), plus CXCL13 and six widely used exhaustion markers |
+
+None of these seven is a published gene set. They are short marker lists
+written by TCRsift's authors; the published sets (`NeoTCR8`, `NeoTCR4`,
+`MANAscore`) are in the registry below.
 
 `TumorReactive` here is broader than the two-gene `tumor_reactive` panel in
 the table above. `Broad` variants and `CirculatingMemory` are also registered.

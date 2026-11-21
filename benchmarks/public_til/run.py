@@ -13,6 +13,12 @@ Datasets and how TCRsift is exercised on each:
   PD-1+ CD8 TIL. Positives are beta chains found in HPV-tetramer-sorted cells
   of the same patient; there are no tested negatives, so they are compared
   with every other (unlabelled) clone.
+* Chiffelle 2024 (melanoma, GSE222448): the same command on baseline tumors.
+  Labels are clonotypes tested as tumor reactive (TR) or not (NTR).
+* Pulliam 2024 (Merkel cell carcinoma, GSE227708): the same command on the
+  tumor cells of two hashed runs. Positives are beta chains of clones that
+  bound Merkel cell polyomavirus multimers; there are no tested negatives in
+  the same tumor.
 * Meng 2023 (PDAC, GSE254250): GEO has no VDJ contigs, only a per-cell
   clonotype id, so the same scoring, background calibration, cutoff and
   round-robin functions are called on the authors' CD8 cells. Labels are
@@ -54,7 +60,24 @@ CAUSHI_RUNS = [
     ("other_tissue_default", ("LN", "normal"), []),
 ]
 TUMOR_SIGNATURES = ("TumorReactive", "MANAscore", "NeoTCR8")
+# The default command, two lower CD3 floors, and the tumor-reactivity
+# signatures alone, for the datasets small enough to rerun cheaply.
+SENSITIVITY_RUNS = [
+    ("default", []),
+    ("cd3_3", ["--min-cd3", "3"]),
+    ("cd3_0", ["--min-cd3", "0"]),
+    ("tumor_signatures", ["--signatures", *TUMOR_SIGNATURES]),
+]
 BUDGETS = (25, 50, 100, 200)
+
+
+def is_current(out):
+    """True when ``out`` holds a finished run of the installed tcrsift version.
+    Runs left by another version are redone, so every table is from one version."""
+    from tcrsift import __version__
+
+    config = out / "prioritization.json"
+    return config.exists() and json.loads(config.read_text()).get("version") == __version__
 
 
 # ------------------------------------------------------------------- metrics
@@ -142,7 +165,7 @@ def run_caushi(data_dir, work_dir):
         sheet.write_text("\n".join(lines) + "\n")
         out = work_dir / f"caushi_{run}"
         seconds_file = out / "benchmark_seconds.txt"
-        if not (out / "prioritization.json").exists():
+        if not is_current(out):
             start = time.perf_counter()
             tcrsift_main(["prioritize", str(sheet), "-o", str(out), "--context", "solid-tumor", *extra])
             seconds_file.write_text(f"{time.perf_counter() - start:.0f}\n")
@@ -228,7 +251,7 @@ def run_eberhardt(data_dir, work_dir):
     lines += [f"{s.name},{s.name.split('_')[0]},{s.name.split('_')[2]},{s / 'vdj'},{s / 'gex'}" for s in bulk]
     sheet.write_text("\n".join(lines) + "\n")
     out = work_dir / "eberhardt_default"
-    if not (out / "prioritization.json").exists():
+    if not is_current(out):
         tcrsift_main(["prioritize", str(sheet), "-o", str(out), "--context", "solid-tumor"])
     config = json.loads((out / "prioritization.json").read_text())
     signatures = config["resolved_signatures"]
@@ -260,6 +283,189 @@ def run_eberhardt(data_dir, work_dir):
         "labelled_selected": counts(table, table.selected_for_review), "by_patient": by_patient,
     }
     return aurocs, table[table.label.ne("untested")], facts
+
+
+# ------------------------------------------- shared by the full-command runs
+
+def one_label_per_beta(table):
+    """One row per patient and beta chain. A beta listed with two different
+    labels (for example reactive with one alpha, not with another) is dropped."""
+    distinct = table.groupby(["donor", "CDR3_beta"]).label.transform("nunique")
+    return table[distinct.eq(1)].drop_duplicates(["donor", "CDR3_beta"])
+
+
+def run_prioritize(sheet_rows, sheet, out, extra=()):
+    """Write a sample sheet, run the unmodified command once, return its config."""
+    from tcrsift.cli import main as tcrsift_main
+
+    sheet.write_text("\n".join(["sample,patient_id,tissue,vdj_dir,gex_dir", *sheet_rows]) + "\n")
+    if not is_current(out):
+        tcrsift_main(["prioritize", str(sheet), "-o", str(out), "--context", "solid-tumor", *extra])
+    return json.loads((out / "prioritization.json").read_text())
+
+
+def labelled_clone_table(out, labels, signatures):
+    """Scored clones joined to beta-chain labels, one row per labelled beta."""
+    sig_cols = [f"signature_{n}{s}" for n in signatures for s in ("_percentile", "_passes_cutoff")]
+    clones = pd.read_csv(out / "all_scored_clones.csv", low_memory=False)
+    clones = clones.merge(labels[["donor", "CDR3_beta", "label"]], on=["donor", "CDR3_beta"], how="left")
+    clones = clones.rename(columns={f"{c}_max": c for c in sig_cols}).copy()
+    clones["label"] = clones.label.fillna("untested")
+    clones["size_percentile"] = clones.groupby("donor").cell_count.rank(pct=True)
+    cutoff_cols = [c for c in sig_cols if c.endswith("cutoff")]
+    clones["passes_any"] = clones[cutoff_cols].fillna(False).astype(bool).any(axis=1)
+    clones["passes_tumor_signature"] = clones[
+        [f"signature_{n}_passes_cutoff" for n in TUMOR_SIGNATURES]].fillna(False).astype(bool).any(axis=1)
+    # The simple alternative to the shortlist: a patient's top clones by one score.
+    rank = clones[clones.cell_count.ge(2)].groupby("donor")[
+        "signature_TumorReactive_percentile"].rank(ascending=False, method="first")
+    clones["top10_tumor_reactive"] = rank.le(10).reindex(clones.index, fill_value=False)
+    clones["top20_tumor_reactive"] = rank.le(20).reindex(clones.index, fill_value=False)
+    any_cols = ["eligible_for_review", "selected_for_review", "passes_any", "passes_tumor_signature",
+                "top10_tumor_reactive", "top20_tumor_reactive", *cutoff_cols]
+    keep = ["donor", "CDR3_beta", "CDR3_alpha", "label", "cell_count", "size_percentile",
+            "selection_rank", "selected_signature", *any_cols,
+            *[c for c in sig_cols if c.endswith("percentile")]]
+    return clones, collapse_by_beta(clones[keep], any_cols)
+
+
+def command_facts(config, clones, table):
+    filters = config["cell_filters"]
+    expanded = table.cell_count.ge(2)
+    return {
+        "patients": int(clones.donor.nunique()), "cells_after_gex_qc": filters[0]["before"],
+        "cells_retained": filters[-1]["after"], "cell_filters": filters, "clones_scored": len(clones),
+        "candidates": int(clones.selected_for_review.sum()), "labelled_scored": counts(table),
+        "labelled_min2_cells": counts(table, expanded),
+        "labelled_min2_pass_any": counts(table, expanded & table.passes_any),
+        "labelled_min2_pass_tumor_signature": counts(table, expanded & table.passes_tumor_signature),
+        "labelled_eligible": counts(table, table.eligible_for_review),
+        "labelled_selected": counts(table, table.selected_for_review),
+        "labelled_top10_tumor_reactive_per_patient": counts(table, table.top10_tumor_reactive),
+        "labelled_top20_tumor_reactive_per_patient": counts(table, table.top20_tumor_reactive),
+    }
+
+
+# ------------------------------------------------------------- Chiffelle 2024
+
+def chiffelle_labels(data_dir):
+    """Table S3: one clonotype per row, tested for tumor reactivity. Chains are
+    written V_CDR3_J with one extra trailing residue on the CDR3."""
+    raw = pd.read_excel(data_dir / "chiffelle" / "table_s3.xlsx", header=2)
+    raw["Patient"] = raw["Patient"].ffill()
+    raw = raw[raw["Tumor-reactivity"].isin(["yes", "no"]) & raw.iloc[:, 1].notna()]
+    table = pd.DataFrame({
+        "donor": "P" + raw["Patient"].astype(int).astype(str),
+        "CDR3_beta": raw.iloc[:, 1].str.split("_").str[1].str[:-1],
+        "label": np.where(raw["Tumor-reactivity"].eq("yes"), "TR", "NTR"),
+    })
+    return one_label_per_beta(table)
+
+
+def run_chiffelle(data_dir, work_dir):
+    samples = sorted((data_dir / "chiffelle" / "samples").iterdir())
+    labels = chiffelle_labels(data_dir)
+    rows = [f"{s.name},{s.name.split('_')[0]},tumor,{s / 'vdj'},{s / 'gex'}" for s in samples]
+    aurocs, tables, per_patient, facts = [], [], [], {}
+    for run, extra in SENSITIVITY_RUNS:
+        out = work_dir / f"chiffelle_{run}"
+        config = run_prioritize(rows, work_dir / "chiffelle_tumor.csv", out, extra)
+        signatures = config["resolved_signatures"]
+        clones, table = labelled_clone_table(out, labels, signatures)
+        aurocs += auroc_rows(table, signatures, "TR", "NTR", dataset="chiffelle", run=run, tissue="tumor")
+        tables.append(table[table.label.ne("untested")].assign(run=run))
+        facts[run] = {"arguments": extra, **command_facts(config, clones, table)}
+        if run == "default":
+            for patient, group in table.groupby("donor"):
+                for row in auroc_rows(group, signatures, "TR", "NTR", donor=patient):
+                    per_patient.append({k: row[k] for k in ("donor", "signature", "n_positive", "n_negative", "auroc")})
+    summary = {"samples": len(samples), "labels_published": counts(labels), "runs": facts}
+    return aurocs, pd.concat(tables, ignore_index=True), summary, pd.DataFrame(per_patient)
+
+
+# --------------------------------------------------------------- Pulliam 2024
+
+def pulliam_tumor_samples(data_dir, work_dir):
+    """Split each hashed run by hashtag and write its tumor cells as a sample.
+    A cell is assigned to its top hashtag when that has at least 10 counts and
+    at least three times the runner-up."""
+    import gzip
+
+    import scipy.io
+
+    root = data_dir / "pulliam"
+    meta = pd.read_csv(root / "meta_data.csv.gz", encoding="utf-8-sig")
+    made, demux = [], {}
+    for run_dir in sorted((root / "runs").iterdir()):
+        run = run_dir.name
+        tubes = meta[meta.Run_id.eq(run)]
+        features = pd.read_csv(run_dir / "features.tsv.gz", sep="\t", header=None)
+        barcodes = pd.read_csv(run_dir / "barcodes.tsv.gz", header=None)[0].to_numpy()
+        matrix = scipy.io.mmread(run_dir / "matrix.mtx.gz").tocsr()
+        tags = features.index[features[0].str.startswith("Hashtag")].to_numpy()
+        hto = matrix[tags].toarray().T
+        ordered = np.sort(hto, axis=1)
+        clear = (ordered[:, -1] >= 10) & (ordered[:, -1] >= 3 * np.maximum(ordered[:, -2], 1))
+        number = features.loc[tags[hto.argmax(axis=1)], 0].str[len("Hashtag"):].astype(int).to_numpy()
+        tissue = pd.Series(np.where(clear, number, 0)).map(dict(zip(tubes.Hashtag, tubes.tissue))).fillna("unassigned")
+        demux[run] = {str(k): int(v) for k, v in tissue.value_counts().items()}
+        tumor = tissue.eq("Tumor").to_numpy()
+        genes = features[2].eq("Gene Expression").to_numpy()
+        sample = work_dir / "pulliam_samples" / f"{run}_tumor"
+        gex = sample / "gex" / "filtered_feature_bc_matrix"
+        # Rebuilt on every run (a few seconds), so a changed rule or an interrupted
+        # run cannot leave a stale sample behind.
+        gex.mkdir(parents=True, exist_ok=True)
+        (sample / "vdj").mkdir(exist_ok=True)
+        with gzip.open(gex / "matrix.mtx.gz", "wb") as handle:
+            scipy.io.mmwrite(handle, matrix[genes][:, tumor].tocoo(), field="integer")
+        # The reference holds human and virus genomes; drop the genome prefix.
+        features[genes].replace(r"^GRCh38_", "", regex=True).to_csv(
+            gex / "features.tsv.gz", sep="\t", header=False, index=False)
+        pd.Series(barcodes[tumor]).to_csv(gex / "barcodes.tsv.gz", header=False, index=False)
+        contigs = pd.read_csv(run_dir / "all_contig_annotations.csv.gz", low_memory=False)
+        called = contigs.is_cell.astype(str).str.lower().eq("true")
+        confident = contigs.high_confidence.astype(str).str.lower().eq("true")
+        contigs[called & confident & contigs.barcode.isin(barcodes[tumor])].to_csv(
+            sample / "vdj" / "filtered_contig_annotations.csv", index=False)
+        made.append((sample, tubes.Patient_id.iloc[0]))
+    return made, demux
+
+
+def pulliam_labels(data_dir):
+    """Table S4 clones with their virus, assigned to a patient through the
+    tube (specimen) they were found in. Clones from the other cohort are dropped."""
+    root = data_dir / "pulliam"
+    meta = pd.read_csv(root / "meta_data.csv.gz", encoding="utf-8-sig")
+    plain = lambda names: names.astype(str).str.lower().str.replace(r"[^a-z0-9]", "", regex=True)  # noqa: E731
+    patient = dict(zip(plain(meta.Tube), meta.Patient_id))
+    raw = pd.read_excel(root / "table_s4.xlsx", header=1)
+    table = pd.DataFrame({"donor": plain(raw.subject).map(patient), "CDR3_beta": raw.cdr3_b_aa,
+                          "label": np.where(raw.virus.eq("MCPyV"), "MCPyV", "other_virus")})
+    return one_label_per_beta(table.dropna(subset=["donor"]))
+
+
+def run_pulliam(data_dir, work_dir):
+    samples, demux = pulliam_tumor_samples(data_dir, work_dir)
+    labels = pulliam_labels(data_dir)
+    rows = [f"{s.name},{patient},tumor,{s / 'vdj'},{s / 'gex'}" for s, patient in samples]
+    aurocs, tables, facts = [], [], {}
+    for run, extra in SENSITIVITY_RUNS[:3]:
+        out = work_dir / f"pulliam_{run}"
+        config = run_prioritize(rows, work_dir / "pulliam_tumor.csv", out, extra)
+        signatures = config["resolved_signatures"]
+        clones, table = labelled_clone_table(out, labels, signatures)
+        # As for Eberhardt: positives against unlabelled clones of two or more
+        # cells, within the one tumor that has positives.
+        positive_donors = table.loc[table.label.eq("MCPyV"), "donor"].unique()
+        expanded = table[table.cell_count.ge(2) & table.donor.isin(positive_donors)]
+        aurocs += auroc_rows(expanded, signatures, "MCPyV", "untested", dataset="pulliam", run=run, tissue="tumor")
+        tables.append(table[table.label.ne("untested")].assign(run=run))
+        facts[run] = {"arguments": extra, **command_facts(config, clones, table)}
+    in_run = set(clones.donor)
+    summary = {"samples": len(samples), "cells_by_hashtag_tissue": demux, "runs": facts,
+               "labels_in_these_patients": {d: counts(g) for d, g in labels.groupby("donor") if d in in_run}}
+    return aurocs, pd.concat(tables, ignore_index=True), summary
 
 
 # ------------------------------------------------------------------ Meng 2023
@@ -426,8 +632,13 @@ def main():
     meng_auroc, meng_table, meng_facts, meng_patients, meng_cutoffs, meng_selection = run_meng(args.data_dir)
     caushi_auroc, caushi_table, caushi_facts = run_caushi(args.data_dir, args.work_dir)
     hpv_auroc, hpv_table, hpv_facts = run_eberhardt(args.data_dir, args.work_dir)
+    mel_auroc, mel_table, mel_facts, mel_patients = run_chiffelle(args.data_dir, args.work_dir)
+    mcc_auroc, mcc_table, mcc_facts = run_pulliam(args.data_dir, args.work_dir)
     out = args.out_dir
-    pd.DataFrame(caushi_auroc + meng_auroc + hpv_auroc).to_csv(out / "signature_auroc.csv", index=False)
+    mel_table.to_csv(out / "chiffelle_labelled_clones.csv", index=False)
+    mel_patients.to_csv(out / "chiffelle_per_patient_auroc.csv", index=False)
+    mcc_table.to_csv(out / "pulliam_labelled_clones.csv", index=False)
+    pd.DataFrame(caushi_auroc + meng_auroc + hpv_auroc + mel_auroc + mcc_auroc).to_csv(out / "signature_auroc.csv", index=False)
     caushi_table.to_csv(out / "caushi_labelled_clones.csv", index=False)
     hpv_table.to_csv(out / "eberhardt_labelled_clones.csv", index=False)
     meng_table.to_csv(out / "meng_labelled_clones.csv", index=False)
@@ -436,7 +647,7 @@ def main():
     meng_selection.to_csv(out / "meng_selection.csv", index=False)
     (out / "summary.json").write_text(json.dumps(
         {"tcrsift_version": __version__, "caushi": caushi_facts, "meng": meng_facts,
-         "eberhardt": hpv_facts}, indent=2) + "\n")
+         "eberhardt": hpv_facts, "chiffelle": mel_facts, "pulliam": mcc_facts}, indent=2) + "\n")
     print(f"wrote {out}")
 
 

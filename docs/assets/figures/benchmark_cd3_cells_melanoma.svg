@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="475.2pt" height="216pt" viewBox="0 0 475.2 216" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 216 
+L 475.2 216 
+L 475.2 0 
+L 0 0 
+z
+" style="fill: #fcfcfb"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 89.320552 212.99976 
+L 472.19976 212.99976 
+L 472.19976 16.50024 
+L 89.320552 16.50024 
+z
+" style="fill: #fcfcfb"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 89.320552 66.655712 
+L 340.801149 66.655712 
+L 340.801149 25.432036 
+L 89.320552 25.432036 
+z
+" clip-path="url(#p64f2cefbcf)" style="fill: #2a78d6"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 89.320552 135.361838 
+L 326.943847 135.361838 
+L 326.943847 94.138162 
+L 89.320552 94.138162 
+z
+" clip-path="url(#p64f2cefbcf)" style="fill: #2a78d6"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 89.320552 204.067964 
+L 189.243258 204.067964 
+L 189.243258 162.844288 
+L 89.320552 162.844288 
+z
+" clip-path="url(#p64f2cefbcf)" style="fill: #2a78d6"/>
+   </g>
+   <g id="matplotlib.axis_1"/>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_1"/>
+     <g id="text_1">
+      <text style="font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="85.820552" y="187.206126" transform="rotate(-0 85.820552 187.206126)">10 counts (default)</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_2"/>
+     <g id="text_2">
+      <text style="font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="85.820552" y="118.5" transform="rotate(-0 85.820552 118.5)">3 counts</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_3"/>
+     <g id="text_3">
+      <text style="font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="85.820552" y="49.793874" transform="rotate(-0 85.820552 49.793874)">No floor</text>
+     </g>
+    </g>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="345.871947" y="48.500593" transform="rotate(-0 345.871947 48.500593)">12,395  (74% of CD8)</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="332.014646" y="117.206719" transform="rotate(-0 332.014646 117.206719)">11,712  (70% of CD8)</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="194.314056" y="185.912845" transform="rotate(-0 194.314056 185.912845)">4,925  (30% of CD8)</text>
+   </g>
+   <g id="text_7">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="89.320552" y="10.50024" transform="rotate(-0 89.320552 10.50024)">CD8 cells retained with a paired TCR</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p64f2cefbcf">
+   <rect x="89.320552" y="16.50024" width="382.879208" height="196.49952"/>
+  </clipPath>
+ </defs>
+</svg>
