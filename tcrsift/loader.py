@@ -633,8 +633,8 @@ def _pivot_vdj_by_barcode(vdj_df: pd.DataFrame) -> pd.DataFrame:
     pivot_df["has_both_chains"] = pivot_df["has_TRA"] & pivot_df["has_TRB"]
 
     # Create combined CDR3ab identifier
-    pivot_df["CDR3_alpha"] = pivot_df.get("TRA_1_cdr3", pd.Series(index=pivot_df.index))
-    pivot_df["CDR3_beta"] = pivot_df.get("TRB_1_cdr3", pd.Series(index=pivot_df.index))
+    pivot_df["CDR3_alpha"] = pivot_df.get("TRA_1_cdr3", pd.Series(index=pivot_df.index, dtype=object))
+    pivot_df["CDR3_beta"] = pivot_df.get("TRB_1_cdr3", pd.Series(index=pivot_df.index, dtype=object))
     pivot_df["CDR3ab"] = pivot_df["CDR3_alpha"].fillna("") + "_" + pivot_df["CDR3_beta"].fillna("")
 
     return pivot_df

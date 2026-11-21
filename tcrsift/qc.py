@@ -1175,8 +1175,7 @@ def cell_qc_funnel(
             floor = 2 * (min_genes if min_genes is not None else 250)
         adata.obs["qc_low_coverage"] = (adata.obs["_n_genes"] < floor).to_numpy()
 
-    for c in ("_n_counts", "_n_genes", "_pct_mt"):
-        adata.obs.drop(columns=c, inplace=True, errors="ignore")
+    adata.obs = adata.obs.drop(columns=["_n_counts", "_n_genes", "_pct_mt"], errors="ignore")
 
     waterfall = pd.DataFrame(rows, columns=["step", "reason", "removed", "remaining"])
     return adata, waterfall

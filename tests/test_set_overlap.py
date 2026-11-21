@@ -104,6 +104,28 @@ class TestPlotSetOverlap:
         plot_set_overlap(sets, out)
         assert out.exists() and out.stat().st_size > 0
 
+    def test_falls_back_to_bars_when_upsetplot_fails(self, tmp_path, monkeypatch, caplog):
+        # upsetplot 0.9.0 raises inside its matrix drawing under pandas 3. A
+        # failure in the optional library must not lose the figure.
+        import sys
+        import types
+
+        from tcrsift.plots import plot_set_overlap
+
+        def broken(*args, **kwargs):
+            raise ValueError("Invalid RGBA argument: nan")
+
+        fake = types.ModuleType("upsetplot")
+        fake.from_contents = lambda sets: sets
+        fake.plot = broken
+        monkeypatch.setitem(sys.modules, "upsetplot", fake)
+        sets = {"m1": {"A", "B"}, "m2": {"A", "C"}, "m3": {"B", "C", "D"}}
+        out = tmp_path / "upset.png"
+        with caplog.at_level("WARNING", logger="tcrsift.plots"):
+            plot_set_overlap(sets, out)
+        assert out.exists() and out.stat().st_size > 0
+        assert "drawing a bar chart" in caplog.text
+
     def test_noop_single_set(self, tmp_path):
         from tcrsift.plots import plot_set_overlap
 

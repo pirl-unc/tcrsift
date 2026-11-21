@@ -1,5 +1,5 @@
 {
-  "tcrsift_version": "3.27.0",
+  "tcrsift_version": "3.27.1",
   "caushi": {
     "labels_published": {
       "viral": 82,
@@ -14,7 +14,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 165,
+        "seconds": 163,
         "cells_after_gex_qc": 248332,
         "cells_retained": 45821,
         "cell_filters": [
@@ -84,7 +84,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 126,
+        "seconds": 119,
         "cells_after_gex_qc": 248332,
         "cells_retained": 19335,
         "cell_filters": [
@@ -154,7 +154,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 159,
+        "seconds": 158,
         "cells_after_gex_qc": 248332,
         "cells_retained": 48869,
         "cell_filters": [
@@ -221,7 +221,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 107,
+        "seconds": 113,
         "cells_after_gex_qc": 69487,
         "cells_retained": 17518,
         "cell_filters": [
@@ -283,7 +283,7 @@
           "LN",
           "normal"
         ],
-        "seconds": 89,
+        "seconds": 102,
         "cells_after_gex_qc": 144214,
         "cells_retained": 25073,
         "cell_filters": [
@@ -353,7 +353,7 @@
           "LN",
           "normal"
         ],
-        "seconds": 65,
+        "seconds": 66,
         "cells_after_gex_qc": 144214,
         "cells_retained": 7726,
         "cell_filters": [

@@ -43,7 +43,7 @@ datasets, 33 patients in all, and reports what works and what does not.
     **circular** and should be ignored when judging the tool. No other
     signature was derived from a dataset used here.
 
-All results are from TCRsift 3.27.0, run from `benchmarks/public_til/`
+All results are from TCRsift 3.27.1, run from `benchmarks/public_til/`
 ([how to reproduce](#reproducing)). Nothing was tuned to these labels.
 
 ## The source studies
@@ -499,7 +499,7 @@ classification and the paired-receptor gates. Cells retained at the defaults:
 45,821 of 248,332 in lung, 11,712 of 54,837 in melanoma, 8,198 of 32,735 in
 head and neck, and 652 of 8,311 in Merkel cell carcinoma.
 
-**Speed.** The 33-sample lung run (248,332 cells) took 165 seconds on a laptop
+**Speed.** The 33-sample lung run (248,332 cells) took 163 seconds on a laptop
 with 32 GB of memory.
 
 ## What this does not show

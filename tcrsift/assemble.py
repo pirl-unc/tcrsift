@@ -3799,6 +3799,8 @@ def apply_leader_policy(
                 )
         if changed:
             for k, v in work.items():
+                if k not in df.columns:  # .at will stop creating columns
+                    df[k] = pd.Series([None] * len(df), index=df.index, dtype=object)
                 df.at[idx, k] = v
 
     # --- Pass 2: optional secondary constructs --------------------------------

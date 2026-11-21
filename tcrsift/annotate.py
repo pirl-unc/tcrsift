@@ -1000,10 +1000,12 @@ def _load_iedb_v3(path: Path) -> pd.DataFrame:
 
     # Prefer "CDR3 Curated" (manually validated) over "CDR3 Calculated"
     # (algorithmic), matching how VDJdb prioritizes curated entries.
-    cdr3_alpha = _pick("Chain 1", "CDR3 Curated").fillna(
+    # ``combine_first`` and not ``fillna``: an all-missing curated column is
+    # float64, and pandas will stop accepting strings as its fill value.
+    cdr3_alpha = _pick("Chain 1", "CDR3 Curated").combine_first(
         _pick("Chain 1", "CDR3 Calculated")
     )
-    cdr3_beta = _pick("Chain 2", "CDR3 Curated").fillna(
+    cdr3_beta = _pick("Chain 2", "CDR3 Curated").combine_first(
         _pick("Chain 2", "CDR3 Calculated")
     )
 
