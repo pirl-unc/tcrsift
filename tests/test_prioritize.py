@@ -106,6 +106,35 @@ def test_budget_ending_inside_a_round_is_shared_across_signatures_and_samples():
     assert full[full.selected_for_review].selected_signature.tolist() == ["X"] * 4 + ["Y"] * 4 + ["Z"] * 4
 
 
+def _three_clone_tables():
+    scores = pd.DataFrame({"donor": "p", "sample": "s", "lineage": "cd8", "CDR3ab": ["X", "Y", "Z"],
+                           "cells": 5, "frequency": 0.1, "signature_A": [5.0, -1, 4],
+                           "signature_B": [5.0, -1, -1], "signature_C": [-1.0, 5, -1]})
+    for name in "ABC":
+        scores[f"signature_{name}_percentile"] = scores[f"signature_{name}"].rank(pct=True)
+    clones = pd.DataFrame({"donor": "p", "CDR3ab": ["X", "Y", "Z"], "eligible_for_review": True})
+    return clones, scores
+
+
+def test_shared_round_does_not_spend_a_turn_on_a_list_with_nothing_left():
+    # B's only clone, X, also heads A. B must not use up the turn that C needs.
+    clones, scores = _three_clone_tables()
+    order = {}
+    for cap in (2, 3):
+        out = select_round_robin(clones, scores, ["A", "B", "C"], cap, 0.0, None, "legacy")
+        order[cap] = out[out.selected_for_review].CDR3ab.tolist()
+    assert order[2] == ["X", "Y"]
+    assert order[3][:2] == order[2]  # a smaller budget is a prefix of a larger one
+
+
+def test_no_cap_matches_a_cap_larger_than_the_eligible_count():
+    clones, scores = _ranking_tables()
+    cols = ["donor", "CDR3ab", "selection_rank", "selected_signature", "selected_sample"]
+    uncapped = select_round_robin(clones, scores, ["X", "Y"], 0)
+    large = select_round_robin(clones, scores, ["X", "Y"], 10**6)
+    pd.testing.assert_frame_equal(uncapped[cols], large[cols])
+
+
 def test_round_robin_takes_top_of_distinct_signatures_and_handles_empty_lists():
     clones, scores = _ranking_tables()
     scores = scores[scores["sample"] == "s1"].copy()

@@ -108,7 +108,7 @@ experimentally confirmed receptors. Two sets of measurements exist:
 - [Benchmark on public TIL data](benchmarks.md): five public tumor datasets
   with experimentally labelled clones. The TumorReactive signature ranks
   reactive clones above non-reactive ones in pancreatic cancer and melanoma
-  (AUROC 0.81 and 0.79), more weakly in lung cancer (0.69, on few labelled
+  (AUROC 0.81 and 0.78), more weakly in lung cancer (0.69, on few labelled
   clones), and shows no enrichment for virus-specific clones in two
   virus-driven tumors. The default cutoffs enrich for reactive clones strongly
   in pancreatic cancer and weakly in melanoma.

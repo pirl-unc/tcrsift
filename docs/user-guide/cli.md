@@ -331,7 +331,7 @@ tcrsift prioritize samples.yaml -o candidates/ --context blood
 | `--exclude-signatures NAME ...` | Remove signatures |
 | `--max-clones N` | Total run-wide cap; default 200, 0 = unlimited (cutoffs still apply) |
 | `--signature-quantile` | Per-list percentile floor; default 0.90 |
-| `--min-signature-score` | Strict lower score cutoff; default 0; flat lists always excluded |
+| `--min-signature-score` | Optional strict lower score cutoff; no default with the background cutoff, 0 with `--signature-cutoff legacy`; flat lists always excluded |
 | `--min-signature-support` | Minimum signatures passing both cutoffs; default 1 |
 | `--min-cells`, `--min-frequency` | Abundance floors; default 2, 0.001 |
 | `--exclude-known-viral` | Opt-in viral database-match exclusion |

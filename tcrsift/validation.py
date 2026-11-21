@@ -605,10 +605,12 @@ def pick_representative_cell(
     available = [c for c in umi_cols if c in clone_df.columns]
     if available:
         score = clone_df[available].fillna(0).sum(axis=1)
-        rep_idx = score.idxmax()
+        position = int(score.to_numpy().argmax())
     else:
-        rep_idx = clone_df.index[0]
-    return clone_df.loc[rep_idx]
+        position = 0
+    # By position: barcodes repeat across samples, and a label lookup on a
+    # repeated barcode returns several rows, not one cell.
+    return clone_df.iloc[position]
 
 
 # Common synonyms for tcrsift's canonical CDR3 column names. Keyed by a

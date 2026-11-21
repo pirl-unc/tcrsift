@@ -392,7 +392,20 @@ def _build_sample(data: dict) -> Sample:
             f"Unknown sample-sheet column(s): {unknown}. "
             f"Valid columns: {sorted(valid)}"
         )
+    # A blank cell means "not given": let the field's default apply instead of
+    # passing None over it (a blank ``source`` was rejected as invalid).
+    data = {key: value for key, value in data.items() if value is not None}
+    for key in ("sample", "patient_id"):  # YAML reads a bare 12 as an integer
+        if key in data:
+            data[key] = str(data[key])
     return Sample(**data)
+
+
+def _reject_duplicate_samples(samples: list) -> None:
+    names = pd.Series([s.sample for s in samples])
+    repeated = sorted(names[names.duplicated()].unique())
+    if repeated:
+        raise ValueError(f"Sample sheet lists sample name(s) more than once: {repeated}")
 
 
 def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
@@ -424,6 +437,7 @@ def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
 
         samples.append(_build_sample(sample_data))
 
+    _reject_duplicate_samples(samples)
     sheet = SampleSheet(samples=samples)
     # Sheet-level flags (#26). Accept any truthy YAML value — bare `true`
     # parses to bool, but quoted forms like "true" / "yes" parse to
@@ -468,6 +482,7 @@ def _load_csv_sample_sheet(path: Path, sep: str = ",") -> SampleSheet:
 
         samples.append(_build_sample(sample_data))
 
+    _reject_duplicate_samples(samples)
     return SampleSheet(samples=samples)
 
 

@@ -608,3 +608,27 @@ class TestAntigenLabelMap:
         assert sheet.antigen_label_map(key="enrichment_method") == {
             "AIMpos": "WT1 minigene pool B",
         }
+
+
+class TestBlankCellsNumericNamesAndDuplicates:
+    def test_blank_source_cell_uses_the_default(self, tmp_path):
+        sheet = tmp_path / "s.csv"
+        sheet.write_text("sample,vdj_dir,source\ns1,/x,culture\ns2,/y,\n")
+        samples = load_sample_sheet(sheet).samples
+        assert [s.source for s in samples] == ["culture", "culture"]
+
+    def test_numeric_yaml_sample_name_is_a_string(self, tmp_path):
+        sheet = tmp_path / "s.yaml"
+        sheet.write_text("samples:\n  - sample: 12\n    vdj_dir: /x\n    patient_id: 7\n")
+        sample = load_sample_sheet(sheet).samples[0]
+        assert (sample.sample, sample.patient_id) == ("12", "7")
+
+    @pytest.mark.parametrize("name,text", [
+        ("s.csv", "sample,vdj_dir\ns1,/x\ns1,/y\n"),
+        ("s.yaml", "samples:\n  - sample: s1\n    vdj_dir: /x\n  - sample: s1\n    vdj_dir: /y\n"),
+    ])
+    def test_duplicate_sample_names_are_rejected(self, tmp_path, name, text):
+        sheet = tmp_path / name
+        sheet.write_text(text)
+        with pytest.raises(ValueError, match="more than once"):
+            load_sample_sheet(sheet)

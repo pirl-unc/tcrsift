@@ -171,11 +171,22 @@ def load_cellranger_vdj(
         if verbose:
             logger.info(f"  Dropped {int(no_chain.sum()):,} contigs with no chain call")
         df = df[~no_chain]
+    # Cell Ranger's filtered table still lists non-productive contigs (frame
+    # shifts, stop codons, no CDR3). Chains are ranked by UMI count below, so
+    # a non-productive contig with more UMIs displaced the cell's real chain,
+    # or left the cell with no CDR3 at all. Cell Ranger builds its own
+    # clonotypes from productive contigs only; do the same.
+    if "productive" in df.columns:
+        productive = df["productive"].astype(str).str.lower().eq("true")
+        if verbose and not productive.all():
+            logger.info(f"  Dropped {int((~productive).sum()):,} non-productive contigs")
+        df = df[productive]
     df = df.copy()
     if len(df) == 0:
         raise TCRsiftValidationError(
             f"No usable contigs in: {annotations_path}",
-            hint="Every contig was from a non-cell barcode, low confidence, or had no chain call.",
+            hint="Every contig was from a non-cell barcode, low confidence, non-productive, "
+            "or had no chain call.",
         )
 
     # Log summary statistics
@@ -328,6 +339,15 @@ def load_cellranger_gex(
         if h5_path.exists():
             logger.info(f"Loading GEX from h5 file: {h5_path}")
             adata = sc.read_10x_h5(str(h5_path))
+            # Index genes by Ensembl id, as the matrix-directory reader does.
+            # Symbols repeat in 10x references, and a repeated name makes
+            # every name-based gene lookup fail; an h5 sample combined with a
+            # matrix-directory sample also needs the same gene axis.
+            if "gene_ids" in adata.var.columns:
+                adata.var["gene_symbols"] = adata.var_names.astype(str)
+                adata.var_names = adata.var["gene_ids"].astype(str)
+                adata.var = adata.var.drop(columns="gene_ids")
+                adata.var.index.name = None
         else:
             available = [f.name for f in gex_dir.iterdir()][:15]
             raise TCRsiftValidationError(
@@ -531,23 +551,28 @@ def combine_gex_and_vdj(
         # Start with direct matches where possible
         barcode_to_vdj = {bc: bc for bc in adata.obs_names if bc in vdj_barcodes}
 
-        # Build base-barcode mapping for VDJ barcodes
-        vdj_by_base: dict[str, list[str]] = {}
-        for bc in vdj_barcodes:
-            base = _strip_suffix(bc)
-            vdj_by_base.setdefault(base, []).append(bc)
-
-        # Try base matching for any unmapped GEX barcodes
-        for bc in adata.obs_names:
-            if bc in barcode_to_vdj:
-                continue
-            bc_base = _strip_suffix(bc)
-            if bc_base in vdj_by_base:
-                candidates = vdj_by_base[bc_base]
-                if bc in candidates:
-                    barcode_to_vdj[bc] = bc
-                else:
+        # Suffix-insensitive matching is for a sample whose VDJ and GEX
+        # libraries were given different GEM-group suffixes, so it applies
+        # only when no barcode matches exactly. Applied per barcode it gave
+        # the receptor of cell X-1 to an unrelated cell X-2 of another GEM
+        # group. A base shared by several barcodes on either side is
+        # ambiguous and is left unmatched.
+        if not barcode_to_vdj:
+            vdj_by_base: dict[str, list[str]] = {}
+            for bc in sorted(vdj_barcodes):
+                vdj_by_base.setdefault(_strip_suffix(bc), []).append(bc)
+            gex_base_counts = pd.Series([_strip_suffix(bc) for bc in adata.obs_names]).value_counts()
+            for bc in adata.obs_names:
+                base = _strip_suffix(bc)
+                candidates = vdj_by_base.get(base, [])
+                if len(candidates) == 1 and gex_base_counts[base] == 1:
                     barcode_to_vdj[bc] = candidates[0]
+        if not barcode_to_vdj:
+            logger.warning(
+                "  No GEX barcode matches any VDJ barcode "
+                f"(GEX e.g. {adata.obs_names[0]!r}, VDJ e.g. {min(vdj_barcodes)!r}); "
+                "every cell will have no receptor. Check that the two directories are the same sample."
+            )
 
         # Add VDJ columns to adata.obs using the mapping. Build all columns,
         # then assign in one concat to avoid the fragmentation PerformanceWarning
