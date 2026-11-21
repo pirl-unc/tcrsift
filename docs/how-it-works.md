@@ -105,11 +105,12 @@ probabilities are in the [prioritization guide](user-guide/til-signatures.md).
 The cutoffs above are transparent operating choices, not thresholds fitted to
 experimentally confirmed receptors. Two sets of measurements exist:
 
-- [Benchmark on public TIL data](benchmarks.md): three public tumor datasets
-  with experimentally labelled clones. The tumor-reactivity signatures rank
-  reactive clones well in pancreatic and lung tumors (AUROC about 0.8 to 0.97)
-  and show no enrichment in a head and neck dataset. The same page shows that
-  short lists improve when only those three signatures are used.
+- [Benchmark on public TIL data](benchmarks.md): five public tumor datasets
+  with experimentally labelled clones. The TumorReactive signature ranks
+  reactive clones above non-reactive ones in pancreatic, melanoma and lung
+  tumors (AUROC 0.75 to 0.97) and shows no enrichment for virus-specific
+  clones in two virus-driven tumors. The shortlist is enriched for reactive
+  clones in pancreatic cancer and not in melanoma.
 - [Signature reproducibility map](reproducibility_map.md): which signatures
   held up across two donors in an in-vitro MART-1 expansion pilot.
 

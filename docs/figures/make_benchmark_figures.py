@@ -60,15 +60,54 @@ def signature_auroc():
     table = pd.read_csv(RESULTS / "signature_auroc.csv")
     meng = table[table.dataset.eq("meng")]
     caushi = table[table.dataset.eq("caushi") & table.run.eq("tumor_default") & table.tissue.eq("all")]
+    melanoma = table[table.dataset.eq("chiffelle") & table.run.eq("default")]
     fig1, ax1 = plt.subplots(figsize=(6.6, 4.4), constrained_layout=True)
     fig2, ax2 = plt.subplots(figsize=(7.2, 4.7), constrained_layout=True)
-    m, c = meng.iloc[0], caushi.iloc[0]
+    fig3, ax3 = plt.subplots(figsize=(6.6, 4.4), constrained_layout=True)
+    m, c, k = meng.iloc[0], caushi.iloc[0], melanoma.iloc[0]
     auroc_forest(ax1, meng, f"PDAC (Meng 2023): {m.n_positive} reactive vs "
                             f"{m.n_negative} non-reactive clones", note=True)
     auroc_forest(ax2, caushi, f"NSCLC (Caushi 2021): {c.n_positive} neoantigen vs "
                               f"{c.n_negative} viral clones", note=True, circular=("MANAscore",))
+    auroc_forest(ax3, melanoma, f"Melanoma (Chiffelle 2024): {k.n_positive} reactive vs "
+                                f"{k.n_negative} non-reactive clones", note=True)
     save(fig1, "benchmark_auroc_pancreatic")
     save(fig2, "benchmark_auroc_lung")
+    save(fig3, "benchmark_auroc_melanoma")
+
+
+def auroc_by_dataset():
+    """One independent signature across all five datasets. Datasets without
+    tested negatives (positives against unlabelled clones) are drawn hollow."""
+    table = pd.read_csv(RESULTS / "signature_auroc.csv")
+    table = table[table.signature.eq("TumorReactive")]
+    # (dataset, run, tissue, label, has tested negatives)
+    wanted = [("meng", "default", "tumor", "Pancreatic (Meng 2023)", True),
+              ("chiffelle", "default", "tumor", "Melanoma (Chiffelle 2024)", True),
+              ("caushi", "tumor_default", "all", "Lung (Caushi 2021)", True),
+              ("eberhardt", "default", "all", "Head and neck, HPV+ (Eberhardt 2021)", False),
+              ("pulliam", "cd3_0", "tumor", "Merkel cell, no CD3 floor (Pulliam 2024)", False)]
+    fig, ax = plt.subplots(figsize=(8.2, 3.6), constrained_layout=True)
+    for i, (dataset, run, tissue, label, tested) in enumerate(reversed(wanted)):
+        row = table[table.dataset.eq(dataset) & table.run.eq(run) & table.tissue.eq(tissue)].iloc[0]
+        color = BLUE if tested else INK2
+        ax.plot([row.auroc_low, row.auroc_high], [i, i], color=color, lw=2, solid_capstyle="round")
+        ax.scatter([row.auroc], [i], s=55, color=color if tested else SURFACE, edgecolor=SURFACE if tested else color,
+                   linewidth=1.5 if tested else 1.8, zorder=3)
+        versus = "tested negatives" if tested else "unlabelled"
+        ax.text(1.03, i, f"{row.auroc:.2f}  ({row.n_positive} vs {row.n_negative} {versus})", va="center",
+                fontsize=9, color=INK)
+    ax.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))
+    ax.set_yticks(range(len(wanted)), [w[3] for w in reversed(wanted)])
+    ax.set_xlim(0.1, 1.0)
+    ax.set_ylim(-0.6, len(wanted) - 0.4)
+    ax.set_xlabel("TumorReactive AUROC (95% bootstrap interval)")
+    ax.set_title("TumorReactive across the five datasets")
+    ax.grid(axis="x", lw=0.6)
+    ax.set_axisbelow(True)
+    ax.tick_params(axis="y", length=0)
+    ax.spines["left"].set_visible(False)
+    save(fig, "benchmark_auroc_by_dataset")
 
 
 def percent_axis(ax, axis="x"):
@@ -182,12 +221,12 @@ def threshold_sweeps():
         save(fig, name)
 
 
-def cd3_gate():
-    """Cells kept and ranking of validated clones under three CD3 floors (lung data)."""
-    runs = json.loads((RESULTS / "summary.json").read_text())["caushi"]["runs"]
+def cd3_gate(dataset, order, versus, suffix=""):
+    """Cells kept and ranking of validated clones under three CD3 floors."""
+    runs = json.loads((RESULTS / "summary.json").read_text())[dataset]["runs"]
     aurocs = pd.read_csv(RESULTS / "signature_auroc.csv")
-    aurocs = aurocs[aurocs.dataset.eq("caushi") & aurocs.tissue.eq("all") & aurocs.signature.eq("TumorReactive")]
-    order = [("tumor_cd3_0", "No floor"), ("tumor_cd3_3", "3 counts"), ("tumor_default", "10 counts (default)")]
+    whole = aurocs.tissue.isin(["all", "tumor"])
+    aurocs = aurocs[aurocs.dataset.eq(dataset) & whole & aurocs.signature.eq("TumorReactive")]
     labels = [label for _, label in reversed(order)]
     fig1, ax1 = plt.subplots(figsize=(6.6, 3.0), constrained_layout=True)
     fig2, ax2 = plt.subplots(figsize=(7.4, 3.2), constrained_layout=True)
@@ -219,14 +258,14 @@ def cd3_gate():
     ax2.spines["left"].set_visible(False)
     ax2.grid(axis="x", lw=0.6)
     ax2.set_axisbelow(True)
-    ax2.set_xlabel("TumorReactive AUROC, neoantigen vs viral clones")
+    ax2.set_xlabel(f"TumorReactive AUROC, {versus} clones")
     ax2.set_title("Ranking of validated clones", fontsize=10)
-    save(fig1, "benchmark_cd3_cells")
-    save(fig2, "benchmark_cd3_ranking")
+    save(fig1, f"benchmark_cd3_cells{suffix}")
+    save(fig2, f"benchmark_cd3_ranking{suffix}")
 
 
 def dataset_designs():
-    """Schematic of the three source studies: who, what was sequenced, how
+    """Schematic of the five source studies: who, what was sequenced, how
     specificity was established, and which labels the benchmark uses.
     Drawn here from each paper's abstract and deposit; not a paper figure."""
     columns = ["Patients", "Sequenced", "How specificity was established", "Labels used here"]
@@ -246,8 +285,18 @@ def dataset_designs():
             "Single-cell RNA + TCR\nof tetramer-sorted and\nbulk PD-1+ CD8 TIL",
             "MHC class I tetramers\nloaded with HPV E2\npeptides",
             "Tetramer-positive\nbeta chains;\nno negatives"]),
+        ("Chiffelle 2024\nmelanoma", [
+            "11 of 13 patients with\nmelanoma given TIL\ntherapy",
+            "Single-cell RNA + TCR\nof CD45+ cells from the\ntumor before treatment",
+            "TCRs cloned and tested\nagainst the patient's\nown tumor cells",
+            "65 reactive and\n65 non-reactive\nclonotypes"]),
+        ("Pulliam 2024\nMerkel cell", [
+            "2 of 7 patients with\nMerkel cell carcinoma",
+            "Single-cell RNA + TCR\nof hashed tumor and\nblood cells",
+            "MHC class I multimers\nloaded with polyomavirus\nor other viral peptides",
+            "Polyomavirus-specific\nbeta chains;\nno negatives"]),
     ]
-    fig, ax = plt.subplots(figsize=(11, 4.6), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(11, 7.4), constrained_layout=True)
     width, height, x0, dx, dy = 2.25, 1.0, 1.75, 2.6, 1.35
     for c, name in enumerate(columns):
         ax.text(x0 + c * dx + width / 2, 0.42, name, ha="center", va="center", fontsize=9.5,
@@ -268,7 +317,7 @@ def dataset_designs():
                 ax.annotate("", xy=(x + dx - 0.04, y - height / 2), xytext=(x + width + 0.04, y - height / 2),
                             arrowprops={"arrowstyle": "->", "color": INK2, "lw": 1.1})
     ax.set_xlim(0, x0 + 3 * dx + width + 0.1)
-    ax.set_ylim(-2 * dy - height - 0.4, 0.7)
+    ax.set_ylim(-(len(rows) - 1) * dy - height - 0.4, 0.7)
     ax.axis("off")
     save(fig, "benchmark_datasets")
 
@@ -276,8 +325,12 @@ def dataset_designs():
 if __name__ == "__main__":
     dataset_designs()
     signature_auroc()
+    auroc_by_dataset()
     cutoff_pass_rates()
     selection_by_budget()
     threshold_sweeps()
-    cd3_gate()
+    floors = ["No floor", "3 counts", "10 counts (default)"]
+    cd3_gate("caushi", list(zip(["tumor_cd3_0", "tumor_cd3_3", "tumor_default"], floors)), "neoantigen vs viral")
+    cd3_gate("chiffelle", list(zip(["cd3_0", "cd3_3", "default"], floors)), "reactive vs non-reactive",
+             suffix="_melanoma")
     print("wrote benchmark figures")
