@@ -204,17 +204,23 @@ negative one; 0.5 is chance.
 These are the nine signatures the `solid-tumor` preset scores for CD8 cells.
 Where each came from decides whether a result is an independent test.
 
-| Signature | Genes | Source | Independent of the data here? |
+| Signature | Genes | Where the gene list comes from | Independent of the data here? |
 | --- | --- | --- | --- |
-| TumorReactive | CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE | Literature-curated exhaustion and tissue-residency markers | Yes |
-| MANAscore proxy | CXCL13 and ENTPD1 up, IL7R down | Genes from a model trained on the **Caushi 2021** lung data ([Zeng et al. 2025](https://doi.org/10.1038/s41467-024-55059-3)) | **No for lung: circular.** Yes for the other four. |
-| NeoTCR8 | 243 genes, including GZMB, ENTPD1 and KIR2DL4 | [Lowery et al. 2022](https://doi.org/10.1126/science.abl5447), metastatic gastrointestinal cancers | Yes |
-| Differentiated | IFNG, GZMB, PRF1, GNLY, NKG7 up; TCF7, LEF1, CCR7, SELL down | Curated effector-versus-naive contrast | Yes |
-| AntigenExperienced | IFNG, GZMB, PRF1, GNLY, NKG7 | Curated effector markers | Yes |
-| Cytolytic | PRF1, GZMB | Curated | Yes |
-| AcuteActivation | TNFRSF9, MKI67 | Curated | Yes |
-| AIM | TNFRSF9, TNFRSF4 | Curated activation-induced markers | Yes |
-| Proliferation | MKI67 | Curated | Yes |
+| TumorReactive | CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE | Chosen by TCRsift's authors; not a published gene set. CD39 (ENTPD1) and CD103 (ITGAE) follow [Simoni et al. 2018](https://doi.org/10.1038/s41586-018-0130-2) and [Duhen et al. 2018](https://doi.org/10.1038/s41467-018-05072-0), which showed they mark tumor-reactive CD8 TIL. CXCL13 and the six exhaustion genes are the authors' selection of widely used markers, with no single source. | Yes |
+| MANAscore proxy | CXCL13 and ENTPD1 up, IL7R down | The three genes of the MANAscore model, which was trained on the **Caushi 2021** lung data ([Zeng et al. 2025](https://doi.org/10.1038/s41467-024-55059-3)). TCRsift scores them without the model's weights. | **No for lung: circular.** Yes for the other four. |
+| NeoTCR8 | 243 genes, including GZMB, ENTPD1 and KIR2DL4 | Published gene set, used as published: [Lowery et al. 2022](https://doi.org/10.1126/science.abl5447), metastatic gastrointestinal cancers. | Yes |
+| Differentiated | IFNG, GZMB, PRF1, GNLY, NKG7 up; TCF7, LEF1, CCR7, SELL down | Chosen by TCRsift's authors from textbook effector and naive markers; not a published gene set. Its composition was settled on TCRsift's own in-vitro MART-1 expansion pilot ([reproducibility map](reproducibility_map.md)), not on tumor data. | Yes |
+| AntigenExperienced | IFNG, GZMB, PRF1, GNLY, NKG7 | Chosen by TCRsift's authors: the "up" half of Differentiated. Same pilot. | Yes |
+| Cytolytic | PRF1, GZMB | Chosen by TCRsift's authors: the perforin and granzyme B pair. The code cites its use in [Caushi et al. 2021](https://doi.org/10.1038/s41586-021-03752-4), [Krishna et al. 2020](https://doi.org/10.1126/science.abb9847) and [Hanada et al. 2022](https://doi.org/10.1016/j.ccell.2022.03.012). | Mostly. Caushi is one of the three papers cited for it, though no genes were selected from Caushi data. |
+| AcuteActivation | TNFRSF9, MKI67 | Chosen by TCRsift's authors: 4-1BB and Ki-67, split out of AntigenExperienced after the same pilot. No published source. | Yes |
+| AIM | TNFRSF9, TNFRSF4 | Chosen by TCRsift's authors: the transcripts of 4-1BB and OX40, the two surface markers read by activation-induced-marker assays. No published source. | Yes |
+| Proliferation | MKI67 | Chosen by TCRsift's authors: Ki-67 alone. No published source. | Yes |
+
+Only NeoTCR8 is a published gene set used as published. MANAscore is a proxy
+for a published model. The other seven are short lists that TCRsift's authors
+wrote down from markers in common use; where a paper or an internal experiment
+informed the choice, it is named above. None of the seven was fitted to any
+dataset on this page.
 
 The first three are the "tumor-reactivity signatures" referred to throughout;
 the other six are the "general state signatures". Several overlap: CXCL13 and
