@@ -1,6 +1,7 @@
-# TIL Selection API
+# Longitudinal TIL Selection API
 
-Module for TIL-only timepoint harmonization and clone prioritization.
+Harmonize per-timepoint 10x VDJ and GEX files in the legacy v2 layout and apply
+multi-branch TIL selection masks.
 
 ::: tcrsift.til_select
     options:

@@ -1,81 +1,84 @@
-# Pipeline Overview
+# Culture Pipeline
 
-TCRsift processes single-cell TCR data through a series of steps, each building on the previous.
+`tcrsift run` processes antigen-stimulated T-cell cultures (with optional
+matched TIL) through seven sequential stages, writing intermediate files and QC
+summaries at each step.
 
-## Pipeline Steps
+## Pipeline stages
 
 ```mermaid
 flowchart TD
-    S[Sample sheet] --> L["Load<br/>Cell Ranger VDJ + GEX"]
-    L --> P["Phenotype<br/>CD4 / CD8 classification"]
-    P --> C["Clonotype<br/>aggregate cells by CDR3"]
-    C --> F["Filter<br/>tiered abundance selection"]
-    F --> A["Annotate<br/>VDJdb, IEDB, CEDAR"]
-    A --> T["Match TIL<br/>optional"]
-    T --> X["Assemble<br/>full-length sequences"]
+    S[Sample sheet] --> L["1. Load<br/>Cell Ranger VDJ + GEX"]
+    L --> P["2. Phenotype<br/>CD4 / CD8 classification"]
+    P --> C["3. Clonotype<br/>group cells by CDR3"]
+    C --> F["4. Filter<br/>abundance or FDR tiers"]
+    F --> A["5. Annotate<br/>VDJdb, IEDB, CEDAR"]
+    A --> T["6. Match TIL<br/>optional"]
+    T --> X["7. Assemble<br/>full-length constructs"]
 ```
 
-## 1. Load Data
+## 1. Load data
 
-Parses CellRanger VDJ and GEX outputs:
-
-- **VDJ**: `filtered_contig_annotations.csv` for TCR sequences
-- **GEX**: `filtered_feature_bc_matrix/` for gene expression
+Reads Cell Ranger VDJ (`filtered_contig_annotations.csv`, dropping
+non-productive contigs) and GEX (`filtered_feature_bc_matrix/` or
+`filtered_feature_bc_matrix.h5`) outputs and pairs them by cell barcode:
 
 ```bash
 tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
 ```
 
-The output is an AnnData object with:
+The resulting `AnnData` stores cell barcodes in `obs_names`, expression counts
+in `X`, and primary α/β chain annotations plus T-cell marker counts in `obs`.
 
-- Cell barcodes as observations
-- Gene expression in `X`
-- VDJ annotations in `obs` columns
+## 2. Phenotype cells
 
-## 2. Phenotype Cells
-
-Classifies cells as CD4+ or CD8+ based on gene expression:
+Classifies each cell into CD4+ or CD8+ categories from `CD4`, `CD8A`, and
+`CD8B` counts and applies the minimum CD3 count filter (`--min-cd3-reads 3` by
+default):
 
 ```bash
 tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --cd4-cd8-ratio 3.0
 ```
 
-Classification categories:
+| Category | Rule (default `ratio = 3.0`) |
+| --- | --- |
+| `Confident CD8+` | `(CD8A + CD8B + 1) / (CD4 + 1) > ratio` |
+| `Confident CD4+` | `(CD4 + 1) / (CD8A + CD8B + 1) > ratio` |
+| `Likely CD8+` | `CD8A + CD8B > 0` and `CD4 = 0` |
+| `Likely CD4+` | `CD4 > 0` and `CD8A + CD8B = 0` |
+| `Unknown` | Comparable non-zero expression, or zero on both |
 
-| Category | Criteria |
-|----------|----------|
-| Confident CD8+ | CD8/CD4 ratio > threshold |
-| Confident CD4+ | CD4/CD8 ratio > threshold |
-| Likely CD8+ | CD8 > 0 and CD4 = 0 |
-| Likely CD4+ | CD4 > 0 and CD8 = 0 |
-| Unknown | Similar expression levels |
+## 3. Aggregate clonotypes
 
-## 3. Aggregate Clonotypes
-
-Groups cells by CDR3 sequences:
+Collapses retained cells into clonotypes by CDR3 amino-acid sequence and
+computes cell counts, within-sample frequencies, and consensus T-cell lineage
+(when run through `tcrsift run`, bundled k-mer `Pgen`/`Ppost` log-probabilities
+are also attached automatically; run `tcrsift pgen annotate` when executing
+steps individually):
 
 ```bash
 tcrsift clonotype -i phenotyped.h5ad -o clonotypes.csv --group-by CDR3ab
 ```
 
-Grouping options:
+- `CDR3ab` (default): requires matching α and β CDR3 sequences.
+- `CDR3b_only`: groups by β-chain CDR3 alone.
 
-- `CDR3ab`: Match by both alpha and beta chains (stricter)
-- `CDR3b_only`: Match by beta chain only (more permissive)
+## 4. Filter clonotypes
 
-## 4. Filter Clonotypes
-
-Applies tiered abundance filtering to prioritize clones for review:
+Assigns clonotypes to confidence tiers (`tier1`–`tier5`) using fixed abundance
+thresholds or logistic FDR estimation:
 
 ```bash
 tcrsift filter -i clonotypes.csv -o filtered/ --method threshold --tcell-type cd8
 ```
 
-See [Filtering Strategies](filtering.md) for detailed options.
+See [Filtering Strategies](filtering.md) for tier definitions, `--fdr-scope`,
+and multi-method overlap outputs.
 
-## 5. Annotate Clonotypes
+## 5. Annotate clonotypes
 
-Matches against public TCR databases:
+Flags clonotypes matching known epitopes in VDJdb, IEDB, or CEDAR (using
+explicit file paths or the managed `tcrsift data` cache):
 
 ```bash
 tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
@@ -83,86 +86,62 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
     --iedb /path/to/iedb
 ```
 
-Annotations include:
+## 6. Match TIL (optional)
 
-- Known epitope specificity
-- Viral vs tumor antigens
-- Database source
+When TIL samples (`source: til`) are listed on the same sample sheet as culture
+samples, `tcrsift run` automatically excludes them from culture aggregation and
+annotates culture clonotypes with `til_match`, `til_cell_count`, and
+`til_frequency`.
 
-## 6. Match TIL (Optional)
-
-For tumor studies, match culture clonotypes against TIL:
+To match culture clonotypes against TIL processed separately, run `match-til`:
 
 ```bash
 tcrsift match-til -i annotated.csv --til-csv til_clonotypes.csv -o matched.csv
 
-# Multiple TIL samples without a sample sheet:
+# Multiple TIL inputs without a sample sheet:
 tcrsift match-til -i annotated.csv -o matched.csv \
   --til-sample T1=csv:/path/to/til_t1.csv \
   --til-sample T2=h5ad:/path/to/til_t2.h5ad
 ```
 
-This identifies culture clones that are also present in tumor. It cannot emit a
-TIL-only clone that is absent from the input culture table; use
-`til-clonotype` to enumerate those, or `til-prioritize` to select them by expression signatures and abundance.
+`match-til` annotates rows already present in the input culture table; it does
+not add clones found only in TIL. For TIL-only datasets without culture samples:
 
-TIL samples are excluded from culture aggregation/filtering and only used for matching.
+- **Expression-state prioritization (standard Cell Ranger VDJ + GEX):** use
+  `tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor` (or
+  `tcrsift til-prioritize`; see [Clone Prioritization](til-signatures.md)).
+- **Count/frequency harmonization across TIL samples:** use `tcrsift
+  til-clonotype`.
+- **Longitudinal TIL samples in the legacy v2 file layout:** use `tcrsift
+  til-select` (see [CLI Reference](cli.md#tcrsift-til-select)).
 
-For TIL-only analysis (no culture input), use:
+## 7. Assemble full-length sequences
 
-```bash
-tcrsift til-clonotype -o til_clonotypes.csv \
-  --til-sample T1=csv:/path/to/til_t1.csv \
-  --til-sample T2=h5ad:/path/to/til_t2.h5ad
-```
-
-For TIL-only 10x VDJ+GEX prioritization across two or more ordered samples
-(CD8 + expression-state + frequency-change masks), use:
-
-```bash
-tcrsift til-select \
-  --data-dir /path/to/til_timepoint_data \
-  --rank-by marker_score_z_mean
-```
-
-`til-select` runs in v2-compatible CSV mode by default, so with the same data/options
-it reproduces legacy `harmonize_abtcr_timepoints.py` CSV outputs. Figures and PDFs may
-still differ byte-for-byte.
-
-Expected per-timepoint files in `--data-dir`:
-- `consensus_annotations.<TP>.csv`
-- `clonotypes.<TP>.csv`
-- `filtered_contig_annotations.<TP>.csv`
-- `sample_filtered_feature_bc_matrix.<TP>.h5`
-
-## 7. Assemble Full Sequences
-
-Build full-length TCR sequences:
+Constructs full-length α, β, and single-chain (`β-linker-α`) amino-acid and DNA
+sequences for synthesis:
 
 ```bash
 tcrsift assemble -i annotated.csv -o sequences.csv \
+    --contigs-dir /path/to/vdj \
     --include-constant \
+    --single-chain \
     --linker T2A \
     --fasta sequences.fasta
 ```
 
-Output includes:
+Pass `--allow-canonical-fallback` when assembling without `--contigs-dir`.
+Assembled constructs combine:
 
-- Leader peptide (from contigs)
-- Variable region (VDJ)
-- Constant region (canonical TRAC / TRBC1 / TRBC2 — see below)
-- Single-chain construct (beta-T2A-alpha)
+- **Leader peptides:** `CD28` on α and `CD8A` on β by default, or native V-gene
+  leaders extracted from Cell Ranger FASTA contigs (`--leaders-from-contigs`).
+- **Variable regions:** assembled V(D)J sequences from clonotyping.
+- **Constant regions:** packaged canonical human `TRAC`, `TRBC1`, and `TRBC2`
+  references. When contig FASTAs are supplied, compatible donor nucleotides at
+  the J→C junction are preserved before switching to codon-optimized canonical
+  sequence; see [Assembly API](../api/assemble.md#constant-region-construction).
+- **2A linker:** `T2A` by default (`P2A`, `E2A`, and `F2A` are also supported).
 
-Constant-region amino-acid sequences come from packaged canonical references.
-When a CellRanger contig is available, assembly preserves compatible donor
-nucleotides at the J→C boundary and fills the remainder from the canonical
-reference; without contigs it uses canonical codon-optimized sequence
-throughout. The exact blending, incomplete-codon, and QC rules live in the
-[Assembly API](../api/assemble.md#constant-region-construction).
-
-## Running the Complete Pipeline
-
-Use `tcrsift run` to execute all steps:
+## Running the full pipeline at once
 
 ```bash
 tcrsift run \
@@ -170,8 +149,8 @@ tcrsift run \
     --output-dir results/ \
     --vdjdb /path/to/vdjdb \
     --tcell-type cd8 \
-    --method threshold \
-    # report generation is enabled by default; use --no-report to disable
+    --method threshold
 ```
 
-This creates a complete output directory with all intermediate files and a summary report.
+Pass `--no-report` to skip PDF report generation or `--skip-plots` to skip PNG
+figures.

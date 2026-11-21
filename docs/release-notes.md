@@ -1,112 +1,110 @@
 # Prioritization release notes
 
-Behavior changes to `tcrsift prioritize` / `til-prioritize` that can alter a
-shortlist. Record the package version with every analysis; the
-[prioritization guide](user-guide/til-signatures.md) always describes the
-current release. The complete per-release history is on
+Behavior changes in `tcrsift prioritize` and `til-prioritize` that can alter a
+shortlist. Record the package version alongside every analysis; the
+[prioritization guide](user-guide/til-signatures.md) documents the current
+release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
 ## 3.28.0
 
-Fixes that change which receptor a cell is assigned and which clones are
-shortlisted. Rerun analyses made with earlier versions.
+Bug fixes affecting receptor assignment and shortlist selection. Re-run
+analyses generated with earlier versions.
 
 - **Non-productive contigs are dropped on load.** Cell Ranger's filtered contig
-  table lists them, and the loader ranked a cell's contigs by UMI count alone,
-  so a non-productive contig could become the cell's alpha or beta chain, hide
-  the real one, or leave the cell with no CDR3. In the public lung data 7% of
-  primary chains were non-productive. This applies to every command that loads
-  Cell Ranger VDJ output, including `run`.
-- **Barcodes are matched exactly unless nothing matches.** Suffix-insensitive
-  matching was applied per barcode, so a cell `X-2` could receive the receptor
-  of an unrelated cell `X-1`. It now applies only when a sample has no exact
-  match, skips ambiguous barcodes, and warns when nothing matches.
-- **`.h5` expression input is indexed by Ensembl id**, like matrix
-  directories. A repeated gene symbol made an `.h5`-only sample fail to load,
-  and mixing `.h5` and matrix-directory samples doubled the gene axis.
-- **Budget sharing, two corrections to 3.27.0.** A list whose only clone had
-  just been taken by another list could use up a turn, so a smaller
-  `--max-clones` was not always a prefix of a larger one. And
-  `--max-clones 0` was treated as a budget equal to the eligible count, which
-  changed `selection_rank` and the recorded signature compared with a large
-  cap.
-- **V and J gene filters with repeated barcodes.** When a clone's
-  highest-UMI cell shared its barcode with another cell of the clone in a
-  different sample, the clone's gene columns held several values, and
-  `--exclude-trav12-2`, `--exclude-v-gene` and `--include-v-gene` misjudged
-  it.
-- **Sample sheets.** A blank `source` cell uses the default instead of being
-  rejected, numeric YAML sample names are read as text, and a sample name
-  listed twice is reported when the sheet is read.
+  table retains non-productive contigs, and the loader previously ranked a
+  cell's contigs by UMI count alone. A high-UMI non-productive contig could
+  therefore displace a cell's productive alpha or beta chain or leave the cell
+  without a CDR3 (7% of primary chains in the public lung dataset were
+  non-productive). Applies to every command that loads Cell Ranger VDJ output,
+  including `run`.
+- **Barcodes are matched exactly unless no exact matches exist.** Stripping
+  `-1`/`-2` suffixes per barcode could previously pair GEX cell `X-2` with the
+  TCR of an unrelated VDJ cell `X-1`. Core-barcode fallback now runs only when
+  a sample has zero exact barcode matches, skips ambiguous core barcodes, and
+  warns when nothing matches.
+- **`.h5` expression matrices are indexed by Ensembl ID**, matching matrix
+  directories. Duplicate gene symbols previously caused `.h5`-only samples to
+  fail on load, and mixing `.h5` and matrix-directory samples duplicated the
+  gene axis.
+- **Mid-round budget sharing and `--max-clones 0` fixes.** A list whose sole
+  remaining clone had already been selected by another list could still consume
+  a turn, violating prefix consistency across `--max-clones` budgets. In
+  addition, `--max-clones 0` was treated as a cap equal to the eligible clone
+  count, altering `selection_rank` and `selected_signature` relative to a
+  non-binding cap.
+- **V and J gene filters with repeated barcodes across samples.** When a
+  clone's highest-UMI cell shared its barcode string with another cell in a
+  different sample, representative gene lookup returned multiple rows and
+  caused `--exclude-trav12-2`, `--exclude-v-gene`, and `--include-v-gene` to
+  misclassify the clone.
+- **Sample-sheet parsing.** Blank `source` cells fall back to the default
+  instead of raising an error, numeric YAML sample names are coerced to strings,
+  and duplicate sample names are rejected on load.
 
 ## 3.27.0
 
-Two changes that alter shortlists, both prompted by the
-[public-data evaluation](benchmarks.md#4-what-do-the-cell-gates-cost).
+Two shortlist-changing updates motivated by the
+[public TIL benchmark](benchmarks.md#4-what-do-the-cell-filters-drop):
 
-- The default `--min-cd3` is 3, down from 10, matching the `run` and
-  `phenotype` commands. A floor of 10 removed 65% to 92% of CD8 cells in the
-  datasets evaluated and did not rank the same clones better. More cells and
-  clones are scored, so scores, cutoffs and shortlists change. Pass
-  `--min-cd3 10` for the previous behavior.
-- When the clone budget ends partway through a round, the remaining turns are
-  shared across signatures and samples: each goes to the signature, then the
-  sample, with the fewest turns in that round. Previously they went to the
-  first lists in signature order, so in a run with more qualifying lists than
-  budget the signatures listed last in the preset could supply no candidates.
-  Only the final, partial round of a selection changes; full rounds are
-  visited in the same order as before.
+- **Default `--min-cd3` lowered from 10 to 3**, matching `run` and `phenotype`.
+  Across public TIL datasets, a floor of 10 discarded 65% to 92% of CD8 cells
+  without improving ranking among surviving clones. Because more cells and
+  clones enter scoring, signature percentiles, background floors, and
+  shortlists change. Pass `--min-cd3 10` to reproduce earlier filtering.
+- **Fair mid-round budget allocation.** When `--max-clones` expires partway
+  through a round, remaining turns are assigned to the signature (and within
+  it, the sample) with the fewest picks so far in that round. Previously, partial
+  rounds were truncated in preset order, which could starve signatures listed
+  near the end of a preset when qualifying lists outnumbered the budget. Full
+  rounds retain the existing order.
 
 ## 3.26.0
 
-Fixes found by running on public data ([evaluation](benchmarks.md)). None
-changes scores or shortlists for inputs that already ran.
+Loader and scoring fixes uncovered while benchmarking on public datasets
+([benchmarks](benchmarks.md)). Existing runs that completed without error
+produce unchanged scores and shortlists.
 
-- Multi-sample runs that read `filtered_feature_bc_matrix/` directories keep
-  the gene symbols supplied with the matrices. Previously
-  `--context solid-tumor` could stop with "genes absent from matrix".
-- Signature genes are matched across reference-annotation renames through a
-  small synonym table (for example PLA2G16/PLAAT3 and CARS/CARS1), so NeoTCR8,
-  NeoTCR4 and NeoTCR_PBL score on current Cell Ranger references. A gene with
-  no synonym present is still an error.
-- When a sample has only `all_contig_annotations.csv`, the loader keeps called
-  cells and high-confidence contigs and drops contigs with no chain call.
-- The command warns when any single cell filter other than lineage removes
-  more than half of the remaining cells. The default `--min-cd3 10` is
-  unchanged.
+- Multi-sample runs reading `filtered_feature_bc_matrix/` directories preserve
+  the gene symbols supplied with the matrices instead of failing with missing
+  signature genes under `--context solid-tumor`.
+- Signature lookup resolves common HGNC symbol renames via a built-in alias
+  table (such as `PLA2G16`/`PLAAT3` and `CARS`/`CARS1`), allowing `NeoTCR8`,
+  `NeoTCR4`, and `NeoTCR_PBL` to score across older and newer Cell Ranger
+  references. Genuinely absent genes still raise an error.
+- When only `all_contig_annotations.csv` is present, the VDJ loader filters to
+  called cells and high-confidence contigs with valid chain calls.
+- `prioritize` logs a warning whenever any single non-lineage cell filter
+  removes more than half of the remaining cells.
 
 ## 3.25.0
 
-Background selection now defaults to either mean or high-cell subset evidence,
-with separate ranked lists inside the same 200-total budget. Exports include
-high-cell counts, fractions, exact enrichment tails, and the evidence route
-that supplied each candidate. `--signature-evidence mean` restores the 3.24.0
-selection rule; legacy mode retains its previous behavior.
+Background cutoff mode defaults to `--signature-evidence either`, allowing
+clones to qualify via elevated mean expression or hypergeometric enrichment of
+high-scoring cells, each contributing its own ranked list within the shared
+200-clone budget. Output tables add high-cell counts, fractions, exact tail
+probabilities, and `selected_evidence`. Pass `--signature-evidence mean` for
+3.24.0 behavior; `legacy` cutoff mode continues to use mean scores only.
 
 ## 3.24.0
 
-The default stopping rule now uses a size-matched empirical background floor
-instead of score > 0. The total cap remains 200 and the rank gate remains the
-top decile. Use `--signature-cutoff legacy` for the previous score rule. This
-can substantially reduce shortlists, especially with very small samples.
-NeoTCR module scores now explicitly read normalized `.X` even when `.raw`
-exists. Their registry metadata and descriptions correctly identify log-space
-control subtraction; the bare-DataFrame proxy follows the other signatures'
-default `log1p` transform (pass `log1p=False` for already logged frames).
+Replaced the fixed `score > 0` floor with a size-matched empirical resampling
+floor (`--signature-cutoff background`), keeping the top-decile rank gate and
+200-clone cap. Pass `--signature-cutoff legacy` for the previous rule. NeoTCR
+module scoring now always reads normalized `.X` even when `.raw` is present,
+and bare-DataFrame fallback scoring applies `log1p` by default (pass
+`log1p=False` if inputs are already log-transformed).
 
 ## 3.23.1
 
-The cap is now **200 total**, replacing 100 per patient. Selection ranks are
-global. That release used percentile ≥ 0.90 and score > 0; numerically flat
-lists are excluded. Exhausted lists yield their turns to the remaining lists.
-There is no fallback below these cutoffs to fill the budget.
+Changed `--max-clones` from 100 per patient to **200 across the entire run**
+with global `selection_rank`. Required percentile ≥ 0.90 and score > 0,
+skipping numerically flat lists and yielding turns from exhausted lists without
+padding below cutoffs.
 
-## Changes from 3.22
+## 3.23.0 (changes from 3.22)
 
-Both command names now use context-dependent stratification, default CD8
-selection, viral exclusion off, and a disabled mitochondrial floor. MART-1
-exclusion remains on. One sample is sufficient. These changes intentionally
-change shortlists from the original TIL example; the old ranking algorithm
-is not restored by adjusting thresholds. Use the recorded configuration and
-package version when reproducing a prior analysis.
+Unified `prioritize` and `til-prioritize` around context presets, CD8 selection
+by default, MART-1 exclusion on, viral exclusion off, no minimum mitochondrial
+floor, and single-sample support.

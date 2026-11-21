@@ -1,6 +1,7 @@
 # Sample Sheet API
 
-Module for parsing and validating sample sheets.
+Parse and validate YAML and CSV sample sheets describing input paths, antigens,
+and study-design metadata.
 
 ::: tcrsift.sample_sheet
     options:

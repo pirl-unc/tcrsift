@@ -1,47 +1,43 @@
 # Filtering Strategies
 
-TCRsift uses abundance and study-design metadata to prioritize clones for
-review. Filtering does not establish antigen specificity.
+`tcrsift filter` assigns clonotypes from antigen-stimulated cultures to
+confidence tiers (`tier1`–`tier5`) using cell counts, within-sample
+frequencies, T-cell lineage, and optional viral exclusions. Tiering ranks
+clonal expansion for experimental follow-up; it does not prove epitope
+specificity.
 
-## Overview
+## Sources of clones in stimulated cultures
 
-Antigen-specific T cell cultures typically contain:
+Peptide- or antigen-stimulated T-cell cultures typically contain a mixture of:
 
-- **True positives**: Clones expanded due to antigen recognition
-- **Bystander clones**: Expanded due to cytokines, not antigen
-- **Contaminants**: Low-frequency clones from sample handling
+- **Antigen-responsive clones** that expanded upon recognizing the target
+  antigen.
+- **Bystander clones** (often common anti-viral memory T cells) carried over or
+  expanded non-specifically by cytokines.
+- **Background singletons and low-count clones** from unexpanded input T cells
+  or ambient/doublet artifacts.
 
-TCRsift uses multiple criteria to separate these populations.
+## Threshold method (default)
 
-## Threshold Method (Default)
+The `threshold` method assigns each clone to the strictest tier whose minimum
+cell count (`cell_count`) and peak within-sample frequency (`max_frequency`) it
+meets:
 
-The threshold method applies configurable criteria at each tier:
-
-| Tier | Min Cells | Min Frequency | Confidence |
-|------|-----------|---------------|------------|
-| Tier 1 | 10 | 1% | Highest |
-| Tier 2 | 5 | 0.5% | High |
-| Tier 3 | 3 | 0.1% | Medium |
-| Tier 4 | 2 | 0.05% | Low |
-| Tier 5 | 2 | 0% | Lowest |
-
-### Criteria Explained
-
-**Min Cells**: Clones with more cells are more likely to be true positives.
-
-**Min Frequency**: Higher frequency suggests active expansion.
-
-The bundled tiers are abundance-only. A custom tier definition may still add
-`max_conditions`, but cross-condition specificity is better represented
-explicitly through the sample/method/donor selection helpers.
-
-### Using Threshold Filtering
+| Tier | Min cells | Min frequency | Priority |
+| --- | --- | --- | --- |
+| `tier1` | 10 | 1.0% (`0.01`) | Highest |
+| `tier2` | 5 | 0.5% (`0.005`) | High |
+| `tier3` | 3 | 0.1% (`0.001`) | Medium |
+| `tier4` | 2 | 0.05% (`0.0005`) | Low |
+| `tier5` | 2 | 0% | Lowest |
 
 ```bash
-tcrsift filter -i clonotypes.csv -o filtered/ --method threshold
+tcrsift filter -i clonotypes.csv -o filtered/ --method threshold --tcell-type cd8
 ```
 
-### Custom Tier Definitions
+Bundled tier definitions use abundance only. In Python, custom
+`tier_definitions` dictionaries may also include `max_conditions` to cap how
+many stimulation conditions a clone may appear in:
 
 ```python
 from tcrsift import filter_clonotypes
@@ -55,62 +51,67 @@ custom_tiers = {
 filtered = filter_clonotypes(clonotypes, tier_definitions=custom_tiers)
 ```
 
-## Logistic Method
+## Logistic (FDR) method
 
-The logistic method uses logistic regression to adaptively set thresholds based on your data.
+The `logistic` method fits a logistic regression model relating clone frequency
+to non-viral (or single-condition) status among abundant clones, converts model
+probabilities into estimated false discovery rates, and assigns clones to FDR
+tiers:
 
 ```bash
 tcrsift filter -i clonotypes.csv -o filtered/ --method logistic \
     --fdr-tiers 0.0001,0.001,0.01,0.1,0.15
 ```
 
-### How It Works
+| Tier | Default FDR cutoff |
+| --- | --- |
+| `tier1` | 0.0001 (0.01%) |
+| `tier2` | 0.001 (0.1%) |
+| `tier3` | 0.01 (1%) |
+| `tier4` | 0.10 (10%) |
+| `tier5` | 0.15 (15%) |
 
-1. Fits a logistic model predicting "high quality" based on frequency
-2. Uses the model to estimate probability for each clone
-3. Assigns tiers based on FDR thresholds
+!!! note "When logistic fitting is unstable"
+    Logistic calibration requires annotated viral/background clones or multiple
+    conditions across a sufficient range of frequencies. On small or weakly
+    expanded samples where fitting cannot converge, `filter_clonotypes_logistic`
+    falls back to a fixed frequency threshold; prefer `--method threshold` for
+    single-sample or unannotated runs.
 
-### FDR Tiers
+In multi-donor `tcrsift run` cohorts, `--fdr-scope` defaults to `auto`, which
+computes separate tierings per donor (`filtered_tier{1..5}_<donor>.csv`) unless
+`donors_share_antigen: true` is set on the sample sheet or `--fdr-scope global`
+is passed explicitly.
 
-| Tier | FDR | Interpretation |
-|------|-----|----------------|
-| Tier 1 | 0.0001 | < 0.01% false discovery rate |
-| Tier 2 | 0.001 | < 0.1% false discovery rate |
-| Tier 3 | 0.01 | < 1% false discovery rate |
-| Tier 4 | 0.1 | < 10% false discovery rate |
-| Tier 5 | 0.15 | < 15% false discovery rate |
+## Multi-method overlap and recovery (`enrichment_method`)
 
-### When to Use Logistic
+When `enrichment_method` (such as `AIMpos`, `tetpos`, or `CTYneg`) is populated
+on the sample sheet, `tcrsift run` writes per-method rankings and cross-method
+comparison tables alongside the tier files:
 
-The logistic method is useful when:
+- `data/filtered_by_method/<donor>__<method>.csv`: top clones per donor and
+  method (`--per-method-top-n`).
+- `data/method_overlap_<donor>.csv` and `plots/method_overlap_<donor>.png`:
+  pairwise method overlap matrix (`--method-overlap-similarity
+  {jaccard,dice,count}`) and heatmap.
+- `data/method_overlap_sets.csv` and `plots/method_overlap_upset.png`: multi-way
+  clone intersection counts and UpSet/bar chart.
+- `data/method_recovery.csv` and `plots/method_recovery.png`: fraction of the
+  strictest populated tier recovered by each method per donor.
 
-- You have many samples with varied characteristics
-- You want data-driven threshold selection
-- You need FDR-based confidence estimates
+## Lineage and viral exclusions
 
-!!! warning "Note"
-    The logistic method can be sensitive to noisy data. If you see unexpected results, try the threshold method instead.
-
-## T Cell Type Filtering
-
-Filter by phenotype classification:
+Restrict candidates to the T-cell lineage expected for your antigen format
+(based on each clone's majority cell phenotype, `Tcell_type_consensus`):
 
 ```bash
-# CD8+ only (default for short peptides)
-tcrsift filter -i clonotypes.csv -o filtered/ --tcell-type cd8
-
-# CD4+ only
-tcrsift filter -i clonotypes.csv -o filtered/ --tcell-type cd4
-
-# Both CD4+ and CD8+
-tcrsift filter -i clonotypes.csv -o filtered/ --tcell-type both
+tcrsift filter -i clonotypes.csv -o filtered/ --tcell-type cd8   # MHC-I / short peptides
+tcrsift filter -i clonotypes.csv -o filtered/ --tcell-type cd4   # MHC-II
+tcrsift filter -i clonotypes.csv -o filtered/ --tcell-type both  # long peptides / whole protein
 ```
 
-TCRsift uses the consensus T cell type from phenotyping. A clone is classified based on the majority of its cells.
-
-## Viral Exclusion
-
-First annotate the clones, then remove known viral matches:
+To remove cataloged bystander viral TCRs (CMV, EBV, influenza, HIV, SARS-CoV-2),
+annotate against VDJdb/IEDB first and pass `--exclude-viral`:
 
 ```bash
 tcrsift annotate -i clonotypes.csv -o annotated.csv \
@@ -119,52 +120,21 @@ tcrsift annotate -i clonotypes.csv -o annotated.csv \
 tcrsift filter -i annotated.csv -o filtered/ --exclude-viral
 ```
 
-Alternatively, `tcrsift annotate ... --exclude-viral` annotates and removes
-them in one step. A database hit is evidence of a known viral specificity; no
-hit means unknown, not proven non-viral. Matching strictness also matters:
-paired αβ matching is more specific than β-only matching.
+(`tcrsift annotate ... --exclude-viral` also performs annotation and removal in
+a single step.) Absence of a database hit means the sequence is uncataloged,
+not proven non-viral; paired `CDR3ab` matching is much more specific than
+`CDR3b_only`.
 
-## Combining with TIL Data
+## Cross-checking against matched TIL
 
-For tumor studies, useful combined prioritization evidence is:
-
-1. Clone expanded in antigen culture
-2. Clone also present in tumor (TIL)
+When tumor repertoire data are available for the same patient, clones that both
+expand in antigen-stimulated culture and appear in TIL carry stronger evidence
+for experimental testing:
 
 ```bash
-# First filter culture data
 tcrsift filter -i culture_clonotypes.csv -o filtered/ --method threshold
-
-# Then match against TIL
 tcrsift match-til -i filtered/tier1.csv --til-csv til_clonotypes.csv -o matched.csv
 ```
 
-Clones in both culture and TIL are strong candidates for functional
-validation, but overlap alone does not establish tumor specificity.
-
-## Recommended Workflow
-
-1. **Start with default threshold filtering**
-   ```bash
-   tcrsift filter -i clonotypes.csv -o filtered/ --tcell-type cd8
-   ```
-
-2. **Review tier distributions**
-   - Many clones in tier 1? Your cultures worked well.
-   - Mostly tier 4-5? Consider more stringent culture conditions.
-
-3. **Annotate and exclude known viral matches**
-   ```bash
-   tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
-     --vdjdb /path/to/vdjdb --exclude-viral
-   ```
-
-4. **If available, validate with TIL**
-   ```bash
-   tcrsift match-til -i annotated.csv --til-csv til.csv -o final.csv
-   ```
-
-5. **Prioritize clones for validation**
-   - Tier 1 + TIL match = highest priority
-   - Tier 1-2 + no viral match = high priority
-   - Tier 3-4 = consider if functional validation capacity allows
+(In `tcrsift run`, listing a `source: til` sample on the same sample sheet runs
+this step automatically.)

@@ -1,97 +1,96 @@
-# Gene-expression signatures
+# Gene-Expression Signatures
 
-TCRsift has two related registries:
+TCRsift defines gene-expression signatures across two modules:
 
-- `T_CELL_SIGNATURES`: compact functional programs used for exploratory
-  per-cell/per-clone scoring and TIL selection.
-- `NEOANTIGEN_SIGNATURES`: published neoantigen-reactivity signatures with
-  their own scoring methods, input units, and citations.
+- `tcrsift.signatures` (`T_CELL_SIGNATURES`): compact unsigned marker panels
+  for per-cell and per-clone state scoring, plus cell-type registries for
+  `annotate_cells`.
+- `tcrsift.signature_methods` (`SIGNATURES` and `NEOANTIGEN_SIGNATURES`):
+  signed z-score panels and published neoantigen-reactivity gene sets used by
+  `tcrsift prioritize` and `score_by_name`.
 
-Scores describe cell state. They do not establish which antigen a TCR binds.
-Interpret the same program in its source compartment: AIM is most useful after
-in-vitro stimulation, while tumor-reactive/exhaustion programs are most useful
-in fresh TIL.
+Signature scores quantify transcriptional state rather than epitope
+specificity, and depend on tissue context: `AIM` and `AcuteActivation` reflect
+recent stimulation in culture, whereas `TumorReactive` and exhaustion panels
+reflect chronic antigen exposure in fresh TIL.
 
-## Compact functional programs
+## Compact functional programs (`T_CELL_SIGNATURES`)
 
-All symbols are HGNC human gene names.
+All gene symbols follow human HGNC nomenclature.
 
-| Name | Genes / contrast | Intended use |
+| Name | Genes | Intended readout |
 | --- | --- | --- |
-| `effector` | IFNG, GZMB, PRF1, GNLY, NKG7 | Cytotoxic-effector state |
-| `activation` | Deprecated alias of `effector` | Backward compatibility only |
-| `naive_stem` | TCF7, LEF1, CCR7, SELL, IL7R, CD27, CD28 | Naïve/stem-memory state |
-| `antigen_response` | TNFRSF9, MKI67 | Focal recent-response/proliferation readout |
-| `aim` | TNFRSF9, TNFRSF4, IL2RA, MKI67 | Activation-induced-marker program in stimulated culture |
-| `cytolytic` | PRF1, GZMB | Minimal cytolytic readout |
-| `exhaustion` | PDCD1, TOX, LAG3, HAVCR2, TIGIT | Chronic-antigen/exhaustion state in TIL |
-| `tumor_reactive` | CXCL13, ENTPD1 | Compact tumor-reactive TIL phenotype |
-| `expansion_core` | MKI67, TNFRSF9, EGR2, IFNG, CXCL13, HAVCR2 | Cross-compartment expansion-associated panel |
+| `effector` | `IFNG, GZMB, PRF1, GNLY, NKG7` | Cytotoxic effector differentiation |
+| `activation` | Deprecated alias of `effector` | Retained for backward compatibility |
+| `naive_stem` | `TCF7, LEF1, CCR7, SELL, IL7R, CD27, CD28` | Naive and stem-like memory state |
+| `antigen_response` | `TNFRSF9, MKI67` | Recent activation and proliferation |
+| `aim` | `TNFRSF9, TNFRSF4, IL2RA, MKI67` | Activation-induced-marker response in stimulated culture |
+| `cytolytic` | `PRF1, GZMB` | Minimal perforin/granzyme B readout |
+| `exhaustion` | `PDCD1, TOX, LAG3, HAVCR2, TIGIT` | Chronic stimulation / exhaustion in TIL |
+| `tumor_reactive` | `CXCL13, ENTPD1` | Minimal two-gene tumor-reactive TIL readout |
+| `expansion_core` | `MKI67, TNFRSF9, EGR2, IFNG, CXCL13, HAVCR2` | Cross-compartment expansion-associated markers |
 
-`MARKER_PANEL_HGNC` is the union extracted by `til-select`; it is a display and
-scoring panel, not another biological signature.
+`MARKER_PANEL_HGNC` is the combined gene extraction list used by `til-select`
+rather than a standalone biological signature.
 
-## Named signatures used by `prioritize`
+## Signatures scored by `tcrsift prioritize` (`SIGNATURES`)
 
-`tcrsift prioritize` selects signatures by these names (`--signatures`,
-`--context`). They are defined in `tcrsift.signature_methods.SIGNATURES` and
-are scored as the mean of z-scored up genes minus down genes, per sample.
+`tcrsift prioritize` selects panels by these names (`--signatures`,
+`--context`), scoring each cell as the mean of within-sample z-scored positive
+genes minus negative genes:
 
-| Name | Up | Down | Where the gene list comes from |
+| Name | Up genes | Down genes | Provenance |
 | --- | --- | --- | --- |
-| `Differentiated` | IFNG, GZMB, PRF1, GNLY, NKG7 | TCF7, LEF1, CCR7, SELL | TCRsift's authors, from textbook effector and naive markers; composition settled on the in-vitro MART-1 pilot ([reproducibility map](../reproducibility_map.md)) |
-| `AntigenExperienced` | IFNG, GZMB, PRF1, GNLY, NKG7 | | TCRsift's authors: the "up" half of `Differentiated` |
-| `Cytolytic` | PRF1, GZMB | | TCRsift's authors: perforin and granzyme B, as used in [Caushi 2021](https://doi.org/10.1038/s41586-021-03752-4), [Krishna 2020](https://doi.org/10.1126/science.abb9847) and [Hanada 2022](https://doi.org/10.1016/j.ccell.2022.03.012) |
-| `AcuteActivation` | TNFRSF9, MKI67 | | TCRsift's authors: 4-1BB and Ki-67, split out of `AntigenExperienced` after the same pilot |
-| `Proliferation` | MKI67 | | TCRsift's authors: Ki-67 alone |
-| `AIM` | TNFRSF9, TNFRSF4 | | TCRsift's authors: transcripts of the 4-1BB and OX40 markers read by activation-induced-marker assays |
-| `TumorReactive` | CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE | | TCRsift's authors: CD39 and CD103 after [Simoni 2018](https://doi.org/10.1038/s41586-018-0130-2) and [Duhen 2018](https://doi.org/10.1038/s41467-018-05072-0), plus CXCL13 and six widely used exhaustion markers |
+| `Differentiated` | `IFNG, GZMB, PRF1, GNLY, NKG7` | `TCF7, LEF1, CCR7, SELL` | Canonical effector minus naive/stem markers, fixed on the two-donor MART-1 pilot ([reproducibility map](../reproducibility_map.md)) |
+| `AntigenExperienced` | `IFNG, GZMB, PRF1, GNLY, NKG7` | — | Positive arm of `Differentiated` |
+| `Cytolytic` | `PRF1, GZMB` | — | Perforin and granzyme B ([Caushi 2021](https://doi.org/10.1038/s41586-021-03752-4), [Krishna 2020](https://doi.org/10.1126/science.abb9847), [Hanada 2022](https://doi.org/10.1016/j.ccell.2022.03.012)) |
+| `AcuteActivation` | `TNFRSF9, MKI67` | — | 4-1BB and Ki-67, separated from `AntigenExperienced` after the MART-1 pilot |
+| `Proliferation` | `MKI67` | — | Ki-67 alone |
+| `AIM` | `TNFRSF9, TNFRSF4` | — | 4-1BB and OX40 mRNAs corresponding to surface AIM sorting |
+| `TumorReactive` | `CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE` | — | CD39 and CD103 ([Simoni 2018](https://doi.org/10.1038/s41586-018-0130-2), [Duhen 2018](https://doi.org/10.1038/s41467-018-05072-0)) plus `CXCL13` and six TIL exhaustion markers |
 
-None of these seven is a published gene set. They are short marker lists
-written by TCRsift's authors; the published sets (`NeoTCR8`, `NeoTCR4`,
-`MANAscore`) are in the registry below.
+`Broad` variants and `CirculatingMemory` are also registered in `SIGNATURES`.
+Note that nine-gene `TumorReactive` above is broader than the two-gene
+`tumor_reactive` entry in `T_CELL_SIGNATURES`. Empirical AUROCs across five
+public tumor datasets are reported in [Benchmark on public TIL
+data](../benchmarks.md).
 
-`TumorReactive` here is broader than the two-gene `tumor_reactive` panel in
-the table above. `Broad` variants and `CirculatingMemory` are also registered.
-How these perform against experimentally labelled clones is reported in the
-[evaluation on public data](../benchmarks.md).
+## Published neoantigen-reactivity registry (`NEOANTIGEN_SIGNATURES`)
 
-## Published neoantigen-reactivity registry
+`score_by_name` dispatches each signature using its registered scoring method:
 
-`score_by_name` dispatches each entry according to its registered method
-instead of treating unlike signatures as interchangeable weighted sums.
-
-| Name | Source | TCRsift implementation |
+| Name | Reference | TCRsift scoring rule |
 | --- | --- | --- |
-| `MANAscore` | Zeng/Smith, Nature Communications 2025 (PMID 39900903) | Transparent signed-z proxy: `(z(CXCL13) + z(ENTPD1) - z(IL7R)) / sqrt(3)`. The paper's trained RF+linear ensemble is not shipped and this proxy must not be described as the original fitted model. |
-| `NeoTCR8` | Lowery/Rosenberg, Science 2022 (PMID 35113651) | Published 243-gene CD8 set, unweighted gene-set enrichment |
-| `NeoTCR4` | Lowery/Rosenberg, Science 2022 (PMID 35113651) | Published 40-gene CD4 set, unweighted gene-set enrichment |
-| `NeoTCR_PBL` | Yossef/Rosenberg, Cancer Cell 2023 (PMID 38039963) | Published 151-gene circulating CD8 set, unweighted gene-set enrichment; use for blood, not as the default TIL signature |
+| `MANAscore` | Zeng et al., *Nat Commun* 2025 (PMID 39900903) | Unweighted three-gene signed-z proxy: `(z(CXCL13) + z(ENTPD1) - z(IL7R)) / sqrt(3)`. Does not run the paper's fitted random-forest/linear ensemble. |
+| `NeoTCR8` | Lowery et al., *Science* 2022 (PMID 35113651) | Published 243-gene CD8 set via Scanpy `score_genes` |
+| `NeoTCR4` | Lowery et al., *Science* 2022 (PMID 35113651) | Published 40-gene CD4 set via Scanpy `score_genes` |
+| `NeoTCR_PBL` | Yossef et al., *Cancer Cell* 2023 (PMID 38039963) | Published 151-gene circulating CD8 set via Scanpy `score_genes` (`blood-tumor` preset) |
 
-For `NeoTCR4`, `NeoTCR8`, and `NeoTCR_PBL`, pass an AnnData object containing
-the full log-normalized gene universe in `.X`. These are Scanpy `score_genes`
-module scores: mean signature expression minus expression-matched control-gene
-expression, **not the papers' scGSEA scores**. The scorer explicitly uses `.X`,
-even if `.raw` exists. A bare DataFrame cannot supply the full universe for
-matched controls, so TCRsift warns and falls back to a mean-z proxy. Registry
-input units are `log1p`, not ranks. Numeric thresholds from scGSEA do not transfer.
-For the bare-DataFrame proxy, the default now applies `log1p` before per-gene
-standardization, consistently with other signatures. Pass `log1p=False` when
-the DataFrame already contains log-normalized values. AnnData module scoring
-expects `.X` to already be log-normalized and does not apply another logarithm.
+Scoring notes for `NeoTCR4`, `NeoTCR8`, and `NeoTCR_PBL`:
+
+- **AnnData inputs:** pass an `AnnData` whose `.X` contains the full
+  `log1p(CP10K)`-normalized transcriptome with `log1p=False` (`score_by_name`
+  always reads `.X` rather than `.raw`, and does not apply a second logarithm).
+  Scores are Scanpy `score_genes` module scores (signature mean minus
+  expression-matched control-gene mean), **not** single-cell GSEA; numeric
+  scGSEA cutoffs from the original papers do not transfer.
+- **DataFrame inputs:** because a subset `DataFrame` lacks the full gene
+  universe needed for expression-matched control bins, `score_by_name` warns
+  and falls back to mean per-gene z-scores (applying `log1p` first by default;
+  pass `log1p=False` if values are already log-normalized).
 
 ## Usage
 
-Compact unsigned programs:
+Compact unsigned panels:
 
 ```python
 from tcrsift import compute_signature_scores_per_cell
 
 compute_signature_scores_per_cell(adata)
-print([column for column in adata.obs if column.startswith("signature_")])
+print([col for col in adata.obs if col.startswith("signature_")])
 ```
 
-Published/signed methods:
+Signed and published signatures:
 
 ```python
 import scanpy as sc
@@ -101,29 +100,26 @@ sc.pp.normalize_total(adata, target_sum=10_000)
 sc.pp.log1p(adata)
 
 for name in ("MANAscore", "NeoTCR8", "NeoTCR4"):
-    # X is already log1p(CP10K), so do not log it again.
     score_by_name(adata, name, log1p=False, key_added=f"signature_{name}")
 ```
 
-For multiple samples, score within each sample or donor before aggregating
-clones; otherwise sample-level expression shifts can dominate the result. See
-[Multi-sample TIL prioritization](../user-guide/til-signatures.md) for a
-complete example.
+In multi-sample cohorts, normalize and score within each sample before
+aggregating clonotypes so sample-wide baseline shifts do not dominate rankings;
+see [Clone Prioritization](../user-guide/til-signatures.md).
 
 ## Cell-type and state registries
 
-The per-cell annotator (`tcrsift.annotate_cells`) also exposes:
+Used by [`tcrsift.annotate_cells`](../user-guide/atlas.md):
 
-| Constant | What it contains |
+| Registry constant | Contents |
 | --- | --- |
-| `CELL_TYPE_SIGNATURES` | Blood/PBMC-oriented default cell-type registry |
-| `PBMC_CELL_TYPE_SIGNATURES` | Explicit alias for that default |
-| `SOLID_TUMOR_CELL_TYPE_SIGNATURES` | Default plus solid-tissue lineages |
-| `T_STATE_SIGNATURES`, `B_STATE_SIGNATURES` | T- and B-cell sub-state registries |
-| `PBMC_CULTURE_TYPES` | Type allow-list for PBMC/culture annotation |
+| `CELL_TYPE_SIGNATURES` / `PBMC_CELL_TYPE_SIGNATURES` | Default blood/PBMC immune and basic stromal cell-type markers |
+| `SOLID_TUMOR_CELL_TYPE_SIGNATURES` | PBMC lineages plus solid-tissue stromal, neural, muscle, mesothelial, and osteoclast markers |
+| `T_STATE_SIGNATURES`, `B_STATE_SIGNATURES` | T-cell and B-cell functional sub-state markers |
+| `PBMC_CULTURE_TYPES` | Cell-type allow-list for Ficoll-isolated PBMC cultures |
 
-Malignant-cell calls are handled by `MarkerCountOverride`/`tumor_override`,
-not by adding a “malignant” expression signature to this registry.
+Malignant clusters are typed with `tumor_override` / `MarkerCountOverride`
+rather than a fixed signature in these registries.
 
 ::: tcrsift.signatures
     options:

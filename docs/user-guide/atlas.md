@@ -1,188 +1,193 @@
-# Single-Cell Atlas Path
+# Single-Cell Atlas Workflow
 
-Alongside the TCR-selection pipeline, TCRsift ships a gene-expression **atlas
-path** that QCs, embeds, and annotates an `AnnData` of single cells:
+Alongside clonotype prioritization, TCRsift provides a three-step single-cell
+gene-expression workflow (quality control, embedding, and cluster annotation)
+for building cell-level atlases from raw-count `AnnData` objects:
 
 ```
 cell_qc_funnel  →  embed_cells  →  annotate_cells / annotate_clusters
-  (per-cell QC       (Pearson-residual        (per-cluster cell-type +
-   + doublet          PCA → Harmony →           T/B-state argmax with
-   funnel)            UMAP → Leiden)            biology-aware gates)
+  (coverage,         (Pearson-residual        (cluster-level cell-type
+   mito, and          PCA → Harmony →          and T/B-state scoring)
+   doublet filters)   UMAP → Leiden)
 ```
 
-These are library functions; on the command line they are the
-[`tcrsift cells qc` / `cells embed` / `cells annotate`](cli.md#tcrsift-cells)
-subcommands. Everything below runs on a raw-count `AnnData` — for example the
-object returned by `tcrsift.load_sample`.
+These functions are available in Python and through the
+[`tcrsift cells qc`, `cells embed`, and `cells annotate`](cli.md#tcrsift-cells)
+CLI subcommands. All three steps expect raw UMI counts in `adata.X` (or
+`adata.layers["counts"]`), such as the `AnnData` returned by
+`tcrsift.load_sample`.
 
-## End to end
+## End-to-end Python example
 
 ```python
-import scanpy as sc
-from tcrsift import cell_qc_funnel, embed_cells, annotate_cells
-from tcrsift.config import LoadConfig, EmbedConfig
+from tcrsift import annotate_cells, cell_qc_funnel, embed_cells
+from tcrsift.config import EmbedConfig, LoadConfig
 
-# adata.X is RAW COUNTS (or provide adata.layers["counts"]).
+# 1. Per-cell QC and doublet filtering.
+#    Passing LoadConfig() enables full PBMC coverage and mito bounds;
+#    waterfall_df records how many cells each step removed.
+adata, waterfall_df = cell_qc_funnel(adata, config=LoadConfig())
+print(waterfall_df)  # columns: [step, reason, removed, remaining]
 
-# 1) Per-cell QC + doublet funnel. Bare defaults are gentle (only the
-#    near-universal low-quality floors); the opinionated PBMC preset is one
-#    explicit config away. A returned waterfall makes the cull visible.
-adata, waterfall = cell_qc_funnel(adata, config=LoadConfig())
-print(waterfall)  # [step, reason, removed, remaining] per QC/doublet class
-
-# 2) Variance-stabilized embedding → Leiden clusters.
+# 2. Pearson-residual PCA, Harmony batch integration, UMAP, and Leiden clustering.
 atlas = embed_cells(adata, EmbedConfig(batch_key="sample"))
 
-# 3) Annotate: per-cluster cell-type + T/B-state argmax, written to
-#    obs["phenotype_base"] and obs["phenotype"].
+# 3. Cluster-level cell-type and T/B-state assignment
+#    (writes obs["phenotype_base"] and obs["phenotype"]).
 annotate_cells(atlas)
 print(atlas.obs["phenotype"].value_counts())
 ```
 
-## The default registries are blood/PBMC-oriented
+## Choosing PBMC vs solid-tumor references
 
-`annotate_cells` argmaxes each cluster over `CELL_TYPE_SIGNATURES`,
-`T_STATE_SIGNATURES`, and `B_STATE_SIGNATURES` from `tcrsift.signatures`. **These
-defaults are calibrated for blood / PBMC data.** `CELL_TYPE_SIGNATURES` covers
-the immune lineages and common stroma, but omits solid-tissue types a tumor
-atlas needs (mesothelial, osteoclast, skeletal muscle, adipocyte, Schwann/nerve),
-and its shared-type gene lists are PBMC-tuned. Running a solid-tumor atlas against
-the default gives confidently wrong calls (e.g. tumor cells argmax'd to
-Fibroblast) with no signal that the reference is blood-shaped.
+By default, `annotate_cells` scores clusters against `CELL_TYPE_SIGNATURES`,
+`T_STATE_SIGNATURES`, and `B_STATE_SIGNATURES` from `tcrsift.signatures`, and
+`cell_qc_funnel` checks cross-lineage doublets using `DEFAULT_LINEAGE_PROGRAMS`.
+**Both defaults are designed for blood and PBMC datasets.** Because
+`CELL_TYPE_SIGNATURES` omits non-hematopoietic solid-tissue lineages
+(mesothelial, osteoclast, skeletal muscle, adipocyte, Schwann/neural), applying
+the default reference to a solid-tumor sample will misclassify tumor or stromal
+clusters (often as `Fibroblast`).
 
-Override `reference=` (and, for tissue-specific states, `t_state_reference=` /
-`b_state_reference=`) — they are threaded to **both** the scorer and the
-per-cluster reader, so a caller-defined type or state is consistently scored and
-used rather than silently dropped:
+For solid tumors, pass the solid-tumor doublet and cell-type registries
+explicitly. Custom `reference`, `t_state_reference`, and `b_state_reference`
+dictionaries are forwarded to both signature scoring and cluster assignment:
 
 ```python
-from tcrsift.signatures import SOLID_TUMOR_CELL_TYPE_SIGNATURES
 from tcrsift.qc import SOLID_TUMOR_LINEAGE_PROGRAMS
+from tcrsift.signatures import SOLID_TUMOR_CELL_TYPE_SIGNATURES
 
-# QC doublet gate for solid tumor (folds osteoclasts into myeloid, keeps
-# fibroblast as the tumor+immune doublet handle):
-adata, wf = cell_qc_funnel(adata, config=LoadConfig(),
-                           lineage_sets=SOLID_TUMOR_LINEAGE_PROGRAMS)
+# Solid-tumor doublet rules (merges osteoclasts into myeloid and keeps
+# fibroblast collagen to catch tumor-immune doublets):
+adata, wf = cell_qc_funnel(
+    adata,
+    config=LoadConfig(),
+    lineage_sets=SOLID_TUMOR_LINEAGE_PROGRAMS,
+)
 
-# Annotation with the solid-tumor cell-type registry:
+# Solid-tumor cell-type reference:
 annotate_cells(atlas, reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES)
 ```
 
-`PBMC_CELL_TYPE_SIGNATURES` is an explicit alias for the default, so an override
-reads symmetrically against `SOLID_TUMOR_CELL_TYPE_SIGNATURES`.
+`PBMC_CELL_TYPE_SIGNATURES` is exported as an explicit alias for
+`CELL_TYPE_SIGNATURES`.
 
-## Typing malignant cells (any cancer type)
+## Identifying malignant clusters with `tumor_override`
 
-Malignant cells are **not** a signature in either registry — a tumor cluster
-often shares collagen with fibroblasts and loses the argmax, and there is no
-reliable pan-cancer tumor expression program. Type it on positive marker-count
-evidence instead. `tumor_override` wires the h37-style rule in one line:
+Neither cell-type registry includes a generic malignant signature, because
+malignant transcriptional programs vary widely by cancer type and collagen-rich
+tumor clusters otherwise score as fibroblasts. Instead, `tumor_override` labels
+malignant clusters from cancer-testis antigen (CTA) co-expression and optional
+lineage transcription factors:
 
-- **primary** — relabel `Tumor` if a fraction of cells each express ≥2 distinct
-  markers from your panel; **or**
-- **rescue** — a lineage-TF is high **and** ≥1 marker shows in a fraction of
-  cells (catches low-coverage tumor whose sparse markers dropped below the
-  primary bar).
+- **Primary rule:** relabel a cluster `Tumor` when at least a target fraction
+  of cells each express ≥2 distinct genes from the marker panel.
+- **Rescue rule:** relabel `Tumor` when a tissue lineage transcription factor
+  is elevated **and** ≥1 panel marker is expressed in a target fraction of
+  cells (recovering lower-coverage malignant clusters).
 
-The marker panel defaults to **oncoref's** curated pan-cancer CTA set —
-`oncoref.CTA_gene_names()` unioned with `oncoref.cta_clinical_target_gene_names()`
-(canonical clinically-expressed CTAs like NY-ESO-1/CTAG2 and MAGEA11 that
-testis-restriction filtering drops but are real tumor markers). CTAs are shared
-across solid tumors, so the panel is reused across cancers and only the
-lineage-TF rescue is tissue-specific:
+By default, the marker panel combines `oncoref.CTA_gene_names()` with
+`oncoref.cta_clinical_target_gene_names()` (retaining clinically validated CTAs
+such as `CTAG1B` [NY-ESO-1], `CTAG2` [LAGE-1], and `MAGEA11` alongside strictly
+testis-restricted genes). Only the rescue transcription factors need to be
+specified per tumor histology:
 
 ```python
+import oncoref
 from tcrsift.annotate_cells import tumor_override
 
-osteosarcoma = tumor_override(lineage_tfs=["RUNX2", "SATB2"])  # panel auto-filled
-annotate_cells(atlas, reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES,
-               overrides=[osteosarcoma])
+# Osteosarcoma: default CTA panel + bone/mesenchymal lineage TFs
+osteosarcoma = tumor_override(lineage_tfs=["RUNX2", "SATB2"])
+annotate_cells(
+    atlas,
+    reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES,
+    overrides=[osteosarcoma],
+)
+
+# Melanoma
+melanoma = tumor_override(lineage_tfs=["MITF", "SOX10"])
+
+# Primary CTA rule only (no lineage-TF rescue)
+cta_only = tumor_override()
+
+# Custom stricter panel (testis-restricted CTAs only)
+strict_melanoma = tumor_override(
+    oncoref.CTA_testis_restricted_gene_names(),
+    lineage_tfs=["MITF"],
+)
 ```
 
-Adapting to another cancer is usually just swapping the rescue TFs (omit
-`lineage_tfs` for the primary bar alone); override `gene_set` when you want a
-tighter or tuned oncoref panel:
+`tumor_override` returns a `MarkerCountOverride` instance; construct
+`MarkerCountOverride` directly when customizing `min_expr`, `count_col`, or
+cluster fractions.
+
+## Sub-clustering compartments with `refine_cluster`
+
+Global Leiden clustering prioritizes broad lineage differences and often merges
+finer populations within a compartment, such as pDCs and cDC1s inside myeloid
+clusters, or γδ T cells co-clustering with cytotoxic αβ CD8 T cells.
+`refine_cluster` isolates a subset of cells, re-computes Pearson-residual PCA
+and Leiden clusters within that subset alone, and passes each sub-cluster to a
+callback (`relabel_fn`) that assigns updated labels.
+
+The re-clustering pipeline runs `counts → normalize_pearson_residuals →
+nan_to_num → pca(n_comps=min(n_pcs, n_obs-1, n_vars-1)) →
+neighbors(n_neighbors) → leiden(resolution, flavor="igraph", n_iterations=2,
+directed=False)` with a fixed `random_state` and no UMAP step. When
+`informative_genes` is supplied, that gene list is used without further
+filtering.
+
+TCRsift includes `gd_cd8_relabel` for separating γδ T cells from αβ CD8 T
+cells:
 
 ```python
-tumor_override(lineage_tfs=["MITF", "SOX10"])                    # melanoma
-tumor_override()                                                 # no rescue signal
-# a tighter, testis-restricted panel:
-import oncoref
-tumor_override(oncoref.CTA_testis_restricted_gene_names(), lineage_tfs=["MITF"])
-```
+from tcrsift import gd_cd8_relabel, refine_cluster
 
-`tumor_override` returns a `MarkerCountOverride`, so you can still reach for the
-class directly when you need finer control (custom `min_expr`, `count_col`, …).
-
-## Recovering sub-structure with `refine_cluster`
-
-`annotate_clusters` labels clusters over the **global** embedding, whose axes are
-dominated by whole-atlas structure. Biology that lives *within* a compartment —
-rare pDC/cDC1 co-embedded in myeloid, genuine γδ vs ambient-αβ CD8 sharing one
-cytotoxic cluster, tumor sub-states — doesn't resolve there. `refine_cluster` is
-the general recovery pass: it isolates a compartment, **re-embeds it alone** on
-its own Pearson residuals, sub-clusters it, and hands each sub-cluster to a
-caller callback that names it. The discriminating logic lives entirely in
-`relabel_fn` — the same primitive drives γδ/αβ-CD8 disaggregation, DC recovery,
-and tumor sub-state splitting.
-
-The re-embed is a **fixed, exposed recipe**: `counts → normalize_pearson_residuals
-→ nan_to_num → pca(n_comps=min(n_pcs, n_obs-1, n_vars-1)) → neighbors(n_neighbors)
-→ leiden(resolution, flavor="igraph", n_iterations=2, directed=False)`, all on
-`random_state`, no UMAP. When you pass `informative_genes` the clustering panel
-is used **verbatim** — no MT/receptor/min-cells curation — so a hand-rolled pass
-running the identical steps and seeds reproduces the sub-partition byte-for-byte
-and can be retired in favor of this primitive.
-
-γδ/αβ-CD8 disaggregation ships as a ready `relabel_fn`, `gd_cd8_relabel`:
-
-```python
-from tcrsift import refine_cluster, gd_cd8_relabel
-
-# has_ab_contig is a caller-populated bool obs column — materialize it however
-# your VDJ capture is encoded. For a "α/β" paired-CDR3 string:
+# Populate a boolean obs column indicating paired/productive αβ VDJ capture:
 s = atlas.obs["CDR3a/b"].astype(str)
-atlas.obs["has_ab_contig"] = (s != "/") & (s != "") & s.str.contains("[A-Z]", regex=True)
+atlas.obs["has_ab_contig"] = (
+    (s != "/") & (s != "") & s.str.contains("[A-Z]", regex=True)
+)
 
 refine_cluster(
-    atlas,                          # mutated in place
-    "CD8 T",                        # compartment: label / bool mask / index / predicate
-    relabel_fn=gd_cd8_relabel(),    # TRDC>=0.9 (log1p CP10K) AND αβ-capture<0.25 → γδ
-    informative_genes=panel,        # used verbatim
+    atlas,                          # modified in place
+    "CD8 T",                        # label in label_col, bool mask, index, or callable
+    relabel_fn=gd_cd8_relabel(),    # mean TRDC >= 0.9 (log1p CP10K) and αβ capture < 0.25
+    informative_genes=panel,
     resolution=0.5,
     n_pcs=30,
-    min_cells=51,                   # skip compartments too small to re-embed
+    min_cells=51,                   # skip compartments smaller than min_cells
     label_col="phenotype_base",
     final_cluster_col="final_cluster",
 )
 ```
 
-`gd_cd8_relabel` calls a sub-cluster γδ **iff both** its mean `TRDC` (read from
-`.X`, so keep it on the log1p-CP10K scale the 0.9 cutoff assumes) clears
-`trdc_min` **and** its mean `has_ab_contig` is below `ab_max` — aggregating per
-sub-cluster is what makes it robust to the ~46% per-cell `TRDC` dropout. It
-returns `("gd T", "gdt")` or `("CD8 effector/cytotoxic", "gdt_cd8")`, and warns
-(doesn't fail) when a sub-cluster's mean capture lands between the two regimes.
-All of that — gene, obs column, thresholds, labels — is overridable.
+`gd_cd8_relabel` classifies a sub-cluster as γδ T (`("gd T", "gdt")`) only when
+its sub-cluster mean `TRDC` expression in `.X` (on `log1p(CP10K)`) meets
+`trdc_min` **and** its mean `has_ab_contig` fraction falls below `ab_max`;
+averaging across the sub-cluster compensates for single-cell `TRDC` dropout.
+Otherwise it returns `("CD8 effector/cytotoxic", "gdt_cd8")`, logging a warning
+when αβ capture falls in an intermediate range. Gene symbol, `obs` column,
+thresholds, and output labels are all configurable.
 
-Writing your own `relabel_fn` is the general path: it receives a copy of one
-sub-cluster (original-scale `.X`, `obs` intact, plus `obs["leiden"]` = the local
-sub-cluster id) and returns a label, a `(label, final_cluster)` pair, or `None`
-to leave it unchanged. `mask` selects the compartment (a label matched against
-`label_col`, a boolean mask, a positional-index list, or a predicate `adata ->
-mask`); only those cells' labels are touched. Compartments smaller than
-`min_cells` are skipped.
+Custom `relabel_fn` callbacks receive a copy of one sub-cluster (`adata` with
+original `.X`, `obs`, and local `obs["leiden"]`) and return a new label string,
+a `(label, final_cluster)` tuple, or `None` to leave existing labels unchanged.
 
-## Notes
+## Parameter and QC details
 
-- **Config**: `cell_qc_funnel(config=...)` accepts a top-level `TCRsiftConfig`
-  (unwrapped to its `.load` section) or a flat `LoadConfig`; explicit kwargs win
-  over `config` win over the built-in defaults. Passing `None` for any bound
-  disables it.
-- **`pct_counts_mt`**: the funnel leaves a caller's pre-existing `pct_counts_mt`
-  (e.g. from `scanpy.pp.calculate_qc_metrics`) untouched and only computes it when
-  absent; the mito gate runs off its own arithmetic either way.
-- **Culture restriction**: for a Ficoll-isolated PBMC / peptide-stimulated
-  culture, pass `allowed_types=tcrsift.signatures.PBMC_CULTURE_TYPES` so a
-  cultured moDC/macrophage cluster can't win a stromal signature it shares an
-  activation program with.
+- **Threshold precedence in `cell_qc_funnel`.** Without a `config` argument,
+  only `min_genes=250`, `min_counts=500`, and `max_mito_pct=8` are active
+  (`max_genes`, `max_counts`, and `min_mito_pct` default to `None`). Passing a
+  `LoadConfig` or top-level `TCRsiftConfig` supplies full PBMC bounds, and
+  explicit keyword arguments override `config` values (passing `None` disables
+  any individual bound). Any single step that removes more than `warn_frac`
+  (default 10%) of entering cells logs a warning.
+- **Mitochondrial percentage calculation.** If `adata.obs["pct_counts_mt"]` is
+  already present, `cell_qc_funnel` leaves that column unchanged; however, the
+  mitochondrial filter itself always evaluates mitochondrial fraction directly
+  from raw counts.
+- **Stimulated PBMC cultures.** For Ficoll-isolated PBMC cultures without solid
+  stroma, pass `allowed_types=tcrsift.signatures.PBMC_CULTURE_TYPES` to
+  `annotate_cells` so activated monocyte-derived DCs or macrophages are not
+  assigned stromal labels.

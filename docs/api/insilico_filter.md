@@ -1,45 +1,44 @@
-# In-silico filter layer
+# In-Silico Filter Layer
 
-A **stackable filter layer** (#149) that composes *on top of* the
-assay/enrichment groups (the sorts) and the selection rules. Each layer is
-a per-clone percentile predicate on an existing feature — Ppost
-([#143](seqprob.md)) or a GEX signature score
-([signatures](signatures.md)) — so a group can be progressively refined:
+`tcrsift.insilico_filter` applies composable percentile-rank predicates (such
+as low `Ppost` in [sequence probability](seqprob.md) or high/low expression
+signatures in [signatures](signatures.md)) within experimental sorting or
+enrichment groups:
 
 ```
 CTYneg
-CTYneg · Ppost^low
-CTYneg · Ppost^low · GEXnaive^low
-CTYneg · Ppost^low · GEXnaive^low · GEXresponse^high
+CTYneg + low Ppost
+CTYneg + low Ppost + low naive_stem
+CTYneg + low Ppost + low naive_stem + high antigen_response
 ```
 
-Applying the full stack yields one **named composite** subgroup (default
-label `IS`, for *in-silico*), so each assay group gains a filtered twin —
-`CTYneg` and `CTYneg+IS`. N assay groups → 2N groups, and the twins feed
-the cross-group Jaccard-overlap analysis.
+Applying a predicate list creates a filtered counterpart subgroup (default
+suffix `+IS`, for *in-silico*) alongside each original assay group (for
+example, `CTYneg` and `CTYneg+IS`), so cross-method Jaccard overlap can be
+compared before and after in-silico filtering.
 
-## Scoring conventions
+## Ranking conventions
 
-- Each predicate is a **lower-is-better percentile rank** in `[0, 1]`
-  (0 = best). `direction="high"` flips it so high scores win
-  (e.g. `GEXresponse^high` → `−antigen_response`).
-- Tie handling keeps `Ppost == 0` a valid **best** value and groups all
-  equal scores together (`rank(method="average"/"min")`) — never dropped.
-- A clone **passes** a predicate when its percentile rank ≤ the predicate's
-  `percentile`. A missing score never passes.
-- With a group column, ranks are computed **within each assay group**, so
-  the filter refines each group against its own distribution.
-- The composite's own ranking metric is the **average of the per-dimension
-  percentile ranks** → top-k or a percentile cut.
+- Every predicate converts its feature to a **lower-is-better percentile rank**
+  in `[0, 1]` (`0` = best). Setting `direction="high"` ranks values in
+  descending order so high values rank near `0`.
+- Equal values share a tied rank (`average` or `min`) rather than being
+  dropped, preserving `Ppost == 0` as a valid minimum.
+- A clone passes a predicate when its percentile rank is `<= percentile`; `NaN`
+  values always fail.
+- When `group_col` is supplied, percentile ranks are computed independently
+  within each assay group.
+- `average_percentile_rank` averages the per-predicate percentile ranks to
+  provide a composite ranking score.
 
-## Config
+## Configuration
 
 ```yaml
 insilico_filter:
   label: IS
   predicates:
-    - {score: log10_ppost,             direction: low,  percentile: 0.5}
-    - {score: signature_naive_stem,    direction: low,  percentile: 0.5}
+    - {score: log10_ppost,                direction: low,  percentile: 0.5}
+    - {score: signature_naive_stem,       direction: low,  percentile: 0.5}
     - {score: signature_antigen_response, direction: high, percentile: 0.5}
 ```
 
@@ -47,17 +46,19 @@ insilico_filter:
 
 ```python
 from tcrsift.insilico_filter import (
-    predicates_from_config, apply_insilico_filter, insilico_overlap_long,
+    apply_insilico_filter,
+    insilico_overlap_long,
+    predicates_from_config,
 )
 
 preds = predicates_from_config(config.insilico_filter)
 
-# Annotate each clone with pass-flag, avg rank, and composite group name:
+# Add pass boolean, mean percentile rank, and composite subgroup label:
 clones = apply_insilico_filter(clones, preds, group_col="method", label="IS")
 
-# Jaccard overlap across base groups AND their +IS twins:
+# Compute pairwise overlap across base groups and their +IS counterparts:
 mats = insilico_overlap_long(clones, preds, group_col="method")
-jaccard = mats["jaccard"]   # e.g. does AIMpos+IS overlap tetpos+IS more?
+jaccard = mats["jaccard"]
 ```
 
 ::: tcrsift.insilico_filter

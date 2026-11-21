@@ -1,129 +1,39 @@
-# Future Plans and Known Limitations
+# Known Limitations and Roadmap
 
-This document tracks known limitations and planned future enhancements for TCRsift.
+## Species support
 
-## Species Limitations
+TCRsift currently targets **human** α/β TCR and GEX datasets:
 
-**Current Status:** TCRsift currently only supports **human** TCR data.
+1. **Constant-region references (`tcrsift/assemble.py`):** packaged canonical
+   sequences (`tcrsift/refseqs/canonical_constants.fasta`) cover human `TRAC`,
+   `TRBC1`, and `TRBC2`, and C-terminus QC checks validate human sequence
+   endings.
+2. **Leader sequences (`tcrsift/assemble.py`, `tcrsift/leaders.py`):** bundled
+   IMGT V-gene leader tables (`vgene_leaders.csv.gz`) are *Homo sapiens*
+   `TRAV`/`TRBV` alleles, and predefined signal peptides (`CD8A`, `CD28`,
+   `TRAC`, `TRBC`, plus murine `IgK`) use human codon optimization.
+3. **Gene symbols and background models:** `loader.py`, `phenotype.py`,
+   `signatures.py`, and `seqprob.py` assume human HGNC symbols (`CD3D/E/G`,
+   `CD4`, `CD8A/B`, `TRAV`/`TRBV`) and human PBMC/OLGA CDR3 backgrounds.
 
-### Human-Specific Components
+### Multi-species design sketch
 
-The following components are hardcoded for human:
+Supporting mouse (*Mus musculus*) or non-human primate data requires
+parameterizing species-specific reference tables:
 
-1. **Constant Region Sequences** (`assemble.py`)
-   - Uses `pyensembl` with human genome (GRCh38, release 93)
-   - Fetches TRAC, TRBC1, TRBC2 sequences from Ensembl
-   - Constant region QC checks use human sequence endings
+- Constant-region FASTAs (`Trac`, `Trbc1`, `Trbc2`) and murine codon tables
+- IMGT leader tables and `Tr[ab][vdjc]` gene-name regexes
+- Mouse marker symbols (`Cd3d`, `Cd3e`, `Cd3g`, `Cd4`, `Cd8a`, `Cd8b1`) and
+  signature ortholog mappings
+- Species filtering when matching VDJdb and IEDB
 
-2. **Default Leader Sequences** (`assemble.py`)
-   - CD8A, CD28, IgK, TRAC, TRBC leaders are human sequences
-   - DNA codons are human codon-optimized
+If you need support for a non-human species, open an issue at
+<https://github.com/pirl-unc/tcrsift/issues> describing your assay format and
+reference build.
 
-3. **Gene Names** (`loader.py`, `clonotype.py`)
-   - Assumes human TCR gene nomenclature (TRAV, TRBV, etc.)
-   - CD marker genes (CD3D, CD3E, CD4, CD8A, CD8B) are human
+## Future directions
 
-4. **Public Database Matching** (`annotate.py`)
-   - VDJdb, IEDB, CEDAR matching assumes human TCR format
-   - CDR3 matching uses human conventions
-
-### Multi-Species Support Roadmap
-
-To support other species (mouse, non-human primates, etc.):
-
-#### Phase 1: Configuration-Based Species Selection
-
-```python
-# Proposed API
-from tcrsift import TCRsiftConfig
-
-config = TCRsiftConfig(species="mouse")  # or "human" (default)
-adata = load_samples(sample_sheet, config=config)
-```
-
-#### Phase 2: Species-Specific Reference Data
-
-1. **Create species modules:**
-   ```
-   tcrsift/
-     species/
-       __init__.py
-       human.py      # Current hardcoded data
-       mouse.py      # Mouse-specific sequences
-       base.py       # Abstract base class
-   ```
-
-2. **Each species module provides:**
-   - Constant region sequences (TRAC, TRBC1, TRBC2 equivalents)
-   - Default leader peptide sequences
-   - Gene name patterns (TRAV vs Trav)
-   - CD marker gene names
-   - Ensembl release and species name
-
-3. **Example species module structure:**
-   ```python
-   # tcrsift/species/mouse.py
-
-   ENSEMBL_RELEASE = 93
-   ENSEMBL_SPECIES = "mus_musculus"
-
-   CONSTANT_REGIONS = {
-       "TRAC": "...",
-       "TRBC1": "...",
-       "TRBC2": "...",
-   }
-
-   DEFAULT_LEADERS = {
-       "CD8A": {"aa": "...", "dna": "..."},
-       # ...
-   }
-
-   CD_MARKERS = {
-       "CD3": ["Cd3d", "Cd3e", "Cd3g"],
-       "CD4": ["Cd4"],
-       "CD8": ["Cd8a", "Cd8b1"],
-   }
-
-   TCR_GENE_PATTERN = r"Tr[ab][vdjc]\d+"
-   ```
-
-#### Phase 3: Database Updates
-
-1. Update VDJdb/IEDB/CEDAR loaders to filter by species
-2. Add species column to annotation outputs
-3. Support cross-species TCR comparison (humanized mouse TCRs, etc.)
-
-### Contributing Species Support
-
-If you need support for a specific species:
-
-1. Open an issue describing your use case
-2. Provide reference sequences if available (constant regions, leaders)
-3. Consider contributing a species module (see `tcrsift/species/` structure above)
-
-## Other Planned Features
-
-### Near-Term
-
-- [ ] Batch effect correction for multi-sample analyses
-- [ ] Integration with Seurat/Scanpy pipelines
-- [ ] HTML report generation improvements
-
-### Medium-Term
-
-- [ ] TCR clustering by sequence similarity
-- [ ] Structural modeling integration (AlphaFold, TCRmodel)
-- [ ] Neoantigen binding prediction integration
-
-### Long-Term
-
-- [ ] Web interface for non-programmers
-- [ ] Cloud deployment support
-- [ ] Real-time analysis of sequencing data
-
-## Feedback
-
-Please open issues at https://github.com/pirl-unc/tcrsift/issues for:
-- Species support requests
-- Feature requests
-- Bug reports
+- TCR sequence-similarity clustering across clonotypes
+- Depth-normalized CD3 gating and adaptive shortlist budgets for large cohorts
+- Expanded validation cohorts for `blood`, `mpe`, and `heme` prioritization
+  presets

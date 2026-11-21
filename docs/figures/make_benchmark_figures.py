@@ -27,7 +27,7 @@ LABELS = {"clone_size": "Clone size (baseline)", "MANAscore": "MANAscore proxy"}
 def auroc_forest(ax, rows, title, note=None, circular=()):
     """Dot and interval per signature. ``circular`` names signatures that were
     derived from the dataset being plotted: drawn hollow, in orange, and
-    labelled, because their score there is not an independent test."""
+    labeled, because their score there is not an independent test."""
     rows = rows.sort_values("auroc")
     y = range(len(rows))
     for i, row in zip(y, rows.itertuples()):
@@ -78,7 +78,7 @@ def signature_auroc():
 
 def auroc_by_dataset():
     """One independent signature across all five datasets. Datasets without
-    tested negatives (positives against unlabelled clones) are drawn hollow."""
+    tested negatives (positives against unlabeled clones) are drawn hollow."""
     table = pd.read_csv(RESULTS / "signature_auroc.csv")
     table = table[table.signature.eq("TumorReactive")]
     # (dataset, run, tissue, label, has tested negatives)
@@ -94,7 +94,7 @@ def auroc_by_dataset():
         ax.plot([row.auroc_low, row.auroc_high], [i, i], color=color, lw=2, solid_capstyle="round")
         ax.scatter([row.auroc], [i], s=55, color=color if tested else SURFACE, edgecolor=SURFACE if tested else color,
                    linewidth=1.5 if tested else 1.8, zorder=3)
-        versus = "tested negatives" if tested else "unlabelled"
+        versus = "tested negatives" if tested else "unlabeled"
         ax.text(1.03, i, f"{row.auroc:.2f}  ({row.n_positive} vs {row.n_negative} {versus})", va="center",
                 fontsize=9, color=INK)
     ax.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))

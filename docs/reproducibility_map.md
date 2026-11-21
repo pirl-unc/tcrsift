@@ -1,59 +1,71 @@
-# Signature reproducibility map — what RNA can and can't do
+# Signature reproducibility map
 
-The curated gene-signature set for clone selection, with an **honest map of
-what each is good for** (#145) — so you don't reach for RNA where the *TCR
-sequence* is the right tool. Derived from the B1-2/B1-3 MART-1 in-vitro
-expansion pilot (paired scRNA + VDJ, two donors).
+This page summarizes which gene-expression signatures replicate across donors
+in stimulated T-cell cultures, and when to use TCR sequence probability instead
+of RNA. These recommendations come from TCRsift's two-donor in-vitro MART-1
+peptide-expansion pilot (paired scRNA-seq and VDJ sequencing across multiple
+sorting and enrichment conditions).
 
-This map is queryable in code:
+You can query the same guidance metadata programmatically:
 
 ```python
 from tcrsift.signature_methods import (
-    SIGNATURE_GUIDANCE, recommended_signatures, RNA_REPRODUCIBILITY_NOTE,
+    SIGNATURE_GUIDANCE,
+    RNA_REPRODUCIBILITY_NOTE,
+    recommended_signatures,
 )
-recommended_signatures()        # ['Differentiated', 'AcuteActivation']
+
+recommended_signatures()                 # ['Differentiated', 'AcuteActivation']
 SIGNATURE_GUIDANCE["Differentiated"].use_for
 ```
 
-## Recommended — reproducible across donors
+## Recommended for stimulated cultures
 
-| Signature | Use for | Why it's reproducible |
+| Signature | Primary use | Evidence from the two-donor pilot |
 | --- | --- | --- |
-| **Differentiated** (effector − naïve/stem, signed; #141) | **clonal expansion** — which clones expanded in culture | Best RNA axis: separates expanded vs rare clones at AUROC up to 0.85, same direction in both donors. |
-| **AcuteActivation** (TNFRSF9/4-1BB, MKI67; #142/#303) | recent antigen response / proliferation; a pilot correlate of publicness | Lower in public TRAV12-2 clones across both donors in the MART-1 pilot, but both genes positively tracked culture expansion in the later compartment analysis. Use as supporting state evidence, not a standalone specificity or expansion call. |
+| **Differentiated** (`IFNG, GZMB, PRF1, GNLY, NKG7` minus `TCF7, LEF1, CCR7, SELL`) | Identifying clones that expanded in culture | Strongest and most consistent RNA axis: separates expanded from unexpanded clones at AUROC up to 0.85 in the same direction across both donors. |
+| **AcuteActivation** (`TNFRSF9`, `MKI67`) | Recent antigen stimulation and proliferation | Both genes tracked culture expansion across compartments; scores were also lower among public `TRAV12-2` clones in both donors. Best used alongside expansion or sequence publicness rather than alone. |
 
-## Situational — document, don't default
+## Situational signatures
 
-- **Cytolytic / AntigenExperienced** — effector program; correlated with an
-  AIM sort by construction (#142). Prefer Differentiated for the expansion
-  question.
-- **AIM / AIMBroad** — the transcriptional analogue of an AIMpos sort; use
-  to check sort/transcriptome concordance, not as an independent axis.
+- **Cytolytic (`PRF1, GZMB`) and AntigenExperienced (`IFNG, GZMB, PRF1, GNLY,
+  NKG7`).** Measure effector differentiation without subtracting naive/stem
+  markers, and correlate strongly with AIM-sorted populations by design. Prefer
+  `Differentiated` when ranking clonal expansion in culture.
+- **AIM and AIMBroad (`TNFRSF9, TNFRSF4` and extended panel).** Transcriptional
+  counterpart of surface 4-1BB/OX40 sorting; useful for checking concordance
+  between FACS gating and mRNA capture rather than as an independent selection
+  axis.
 
-## Wrong biology for short PBMC culture
+## Mismatched to short-term PBMC culture
 
-- **TumorReactive, exhaustion (CD39 / CXCL13 / TOX / CD103)** — chronic
-  in-situ exhaustion biology. Reads as **noise** in short PBMC culture;
-  meaningful only in fresh tissue TILs.
+- **TumorReactive and chronic exhaustion panels (`ENTPD1/CD39`, `CXCL13`,
+  `TOX`, `ITGAE/CD103`, `PDCD1`, `LAG3`, `HAVCR2`, `TIGIT`).** Reflect chronic
+  in-vivo antigen exposure and tissue residency in fresh TIL
+  ([public TIL benchmark](benchmarks.md)). In short-term peptide-stimulated
+  PBMC cultures, these genes behave largely as noise.
 
-## Documented limitation
+## What RNA does not recover: sequence publicness and cross-reactivity
 
-**RNA does not reproducibly recover the precursor-frequency /
-cross-reactivity axis.** Most signatures *flip direction between donors*; a
-cross-donor-validated transcriptome classifier (TCR genes removed, per
-#144) reaches only **AUROC ~0.62–0.69** for publicness, on a diffuse,
-non-interpretable gene set (ZBTB16, ISG15, IL7R, CCL20, stress genes — not
-a naïve program).
+Transcriptional state does **not** reliably separate private, high-specificity
+receptors from high-precursor-frequency public receptors (such as germline-biased
+`TRAV12-2` MART-1 binders). Most gene sets flip sign between donors on that
+task, and a cross-donor transcriptome classifier (with TCR V/J genes excluded)
+reaches only **AUROC 0.62–0.69** for sequence publicness using a diffuse mix of
+interferon, stress, and mucosal genes (`ZBTB16`, `ISG15`, `IL7R`, `CCL20`)
+rather than a coherent T-cell state.
 
-> For **high-specificity / high-avidity / low-cross-reactivity** selection,
-> use **Pgen/Ppost + sequence features** ([`tcrsift.seqprob`](api/seqprob.md),
-> #143), **not RNA**. RNA is for **differentiation / expansion state**, not
-> specificity.
+!!! important "Use sequence probability, not RNA, to filter public receptors"
+    To deprioritize common or easily generated CDR3 sequences, use repertoire
+    generation and observation probabilities (`Pgen` and `Ppost` in
+    [`tcrsift.seqprob`](api/seqprob.md)), not gene expression. Gene expression
+    informs **differentiation and activation state**, whereas TCR sequence
+    models inform **precursor frequency and publicness**.
 
-## Methodology note
+## Avoiding overfitting on small pilots
 
-Do **not** fit/trim signatures on the selection target. With n=2 donors,
-per-gene direction "consistency" is ~chance (≈3.5/7 agree by coin-flip), so
-trimming a signature to the genes that separate a label *here* is
-overfitting. Refine signatures from curated external references and
-validate cross-donor / cross-cohort.
+Do not select or trim signature gene lists to maximize separation on the cohort
+being analyzed. With two donors, half of any arbitrary seven-gene panel will
+agree in sign between donors by coin flip alone (~3.5 of 7 genes), so pruning a
+signature on pilot labels overfits quickly. Define gene panels from external
+biological literature and evaluate them on independent cohorts.

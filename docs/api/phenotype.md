@@ -1,6 +1,7 @@
 # Phenotyping API
 
-Module for T cell phenotype classification.
+Classify single cells into CD4+ and CD8+ T-cell categories from `CD3D/E/G`,
+`CD4`, and `CD8A/B` expression counts.
 
 ::: tcrsift.phenotype
     options:

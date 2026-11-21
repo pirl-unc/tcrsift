@@ -1,6 +1,7 @@
-# Annotation API
+# Database Annotation API
 
-Module for annotating clonotypes with public TCR databases.
+Match clonotypes against VDJdb, IEDB, and CEDAR epitope references and flag
+cataloged viral specificities.
 
 ::: tcrsift.annotate
     options:

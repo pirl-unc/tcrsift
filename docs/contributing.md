@@ -1,67 +1,44 @@
 # Contributing
 
-We welcome contributions to TCRsift!
+Bug fixes, documentation improvements, benchmarks, and new features are welcome
+via GitHub pull requests.
 
-## Development Setup
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/pirl-unc/tcrsift.git
-   cd tcrsift
-   ```
-
-2. Install in development mode:
-   ```bash
-   pip install -e ".[dev]"
-   ```
-
-3. Install pre-commit hooks:
-   ```bash
-   pre-commit install
-   ```
-
-## Running Tests
+## Development setup
 
 ```bash
-pytest tests/ -v
+git clone https://github.com/pirl-unc/tcrsift.git
+cd tcrsift
+pip install -e ".[dev,docs]"
 ```
 
-With coverage:
+TCRsift targets Python 3.9–3.12 on Linux and macOS.
+
+## Running tests and linters
 
 ```bash
+# Full test suite (add -n auto for parallel execution via pytest-xdist)
+pytest tests/
+
+# With coverage report
 pytest tests/ --cov=tcrsift --cov-report=term-missing
-```
 
-## Code Style
-
-We use:
-
-- **ruff** for linting
-- **pylint** for additional checks
-
-Run linting:
-
-```bash
+# Ruff and Pylint checks
 ./lint.sh
 ```
 
-## Documentation
-
-Build documentation locally:
+## Building documentation locally
 
 ```bash
-pip install mkdocs mkdocs-material mkdocstrings[python]
-mkdocs serve
+mkdocs serve          # Live preview at http://127.0.0.1:8000
+mkdocs build --strict # CI check: fails on broken internal links or warnings
 ```
 
-Then open http://localhost:8000.
+## Pull request checklist
 
-## Submitting Changes
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting
-5. Submit a pull request
-
-See [CONTRIBUTING.md](https://github.com/pirl-unc/tcrsift/blob/main/CONTRIBUTING.md) for detailed guidelines.
+- Document public functions and classes with
+  [NumPy-style docstrings](https://numpydoc.readthedocs.io/en/latest/format.html).
+- Include regression tests alongside bug fixes and behavioral tests for new
+  features.
+- Ensure `./lint.sh`, `pytest`, and `mkdocs build --strict` pass cleanly.
+- Follow the [Code of Conduct](https://github.com/pirl-unc/tcrsift/blob/main/code-of-conduct.md);
+  contributions are licensed under Apache 2.0.

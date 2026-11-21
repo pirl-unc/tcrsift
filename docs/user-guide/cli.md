@@ -1,20 +1,23 @@
 # CLI Reference
 
-TCRsift provides a command-line interface with subcommands for each pipeline step.
+Command-line interface for TCRsift. Pass `--help` to any subcommand for its
+complete flag list.
 
-## Global Options
+## Global options
 
 ```bash
-tcrsift --version      # Show version
-tcrsift -v             # Show version (short form)
-tcrsift --help         # Show help
+tcrsift --version      # Print version (short form: -v)
+tcrsift --help         # List all subcommands
 ```
 
-## Commands
+---
+
+## Primary workflows
 
 ### `tcrsift run`
 
-Run the complete pipeline.
+Run the end-to-end culture prioritization pipeline (`load → phenotype →
+clonotype → filter → annotate → match-til → assemble`).
 
 ```bash
 tcrsift run \
@@ -28,46 +31,69 @@ tcrsift run \
 ```
 
 | Option | Description |
-|--------|-------------|
-| `--sample-sheet`, `-s` | Path to sample sheet (required) |
-| `--output-dir`, `-o` | Output directory (required) |
-| `--config`, `-c` | YAML configuration file |
-| `--vdjdb` | Path to VDJdb |
-| `--iedb` | Path to IEDB |
-| `--cedar` | Path to CEDAR |
+| --- | --- |
+| `-s`, `--sample-sheet` | Sample sheet in YAML or CSV format (required) |
+| `-o`, `--output-dir` | Output directory (required) |
+| `-c`, `--config` | YAML configuration file |
+| `--vdjdb`, `--iedb`, `--cedar` | Paths to public TCR databases (auto-discovered from `tcrsift data` cache if omitted) |
+| `--cache-dir` | Override managed reference-database cache directory |
 | `--til-samples` | Comma-separated TIL sample names from the sample sheet |
-| `--til-sample` | Repeatable direct TIL sample spec: `NAME=TYPE:PATH` (TYPE: `csv`, `h5ad`, `vdj`) |
-| `--til-match-by` | TIL matching mode: `CDR3ab` or `CDR3b_only` |
-| `--tcell-type` | Filter type: `cd8`, `cd4`, `both` |
-| `--method` | Filter method: `threshold`, `logistic` |
-| `--no-report` | Skip generating summary report |
-| `--skip-plots` | Skip generating plots |
+| `--til-sample` | Repeatable external TIL source: `NAME=TYPE:PATH` (`TYPE` in `csv`, `h5ad`, `vdj`) |
+| `--til-match-by` | TIL matching key: `CDR3ab` (default) or `CDR3b_only` |
+| `--tcell-type` | Lineage filter: `cd8`, `cd4`, or `both` |
+| `--method` | Tiering method: `threshold` (default) or `logistic` |
+| `--fdr-scope` | Tiering scope: `auto` (default), `global`, `per-donor`, or `per-sample` |
+| `--no-pgen-ppost` | Skip default k-mer `Pgen`/`Ppost` scoring during clonotyping |
+| `--no-report` | Skip PDF summary report generation |
+| `--skip-plots` | Skip PNG plot generation |
 
-Use either `--til-samples` or `--til-sample`, not both.
+Pass either `--til-samples` or `--til-sample`, not both.
 
 ---
 
-### `tcrsift load`
+### `tcrsift prioritize` / `tcrsift til-prioritize`
 
-Load CellRanger data.
+Select a run-wide shortlist of clonotypes from one or more paired Cell Ranger
+VDJ + GEX samples by round-robin across gene-expression signature lists.
+Defaults: `cd8`, `--min-cd3 3`, up to 200 clones total, known MART-1 exclusion
+on, viral exclusion off (pass `--vdjdb`, `--iedb`, or `--cedar` explicitly to
+identify known MART-1 or viral matches). `til-prioritize` is an alias with
+`--context solid-tumor` as its default.
 
 ```bash
-tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
+tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 ```
 
 | Option | Description |
-|--------|-------------|
-| `--sample-sheet`, `-s` | Path to sample sheet (required) |
-| `-o`, `--output` | Output .h5ad file (required) |
+| --- | --- |
+| `--context` | Preset: `generic` (default for `prioritize`), `blood`, `blood-tumor`, `solid-tumor` (default for `til-prioritize`), `mpe`, `heme` |
+| `--tcell-type` | `cd8` (default), `cd4`, or `both` |
+| `--signatures NAME ...` | Explicit signature list replacing the context preset |
+| `--exclude-signatures NAME ...` | Signatures to drop from the preset |
+| `--max-clones N` | Run-wide shortlist cap (default `200`; `0` removes the cap while keeping cutoffs) |
+| `--signature-cutoff` | `background` (default size-matched resampling) or `legacy` (`score > 0`) |
+| `--signature-evidence` | `either` (default for `background`), `mean` (default for `legacy`), or `subset` |
+| `--signature-quantile` | Within-stratum percentile rank floor (default `0.90`; `0` disables) |
+| `--signature-background-quantile` | Random-group quantile for the mean floor (default `0.99`) |
+| `--min-signature-score` | Optional raw-score minimum (default unset in `background` mode, `0` in `legacy`) |
+| `--min-signature-support` | Minimum distinct signatures passing all cutoffs (each within a single stratum; default `1`) |
+| `--min-cd3` | Minimum summed raw `CD3D/E/G` counts per cell (default `3`; `0` disables) |
+| `--min-cells`, `--min-frequency` | Clone abundance floors (defaults `2`, `0.001`) |
+| `--vdjdb`, `--iedb`, `--cedar` | Reference databases for flagging known MART-1 and viral matches |
+| `--exclude-known-viral` | Exclude clones matching viral entries in VDJdb/IEDB/CEDAR |
+| `--no-exclude-known-mart1` | Retain known MART-1 database matches |
+
+See [Clone Prioritization](til-signatures.md) for all QC, VDJ, expression, V/J
+gene, CDR3 length, and subset-evidence options, and `tcrsift prioritize --help`
+for the full flag list.
 
 ---
 
 ### `tcrsift cells`
 
-The single-cell gene-expression path — QC → embed → annotate — as three
-`.h5ad`-in/`.h5ad`-out subcommands wrapping `cell_qc_funnel`, `embed_cells`, and
-`annotate_cells`. See the [Single-Cell Atlas Path](atlas.md) guide for the
-library equivalents and the solid-tumor overrides.
+Single-cell GEX atlas subcommands (`qc → embed → annotate`) operating on
+`.h5ad` files. See [Single-Cell Atlas Workflow](atlas.md) for Python equivalents
+and tumor-typing overrides.
 
 ```bash
 tcrsift cells qc       -i raw.h5ad   -o qc.h5ad    --min-genes 250 --max-mito 8
@@ -75,60 +101,76 @@ tcrsift cells embed    -i qc.h5ad    -o embed.h5ad --batch-key sample --resoluti
 tcrsift cells annotate -i embed.h5ad -o atlas.h5ad --solid-tumor
 ```
 
-**`cells qc`** — per-cell QC + doublet funnel.
+**`tcrsift cells qc`**: coverage, mitochondrial, and doublet filtering:
 
 | Option | Description |
-|--------|-------------|
-| `-i`, `--input` / `-o`, `--output` | Input (raw counts) / output .h5ad (required) |
-| `--min-genes` / `--max-genes` / `--min-counts` / `--max-counts` | Coverage bounds (`N` or `none` to disable; default: the funnel's) |
-| `--min-mito` / `--max-mito` | Mito-percent floor / ceiling (`N` or `none`) |
-| `--pbmc-preset` | Use the opinionated PBMC `LoadConfig()` thresholds as the baseline |
-| `--solid-tumor` | Use `SOLID_TUMOR_LINEAGE_PROGRAMS` for the cross-lineage doublet gate |
-| `--waterfall-csv` | Also write the QC waterfall to a CSV |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Raw-count input `.h5ad` and filtered output `.h5ad` (required) |
+| `--min-genes`, `--max-genes`, `--min-counts`, `--max-counts` | Per-cell coverage bounds (`N` or `none` to disable) |
+| `--min-mito`, `--max-mito` | Mitochondrial percentage floor and ceiling (`N` or `none`) |
+| `--pbmc-preset` | Start from full `LoadConfig()` PBMC bounds |
+| `--solid-tumor` | Use `SOLID_TUMOR_LINEAGE_PROGRAMS` for cross-lineage doublet detection |
+| `--waterfall-csv` | Write step-by-step cell removal counts to CSV |
 
-**`cells embed`** — Pearson-residual PCA → Harmony → UMAP → Leiden.
-
-| Option | Description |
-|--------|-------------|
-| `-i`, `--input` / `-o`, `--output` | Input (raw counts) / output .h5ad (required) |
-| `--batch-key` | obs column to integrate over with Harmony (default: none) |
-| `--resolution` / `--n-pcs` / `--n-neighbors` / `--n-top-genes` / `--seed` | Clustering knobs |
-
-**`cells annotate`** — per-cluster cell-type + T/B-state labels.
+**`tcrsift cells embed`**: Pearson-residual PCA, Harmony, UMAP, and Leiden
+(requires `pip install "tcrsift[atlas]"`):
 
 | Option | Description |
-|--------|-------------|
-| `-i`, `--input` (has `obs['leiden']`) / `-o`, `--output` | Input / output .h5ad (required) |
-| `--leiden-col` | Cluster column in obs (default: `leiden`) |
-| `--solid-tumor` | Use `SOLID_TUMOR_CELL_TYPE_SIGNATURES` instead of the PBMC default |
-| `--pbmc-culture` | Restrict the argmax to `PBMC_CULTURE_TYPES` |
-| `--min-subtype-frac` / `--no-suffix` | Distinguishing-gene-suffix controls |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Input (raw counts) and embedded output `.h5ad` (required) |
+| `--batch-key` | `obs` column integrated by Harmony (default: none) |
+| `--resolution`, `--n-pcs`, `--n-neighbors`, `--n-top-genes`, `--seed` | PCA, neighbor-graph, and Leiden parameters |
 
-Requires the `atlas` extra (`pip install 'tcrsift[atlas]'`) for `embed`.
+**`tcrsift cells annotate`**: cluster-level cell-type and T/B-state assignment:
+
+| Option | Description |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Clustered input (`obs["leiden"]`) and annotated output `.h5ad` (required) |
+| `--leiden-col` | Cluster column in `obs` (default `leiden`) |
+| `--solid-tumor` | Score `SOLID_TUMOR_CELL_TYPE_SIGNATURES` instead of the PBMC default |
+| `--pbmc-culture` | Restrict candidate cell types to `PBMC_CULTURE_TYPES` |
+| `--min-subtype-frac`, `--no-suffix` | Controls for distinguishing-gene state suffixes |
+
+---
+
+## Step-by-step pipeline commands
+
+### `tcrsift load`
+
+Load Cell Ranger VDJ and GEX directories from a sample sheet into one `.h5ad`
+file.
+
+```bash
+tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
+```
+
+| Option | Description |
+| --- | --- |
+| `-s`, `--sample-sheet` | Sample sheet path (required) |
+| `-o`, `--output` | Output `.h5ad` path (required) |
 
 ---
 
 ### `tcrsift phenotype`
 
-Classify cells as CD4+ or CD8+.
+Classify cells into CD4+ and CD8+ categories and apply the CD3 count floor.
 
 ```bash
 tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --cd4-cd8-ratio 3.0 --min-cd3-reads 3
 ```
 
 | Option | Description |
-|--------|-------------|
-| `-i`, `--input` | Input .h5ad file (required) |
-| `-o`, `--output` | Output .h5ad file (required) |
-| `--cd4-cd8-ratio` | CD4/CD8 ratio threshold (default: 3.0) |
-| `--min-cd3-reads` | Minimum CD3 reads (default: 3; 0 disables) |
-| `--plot-phenotype` | Save phenotype plot |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Input and output `.h5ad` paths (required) |
+| `--cd4-cd8-ratio` | Expression ratio threshold for confident calls (default `3.0`) |
+| `--min-cd3-reads` | Minimum summed `CD3D/E/G` counts (default `3`; `0` disables) |
+| `--plot-phenotype` | Generate phenotype summary plots (written to `--output-dir`) |
 
 ---
 
 ### `tcrsift clonotype`
 
-Aggregate cells into clonotypes.
+Group cells into clonotypes by CDR3 sequence.
 
 ```bash
 tcrsift clonotype -i phenotyped.h5ad -o clonotypes.csv \
@@ -138,20 +180,19 @@ tcrsift clonotype -i phenotyped.h5ad -o clonotypes.csv \
 ```
 
 | Option | Description |
-|--------|-------------|
-| `-i`, `--input` | Input .h5ad file (required) |
-| `-o`, `--output` | Output CSV file (required) |
-| `--group-by` | Grouping: `CDR3ab` or `CDR3b_only` |
-| `--min-umi` | Minimum UMI count (default: 2) |
-| `--handle-doublets` | `flag`, `remove`, `keep-primary` |
-| `--airr` | Export AIRR format to this path |
-| `--plot-clonotypes` | Save clonotype plot |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Input `.h5ad` and output `.csv` paths (required) |
+| `--group-by` | `CDR3ab` (default) or `CDR3b_only` |
+| `--min-umi` | Minimum UMI count per chain (default `2`) |
+| `--handle-doublets` | `flag`, `remove`, or `keep-primary` |
+| `--airr` | Optional path for AIRR-formatted TSV export |
+| `--plot-clonotypes` | Generate clonotype abundance plots (written to `--output-dir`) |
 
 ---
 
 ### `tcrsift filter`
 
-Filter and tier clonotypes.
+Assign clonotypes to confidence tiers (`tier1`–`tier5`).
 
 ```bash
 tcrsift filter -i clonotypes.csv -o filtered/ \
@@ -162,22 +203,22 @@ tcrsift filter -i clonotypes.csv -o filtered/ \
 ```
 
 | Option | Description |
-|--------|-------------|
-| `-i`, `--input` | Input CSV file (required) |
-| `-o`, `--output` | Output directory (required) |
-| `--method` | `threshold` or `logistic` |
+| --- | --- |
+| `-i`, `--input` | Input clonotype CSV (required) |
+| `-o`, `--output` | Output directory for tier CSVs (required) |
+| `--method` | `threshold` (default) or `logistic` |
 | `--tcell-type` | `cd8`, `cd4`, or `both` |
-| `--min-cells` | Minimum cell count (default: 2) |
-| `--min-frequency` | Minimum frequency |
-| `--exclude-viral` | Exclude viral clones |
-| `--fdr-tiers` | FDR values for logistic method |
-| `--plot-filter` | Save filter plot |
+| `--min-cells`, `--min-frequency` | Global abundance floors (default `--min-cells 2`) |
+| `--exclude-viral` | Drop rows with `is_viral=True` |
+| `--fdr-tiers` | Comma-separated FDR cutoffs for `--method logistic` |
+| `--plot-filter` | Generate tier distribution plots (written to `--output`) |
 
 ---
 
 ### `tcrsift annotate`
 
-Annotate with public databases.
+Match clonotypes against VDJdb, IEDB, and CEDAR. Succeeds with default columns
+(`db_match=False`, `is_viral=False`) when no database is supplied or cached.
 
 ```bash
 tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
@@ -188,357 +229,217 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
     --exclude-viral
 ```
 
-If no database paths are provided, `annotate` still succeeds and writes default
-annotation columns (`db_match=False`, `is_viral=False`, etc.).
+| Option | Description |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Input and output CSV paths (required) |
+| `--vdjdb`, `--iedb`, `--cedar` | Database file/directory paths |
+| `--match-by` | `CDR3ab` or `CDR3b_only` |
+| `--exclude-viral` | Drop clonotypes matching viral epitopes |
+| `--flag-only` | Add annotation columns without dropping viral rows |
+
+---
+
+### `tcrsift assemble`
+
+Build full-length α, β, and single-chain (`β-linker-α`) protein and DNA
+constructs.
+
+```bash
+tcrsift assemble -i annotated.csv -o sequences.csv \
+    --contigs-dir /path/to/vdj \
+    --alpha-leader CD28 \
+    --beta-leader CD8A \
+    --include-constant \
+    --single-chain \
+    --linker T2A \
+    --fasta sequences.fasta
+```
 
 | Option | Description |
-|--------|-------------|
-| `-i`, `--input` | Input CSV file (required) |
-| `-o`, `--output` | Output CSV file (required) |
-| `--vdjdb` | Path to VDJdb |
-| `--iedb` | Path to IEDB |
-| `--cedar` | Path to CEDAR |
-| `--match-by` | `CDR3ab` or `CDR3b_only` |
-| `--exclude-viral` | Remove viral matches |
-| `--flag-only` | Flag but don't remove viral |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Input and output CSV paths (required) |
+| `--contigs-dir` | Directory of Cell Ranger contig FASTAs (required for contig verification unless `--allow-canonical-fallback` is set, and required for `--leaders-from-contigs` / `from_contig` leaders) |
+| `--allow-canonical-fallback` | Permit canonical constant-region assembly when Cell Ranger contig FASTAs are unavailable |
+| `--alpha-leader`, `--beta-leader` | `CD8A`, `CD28`, `IgK`, `TRAC`, `TRBC`, `from_contig`, or `none` (defaults: α `CD28`, β `CD8A`) |
+| `--no-leaders` | Omit signal peptides on both chains |
+| `--leaders-from-contigs` | Extract native V-gene leaders from Cell Ranger FASTAs |
+| `--include-constant` | Append TRAC/TRBC constant regions |
+| `--constant-source` | `canonical` (packaged references; legacy alias `ensembl`) or `from-data` |
+| `--single-chain` | Emit β-linker-α single-chain construct (`single_chain_aa`, `single_chain_nt`) |
+| `--linker` | 2A peptide: `T2A` (default), `P2A`, `E2A`, or `F2A` |
+| `--fasta`, `--airr` | Optional FASTA or AIRR output paths |
+
+---
+
+## Reference cache, sequence probability, and supplementary commands
+
+### `tcrsift data`
+
+Inspect, download, or clear cached public reference databases (VDJdb, IEDB,
+CEDAR, and IMGT `TRAV`/`TRBV` V-region germline references). Cache location
+resolves in order: `--cache-dir`, `$TCRSIFT_DATA_DIR`,
+`$XDG_CACHE_HOME/tcrsift`, `~/.cache/tcrsift`.
+
+```bash
+tcrsift data list                    # Show database status, sizes, and paths
+tcrsift data download                # Download all auto-fetchable databases
+tcrsift data download --db iedb      # Download one database (--force refreshes)
+tcrsift data clear --db iedb         # Remove one database (omit --db for all)
+```
+
+---
+
+### `tcrsift pgen`
+
+Score clonotype CSVs with sequence generation (`Pgen`) and observed-repertoire
+publicness (`Ppost`) log-probabilities, or manage custom TCRpeg/k-mer models.
+
+```bash
+tcrsift pgen annotate clones.csv -o clones_prob.csv --chain both --backend kmer
+tcrsift pgen status
+```
 
 ---
 
 ### `tcrsift match-til`
 
-Match against TIL data. Supports multiple input formats and multi-sample matching.
-
-**Basic usage (single TIL source):**
+Annotate culture clonotypes with presence, cell counts, and frequencies across
+one or more TIL datasets.
 
 ```bash
-# From h5ad file
+# Single TIL input (.h5ad, .csv, or Cell Ranger vdj directory)
 tcrsift match-til -i clonotypes.csv --til-h5ad til.h5ad -o matched.csv
-
-# From CSV file
 tcrsift match-til -i clonotypes.csv --til-csv til.csv -o matched.csv
-
-# From CellRanger VDJ directory
 tcrsift match-til -i clonotypes.csv --til-vdj-dir /path/to/vdj -o matched.csv
-```
 
-**Multi-sample TIL matching (via sample sheet):**
-
-```bash
+# Multiple TIL samples via sample sheet or direct NAME=TYPE:PATH specs
 tcrsift match-til -i clonotypes.csv -s til_samples.yaml -o matched.csv
-```
-
-**Multi-sample TIL matching (direct specs, no sample sheet):**
-
-```bash
 tcrsift match-til -i clonotypes.csv -o matched.csv \
   --til-sample T1=csv:/path/to/til_t1.csv \
   --til-sample T2=h5ad:/path/to/til_t2.h5ad \
   --til-sample T3=vdj:/path/to/til_t3_vdj_outs
 ```
 
-Sample sheet format for multiple TIL samples:
-```yaml
-samples:
-  - sample: "TIL_Sample1"
-    source: til
-    vdj_dir: "/path/to/vdj"
-  - sample: "TIL_Sample2"
-    source: til
-    til_csv: "/path/to/til.csv"
-```
-
-**Required inputs:**
-
 | Option | Description |
-|--------|-------------|
-| `-i`, `--input` | Culture clonotypes CSV (required) |
-| `-o`, `--output` | Output CSV file (required) |
-
-**TIL data source (provide one):**
-
-| Option | Description |
-|--------|-------------|
-| `-s`, `--sample-sheet` | Sample sheet with TIL samples (YAML or CSV) |
-| `--til-h5ad` | Single TIL h5ad file |
-| `--til-csv` | Single TIL CSV file (must have CDR3_alpha/CDR3_beta) |
-| `--til-vdj-dir` | Single CellRanger VDJ output directory |
-| `--til-sample` | Repeatable direct sample spec: `NAME=TYPE:PATH` (TYPE: `csv`, `h5ad`, `vdj`) |
-
-**Matching options:**
-
-| Option | Description |
-|--------|-------------|
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Input culture CSV and output CSV (required) |
+| `-s`, `--sample-sheet` | YAML/CSV sample sheet containing `source: til` entries |
+| `--til-h5ad`, `--til-csv`, `--til-vdj-dir` | Single TIL source |
+| `--til-sample` | Repeatable `NAME=TYPE:PATH` (`csv`, `h5ad`, `vdj`) |
 | `--match-by` | `CDR3ab` (default) or `CDR3b_only` |
-| `--min-til-cells` | Min TIL cells to count as match (default: 1) |
+| `--min-til-cells` | Minimum TIL cells required to flag `til_match=True` (default `1`) |
 
-**Output columns:**
-
-For all inputs:
-- `til_match`: Boolean indicating if clone was found in TIL
-- `til_samples`: Comma-separated list of matching TIL samples
-- `til_cell_count`: Total cells across all TIL samples
-- `til_frequency`: Combined frequency
-
-For multi-sample inputs, per-sample columns are added:
-- `til_cell_count.{sample}`: Cells in specific TIL sample
-- `til_frequency.{sample}`: Frequency in specific TIL sample
+Adds `til_match`, `til_samples`, `til_cell_count`, and `til_frequency` (plus
+`til_cell_count.{sample}` and `til_frequency.{sample}` when multiple TIL samples
+are given).
 
 ---
 
 ### `tcrsift til-clonotype`
 
-Aggregate TIL-only data into clonotype counts/frequencies across one or more TIL samples.
+Harmonize one or more TIL-only inputs into a single clonotype count and
+frequency table.
 
 ```bash
-# Single TIL source
-tcrsift til-clonotype -o til_clonotypes.csv --til-csv til.csv
-
-# Multi-sample direct specs (no sample sheet)
 tcrsift til-clonotype -o til_clonotypes.csv \
   --til-sample T1=csv:/path/to/til_t1.csv \
-  --til-sample T2=h5ad:/path/to/til_t2.h5ad \
-  --til-sample T3=vdj:/path/to/til_t3_vdj_outs
+  --til-sample T2=h5ad:/path/to/til_t2.h5ad
 ```
 
-| Option | Description |
-|--------|-------------|
-| `-o`, `--output` | Output CSV file (required) |
-| `-s`, `--sample-sheet` | TIL sample sheet (YAML/CSV) |
-| `--til-h5ad` | Single TIL h5ad file |
-| `--til-csv` | Single TIL CSV file |
-| `--til-vdj-dir` | Single TIL VDJ directory |
-| `--til-sample` | Repeatable direct sample spec: `NAME=TYPE:PATH` |
-| `--match-by` | `CDR3ab` (default) or `CDR3b_only` |
-| `--min-cells` | Minimum total TIL cells per clonotype (default: 1) |
-
----
-
-### `tcrsift prioritize`
-
-Select one shortlist for the entire run by taking turns across signature/sample/lineage
-rankings. Defaults: CD8, at most 200 total clones, MART-1 exclusion on, viral
-exclusion off. One or more paired CellRanger VDJ + GEX samples are supported.
-
-```bash
-tcrsift prioritize samples.yaml -o candidates/ --context blood
-```
-
-| Option | Meaning |
-| --- | --- |
-| `--context` | `generic` (default), `blood`, `blood-tumor`, `solid-tumor`, `mpe`, `heme` |
-| `--tcell-type` | `cd8` (default), `cd4`, `both` |
-| `--signatures NAME ...` | Replace preset signatures |
-| `--exclude-signatures NAME ...` | Remove signatures |
-| `--max-clones N` | Total run-wide cap; default 200, 0 = unlimited (cutoffs still apply) |
-| `--signature-quantile` | Per-list percentile floor; default 0.90 |
-| `--min-signature-score` | Optional strict lower score cutoff; no default with the background cutoff, 0 with `--signature-cutoff legacy`; flat lists always excluded |
-| `--min-signature-support` | Minimum signatures passing both cutoffs; default 1 |
-| `--min-cells`, `--min-frequency` | Abundance floors; default 2, 0.001 |
-| `--exclude-known-viral` | Opt-in viral database-match exclusion |
-| `--no-exclude-known-mart1` | Disable the default MART-1 exclusion |
-
-The [prioritization guide](til-signatures.md) lists exact presets, lineage rules,
-all gene/count/read/UMI/expression/CDR3 filters, database options, output schemas,
-and changes from 3.22. `tcrsift prioritize --help` lists every flag.
-
-### `tcrsift til-prioritize`
-
-The same command with `--context solid-tumor` as its default. All options and
-selection rules above apply. The old `python examples/multi_sample_til.py ...`
-script remains a wrapper for this entry point.
+Accepts `-s/--sample-sheet`, `--til-h5ad`, `--til-csv`, `--til-vdj-dir`, or
+repeatable `--til-sample` specs, plus `--match-by` (`CDR3ab` or `CDR3b_only`)
+and `--min-cells` (default `1`).
 
 ---
 
 ### `tcrsift til-select`
 
-Select promising TIL clonotypes from two or more ordered 10x VDJ+GEX tumor
-samples/timepoints.
+Prioritize TIL clonotypes across two or more longitudinal timepoints stored in
+the legacy v2 per-timepoint file layout (`consensus_annotations.<TP>.csv`,
+`clonotypes.<TP>.csv`, `filtered_contig_annotations.<TP>.csv`, and
+`sample_filtered_feature_bc_matrix.<TP>.h5`). For standard Cell Ranger
+directories, use [Clone Prioritization](til-signatures.md) (`tcrsift
+prioritize --context solid-tumor`) instead.
 
-This command:
+`til-select`:
 
-- harmonize clonotypes across timepoints,
-- score per-clone marker expression from GEX,
-- apply a CD8 + minimum-cell + known-virus base mask,
-- add cytolytic, antigen-response, AIM, exhaustion, and frequency-change
-  branches,
-- export v2-style subset tables and reports.
+- harmonizes clonotypes across ordered timepoints,
+- scores per-clone marker expression from GEX,
+- applies a CD8, minimum-cell, and non-viral base mask,
+- unions cytolytic, antigen-response, AIM, exhaustion, and frequency-increase
+  selection branches, and
+- writes v2-compatible CSV tables (`abTCR_harmonized.csv`,
+  `figures/abTCR_master_table.csv`, `figures/selection_masks.csv`,
+  `figures/subset_*.csv`) and PDF/PNG reports.
 
-The final union is a review shortlist, despite the legacy
-`is_candidate_tumor_reactive` column name. It does not prove tumor-antigen
-specificity. Frequency-increase branches are meaningful only when the input
-order is a genuine longitudinal series.
+Frequency-increase branches are meaningful only when inputs form a genuine
+time series, and the legacy `is_candidate_tumor_reactive` column denotes
+shortlist membership rather than confirmed tumor specificity.
 
 ```bash
-# Auto-discover inputs from data directory:
 tcrsift til-select --data-dir data --rank-by marker_score_z_mean
-
-# Explicit mappings (v2-compatible):
-tcrsift til-select \
-  --samples \
-    T1=consensus_annotations.T1.csv,clonotypes.T1.csv \
-    T2=consensus_annotations.T2.csv,clonotypes.T2.csv \
-    T3=consensus_annotations.T3.csv,clonotypes.T3.csv
 ```
 
-Per-timepoint required files for marker scoring:
-- `filtered_contig_annotations.<TP>.csv`
-- `sample_filtered_feature_bc_matrix.<TP>.h5`
-
 | Option | Description |
-|--------|-------------|
-| `--data-dir` | Directory with per-timepoint files (default: `./data`) |
-| `--samples`, `--inputs` | Explicit mappings `LABEL=CONSENSUS,CLONOTYPES` |
-| `--config` | YAML mapping with `timepoints:` block |
-| `--vdjdb`, `--iedb`, `--cedar` | Optional public DB annotation sources |
-| `--match-by` | DB matching mode: `CDR3ab` or `CDR3b_only` (default: `CDR3b_only`) |
-| `--marker-genes` | Marker panel for GEX scoring |
-| `--cytolytic-genes`, `--antigen-response-genes` | Compact score branches |
-| `--activation-genes`, `--exhaustion-genes` | AIM and chronic-antigen score branches |
-| `--min-cells-per-clone` | Base selection minimum total cells |
-| `--min-cd8-cp10k` | Base selection CD8 threshold |
-| `--max-cd4-to-cd8-ratio` | Base selection CD4/CD8 ratio ceiling |
-| `--increase-ratio-nonzero-min` | Increasing branch ratio threshold |
-| `--immunogenic-percentile` | Percentile cutoff for immunogenic branch |
-| `--rank-by` | Top-k ranking metric |
-| `--fig-dir` | Output directory for plots/subsets (default: `./figures`) |
-| `--out-table` | Harmonized CSV output (default: `./abTCR_harmonized.csv`) |
-| `--out-selected-report` | Selected-clone PDF report path |
-
-Main outputs include:
-- `abTCR_harmonized.csv`
-- `figures/abTCR_master_table.csv`
-- `figures/abTCR_annotated.csv`
-- `figures/selection_masks.csv`
-- `figures/subset_*.csv`
-- `figures/selection_funnel.png`
-- `figures/selected_clones_report.pdf`
-
-v2 CSV compatibility mode (default):
-- `til-select` emits v2-compatible CSV column sets and ordering.
-- With identical inputs/options, CSV outputs are expected to match legacy `v2/harmonize_abtcr_timepoints.py`.
-- Plot/PDF artifacts are generated but may differ byte-for-byte across environments.
-
-For standard CellRanger directories and published NeoTCR/MANAscore methods, see
-[Multi-sample TIL Prioritization](til-signatures.md).
-
----
-
-### `tcrsift assemble`
-
-Assemble full-length sequences.
-
-```bash
-tcrsift assemble -i annotated.csv -o sequences.csv \
-    --alpha-leader CD28 \
-    --beta-leader CD8A \
-    --include-constant \
-    --linker T2A \
-    --fasta sequences.fasta
-```
-
-**Required inputs:**
-
-| Option | Description |
-|--------|-------------|
-| `-i`, `--input` | Input CSV file (required) |
-| `-o`, `--output` | Output CSV file (required) |
-
-**Conditionally required:**
-
-| Option | Description |
-|--------|-------------|
-| `--contigs-dir` | Directory with CellRanger contig FASTAs. Required when using `--leaders-from-contigs` or `--alpha/beta-leader=from_contig` |
-
-**Leader peptide options:**
-
-| Option | Description |
-|--------|-------------|
-| `--alpha-leader` | Alpha chain leader: `CD8A`, `CD28`, `IgK`, `TRAC`, `TRBC`, `from_contig`, `none` (default: CD28) |
-| `--beta-leader` | Beta chain leader (default: CD8A) |
-| `--no-leaders` | Disable leaders on both chains |
-| `--leaders-from-contigs` | Extract native leaders from CellRanger FASTAs (requires `--contigs-dir`) |
-
-**Sequence options:**
-
-| Option | Description |
-|--------|-------------|
-| `--include-constant` | Add constant regions |
-| `--constant-source` | `canonical` (or legacy alias `ensembl`) for packaged references; `from-data` uses `*_constant_aa/nt` columns |
-| `--single-chain` | Generate single-chain constructs (beta-linker-alpha) |
-| `--linker` | Linker for single-chain (default: T2A) |
-
-**Output options:**
-
-| Option | Description |
-|--------|-------------|
-| `--fasta` | Export to FASTA file |
-| `--airr` | Export to AIRR format |
+| --- | --- |
+| `--data-dir` | Directory containing per-timepoint files (default `./data`) |
+| `--samples`, `--inputs` | Explicit `LABEL=CONSENSUS,CLONOTYPES` mappings |
+| `--config` | YAML file with a `timepoints:` mapping |
+| `--vdjdb`, `--iedb`, `--cedar` | Optional TCR reference databases |
+| `--match-by` | Database matching key: `CDR3b_only` (default) or `CDR3ab` |
+| `--marker-genes`, `--cytolytic-genes`, `--antigen-response-genes`, `--activation-genes`, `--exhaustion-genes` | Gene panels for branch scoring |
+| `--min-cells-per-clone`, `--min-cd8-cp10k`, `--max-cd4-to-cd8-ratio` | Base CD8 selection thresholds |
+| `--increase-ratio-nonzero-min`, `--immunogenic-percentile`, `--rank-by` | Branch cutoffs and top-k ranking metric |
+| `--fig-dir`, `--out-table`, `--out-selected-report` | Output paths |
 
 ---
 
 ### `tcrsift annotate-gex`
 
-Annotate TCR data with gene expression.
+Attach gene-expression columns from a standalone 10x `.h5` matrix to a VDJ CSV
+table (useful when `gex_dir` was not included during `load`).
 
 ```bash
 tcrsift annotate-gex \
     -i cells.csv \
     --gex-file filtered_feature_bc_matrix.h5 \
-    -o cells_with_gex.csv \
+    -o clonotype_gex.csv \
     --aggregate \
     --cd4-cd8-counts
 ```
 
 | Option | Description |
-|--------|-------------|
-| `-i`, `--input` | Input CSV file (required) |
-| `-o`, `--output` | Output CSV file (required) |
-| `--gex-file` | 10x filtered_feature_bc_matrix.h5 file (required) |
-| `--barcode-col` | Column with cell barcodes (default: barcode) |
-| `--genes` | Comma-separated list of genes |
-| `--aggregate` | Aggregate expression by clonotype |
-| `--cd4-cd8-counts` | Compute CD4/CD8 cell counts per clonotype |
-
----
-
-### `tcrsift mnemonic`
-
-Generate mnemonic names for TCRs.
-
-```bash
-tcrsift mnemonic -i clonotypes.csv -o clonotypes_with_names.csv
-```
-
-| Option | Description |
-|--------|-------------|
-| `-i`, `--input` | Input CSV file (required) |
-| `-o`, `--output` | Output CSV file (required) |
-| `--cdr3-col` | Column with CDR3 sequences (auto-detected) |
-| `--name-col` | Output column name for mnemonics |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Input and output CSV paths (required) |
+| `--gex-file` | 10x `filtered_feature_bc_matrix.h5` file (required) |
+| `--barcode-col` | Barcode column name (default `barcode`) |
+| `--genes` | Comma-separated gene symbols to extract |
+| `--aggregate` | Aggregate expression per clonotype (`gex.{GENE}.sum`, `gex.{GENE}.mean`) |
+| `--cd4-cd8-counts` | Add exclusive `CD4_only.count` and `CD8_only.count` columns |
 
 ---
 
 ### `tcrsift load-sct`
 
-Load TCR data from SCT platform Excel files.
+Load paired TCR tables from single-cell trimer (SCT) Excel workbooks.
 
 ```bash
 tcrsift load-sct -i sct_data.xlsx -o sct_clonotypes.csv --aggregate
 ```
 
 | Option | Description |
-|--------|-------------|
-| `-i`, `--input` | Input Excel file (required) |
-| `-o`, `--output` | Output CSV file (required) |
-| `--aggregate` | Aggregate to clonotype level |
-| `--min-snr` | Minimum SNR (default: 2.0) |
-| `--min-reads` | Minimum reads per chain (default: 10) |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Input `.xlsx` and output `.csv` paths (required) |
+| `--aggregate` | Collapse cell rows to clonotype level |
+| `--min-snr` | Minimum signal-to-noise ratio (default `2.0`) |
+| `--min-reads` | Minimum reads per chain (default `10`) |
 
 ---
 
 ### `tcrsift unify`
 
-Merge clonotype data from multiple experiments.
+Merge clonotype tables from independent runs (`CDR3ab` or SCT `CDR3_pair`
+tables) with source prefixes, `occurs_in_*` flags, and combined cell counts.
 
 ```bash
 tcrsift unify \
@@ -546,22 +447,32 @@ tcrsift unify \
     -o unified.csv
 ```
 
+---
+
+### `tcrsift mnemonic`
+
+Generate pronounceable two-word labels from CDR3 sequences so related clonotypes
+are easy to spot in tables and discussions.
+
+```bash
+tcrsift mnemonic -i clonotypes.csv -o clonotypes_with_names.csv
+```
+
 | Option | Description |
-|--------|-------------|
-| `-i`, `--inputs` | Input CSV files (multiple, required) |
-| `-o`, `--output` | Output CSV file (required) |
+| --- | --- |
+| `-i`, `--input` / `-o`, `--output` | Input and output CSV paths (required) |
+| `--cdr3-col` | Source CDR3 column (auto-detected if omitted) |
+| `--name-col` | Output column name (default `mnemonic_name`) |
 
 ---
 
 ### `tcrsift generate-config`
 
-Generate an example configuration file.
+Write a documented YAML configuration file containing all default `tcrsift run`
+parameters.
 
 ```bash
-tcrsift generate-config -o my_config.yaml
+tcrsift generate-config -o config.yaml
 ```
 
-| Option | Description |
-|--------|-------------|
-| `-o`, `--output` | Optional YAML path; without it, print to stdout |
-| `--force` | Allow replacement of an existing output file |
+Omit `-o` to print to stdout; add `--force` to overwrite an existing file.

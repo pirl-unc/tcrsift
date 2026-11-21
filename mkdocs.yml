@@ -75,7 +75,7 @@ nav:
     - Culture Pipeline: user-guide/pipeline.md
     - Filtering Strategies: user-guide/filtering.md
     - Clone Prioritization: user-guide/til-signatures.md
-    - Single-Cell Atlas Path: user-guide/atlas.md
+    - Single-Cell Atlas: user-guide/atlas.md
     - Signature Reproducibility Map: reproducibility_map.md
   - Reference:
     - CLI Reference: user-guide/cli.md
@@ -90,13 +90,13 @@ nav:
       - Signatures: api/signatures.md
       - Candidate Selection: api/candidate.md
       - TIL Matching: api/til.md
-      - TIL Selection: api/til_select.md
+      - Longitudinal TIL Selection: api/til_select.md
     - Sequence annotation:
-      - Annotation: api/annotate.md
-      - Pgen / Publicness: api/pgen.md
-      - Sequence probability (k-mer/TCRpeg): api/seqprob.md
-      - TCR annotation + PRISM: api/annotate_tcrs.md
-      - In-silico filter: api/insilico_filter.md
+      - Database Annotation: api/annotate.md
+      - Heuristic Pgen: api/pgen.md
+      - Sequence Probability: api/seqprob.md
+      - TCR Annotation & PRISM: api/annotate_tcrs.md
+      - In-Silico Filter: api/insilico_filter.md
     - Sequence output:
       - Assembly: api/assemble.md
       - Display Formatting: api/format.md

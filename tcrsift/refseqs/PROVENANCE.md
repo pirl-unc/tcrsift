@@ -1,59 +1,56 @@
-# Reference model provenance
+# Reference Model and Sequence Provenance
 
-Shipped background models for data-driven Pgen/Ppost (`tcrsift.seqprob`,
-gene-agnostic order-2 k-mer). Regenerate with
-`scripts/generate_kmer_background.py`.
+Provenance for packaged background probability models (`tcrsift.seqprob`) and
+IMGT V-gene leader references (`tcrsift.leaders`).
 
-## Ppost — observed healthy-PBMC background (publicness)
+## `Ppost`: observed healthy-PBMC background
 
-`kmer_ppost_alpha.npz` / `kmer_ppost_beta.npz` are fit on
-**`observed_pbmc_10x.csv.gz`** (bundled here): the pooled, de-identified unique
-CDR3 amino-acid sequences (with V/J gene calls — no barcodes or donor IDs) from
-five **10x Genomics healthy-donor VDJ-T** datasets, CC-licensed. Both α and β
-are drawn from the **same** pooled source.
+`kmer_ppost_alpha.npz` and `kmer_ppost_beta.npz` are order-2 amino-acid Markov
+models fitted on `observed_pbmc_10x.csv.gz` (bundled in this directory),
+regenerated via `scripts/generate_kmer_background.py`.
 
-Filter applied: `productive == True & high_confidence == True`, then deduplicated
-to unique CDR3 per chain → **15,948 α / 18,110 β** unique CDR3.
+`observed_pbmc_10x.csv.gz` pools de-identified unique CDR3 amino-acid sequences
+and V/J gene calls (no cell barcodes or donor identifiers) from five
+CC-licensed **10x Genomics healthy-donor VDJ-T** datasets, filtered to
+`productive == True & high_confidence == True` and deduplicated per chain
+(**15,948 α** and **18,110 β** unique CDR3s):
 
-| component file | 10x dataset (`filtered_contig_annotations.csv`) |
-|----------------|--------------------------------------------------|
-| pbmc10k        | `cell-vdj/5.0.0/sc5p_v2_hs_PBMC_10k_multi_5gex_5fb_b_t` |
-| ref_pbmc1k     | `cell-vdj/5.0.0/sc5p_v2_hs_PBMC_1k_multi_5gex_5fb_b_t` |
-| ref_pbmc3      | `cell-vdj/3.1.0/vdj_v1_hs_pbmc3` |
-| ref_pbmc3ng    | `cell-vdj/3.1.0/vdj_nextgem_hs_pbmc3` |
-| ref_pbmct      | `cell-vdj/2.2.0/vdj_v1_hs_pbmc_t` |
+| Short name | 10x Genomics dataset (`filtered_contig_annotations.csv`) |
+| --- | --- |
+| `pbmc10k` | `cell-vdj/5.0.0/sc5p_v2_hs_PBMC_10k_multi_5gex_5fb_b_t` |
+| `ref_pbmc1k` | `cell-vdj/5.0.0/sc5p_v2_hs_PBMC_1k_multi_5gex_5fb_b_t` |
+| `ref_pbmc3` | `cell-vdj/3.1.0/vdj_v1_hs_pbmc3` |
+| `ref_pbmc3ng` | `cell-vdj/3.1.0/vdj_nextgem_hs_pbmc3` |
+| `ref_pbmct` | `cell-vdj/2.2.0/vdj_v1_hs_pbmc_t` |
 
-Source: 10x Genomics, Single Cell Immune Profiling public datasets
-(https://www.10xgenomics.com/datasets). This is the same neutral background the
-downstream `selection_analysis/build_feat.py` pilot uses, so tcrsift's native
-Ppost is consistent with the validated selection recipe.
+Source: 10x Genomics Single Cell Immune Profiling public datasets
+(<https://www.10xgenomics.com/datasets>).
 
-Note: order-2 CDR3 k-mer log-P is strongly anti-correlated with CDR3 length
-(longer CDR3 → lower Pgen/Ppost, ~0.9 |corr|), so the `ppost_*` PRISM axes
-partly encode length, not only rarity. This is inherent to generation-probability
-scores; see `prism_score` / `select_freq_prism_per_condition` docs.
+Note: order-2 CDR3 k-mer log-probability correlates strongly with CDR3 length
+(`|r| ≈ 0.9`; longer CDR3s receive lower `Pgen` and `Ppost`), an inherent
+property of sequence generation probability models.
 
-## Pgen — synthetic generation background
+## `Pgen`: synthetic generation background
 
-`kmer_pgen_alpha.npz` / `kmer_pgen_beta.npz` are fit on 500,000 OLGA-generated
-synthetic CDR3s per chain (OLGA default human T α/β models). OLGA (GPL-3.0) is
-used **offline at generation time only** — never imported at runtime — so the
-shipped package stays Apache-2.0. The fitted numpy tables are committed; the
-synthetic sequences are not bundled.
+`kmer_pgen_alpha.npz` and `kmer_pgen_beta.npz` are fitted on 500,000 synthetic
+CDR3 sequences per chain generated offline using OLGA's default human T-cell α
+and β models. OLGA (GPL-3.0) is invoked **offline during model generation
+only** and is never imported at runtime, keeping the distributed `tcrsift`
+package under Apache-2.0. Only the fitted NumPy transition tables are bundled.
 
-## Germline V-gene signal peptides (leaders) — IMGT/GENE-DB (#267)
+## Germline V-gene signal peptides (IMGT/GENE-DB)
 
-`vgene_leaders.csv.gz` is the per-allele TRAV/TRBV signal-peptide (leader)
-reference used to germline-anchor `from_contig` leader selection. It's built
-from the vendored IMGT/GENE-DB **L-PART1+L-PART2** FASTA under
-`imgt_vgene_leaders/` (`TRAV_L-PART.fasta`, `TRBV_L-PART.fasta`) by
-`scripts/build_vgene_leaders.py`, which translates each allele and keeps clean,
-ATG-started, stop-free leaders (270 alleles / 123 genes).
+`vgene_leaders.csv.gz` stores per-allele human `TRAV` and `TRBV` signal-peptide
+references used to anchor `from_contig` leader extraction.
+`scripts/build_vgene_leaders.py` builds this table from the vendored
+IMGT/GENE-DB `L-PART1+L-PART2` FASTAs under `imgt_vgene_leaders/`
+(`TRAV_L-PART.fasta`, `TRBV_L-PART.fasta`), retaining clean `ATG`-initiated,
+in-frame, stop-free leaders across 270 alleles and 123 genes.
 
-Source: IMGT/GENE-DB (https://www.imgt.org/genedb/), *Homo sapiens*, query
-`8.1 TRAV` / `8.1 TRBV`, IMGTlabel `L-PART1+L-PART2`. IMGT® is under the
-CC BY-NC-ND 4.0 terms; cite Lefranc et al., *Nucleic Acids Res.* The reference
-is used only as an **alignment anchor** (start/length selection) — the shipped
-leader stays the donor's native contig sequence, so allelic variants are
-preserved. To re-fetch, run `scripts/build_vgene_leaders.py` (URLs documented in
-the script header).
+Source: IMGT/GENE-DB (<https://www.imgt.org/genedb/>, *Homo sapiens*, queries
+`8.1 TRAV` and `8.1 TRBV`, label `L-PART1+L-PART2`, CC BY-NC-ND 4.0; cite
+Lefranc et al., *Nucleic Acids Res.*). For valid `from_contig` leaders, IMGT
+sequences serve as an alignment anchor to locate start codons and leader
+boundaries while retaining the donor's native contig sequence; rejected contig
+leaders fall back to the germline V-gene leader by default (`--leader-fallback
+germline`).

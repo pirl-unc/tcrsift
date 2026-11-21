@@ -1,294 +1,261 @@
 # Clone prioritization by expression state
 
-Use `tcrsift prioritize` for paired CellRanger VDJ + GEX from one or more
-samples. The command selects clones from the top of several expression-state
-lists. It does not infer antigen specificity or prove that a clone was induced
-by vaccination. Keep patient identities in the sample sheet.
+`tcrsift prioritize` ranks paired Cell Ranger VDJ and GEX clonotypes across one
+or more samples using gene-expression state signatures. Include `patient_id` on
+the sample sheet whenever a study spans multiple donors.
 
 ```bash
-# Vaccine / peripheral-blood study; CD8 is the default.
+# Vaccine or peripheral-blood study (CD8 default)
 tcrsift prioritize samples.yaml -o candidates/ --context blood
 
-# Malignant pleural effusion, including both CD4 and CD8.
+# Malignant pleural effusion, scoring both CD4 and CD8 lineages
 tcrsift prioritize samples.yaml -o candidates/ --context mpe --tcell-type both
 
-# AML / other hematologic malignancy.
+# AML or other hematologic malignancy
 tcrsift prioritize samples.yaml -o candidates/ --context heme
 
-# Solid-tumor TILs: these two commands are equivalent.
+# Solid-tumor TIL (these two commands are identical)
 tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 tcrsift til-prioritize samples.yaml -o candidates/
 ```
 
-`til-prioritize` and `examples/multi_sample_til.py` use the same workflow with
-`solid-tumor` as their default context. `--context` can override it. The older
-`til-select` command remains a separate workflow for its legacy ordered-input
-layout; independent samples should not be interpreted as a time series.
+`til-prioritize` and `examples/multi_sample_til.py` run the same workflow with
+`--context solid-tumor` as the default. The older `til-select` subcommand
+remains separate for longitudinal datasets stored in the legacy v2 per-timepoint
+file layout.
 
-## Simple selection rule
+!!! note "What expression prioritization measures"
+    Signatures rank transcriptional states associated with activation, memory,
+    or tumor reactivity; they do not predict epitope specificity or prove that
+    a clone was induced by vaccination. Empirical performance on five public
+    solid-tumor cohorts is reported in [Benchmark on public TIL
+    data](../benchmarks.md).
 
-1. Apply cell QC, CD4/CD8 selection, paired-chain quality, and optional marker
-   expression gates. Use this same cell population for counts and scores.
-2. Score each enabled signature separately within each **sample and lineage**,
-   using log1p(CP10K). Average scores over cells of each clone in that stratum.
-3. Keep clones with **mean evidence OR high-cell subset evidence** (details
-   below). Each route has its own top-decile rank gate. Calibration uses all
-   retained cells in that stratum, before clone abundance/database exclusions
-   or selection. Neither route requires every cell to score highly.
-4. Remove clones failing abundance or explicit exclusion filters. Rank the mean
-   list by score, then frequency, cell count, and CDR3 sequence. Rank the subset
-   list by increasing tail probability, then decreasing high-cell fraction and
-   cell count, then CDR3 sequence.
-5. Take the next unused clone from each list in turn. When a list runs out of
-   qualifying clones, skip it and keep taking from the others. Stop at
-   **200 candidate rows total across the entire run**, or when every list is
-   exhausted. Never pad the shortlist with below-cutoff clones.
+## Selection algorithm
 
-`--max-clones N` changes the total cap; `0` removes the cap but keeps the
-signature cutoffs. This is one shared budget across patients, samples,
-signatures, evidence routes, and lineages. A clone shared between samples occupies one slot
-within a patient; the same sequence in two patients remains two separate rows,
-both counted toward the total cap.
+1. **Filter cells.** Apply GEX quality bounds, CD4/CD8 lineage classification,
+   `--min-cd3`, paired productive α/β chain checks, and any `--min-expression`
+   or `--max-expression` filters. The retained cells define both clone counts
+   and the reference pool for score calibration.
+2. **Score signatures per stratum.** Normalize counts to `log1p(CP10K)` and
+   score each enabled signature independently within each `(patient, sample,
+   lineage)` stratum.
+3. **Qualify clones by mean or subset evidence.** Within each stratum and
+   signature, evaluate every clone on two routes (both enabled by default):
+   elevated clone mean relative to size-matched random cell groups, and
+   hypergeometric enrichment of high-scoring cells. Each route also requires the
+   clone to sit in the top decile of clones in that stratum
+   (`--signature-quantile 0.90`). Reference calibration uses all retained cells
+   in the stratum before clone-level exclusions.
+4. **Apply clone-level exclusions and rank each list.** Remove clones failing
+   minimum abundance (`--min-cells`, `--min-frequency`) or sequence/database
+   exclusions (known MART-1 by default, optional viral, V/J gene, CDR3 length,
+   or publicness filters). Rank mean lists by decreasing mean score, frequency,
+   cell count, and CDR3 sequence; rank subset lists by increasing tail
+   probability, decreasing high-cell fraction, cell count, and CDR3 sequence.
+5. **Take turns across lists up to the budget.** Visit active lists in
+   round-robin order, picking the highest-ranked unselected clone from each list
+   until **200 candidates** are chosen across the run (`--max-clones 200`, or
+   `0` for no cap) or all lists are exhausted. Lists that run out drop out of
+   rotation; the shortlist is never padded with clones that missed the cutoffs.
 
-Every active list gets a turn; there are no fixed signature quotas or weighted
-composite scores. For example, if one list has only 8 qualifying clones, it
-stops after those 8; another can supply the remaining slots while it still has
-qualifying clones. If only 137 distinct candidates qualify overall, the result
-has 137 rows, even with a cap of 200.
+### Budget sharing and list ordering
 
-Lists are visited in signature order (preset order below, or your
-`--signatures` order), then mean and subset evidence, then lexical patient,
-sample, and lineage order. When the budget ends partway through a round, the
-remaining turns are shared out instead of going to the first lists: each turn
-goes to the signature with the fewest turns in that round, then to the sample
-with the fewest. Overlapping signatures are correlated
-views, not independent votes. Duplicate selections are skipped before taking
-the next qualifying clone from the same list.
+The budget is shared across patients, samples, signatures, evidence routes, and
+lineages. Within one patient, a clone shared across multiple samples occupies a
+single shortlist slot; an identical CDR3 sequence appearing in two different
+patients is treated as two distinct rows.
+
+Full rounds visit lists by signature order (preset order below, or the order
+given to `--signatures`), then evidence route (`mean`, `subset`), then lexical
+`patient_id`, `sample`, and `lineage`. If `--max-clones` ends partway through a
+round, remaining slots go to the signature (and within it, the sample) with the
+fewest selections so far in that round, preventing signatures listed late in a
+preset from being starved.
 
 ## Two complementary evidence routes
 
-By default, background mode uses `--signature-evidence either`: a clone can
-qualify through an elevated mean **or** an enriched subset of high-scoring
-cells. This preserves candidates whose expression state varies among cells.
-Each route has a separate ranked list, so a low clone mean cannot bury a
-candidate supported by its high-cell subset. A clone qualifying by both routes
-uses one budget slot, and the signature counts once toward signature support.
+Under the default `--signature-cutoff background --signature-evidence either`,
+a clone can qualify through an elevated mean **or** an enriched subset of
+high-scoring cells. Keeping separate ranked lists for the two routes ensures
+that a clone with heterogeneous cell states is not buried by a modest overall
+mean. If a clone qualifies on both routes, it consumes one shortlist slot and
+counts the signature once toward `--min-signature-support`.
 
-Use `--signature-evidence mean` to retain the 3.24.0 behavior, or `subset` to
-use only the new route. `--signature-cutoff legacy` defaults to mean evidence
-and rejects an explicitly requested subset/either combination.
+Pass `--signature-evidence mean` or `subset` to restrict to a single route.
+`--signature-cutoff legacy` uses mean scores only (`score > 0` and top decile)
+and rejects `subset` or `either`.
 
-### Mean evidence: per-signature background floors
+### Mean route: size-matched background floors
 
-The mean route in `--signature-cutoff background` estimates a separate floor for
-each **signature, patient, sample, lineage, and clone cell count**:
+Within each `(patient, sample, lineage)` stratum and signature, TCRsift
+computes a separate mean floor for each observed clone cell count `n`:
 
-1. For a clone represented by `n` cells in that sample/lineage, draw random
-   groups of `n` retained cells from the same patient/sample/lineage, uniformly
-   **without replacement within a draw**. All retained cells, including the
-   candidate clone, are part of this reference population.
-2. Average the already computed per-cell scores in each random group, exactly
-   as for the real clone. Use 2,000 draws, shared across signatures. Enumerate
-   all possible groups when there are fewer; singleton references use all cells.
-3. Require the clone mean to **exceed the 99th percentile** of those reference
-   means, using the higher observed order statistic and treating numerical ties
-   as failures. The top-decile rank gate is an additional requirement.
+1. Draw 2,000 random groups of `n` cells uniformly without replacement from all
+   retained cells in that stratum (exact enumeration when fewer than 2,000
+   combinations exist; all cells for `n = 1`). Sampling is shared across
+   signatures using deterministic seed `0` (`--signature-background-seed`).
+2. Compute the mean signature score of each random group.
+3. Require the clone's mean score to strictly exceed the **99th percentile** of
+   those group means (`--signature-background-quantile 0.99`, using the
+   `higher` order statistic so ties fail), in addition to the top-decile clone
+   rank gate.
 
-This preserves the observed score distribution, including skew, dropout and
-correlated genes, without assuming Gaussian scores or inventing a universal
-native-unit cutoff. A clone with two cells is compared with two-cell groups;
-a clone with twenty cells is compared with twenty-cell groups. Larger clones
-usually have narrower reference distributions. Seed 0, stable cell identifiers,
-and sorted strata make repeated runs deterministic within a software environment.
-
-**Interpretation:** this is a competitive expression-enrichment reference:
-"higher than random groups of T cells in this sample." It does not estimate
-pure technical noise or establish antigen experience, vaccine induction, or
-antigen specificity. Cell exchangeability within a sample/lineage is an
-assumption; remaining cell-state, quality and batch effects can drive enrichment.
-A uniformly activated population has no contrast to itself. Including truly
-activated clones in the reference can make the rule conservative. An extremely
-small sample may supply no clones even when its top clone looks distinctive.
-
-The 99th percentile is a **configurable operating choice**, not a validated
-biological boundary. Noise can still pass. The exported one-sided background
-tail probability includes ties and uses `(exceedances + 1) / (draws + 1)` for
-Monte Carlo sampling (the exact fraction for enumeration). These probabilities
-are **unadjusted across clones/signatures/samples**; the shortlist has no claimed
-false-discovery-rate control. Stable identifiers and the recorded package
-version, seed, draw count and floor table support reproduction.
+Resampling from observed cell scores preserves skewness, zero inflation, and
+gene-gene correlation without parametric assumptions. Because group-mean
+variance shrinks with `n`, a 2-cell clone faces a much higher bar than a
+20-cell clone:
 
 ![Random groups set the reference](../assets/figures/background_reference.svg)
 
-*Simulated scores. Means of random 2-cell groups spread much wider than means
-of random 20-cell groups, so their 99th percentiles differ.*
+*Simulated cell scores: means of random 2-cell groups spread much wider than
+means of random 20-cell groups.*
 
 ![Size-matched background floor](../assets/figures/background_floor.svg)
 
-*The resulting floor by clone size; the same mean of 0.42 fails for a 5-cell
-clone (B) and passes for a 20-cell clone (C).*
+*Resulting 99th-percentile floor by clone size: a mean of 0.42 fails for a
+5-cell clone (B) and passes for a 20-cell clone (C).*
 
-### Subset evidence: high-cell counts and fractions
+Exported Monte Carlo tail probabilities use `(exceedances + 1) / (draws + 1)`
+(including ties), or the exact fraction under full enumeration.
 
-For each signature within each patient/sample/lineage:
+### Subset route: hypergeometric enrichment of high-scoring cells
 
-1. Label a cell **high-scoring** when its score strictly exceeds the observed
-   90th-percentile cell score (`--signature-high-quantile 0.90`). Use the higher
-   order statistic; numerical ties are excluded, so the high fraction may be
-   less than 10% and a flat program labels no cells high. This is a relative
-   expression label, not a validated antigen-reactivity call.
-2. Record `k` high cells among the clone's `n` observed cells and the fraction
-   `k/n`. By default require **at least 5 high cells**, with no minimum fraction
-   or majority requirement. `--min-signature-high-cells` and
-   `--min-signature-high-fraction` change those requirements.
-3. With `K` high cells among `N` retained cells in the stratum, calculate
-   `P(X >= k)` for `X ~ Hypergeometric(N, K, n)`. This is the exact probability
-   of obtaining at least as many high cells in an equally sized random group
-   drawn without replacement. It uses the same competitive reference as the
-   mean route, including the candidate's cells; no Monte Carlo draws are needed.
-4. Require the unadjusted tail probability to be **≤ 0.01**
-   (`--signature-subset-pvalue`) and rank in the top decile by that probability.
-   The subset rank gate uses all clones in the stratum and is independent of
-   their mean-score ranks. `--signature-quantile` adjusts both routes' rank gates.
+Within each `(patient, sample, lineage)` stratum and signature:
 
-Thus **10/25 high-scoring cells (40%) can qualify even when the other 15 cells
-make the clone mean low**. Qualification still depends on the cell threshold
-and the surrounding population: 10/25 is much more surprising against a 10%
-high-cell reference than against a 40% reference. Exported counts and fractions
-refer to the same sample and lineage, not a pool across different samples.
+1. Mark a cell **high-scoring** when its score strictly exceeds the observed
+   90th-percentile cell score (`--signature-high-quantile 0.90`, `higher` order
+   statistic; flat score distributions mark zero high cells).
+2. Count high-scoring cells `k` among the clone's `n` cells in that stratum. By
+   default, require `k >= 5` (`--min-signature-high-cells 5`) with no minimum
+   fraction (`--min-signature-high-fraction 0`).
+3. Given `K` high-scoring cells among `N` retained cells in the stratum,
+   compute the exact upper-tail probability `P(X >= k)` under
+   `Hypergeometric(N, K, n)`.
+4. Require `P(X >= k) <= 0.01` (`--signature-subset-pvalue 0.01`) and a clone
+   rank in the top decile by that tail probability (`--signature-quantile`).
+
+Thus a 25-cell clone with 10 high-scoring cells (40% vs ≤10% background)
+qualifies even when its remaining 15 cells pull the clone mean below the
+25-cell floor:
 
 ![One clone's cells](../assets/figures/subset_cells.svg)
 
-*Simulated scores. The clone mean (0.22) is below its 25-cell floor (0.30).*
+*Simulated scores: the clone mean (0.22) sits below the 25-cell mean floor
+(0.30).*
 
 ![Chance of that many high cells](../assets/figures/subset_probability.svg)
 
-*Ten high-scoring cells is far more than a random 25-cell group would hold.*
+*Observing 10 or more high-scoring cells in a random 25-cell draw has
+probability `5.4e-5`.*
 
-This is a standard [hypergeometric enrichment calculation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.hypergeom.html),
-but the cell quantile, minimum count, and tail cutoff are configurable TCRsift
-choices. [Zeng et al.](https://www.nature.com/articles/s41467-024-55059-3) used
-at least five MANAscore-high cells per clone and reported substantial
-within-clone state heterogeneity; they also noted that the minimum count depends
-on sequencing depth. Our percentile labels and enrichment test do **not**
-reproduce their trained-model positivity calls. The rationale for a subset
-route is literature-supported; this exact implementation is an extension.
+### Statistical assumptions and threshold tuning
 
-Both routes retain the same exchangeability and population-reference limits.
-The tail probabilities are unadjusted; enabling either route adds opportunities
-to qualify and does not confer false-discovery-rate control. A high-scoring
-subset can reflect a shared state or technical effect rather than antigen
-recognition. The full mean, high-cell count, fraction, and reference prevalence
-are available for review.
+- **Competitive within-sample reference.** Both routes test whether a clone
+  stands out against random draws of T cells from the same sample and lineage
+  (including the candidate clone's own cells, making heavily expanded samples
+  conservative). A sample composed uniformly of activated cells offers no
+  internal contrast, and very small strata may yield no qualifying clones.
+- **Unadjusted operating cutoffs.** Tail probabilities are not adjusted for
+  multiple testing across clones, signatures, routes, or samples; the shortlist
+  does not control a false discovery rate. Strata with flat scores or a single
+  clone are skipped automatically.
+- **Relationship to published methods.** Adapting cutoffs per sample and
+  requiring ≥5 high-scoring cells follows qualitative ideas from
+  [Zeng et al. 2025 (MANAscore)](https://www.nature.com/articles/s41467-024-55059-3),
+  [Lowery et al. 2022 (NeoTCR4/8)](https://pmc.ncbi.nlm.nih.gov/articles/PMC8996692/),
+  and [Yossef et al. 2023 (NeoTCR_PBL)](https://pmc.ncbi.nlm.nih.gov/articles/PMC10843665/),
+  but TCRsift's scoring scales differ from theirs: `NeoTCR4`, `NeoTCR8`, and
+  `NeoTCR_PBL` are scored via [Scanpy
+  `score_genes`](https://scanpy.readthedocs.io/en/stable/generated/scanpy.tl.score_genes.html)
+  (signature mean minus expression-matched control mean on `log1p(CP10K)`, **not
+  scGSEA**), and `MANAscore` is an unweighted three-gene signed-z proxy rather
+  than the published random-forest/linear ensemble. Numeric cutoffs from those
+  papers do not transfer directly.
 
-### What the papers support
-
-| Source | Published approach | Consequence for TCRsift |
-| --- | --- | --- |
-| [Zeng et al., MANAscore, 2025](https://www.nature.com/articles/s41467-024-55059-3) | Patient-specific last troughs of the imputed and non-imputed trained ensemble score distributions; clone calls required at least five MANAscore-high cells. | Supports adapting thresholds to a population. Neither the numeric thresholds nor the fitted probability scale transfer to TCRsift's three-gene signed-z **proxy**. |
-| [Lowery et al., NeoTCR4/8, 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC8996692/) | scGSEA scores, validated against experimentally tested TCRs; figures highlight the 95th percentile. | A percentile is not a universal noise boundary. TCRsift uses the published gene sets with a different scoring implementation. |
-| [Yossef et al., NeoTCR_PBL, 2023](https://pmc.ncbi.nlm.nih.gov/articles/PMC10843665/) | A circulating tumor-reactive gene signature with functional validation in cancer patients. | Blood-specific biological support does not calibrate thresholds for generic blood, vaccine or heme samples. |
-
-TCRsift's NeoTCR AnnData scores use [Scanpy `score_genes`](https://scanpy.readthedocs.io/en/stable/generated/scanpy.tl.score_genes.html):
-mean signature-gene expression minus expression-matched control-gene expression.
-This is **not scGSEA or a rank-based enrichment statistic**. No paper-derived
-numeric cutoff is imported into this different scale. The resampling rule above
-is TCRsift's implementation choice, not a reproduction of those papers' methods.
-
-Adjust the stopping rule explicitly:
+Common threshold adjustments:
 
 ```bash
-# Broaden the rank gate while keeping the default background floor.
+# Relax the within-stratum rank gate while keeping the 99th-percentile floor
 tcrsift prioritize samples.yaml -o candidates/ --context blood \
   --max-clones 200 --signature-quantile 0.80
 
-# More conservative background tail, with more draws for resolution.
+# Stricter background quantile (increase draws so at least 10 fall in the tail)
 tcrsift prioritize samples.yaml -o candidates/ --context blood \
   --signature-background-quantile 0.995 --signature-background-draws 4000
 
-# Explicitly reproduce the 3.23.1 cutoff behavior.
+# Require at least 5 high cells AND at least 20% of the clone on the subset route
+tcrsift prioritize samples.yaml -o candidates/ --context blood \
+  --min-signature-high-cells 5 --min-signature-high-fraction 0.20
+
+# Require a clone to pass all cutoffs on at least two distinct signatures
+tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor \
+  --min-signature-support 2
+
+# Reproduce the 3.23.1 fixed-zero cutoff rule
 tcrsift prioritize samples.yaml -o candidates/ --context blood \
   --signature-cutoff legacy --signature-quantile 0.90 --min-signature-score 0
 ```
 
-`--signature-quantile 0` disables only the percentile gate.
-`--min-signature-score VALUE` adds a strict native-unit floor on top of the
-background floor. When supplied, it also requires a subset candidate's **clone
-mean** to exceed that value, so it can intentionally exclude a diluted subset.
-There is no default universal zero cutoff in background mode;
-a negative score can exceed a more-negative reference floor. In `legacy` mode,
-the minimum replaces the default zero floor and accepts finite negative values.
-`--signature-background-seed` changes the random seed. Draw count must be at
-least 1,000 and leave at least ten expected draws above the requested quantile.
-Flat and single-clone strata are always skipped because they
-provide no within-stratum ranking contrast. For subset evidence, flat cell
-scores produce no high cells and a single clone cannot enrich against itself.
-Tied scores use average percentile
-ranks, so a tied top group can fall below a high percentile cutoff.
+Additional boundary rules:
 
-`--min-signature-support 2` optionally requires two distinct signatures passing
-**all** cutoffs. Each supporting signature must pass them in the same
-sample/lineage; different signatures may qualify in different strata. A clone
-can be taken only from a list where it passes that list's cutoffs.
+- `--signature-quantile 0` disables the rank-decile gate while keeping the
+  background floor.
+- `--min-signature-score VALUE` adds a strict raw-score floor on top of the
+  background floor (and also requires subset-route candidates to clear that
+  clone mean). In background mode there is no default zero cutoff: a negative
+  mean can qualify if the reference distribution is lower still.
+- `--min-signature-support N` requires `N` distinct signatures where each
+  supporting signature passes all of its cutoffs within a single `(sample,
+  lineage)` stratum; different supporting signatures may qualify in different
+  strata of that patient.
+- `--signature-background-draws` must be at least 1,000 and leave at least 10
+  expected draws above `--signature-background-quantile`.
 
-```bash
-# Retain either a high mean or an enriched high-scoring subset (the default).
-tcrsift prioritize samples.yaml -o candidates/ --context blood \
-  --signature-evidence either
+## Context presets and lineage rules
 
-# Require at least 5 high cells and at least 20% of a clone for the subset route.
-tcrsift prioritize samples.yaml -o candidates/ --context blood \
-  --min-signature-high-cells 5 --min-signature-high-fraction 0.20
-```
+Every preset begins with six core state panels (**Differentiated,
+AntigenExperienced, Cytolytic, AcuteActivation, Proliferation, AIM**) and
+appends context-specific signatures:
 
-## Context presets
-
-The shared core, in order, is **Differentiated, AntigenExperienced, Cytolytic,
-AcuteActivation, Proliferation, AIM**. This covers differentiation, effector
-function, recent activation, proliferation, and an AIM-like state. We use one
-panel per named signature, without also adding each `Broad` variant by default.
-
-| Context | Additions to the core | Rationale |
+| Context | Signatures added to core | Intended setting |
 | --- | --- | --- |
-| `generic` (default) | None | Broad state coverage when the setting is unspecified. |
-| `blood` | CirculatingMemory | Blood/vaccine studies need memory as well as activated and effector strata. No tumor-trained scores. |
-| `blood-tumor` | CirculatingMemory, NeoTCR_PBL | Explicit search for circulating antitumor CD8 cells; not a generic vaccine preset. |
-| `solid-tumor` | TumorReactive, MANAscore, NeoTCR8, NeoTCR4 | Include published tumor-reactivity programs alongside broad states. |
-| `mpe` | CirculatingMemory, MANAscore, NeoTCR8, NeoTCR4 | Exploratory transfer of tumor-reactivity programs to malignant pleural effusions, plus memory; omit the epithelial-residency-containing TumorReactive panel. |
-| `heme` | CirculatingMemory | Conservative state coverage for AML/hematologic malignancies. Intentionally the same gene sets as blood; no validated leukemia-specific ranking is shipped. |
+| `generic` (default) | None | Unspecified tissue or exploratory state coverage |
+| `blood` | `CirculatingMemory` | Peripheral blood and vaccine studies (no tumor-derived panels) |
+| `blood-tumor` | `CirculatingMemory`, `NeoTCR_PBL` | Circulating antitumor CD8 T cells in cancer patients |
+| `solid-tumor` | `TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` | Solid-tumor TIL |
+| `mpe` | `CirculatingMemory`, `MANAscore`, `NeoTCR8`, `NeoTCR4` | Malignant pleural effusions (omits `ITGAE`-containing `TumorReactive`) |
+| `heme` | `CirculatingMemory` | AML and other hematologic malignancies (same gene sets as `blood`) |
 
-These are explicit, literature-informed starting points, not validated
-context-specific classifiers. Context applies to the entire invocation; it is
-not inferred from filenames, `source`, or free-text metadata. Run distinct
-contexts separately or supply an explicit common signature set for a mixed study.
+Context applies to the entire run and is never inferred from sample names,
+`tissue`, or `source`.
 
-**Lineage rule:** `--tcell-type cd8` is the default. `cd4` and `both` are also
-available. Confident and likely cells of the requested type are retained;
-unknown cells are excluded. NeoTCR4 is CD4-only; NeoTCR8, NeoTCR_PBL, and
-MANAscore are CD8-only. Incompatible signatures are removed from presets.
-With `both`, each is scored only in its applicable lineage, and CD4/CD8 have
-separate lists. Explicitly requesting an incompatible signature is an error.
+**Lineage compatibility:** `--tcell-type` defaults to `cd8` (`cd4` and `both`
+are also supported; `Confident` and `Likely` cells of the requested lineage are
+kept, and `Unknown` cells are dropped). `NeoTCR4` is CD4-only, while `NeoTCR8`,
+`NeoTCR_PBL`, and `MANAscore` are CD8-only. Presets automatically drop
+signatures incompatible with `--tcell-type` (under `both`, each scores only in
+its compatible lineage); explicitly passing an incompatible signature to
+`--signatures` raises an error.
 
-Override a preset or remove a panel:
+Override or trim a preset:
 
 ```bash
-tcrsift prioritize samples.yaml -o candidates/ --context blood \
-  --signatures CirculatingMemory AcuteActivation Cytolytic --max-clones 60
+# Score only the three tumor-reactivity signatures on a tight screening budget
+tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor \
+  --signatures TumorReactive MANAscore NeoTCR8 --max-clones 50
 
+# Score both CD4 and CD8 while dropping the MANAscore proxy
 tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor \
   --exclude-signatures MANAscore --tcell-type both
 ```
 
-Names are case-insensitive. Other registered panels, including `Broad` variants,
-can be selected explicitly. Required genes missing from the expression matrix
-cause an error; signatures are not silently shortened. A gene that the reference
-lists under a different identifier is still found: a short table of synonyms
-(for example PLA2G16/PLAAT3 and CARS/CARS1) maps the published symbol to the
-same gene in newer or older annotations, and the log names each match. The [signature registry](../api/signatures.md)
-documents gene sets and scoring methods. In particular, MANAscore is TCRsift's
-transparent signed-z **proxy**, not the original trained predictor.
+Signature names are case-insensitive. Missing signature genes raise an error
+rather than silently dropping genes, after checking a built-in alias table for
+renamed HGNC symbols (such as `PLA2G16`/`PLAAT3` and `CARS`/`CARS1`). Gene lists
+and formulas are documented in [Gene-expression signatures](../api/signatures.md).
 
-## Input and outputs
+## Input sheet and output files
 
 ```yaml
 samples:
@@ -306,66 +273,59 @@ samples:
     gex_dir: /data/patient1_post/gex
 ```
 
-CSV sample sheets also work. Sample names must be unique and every sample must
-have both `vdj_dir` and `gex_dir`. If `patient_id` is used, populate it for every
-sample. If omitted entirely, all samples are treated as one patient/cohort.
-`tissue` is descriptive; `--context blood` chooses the preset. `source` can be
-omitted: its legacy pipeline enum is not a tissue or prioritization setting.
+YAML and CSV sample sheets are both accepted. Every row must have a unique
+`sample` name plus both `vdj_dir` and `gex_dir`. If `patient_id` is supplied on
+any row, supply it on every row; if omitted everywhere, all samples are treated
+as a single patient. `tissue` and `timepoint` are recorded as metadata, and
+`source` can be omitted.
 
-- `candidate_clones.csv`: the shortlist, with global `selection_rank` and
-  the `selected_signature`, `selected_sample`, and `selected_lineage` that
-  supplied each selection. `selected_evidence` identifies mean or subset;
-  `selected_cells`, `selected_mean_score`, `selected_high_cells`, and
-  `selected_high_fraction` report the measurements from that exact selection
-  stratum. In legacy mode the high-cell fields are unavailable.
-- `all_scored_clones.csv`: all clones after cell filtering, their scores,
-  `eligible_for_review`, `selected_for_review`, risk flags, and `excluded_reason`.
-  An eligible clone can be unselected because of the clone budget.
-- `clone_sample_scores.csv`: clone/sample/lineage scores, percentiles, counts,
-  and frequencies. In background mode, `signature_NAME_noise_floor` and
-  `signature_NAME_background_tail_probability` record the native-unit floor
-  and unadjusted competitive tail probability. Each `signature_NAME_passes_cutoff` column records
-  qualification before clone exclusions and budgeting. Frequencies here use retained paired cells of that lineage
-  in that sample. Clone-level `max_frequency` uses all retained requested
-  lineages in the sample; these coincide when only one lineage is selected.
-  Background mode also exports `signature_NAME_high_cell_threshold`,
-  `high_cells`, `high_fraction`, `subset_tail_probability`, and
-  `subset_percentile` (each with the same signature prefix). Separate
-  `signature_NAME_mean_passes_cutoff` and `signature_NAME_subset_passes_cutoff`
-  columns show the evidence even when only one route is enabled; the combined
-  `passes_cutoff` column uses only the enabled route(s).
-- `signature_background.csv` (background mode): one calibration record per
-  signature/patient/sample/lineage/clone-size, including background cell count,
-  floor, quantile, actual draw count, exact versus Monte Carlo method, and status.
-  It also records the high-cell score threshold, reference high-cell count,
-  and the exact hypergeometric method for subset evidence.
-- `prioritization.json`: version, arguments, resolved signature set, sequential
-  cell-filter counts, retained counts per sample, and database availability.
-  Counts start after GEX QC; loader logs report GEX QC losses.
+Outputs written to `-o`:
 
-Cells removed by QC are not present in clone tables. All scores and thresholds
-are cohort-relative; the shortlist is for experimental review.
+- `candidate_clones.csv`: shortlisted clones ordered by global `selection_rank`,
+  recording `selected_signature`, `selected_evidence`, `selected_sample`,
+  `selected_lineage`, `selected_cells`, `selected_mean_score`,
+  `selected_high_cells`, and `selected_high_fraction` from the exact list that
+  contributed each pick.
+- `all_scored_clones.csv`: every clone surviving cell filters, with scores,
+  `eligible_for_review`, `selected_for_review`, database/publicness flags, and
+  `excluded_reason` (eligible clones beyond `--max-clones` remain unselected).
+  Clone-level `max_frequency` uses all retained cells across requested lineages
+  in the sample (coinciding with `clone_sample_scores.csv` when a single
+  lineage is selected).
+- `clone_sample_scores.csv`: per-`(clone, sample, lineage)` counts,
+  within-lineage frequencies, signature means, percentiles,
+  `signature_NAME_noise_floor`, `signature_NAME_background_tail_probability`,
+  `signature_NAME_high_cell_threshold`, `high_cells`, `high_fraction`,
+  `subset_tail_probability`, `subset_percentile`, and separate
+  `mean_passes_cutoff`, `subset_passes_cutoff`, and combined `passes_cutoff`
+  booleans (evaluated prior to clone-level exclusions and budgeting).
+- `signature_background.csv` (background mode): one calibration row per
+  `(signature, patient, sample, lineage, clone_size)` recording background cell
+  count, floor, quantile, draw count, exact vs Monte Carlo method, high-cell
+  threshold, and reference high-cell count.
+- `prioritization.json`: package version, CLI arguments, resolved signatures,
+  sequential `cell_filters` counts, per-sample retained cell counts, and
+  reference-database status.
 
-## Filters and units
+## Cell and clone filters
 
-| Options | Default and meaning |
+| Flags | Default and behavior |
 | --- | --- |
-| `--min-cells`, `--min-frequency` | 2 cells across a patient's samples; frequency at least 0.001 in one sample. |
+| `--min-cells`, `--min-frequency` | Clone must have ≥2 cells across a patient's samples and ≥0.001 frequency in at least one sample. |
 | `--min-genes`, `--max-genes` | 250–15,000 detected genes per cell. |
-| `--min-counts`, `--max-counts` | 500–100,000 total GEX UMI counts per cell, not sequencing reads. |
-| `--min-mito-pct`, `--max-mito-pct` | 0–8% mitochondrial counts; no mitochondrial floor by default. |
-| `--min-vdj-umis`, `--min-vdj-reads` | At least 2 UMIs in each primary alpha/beta chain; read gate disabled (0). |
-| `--min-cd3` | At least 3 summed CD3D/E/G raw GEX counts per cell; 0 disables. A raw-count floor scales with sequencing depth, so a higher value can remove most cells of a shallow library; the command warns when it does. The default was 10 before 3.27.0. |
-| `--min-expression GENE=VALUE`, `--max-expression GENE=VALUE` | Optional per-cell log1p(CP10K) thresholds. Repeat for AND conditions. Missing genes are errors. |
-| `--include-v-gene`, `--exclude-v-gene` | Optional exact V calls in either chain, ignoring allele suffix and case. Repeat for multiple genes. |
-| `--include-j-gene`, `--exclude-j-gene` | Corresponding J-gene gates. Inclusion requires at least one listed gene; exclusion rejects any listed gene. Missing calls fail active gene filters. |
-| `--min-alpha-cdr3-length`, `--min-beta-cdr3-length` | Optional amino-acid length floors, including conserved anchors; both disabled (0). |
+| `--min-counts`, `--max-counts` | 500–100,000 total GEX UMI counts per cell. |
+| `--min-mito-pct`, `--max-mito-pct` | 0–8% mitochondrial GEX counts (no minimum floor by default). |
+| `--min-vdj-umis`, `--min-vdj-reads` | ≥2 UMIs on each primary α and β contig; read threshold disabled (`0`). |
+| `--min-cd3` | ≥3 summed raw `CD3D + CD3E + CD3G` GEX counts per cell (`0` disables; default was `10` prior to 3.27.0). Because raw counts scale with sequencing depth, high values can discard most cells in shallow libraries; `prioritize` warns if >50% of cells fail. |
+| `--min-expression GENE=VAL`, `--max-expression GENE=VAL` | Repeatable per-cell `log1p(CP10K)` bounds (combined with AND; missing genes raise an error). |
+| `--include-v-gene`, `--exclude-v-gene` | Exact V-gene match on either chain, ignoring allele suffix and case (repeatable). |
+| `--include-j-gene`, `--exclude-j-gene` | Corresponding J-gene filters; missing gene calls fail active filters. |
+| `--min-alpha-cdr3-length`, `--min-beta-cdr3-length` | Minimum CDR3 amino-acid lengths including conserved anchors (`0` disables). |
 
-Gene-call filters use the representative primary-chain calls in the clone table.
-Only complete paired alpha/beta cells with canonical amino-acid CDR3s enter the
-workflow; dual-chain cells use their primary chains. VDJ and expression gates
-are applied before aggregation, so rejected cells cannot inflate abundance or
-contribute signature scores.
+Only cells with complete, canonical paired α/β CDR3s enter aggregation
+(dual-chain cells use their highest-UMI productive contig per chain). Cell-level
+VDJ and expression filters run before clonotype aggregation, so rejected cells
+contribute neither abundance nor signature scores.
 
 ```bash
 tcrsift prioritize samples.yaml -o candidates/ --context blood \
@@ -374,58 +334,48 @@ tcrsift prioritize samples.yaml -o candidates/ --context blood \
   --min-alpha-cdr3-length 10 --min-beta-cdr3-length 12
 ```
 
-These thresholds illustrate the syntax, not universal biological cutoffs.
-Expression gates can remove the memory/state diversity that stratification is
-intended to preserve; use them when that restriction is intentional.
+## MART-1, viral database matches, and publicness
 
-## MART-1, viral matches, and publicness
+- **Known MART-1 receptors are excluded by default.** Supply explicit reference
+  paths via `--vdjdb`, `--iedb`, or `--cedar` (`prioritize` does not
+  auto-discover from the `tcrsift data` cache); clones matching
+  MART-1/Melan-A/MLANA or `EAAGIGILTV`/`AAGIGILTV`/`ELAGIGILTV` are excluded
+  unless `--no-exclude-known-mart1` is passed. Without a reference database,
+  `prioritize` logs a warning because known MART-1 receptors cannot be flagged.
+- **Known viral matches are retained by default** so vaccine studies and
+  virus-driven tumor analyses do not lose target clones. Pass
+  `--exclude-known-viral` to exclude them. Matching strictness is set by
+  `--database-match strict_ab|ab_with_partial|b_only` (default
+  `ab_with_partial`).
+- **Heuristic sequence exclusions are opt-in.** `--exclude-trav12-2` drops all
+  `TRAV12-2` clones (an aggressive proxy for germline-biased MART-1 binders),
+  and `--exclude-public-quantile 0.90` drops the top decile of k-mer sequence
+  publicness within each patient. Neither CDR3 length nor k-mer probability
+  measures exact V(D)J junctional N-insertions, and short or public CDR3s can
+  still be genuinely antigen-reactive. Audit columns in `all_scored_clones.csv`
+  record these flags even when exclusions are off.
 
-**Known MART-1 matches are excluded by default in every context.** Supply one
-or more reference files with `--vdjdb`, `--iedb`, or `--cedar`. Matches to
-MART-1/Melan-A/MLANA and EAAGIGILTV/AAGIGILTV/ELAGIGILTV are flagged. Without a
-reference database the command warns: it cannot identify unannotated MART-1
-clones. A missing database match means unknown specificity. Override explicitly
-with `--no-exclude-known-mart1` for studies that target MART-1.
+## Literature context for context presets
 
-**Known viral matches are retained by default.** Add `--exclude-known-viral`
-when they should be excluded. This is intentionally opt-in for vaccine studies
-and studies of viral tumor antigens. Database match strictness is controlled by
-`--database-match strict_ab|ab_with_partial|b_only` (default `ab_with_partial`).
-
-`--exclude-trav12-2` is an optional aggressive heuristic. TRAV12-2 bias is not
-proof of MART-1 specificity, and CDR3 length cannot establish it either.
-`--exclude-public-quantile 0.90` optionally removes the top publicness decile
-within each patient (ties can remove a different fraction). Scores and flags
-are retained in the audit table even when these exclusions are disabled.
-
-Length filters and the bundled k-mer publicness model are **not a germline
-distance or an N-insertion count**. Exact junctional analysis would require
-nucleotide sequences and germline V(D)J alignment; beta junctions also contain
-D-segment contributions. This command does not estimate that quantity. Short
-or readily generated receptors can still be antigen-specific, so length and
-publicness exclusions remain opt-in.
-
-## Evidence behind the presets
-
-- [Lowery et al., Science 2022](https://pubmed.ncbi.nlm.nih.gov/35113651/):
-  separate CD4 and CD8 neoantigen-reactive TIL signatures.
-- [Yossef et al., Cancer Cell 2023](https://pubmed.ncbi.nlm.nih.gov/38039963/):
-  circulating antitumor CD8 cells have a memory-like phenotype distinct from
-  their TIL counterparts; basis for the explicit `blood-tumor` preset.
-- [Vaccination/infection profiling, Nature Immunology 2023](https://www.nature.com/articles/s41590-023-01608-9):
-  supports examining multiple antigen-specific CD8 states rather than treating
-  cytotoxicity alone as vaccine specificity.
-- [MPE single-cell study, Nature Communications 2021](https://www.nature.com/articles/s41467-021-27026-9):
-  heterogeneous effusion immune states. Our MPE panel choice is an exploratory
-  extrapolation, not a validated classifier from that study.
-- [AML differentiation/dysfunction study, Blood 2024](https://pubmed.ncbi.nlm.nih.gov/38776511/):
-  motivates preserving memory and differentiated strata; does not validate our
-  `heme` preset or establish leukemia specificity.
-- [MART-1 germline recognition study](https://pmc.ncbi.nlm.nih.gov/articles/PMC2785656/)
-  and [Stitchr](https://pmc.ncbi.nlm.nih.gov/articles/PMC9262623/): context for
-  distinguishing germline V-gene bias, CDR3 length, and junctional diversity.
+- [Lowery et al., *Science* 2022](https://pubmed.ncbi.nlm.nih.gov/35113651/):
+  published CD4 (`NeoTCR4`) and CD8 (`NeoTCR8`) neoantigen-reactive TIL gene
+  sets.
+- [Yossef et al., *Cancer Cell* 2023](https://pubmed.ncbi.nlm.nih.gov/38039963/):
+  circulating antitumor CD8 T cells display a less exhausted, memory-shifted
+  phenotype relative to TIL (`NeoTCR_PBL`, `blood-tumor` preset).
+- [Zeng et al., *Nature Communications* 2025](https://www.nature.com/articles/s41467-024-55059-3):
+  three-gene `CXCL13`/`ENTPD1`/`IL7R` TIL signature and within-clone state
+  heterogeneity motivating the subset evidence route.
+- [Vaccination and infection CD8 state profiling, *Nature Immunology* 2023](https://www.nature.com/articles/s41590-023-01608-9):
+  motivates retaining memory alongside effector states in `blood`.
+- [Malignant pleural effusion atlas, *Nature Communications* 2021](https://www.nature.com/articles/s41467-021-27026-9)
+  and [AML T-cell dysfunction study, *Blood* 2024](https://pubmed.ncbi.nlm.nih.gov/38776511/):
+  biological background for the exploratory `mpe` and `heme` presets.
+- [Cole et al., *J Immunol* 2009](https://pmc.ncbi.nlm.nih.gov/articles/PMC2785656/)
+  and [Stitchr, *Nucleic Acids Res* 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9262623/):
+  germline `TRAV12-2` MART-1 recognition and V(D)J junction structure.
 
 ## Release notes
 
-Behavior changes to this command between versions are listed in the
-[prioritization release notes](../release-notes.md).
+Version-to-version behavior changes are tracked in
+[Prioritization release notes](../release-notes.md).

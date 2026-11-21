@@ -2,12 +2,13 @@
 
 ## Requirements
 
-- Python 3.9 or higher
-- Enough memory and temporary disk for the combined single-cell dataset
+- Python 3.9–3.12
+- Sufficient RAM and temporary disk space for your combined single-cell matrices
 
-The normal install includes the scientific stack, PDF sequence reports,
-constant-region references, Excel input support, and the k-mer/TCRpeg sequence
-probability backends.
+The standard `pip install tcrsift` package includes Scanpy/AnnData, PDF
+sequence reports, packaged human TCR constant-region and leader references,
+Excel import/export, cancer-testis-antigen panels (`oncoref`), and both the
+k-mer and TCRpeg/PyTorch sequence-probability backends.
 
 ## Install from PyPI
 
@@ -15,7 +16,7 @@ probability backends.
 pip install tcrsift
 ```
 
-## Install from Source
+## Install from source
 
 ```bash
 git clone https://github.com/pirl-unc/tcrsift.git
@@ -23,37 +24,33 @@ cd tcrsift
 pip install -e .
 ```
 
-## Optional Dependencies
+## Optional extras
 
-Install everything, including atlas and optional plotting/report helpers:
+Install all optional clustering, plotting, and legacy report dependencies:
 
 ```bash
 pip install "tcrsift[full]"
 ```
 
-Available extras:
+Individual extras:
 
-| Extra | Adds |
-| --- | --- |
-| `atlas` | Harmony, Leiden, and graph dependencies for `tcrsift cells embed` |
-| `plots` | UpSet plots (a built-in bar-chart fallback is used without it) |
-| `reports` | `pdfkit` for legacy HTML-to-PDF report paths |
-| `docs` | MkDocs and the documentation theme/plugins |
-| `dev` | pytest, coverage, Ruff, and Pylint |
-| `full` | `atlas`, `plots`, and `reports` together |
+| Extra | Packages added | Needed for |
+| --- | --- | --- |
+| `atlas` | `harmonypy`, `igraph`, `leidenalg` | `tcrsift cells embed` and `embed_cells` |
+| `plots` | `upsetplot` | UpSet set-overlap plots (falls back to an intersection bar chart when absent) |
+| `reports` | `pdfkit` | Legacy HTML-to-PDF conversion (`reportlab` PDF reports are already in core) |
+| `docs` | `mkdocs`, `mkdocs-material`, `mkdocstrings[python]`, `pymdown-extensions` | Building the documentation site |
+| `dev` | `pytest`, `pytest-cov`, `pytest-xdist`, `ruff`, `pylint` | Running tests and linters |
+| `full` | `atlas` + `plots` + `reports` | All runtime extras |
 
-There are no `assembly`, `excel`, or `tcrpeg` extras. Those capabilities and
-dependencies are part of the core package. Constant-region assembly uses
-packaged canonical references; it does not require a separate
-`pyensembl install` download.
+Constant-region assembly uses packaged canonical FASTA references and does not
+require downloading an Ensembl release via `pyensembl install`.
 
-## Verify Installation
+## Verify installation
 
 ```bash
 tcrsift --version
 ```
-
-Or in Python:
 
 ```python
 import tcrsift
