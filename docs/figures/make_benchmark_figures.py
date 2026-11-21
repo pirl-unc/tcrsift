@@ -221,12 +221,11 @@ def threshold_sweeps():
         save(fig, name)
 
 
-def cd3_gate(dataset, order, versus, suffix=""):
+def cd3_gate(dataset, tissue, order, versus, suffix=""):
     """Cells kept and ranking of validated clones under three CD3 floors."""
     runs = json.loads((RESULTS / "summary.json").read_text())[dataset]["runs"]
     aurocs = pd.read_csv(RESULTS / "signature_auroc.csv")
-    whole = aurocs.tissue.isin(["all", "tumor"])
-    aurocs = aurocs[aurocs.dataset.eq(dataset) & whole & aurocs.signature.eq("TumorReactive")]
+    aurocs = aurocs[aurocs.dataset.eq(dataset) & aurocs.tissue.eq(tissue) & aurocs.signature.eq("TumorReactive")]
     labels = [label for _, label in reversed(order)]
     fig1, ax1 = plt.subplots(figsize=(6.6, 3.0), constrained_layout=True)
     fig2, ax2 = plt.subplots(figsize=(7.4, 3.2), constrained_layout=True)
@@ -330,7 +329,8 @@ if __name__ == "__main__":
     selection_by_budget()
     threshold_sweeps()
     floors = ["No floor", "3 counts", "10 counts (default)"]
-    cd3_gate("caushi", list(zip(["tumor_cd3_0", "tumor_cd3_3", "tumor_default"], floors)), "neoantigen vs viral")
-    cd3_gate("chiffelle", list(zip(["cd3_0", "cd3_3", "default"], floors)), "reactive vs non-reactive",
+    cd3_gate("caushi", "all", list(zip(["tumor_cd3_0", "tumor_cd3_3", "tumor_default"], floors)),
+             "neoantigen vs viral")
+    cd3_gate("chiffelle", "tumor", list(zip(["cd3_0", "cd3_3", "default"], floors)), "reactive vs non-reactive",
              suffix="_melanoma")
     print("wrote benchmark figures")

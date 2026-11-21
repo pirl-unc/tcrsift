@@ -71,6 +71,15 @@ SENSITIVITY_RUNS = [
 BUDGETS = (25, 50, 100, 200)
 
 
+def is_current(out):
+    """True when ``out`` holds a finished run of the installed tcrsift version.
+    Runs left by another version are redone, so every table is from one version."""
+    from tcrsift import __version__
+
+    config = out / "prioritization.json"
+    return config.exists() and json.loads(config.read_text()).get("version") == __version__
+
+
 # ------------------------------------------------------------------- metrics
 
 def auroc(scores, positive):
@@ -156,7 +165,7 @@ def run_caushi(data_dir, work_dir):
         sheet.write_text("\n".join(lines) + "\n")
         out = work_dir / f"caushi_{run}"
         seconds_file = out / "benchmark_seconds.txt"
-        if not (out / "prioritization.json").exists():
+        if not is_current(out):
             start = time.perf_counter()
             tcrsift_main(["prioritize", str(sheet), "-o", str(out), "--context", "solid-tumor", *extra])
             seconds_file.write_text(f"{time.perf_counter() - start:.0f}\n")
@@ -242,7 +251,7 @@ def run_eberhardt(data_dir, work_dir):
     lines += [f"{s.name},{s.name.split('_')[0]},{s.name.split('_')[2]},{s / 'vdj'},{s / 'gex'}" for s in bulk]
     sheet.write_text("\n".join(lines) + "\n")
     out = work_dir / "eberhardt_default"
-    if not (out / "prioritization.json").exists():
+    if not is_current(out):
         tcrsift_main(["prioritize", str(sheet), "-o", str(out), "--context", "solid-tumor"])
     config = json.loads((out / "prioritization.json").read_text())
     signatures = config["resolved_signatures"]
@@ -278,12 +287,19 @@ def run_eberhardt(data_dir, work_dir):
 
 # ------------------------------------------- shared by the full-command runs
 
+def one_label_per_beta(table):
+    """One row per patient and beta chain. A beta listed with two different
+    labels (for example reactive with one alpha, not with another) is dropped."""
+    distinct = table.groupby(["donor", "CDR3_beta"]).label.transform("nunique")
+    return table[distinct.eq(1)].drop_duplicates(["donor", "CDR3_beta"])
+
+
 def run_prioritize(sheet_rows, sheet, out, extra=()):
     """Write a sample sheet, run the unmodified command once, return its config."""
     from tcrsift.cli import main as tcrsift_main
 
     sheet.write_text("\n".join(["sample,patient_id,tissue,vdj_dir,gex_dir", *sheet_rows]) + "\n")
-    if not (out / "prioritization.json").exists():
+    if not is_current(out):
         tcrsift_main(["prioritize", str(sheet), "-o", str(out), "--context", "solid-tumor", *extra])
     return json.loads((out / "prioritization.json").read_text())
 
@@ -300,11 +316,15 @@ def labelled_clone_table(out, labels, signatures):
     clones["passes_any"] = clones[cutoff_cols].fillna(False).astype(bool).any(axis=1)
     clones["passes_tumor_signature"] = clones[
         [f"signature_{n}_passes_cutoff" for n in TUMOR_SIGNATURES]].fillna(False).astype(bool).any(axis=1)
-    clones["tumor_reactive_rank"] = clones[clones.cell_count.ge(2)].groupby("donor")[
+    # The simple alternative to the shortlist: a patient's top clones by one score.
+    rank = clones[clones.cell_count.ge(2)].groupby("donor")[
         "signature_TumorReactive_percentile"].rank(ascending=False, method="first")
-    any_cols = ["eligible_for_review", "selected_for_review", "passes_any", "passes_tumor_signature", *cutoff_cols]
+    clones["top10_tumor_reactive"] = rank.le(10).reindex(clones.index, fill_value=False)
+    clones["top20_tumor_reactive"] = rank.le(20).reindex(clones.index, fill_value=False)
+    any_cols = ["eligible_for_review", "selected_for_review", "passes_any", "passes_tumor_signature",
+                "top10_tumor_reactive", "top20_tumor_reactive", *cutoff_cols]
     keep = ["donor", "CDR3_beta", "CDR3_alpha", "label", "cell_count", "size_percentile",
-            "selection_rank", "selected_signature", "tumor_reactive_rank", *any_cols,
+            "selection_rank", "selected_signature", *any_cols,
             *[c for c in sig_cols if c.endswith("percentile")]]
     return clones, collapse_by_beta(clones[keep], any_cols)
 
@@ -321,9 +341,8 @@ def command_facts(config, clones, table):
         "labelled_min2_pass_tumor_signature": counts(table, expanded & table.passes_tumor_signature),
         "labelled_eligible": counts(table, table.eligible_for_review),
         "labelled_selected": counts(table, table.selected_for_review),
-        # The simple alternative: each patient's top clones by one score.
-        "labelled_top10_tumor_reactive_per_patient": counts(table, table.tumor_reactive_rank.le(10)),
-        "labelled_top20_tumor_reactive_per_patient": counts(table, table.tumor_reactive_rank.le(20)),
+        "labelled_top10_tumor_reactive_per_patient": counts(table, table.top10_tumor_reactive),
+        "labelled_top20_tumor_reactive_per_patient": counts(table, table.top20_tumor_reactive),
     }
 
 
@@ -340,7 +359,7 @@ def chiffelle_labels(data_dir):
         "CDR3_beta": raw.iloc[:, 1].str.split("_").str[1].str[:-1],
         "label": np.where(raw["Tumor-reactivity"].eq("yes"), "TR", "NTR"),
     })
-    return table.drop_duplicates(["donor", "CDR3_beta"])
+    return one_label_per_beta(table)
 
 
 def run_chiffelle(data_dir, work_dir):
@@ -394,20 +413,21 @@ def pulliam_tumor_samples(data_dir, work_dir):
         genes = features[2].eq("Gene Expression").to_numpy()
         sample = work_dir / "pulliam_samples" / f"{run}_tumor"
         gex = sample / "gex" / "filtered_feature_bc_matrix"
-        if not (gex / "matrix.mtx.gz").exists():
-            gex.mkdir(parents=True, exist_ok=True)
-            (sample / "vdj").mkdir(exist_ok=True)
-            with gzip.open(gex / "matrix.mtx.gz", "wb") as handle:
-                scipy.io.mmwrite(handle, matrix[genes][:, tumor].tocoo(), field="integer")
-            # The reference holds human and virus genomes; drop the genome prefix.
-            features[genes].replace(r"^GRCh38_", "", regex=True).to_csv(
-                gex / "features.tsv.gz", sep="\t", header=False, index=False)
-            pd.Series(barcodes[tumor]).to_csv(gex / "barcodes.tsv.gz", header=False, index=False)
-            contigs = pd.read_csv(run_dir / "all_contig_annotations.csv.gz", low_memory=False)
-            called = contigs.is_cell.astype(str).str.lower().eq("true")
-            confident = contigs.high_confidence.astype(str).str.lower().eq("true")
-            contigs[called & confident & contigs.barcode.isin(barcodes[tumor])].to_csv(
-                sample / "vdj" / "filtered_contig_annotations.csv", index=False)
+        # Rebuilt on every run (a few seconds), so a changed rule or an interrupted
+        # run cannot leave a stale sample behind.
+        gex.mkdir(parents=True, exist_ok=True)
+        (sample / "vdj").mkdir(exist_ok=True)
+        with gzip.open(gex / "matrix.mtx.gz", "wb") as handle:
+            scipy.io.mmwrite(handle, matrix[genes][:, tumor].tocoo(), field="integer")
+        # The reference holds human and virus genomes; drop the genome prefix.
+        features[genes].replace(r"^GRCh38_", "", regex=True).to_csv(
+            gex / "features.tsv.gz", sep="\t", header=False, index=False)
+        pd.Series(barcodes[tumor]).to_csv(gex / "barcodes.tsv.gz", header=False, index=False)
+        contigs = pd.read_csv(run_dir / "all_contig_annotations.csv.gz", low_memory=False)
+        called = contigs.is_cell.astype(str).str.lower().eq("true")
+        confident = contigs.high_confidence.astype(str).str.lower().eq("true")
+        contigs[called & confident & contigs.barcode.isin(barcodes[tumor])].to_csv(
+            sample / "vdj" / "filtered_contig_annotations.csv", index=False)
         made.append((sample, tubes.Patient_id.iloc[0]))
     return made, demux
 
@@ -422,7 +442,7 @@ def pulliam_labels(data_dir):
     raw = pd.read_excel(root / "table_s4.xlsx", header=1)
     table = pd.DataFrame({"donor": plain(raw.subject).map(patient), "CDR3_beta": raw.cdr3_b_aa,
                           "label": np.where(raw.virus.eq("MCPyV"), "MCPyV", "other_virus")})
-    return table.dropna(subset=["donor"]).drop_duplicates(["donor", "CDR3_beta"])
+    return one_label_per_beta(table.dropna(subset=["donor"]))
 
 
 def run_pulliam(data_dir, work_dir):

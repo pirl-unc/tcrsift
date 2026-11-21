@@ -28,7 +28,8 @@ datasets, 33 patients in all, and reports what works and what does not.
   this: neither list is enriched there.
 - **The CD3 floor is not settled.** It discards most CD8 cells in every
   dataset. In lung the clones that remain are ranked far better. In melanoma
-  they are ranked slightly worse and a third of the labelled clones are lost.
+  they are ranked slightly worse and a third of the tested non-reactive clones
+  are lost.
   In Merkel cell carcinoma it leaves 159 cells.
 
 !!! warning "One result is circular"
@@ -457,7 +458,7 @@ Every full-command run shows heavy attrition. Cells retained at the defaults:
 19,335 of 248,332 in lung, 4,925 of 54,837 in melanoma, 3,647 of 32,735 in head
 and neck, and 159 of 8,311 in Merkel cell carcinoma.
 
-**Speed.** The 33-sample lung run (248,332 cells) took 139 seconds on a laptop
+**Speed.** The 33-sample lung run (248,332 cells) took 115 seconds on a laptop
 with 32 GB of memory.
 
 ## What this does not show

@@ -14,7 +14,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 139,
+        "seconds": 115,
         "cells_after_gex_qc": 248332,
         "cells_retained": 19335,
         "cell_filters": [
@@ -84,7 +84,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 176,
+        "seconds": 146,
         "cells_after_gex_qc": 248332,
         "cells_retained": 45821,
         "cell_filters": [
@@ -154,7 +154,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 178,
+        "seconds": 151,
         "cells_after_gex_qc": 248332,
         "cells_retained": 48869,
         "cell_filters": [
@@ -221,7 +221,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 116,
+        "seconds": 108,
         "cells_after_gex_qc": 69487,
         "cells_retained": 17518,
         "cell_filters": [
@@ -283,7 +283,7 @@
           "LN",
           "normal"
         ],
-        "seconds": 73,
+        "seconds": 68,
         "cells_after_gex_qc": 144214,
         "cells_retained": 7726,
         "cell_filters": [
@@ -634,8 +634,8 @@
         },
         "labelled_top20_tumor_reactive_per_patient": {
           "untested": 188,
-          "NTR": 16,
-          "TR": 14
+          "TR": 16,
+          "NTR": 16
         }
       },
       "cd3_0": {
@@ -712,8 +712,8 @@
         },
         "labelled_top20_tumor_reactive_per_patient": {
           "untested": 189,
-          "NTR": 15,
-          "TR": 14
+          "TR": 16,
+          "NTR": 15
         }
       },
       "tumor_signatures": {
@@ -960,12 +960,12 @@
         "labelled_top10_tumor_reactive_per_patient": {
           "untested": 8,
           "other_virus": 2,
-          "MCPyV": 1
+          "MCPyV": 2
         },
         "labelled_top20_tumor_reactive_per_patient": {
           "untested": 17,
-          "other_virus": 2,
-          "MCPyV": 1
+          "MCPyV": 3,
+          "other_virus": 2
         }
       },
       "cd3_0": {
@@ -1033,12 +1033,13 @@
         },
         "labelled_top10_tumor_reactive_per_patient": {
           "untested": 9,
-          "other_virus": 2
+          "other_virus": 2,
+          "MCPyV": 1
         },
         "labelled_top20_tumor_reactive_per_patient": {
           "untested": 17,
-          "other_virus": 2,
-          "MCPyV": 1
+          "MCPyV": 3,
+          "other_virus": 2
         }
       }
     },
