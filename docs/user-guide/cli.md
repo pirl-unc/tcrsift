@@ -113,7 +113,7 @@ Requires the `atlas` extra (`pip install 'tcrsift[atlas]'`) for `embed`.
 Classify cells as CD4+ or CD8+.
 
 ```bash
-tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --cd4-cd8-ratio 3.0 --min-cd3-reads 10
+tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --cd4-cd8-ratio 3.0 --min-cd3-reads 3
 ```
 
 | Option | Description |
@@ -121,7 +121,7 @@ tcrsift phenotype -i loaded.h5ad -o phenotyped.h5ad --cd4-cd8-ratio 3.0 --min-cd
 | `-i`, `--input` | Input .h5ad file (required) |
 | `-o`, `--output` | Output .h5ad file (required) |
 | `--cd4-cd8-ratio` | CD4/CD8 ratio threshold (default: 3.0) |
-| `--min-cd3-reads` | Minimum CD3 reads (default: 10) |
+| `--min-cd3-reads` | Minimum CD3 reads (default: 3; 0 disables) |
 | `--plot-phenotype` | Save phenotype plot |
 
 ---

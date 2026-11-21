@@ -52,19 +52,20 @@ TUMOR_TISSUES = ("tumor", "mettumor")
 # (run name, tissues, extra arguments). The first is the default command.
 CAUSHI_RUNS = [
     ("tumor_default", TUMOR_TISSUES, []),
-    ("tumor_cd3_3", TUMOR_TISSUES, ["--min-cd3", "3"]),
+    ("tumor_cd3_10", TUMOR_TISSUES, ["--min-cd3", "10"]),
     ("tumor_cd3_0", TUMOR_TISSUES, ["--min-cd3", "0"]),
     # Is the CD3 floor special, or is any depth filter as good? No CD3 floor,
     # but require 4,000 UMIs per cell instead of 500.
     ("tumor_depth_gate", TUMOR_TISSUES, ["--min-cd3", "0", "--min-counts", "4000"]),
     ("other_tissue_default", ("LN", "normal"), []),
+    ("other_tissue_cd3_10", ("LN", "normal"), ["--min-cd3", "10"]),
 ]
 TUMOR_SIGNATURES = ("TumorReactive", "MANAscore", "NeoTCR8")
-# The default command, two lower CD3 floors, and the tumor-reactivity
-# signatures alone, for the datasets small enough to rerun cheaply.
+# The default command (CD3 floor of 3), the former floor of 10, no floor, and
+# the tumor-reactivity signatures alone, for the datasets small enough to rerun cheaply.
 SENSITIVITY_RUNS = [
     ("default", []),
-    ("cd3_3", ["--min-cd3", "3"]),
+    ("cd3_10", ["--min-cd3", "10"]),
     ("cd3_0", ["--min-cd3", "0"]),
     ("tumor_signatures", ["--signatures", *TUMOR_SIGNATURES]),
 ]
@@ -118,6 +119,23 @@ def auroc_rows(table, signatures, positive_label, negative_label, **tags):
         rows.append({**tags, "signature": name,
                      "n_positive": int(positive[ok].sum()), "n_negative": int((~positive[ok]).sum()),
                      "auroc": auroc(labelled.loc[ok, col], positive[ok]), "auroc_low": low, "auroc_high": high})
+    return rows
+
+
+def same_clone_rows(labelled, signatures, positive_label, negative_label, default_run, strict_run, **tags):
+    """Does a stricter CD3 floor rank clones better, or only score fewer of them?
+
+    Splits the default run's labelled clones into those the stricter run also
+    scored and those it dropped, and reports AUROC for each part."""
+    key = ["donor", "CDR3_beta"]
+    strict = labelled.loc[labelled.run.eq(strict_run), key].drop_duplicates().assign(kept=True)
+    default = labelled[labelled.run.eq(default_run)].merge(strict, on=key, how="left")
+    kept = default.kept.eq(True)
+    rows = []
+    for name, part in ((f"{default_run}_also_scored_at_{strict_run}", default[kept]),
+                       (f"{default_run}_dropped_at_{strict_run}", default[~kept])):
+        rows += [r for r in auroc_rows(part, signatures, positive_label, negative_label, **tags, run=name)
+                 if r["signature"] != "clone_size"]
     return rows
 
 
@@ -210,7 +228,10 @@ def run_caushi(data_dir, work_dir):
             "labelled_eligible": counts(table, table.eligible_for_review), "labelled_selected": counts(table, scored),
         }
     published = {str(k): int(v) for k, v in labels.label.value_counts().items()}
-    return aurocs, pd.concat(clone_tables, ignore_index=True), {"labels_published": published, "runs": facts}
+    labelled = pd.concat(clone_tables, ignore_index=True)
+    aurocs += same_clone_rows(labelled, signatures, "MANA", "viral", "tumor_default", "tumor_cd3_10",
+                              dataset="caushi", tissue="all")
+    return aurocs, labelled, {"labels_published": published, "runs": facts}
 
 
 # ------------------------------------------------------------- Eberhardt 2021
@@ -376,11 +397,15 @@ def run_chiffelle(data_dir, work_dir):
         tables.append(table[table.label.ne("untested")].assign(run=run))
         facts[run] = {"arguments": extra, **command_facts(config, clones, table)}
         if run == "default":
+            preset_signatures = signatures
             for patient, group in table.groupby("donor"):
                 for row in auroc_rows(group, signatures, "TR", "NTR", donor=patient):
                     per_patient.append({k: row[k] for k in ("donor", "signature", "n_positive", "n_negative", "auroc")})
     summary = {"samples": len(samples), "labels_published": counts(labels), "runs": facts}
-    return aurocs, pd.concat(tables, ignore_index=True), summary, pd.DataFrame(per_patient)
+    labelled = pd.concat(tables, ignore_index=True)
+    aurocs += same_clone_rows(labelled, preset_signatures, "TR", "NTR",
+                              "default", "cd3_10", dataset="chiffelle", tissue="tumor")
+    return aurocs, labelled, summary, pd.DataFrame(per_patient)
 
 
 # --------------------------------------------------------------- Pulliam 2024

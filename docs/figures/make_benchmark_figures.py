@@ -86,7 +86,7 @@ def auroc_by_dataset():
               ("chiffelle", "default", "tumor", "Melanoma (Chiffelle 2024)", True),
               ("caushi", "tumor_default", "all", "Lung (Caushi 2021)", True),
               ("eberhardt", "default", "all", "Head and neck, HPV+ (Eberhardt 2021)", False),
-              ("pulliam", "cd3_0", "tumor", "Merkel cell, no CD3 floor (Pulliam 2024)", False)]
+              ("pulliam", "default", "tumor", "Merkel cell (Pulliam 2024)", False)]
     fig, ax = plt.subplots(figsize=(8.2, 3.6), constrained_layout=True)
     for i, (dataset, run, tissue, label, tested) in enumerate(reversed(wanted)):
         row = table[table.dataset.eq(dataset) & table.run.eq(run) & table.tissue.eq(tissue)].iloc[0]
@@ -288,7 +288,7 @@ def dataset_designs():
             "11 of 13 patients with\nmelanoma given TIL\ntherapy",
             "Single-cell RNA + TCR\nof CD45+ cells from the\ntumor before treatment",
             "TCRs cloned and tested\nagainst the patient's\nown tumor cells",
-            "65 reactive and\n65 non-reactive\nclonotypes"]),
+            "72 reactive and\n94 non-reactive\nclonotypes"]),
         ("Pulliam 2024\nMerkel cell", [
             "2 of 7 patients with\nMerkel cell carcinoma",
             "Single-cell RNA + TCR\nof hashed tumor and\nblood cells",
@@ -328,9 +328,9 @@ if __name__ == "__main__":
     cutoff_pass_rates()
     selection_by_budget()
     threshold_sweeps()
-    floors = ["No floor", "3 counts", "10 counts (default)"]
-    cd3_gate("caushi", "all", list(zip(["tumor_cd3_0", "tumor_cd3_3", "tumor_default"], floors)),
+    floors = ["No floor", "3 counts (default)", "10 counts"]
+    cd3_gate("caushi", "all", list(zip(["tumor_cd3_0", "tumor_default", "tumor_cd3_10"], floors)),
              "neoantigen vs viral")
-    cd3_gate("chiffelle", "tumor", list(zip(["cd3_0", "cd3_3", "default"], floors)), "reactive vs non-reactive",
+    cd3_gate("chiffelle", "tumor", list(zip(["cd3_0", "default", "cd3_10"], floors)), "reactive vs non-reactive",
              suffix="_melanoma")
     print("wrote benchmark figures")

@@ -19,7 +19,7 @@ See docs/user-guide/til-signatures.md for their rationale and limitations.
 from __future__ import annotations
 
 import logging
-from collections import deque
+from collections import Counter, deque
 
 import numpy as np
 import pandas as pd
@@ -228,6 +228,8 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
     shared sequences in different patients remain separate candidate rows.
     Only the qualifying head of each list participates. Exhausted lists
     contribute no more turns; other lists continue without quota limits.
+    When the budget ends inside a round, each remaining turn goes to the
+    signature, then the sample, with the fewest turns in that round.
     """
     scores = scores.reset_index(drop=True)
     result = clones.copy()
@@ -260,7 +262,29 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
     limit = max_clones if max_clones else len(eligible)
     while len(selected) < limit:
         before = len(selected)
-        for signature, sample, lineage, route, queue in lists:
+        live = []
+        for entry in lists:
+            queue = entry[-1]
+            while queue and queue[0][:2] in selected:
+                queue.popleft()
+            if queue:
+                live.append(entry)
+        remaining = limit - len(selected)
+        if remaining < len(live):
+            # The budget ends inside this round. Taking a prefix would starve
+            # the signatures listed last, so each turn goes to the signature,
+            # then the sample, with the fewest turns so far in this round.
+            def stratum(entry):
+                return entry[-1][0][0], entry[1], entry[2]  # donor, sample, lineage
+
+            turns, pending, live = Counter(), live, []
+            for _ in range(remaining):
+                entry = min(pending, key=lambda item: (turns[item[0]], turns[stratum(item)]))
+                pending = [item for item in pending if item is not entry]
+                turns[entry[0]] += 1
+                turns[stratum(entry)] += 1
+                live.append(entry)
+        for signature, sample, lineage, route, queue in live:
             while queue and queue[0][:2] in selected:
                 queue.popleft()
             if not queue:
@@ -277,8 +301,6 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
                 row.cells, row[f"signature_{signature}"], row.get(f"signature_{signature}_high_cells", np.nan),
                 row.get(f"signature_{signature}_high_fraction", np.nan),
             ]
-            if len(selected) == limit:
-                break
         if len(selected) == before:
             break
     result["selected_for_review"] = result.selection_rank.notna()

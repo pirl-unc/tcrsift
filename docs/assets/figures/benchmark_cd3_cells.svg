@@ -29,75 +29,75 @@ z
   </g>
   <g id="axes_1">
    <g id="patch_2">
-    <path d="M 89.320552 212.99976 
+    <path d="M 83.759615 212.99976 
 L 472.19976 212.99976 
 L 472.19976 16.50024 
-L 89.320552 16.50024 
+L 83.759615 16.50024 
 z
 " style="fill: #fcfcfb"/>
    </g>
    <g id="patch_3">
-    <path d="M 89.320552 66.655712 
-L 340.801149 66.655712 
-L 340.801149 25.432036 
-L 89.320552 25.432036 
+    <path d="M 83.759615 66.655712 
+L 338.892715 66.655712 
+L 338.892715 25.432036 
+L 83.759615 25.432036 
 z
-" clip-path="url(#p64f2cefbcf)" style="fill: #2a78d6"/>
+" clip-path="url(#p74a3d9ba56)" style="fill: #2a78d6"/>
    </g>
    <g id="patch_4">
-    <path d="M 89.320552 135.361838 
-L 325.116096 135.361838 
-L 325.116096 94.138162 
-L 89.320552 94.138162 
+    <path d="M 83.759615 135.361838 
+L 322.979852 135.361838 
+L 322.979852 94.138162 
+L 83.759615 94.138162 
 z
-" clip-path="url(#p64f2cefbcf)" style="fill: #2a78d6"/>
+" clip-path="url(#p74a3d9ba56)" style="fill: #2a78d6"/>
    </g>
    <g id="patch_5">
-    <path d="M 89.320552 204.067964 
-L 188.818748 204.067964 
-L 188.818748 162.844288 
-L 89.320552 162.844288 
+    <path d="M 83.759615 204.067964 
+L 184.702922 204.067964 
+L 184.702922 162.844288 
+L 83.759615 162.844288 
 z
-" clip-path="url(#p64f2cefbcf)" style="fill: #2a78d6"/>
+" clip-path="url(#p74a3d9ba56)" style="fill: #2a78d6"/>
    </g>
    <g id="matplotlib.axis_1"/>
    <g id="matplotlib.axis_2">
     <g id="ytick_1">
      <g id="line2d_1"/>
      <g id="text_1">
-      <text style="font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="85.820552" y="187.206126" transform="rotate(-0 85.820552 187.206126)">10 counts (default)</text>
+      <text style="font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="80.259615" y="187.206126" transform="rotate(-0 80.259615 187.206126)">10 counts</text>
      </g>
     </g>
     <g id="ytick_2">
      <g id="line2d_2"/>
      <g id="text_2">
-      <text style="font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="85.820552" y="118.5" transform="rotate(-0 85.820552 118.5)">3 counts</text>
+      <text style="font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="80.259615" y="118.5" transform="rotate(-0 80.259615 118.5)">3 counts (default)</text>
      </g>
     </g>
     <g id="ytick_3">
      <g id="line2d_3"/>
      <g id="text_3">
-      <text style="font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="85.820552" y="49.793874" transform="rotate(-0 85.820552 49.793874)">No floor</text>
+      <text style="font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="80.259615" y="49.793874" transform="rotate(-0 80.259615 49.793874)">No floor</text>
      </g>
     </g>
    </g>
    <g id="text_4">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="348.818434" y="48.500593" transform="rotate(-0 348.818434 48.500593)">48,869  (47% of CD8)</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="347.026443" y="48.500593" transform="rotate(-0 347.026443 48.500593)">48,869  (47% of CD8)</text>
    </g>
    <g id="text_5">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="333.133381" y="117.206719" transform="rotate(-0 333.133381 117.206719)">45,821  (44% of CD8)</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="331.113581" y="117.206719" transform="rotate(-0 331.113581 117.206719)">45,821  (44% of CD8)</text>
    </g>
    <g id="text_6">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="196.836033" y="185.912845" transform="rotate(-0 196.836033 185.912845)">19,335  (19% of CD8)</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="192.836651" y="185.912845" transform="rotate(-0 192.836651 185.912845)">19,335  (19% of CD8)</text>
    </g>
    <g id="text_7">
-    <text style="font-weight: 700; font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="89.320552" y="10.50024" transform="rotate(-0 89.320552 10.50024)">CD8 cells retained with a paired TCR</text>
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="83.759615" y="10.50024" transform="rotate(-0 83.759615 10.50024)">CD8 cells retained with a paired TCR</text>
    </g>
   </g>
  </g>
  <defs>
-  <clipPath id="p64f2cefbcf">
-   <rect x="89.320552" y="16.50024" width="382.879208" height="196.49952"/>
+  <clipPath id="p74a3d9ba56">
+   <rect x="83.759615" y="16.50024" width="388.440145" height="196.49952"/>
   </clipPath>
  </defs>
 </svg>

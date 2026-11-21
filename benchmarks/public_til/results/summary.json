@@ -1,5 +1,5 @@
 {
-  "tcrsift_version": "3.26.3",
+  "tcrsift_version": "3.27.0",
   "caushi": {
     "labels_published": {
       "viral": 82,
@@ -14,77 +14,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 115,
-        "cells_after_gex_qc": 248332,
-        "cells_retained": 19335,
-        "cell_filters": [
-          {
-            "filter": "lineage",
-            "before": 248332,
-            "after": 103864
-          },
-          {
-            "filter": "cd3",
-            "before": 103864,
-            "after": 28960
-          },
-          {
-            "filter": "alpha_cdr3",
-            "before": 28960,
-            "after": 22055
-          },
-          {
-            "filter": "beta_cdr3",
-            "before": 22055,
-            "after": 21217
-          },
-          {
-            "filter": "TRA_1_umis",
-            "before": 21217,
-            "after": 19387
-          },
-          {
-            "filter": "TRB_1_umis",
-            "before": 19387,
-            "after": 19335
-          }
-        ],
-        "clones_scored": 5131,
-        "candidates": 200,
-        "eligible_clones": 237,
-        "labelled_scored": {
-          "untested": 5096,
-          "MANA": 10,
-          "viral": 9
-        },
-        "labelled_min2_cells": {
-          "untested": 1125,
-          "MANA": 9,
-          "viral": 5
-        },
-        "labelled_eligible": {
-          "untested": 230,
-          "MANA": 6,
-          "viral": 1
-        },
-        "labelled_selected": {
-          "untested": 194,
-          "MANA": 5,
-          "viral": 1
-        }
-      },
-      "tumor_cd3_3": {
-        "arguments": [
-          "--min-cd3",
-          "3"
-        ],
-        "samples": 33,
-        "patients": 8,
-        "tissues": [
-          "tumor",
-          "mettumor"
-        ],
-        "seconds": 146,
+        "seconds": 165,
         "cells_after_gex_qc": 248332,
         "cells_retained": 45821,
         "cell_filters": [
@@ -138,9 +68,79 @@
           "viral": 2
         },
         "labelled_selected": {
-          "untested": 197,
-          "viral": 2,
+          "untested": 198,
+          "viral": 1,
           "MANA": 1
+        }
+      },
+      "tumor_cd3_10": {
+        "arguments": [
+          "--min-cd3",
+          "10"
+        ],
+        "samples": 33,
+        "patients": 8,
+        "tissues": [
+          "tumor",
+          "mettumor"
+        ],
+        "seconds": 126,
+        "cells_after_gex_qc": 248332,
+        "cells_retained": 19335,
+        "cell_filters": [
+          {
+            "filter": "lineage",
+            "before": 248332,
+            "after": 103864
+          },
+          {
+            "filter": "cd3",
+            "before": 103864,
+            "after": 28960
+          },
+          {
+            "filter": "alpha_cdr3",
+            "before": 28960,
+            "after": 22055
+          },
+          {
+            "filter": "beta_cdr3",
+            "before": 22055,
+            "after": 21217
+          },
+          {
+            "filter": "TRA_1_umis",
+            "before": 21217,
+            "after": 19387
+          },
+          {
+            "filter": "TRB_1_umis",
+            "before": 19387,
+            "after": 19335
+          }
+        ],
+        "clones_scored": 5131,
+        "candidates": 200,
+        "eligible_clones": 237,
+        "labelled_scored": {
+          "untested": 5096,
+          "MANA": 10,
+          "viral": 9
+        },
+        "labelled_min2_cells": {
+          "untested": 1125,
+          "MANA": 9,
+          "viral": 5
+        },
+        "labelled_eligible": {
+          "untested": 230,
+          "MANA": 6,
+          "viral": 1
+        },
+        "labelled_selected": {
+          "untested": 193,
+          "MANA": 6,
+          "viral": 1
         }
       },
       "tumor_cd3_0": {
@@ -154,7 +154,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 151,
+        "seconds": 159,
         "cells_after_gex_qc": 248332,
         "cells_retained": 48869,
         "cell_filters": [
@@ -203,9 +203,9 @@
           "viral": 2
         },
         "labelled_selected": {
-          "untested": 196,
-          "MANA": 2,
-          "viral": 2
+          "untested": 198,
+          "viral": 1,
+          "MANA": 1
         }
       },
       "tumor_depth_gate": {
@@ -221,7 +221,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 108,
+        "seconds": 107,
         "cells_after_gex_qc": 69487,
         "cells_retained": 17518,
         "cell_filters": [
@@ -270,8 +270,8 @@
           "viral": 1
         },
         "labelled_selected": {
-          "untested": 197,
-          "MANA": 2,
+          "untested": 196,
+          "MANA": 3,
           "viral": 1
         }
       },
@@ -283,7 +283,77 @@
           "LN",
           "normal"
         ],
-        "seconds": 68,
+        "seconds": 89,
+        "cells_after_gex_qc": 144214,
+        "cells_retained": 25073,
+        "cell_filters": [
+          {
+            "filter": "lineage",
+            "before": 144214,
+            "after": 54791
+          },
+          {
+            "filter": "cd3",
+            "before": 54791,
+            "after": 46810
+          },
+          {
+            "filter": "alpha_cdr3",
+            "before": 46810,
+            "after": 32874
+          },
+          {
+            "filter": "beta_cdr3",
+            "before": 32874,
+            "after": 30722
+          },
+          {
+            "filter": "TRA_1_umis",
+            "before": 30722,
+            "after": 25575
+          },
+          {
+            "filter": "TRB_1_umis",
+            "before": 25575,
+            "after": 25073
+          }
+        ],
+        "clones_scored": 8169,
+        "candidates": 200,
+        "eligible_clones": 299,
+        "labelled_scored": {
+          "untested": 8097,
+          "viral": 31,
+          "MANA": 16
+        },
+        "labelled_min2_cells": {
+          "untested": 1886,
+          "viral": 22,
+          "MANA": 10
+        },
+        "labelled_eligible": {
+          "untested": 287,
+          "MANA": 8,
+          "viral": 3
+        },
+        "labelled_selected": {
+          "untested": 192,
+          "MANA": 7,
+          "viral": 1
+        }
+      },
+      "other_tissue_cd3_10": {
+        "arguments": [
+          "--min-cd3",
+          "10"
+        ],
+        "samples": 24,
+        "patients": 7,
+        "tissues": [
+          "LN",
+          "normal"
+        ],
+        "seconds": 65,
         "cells_after_gex_qc": 144214,
         "cells_retained": 7726,
         "cell_filters": [
@@ -378,7 +448,7 @@
       "HPV51": 7
     },
     "cells_after_gex_qc": 32735,
-    "cells_retained": 3647,
+    "cells_retained": 8198,
     "cell_filters": [
       {
         "filter": "lineage",
@@ -388,82 +458,84 @@
       {
         "filter": "cd3",
         "before": 30262,
-        "after": 7421
+        "after": 26072
       },
       {
         "filter": "alpha_cdr3",
-        "before": 7421,
-        "after": 4936
+        "before": 26072,
+        "after": 12942
       },
       {
         "filter": "beta_cdr3",
-        "before": 4936,
-        "after": 4491
+        "before": 12942,
+        "after": 11541
       },
       {
         "filter": "TRA_1_umis",
-        "before": 4491,
-        "after": 3673
+        "before": 11541,
+        "after": 8304
       },
       {
         "filter": "TRB_1_umis",
-        "before": 3673,
-        "after": 3647
+        "before": 8304,
+        "after": 8198
       }
     ],
-    "clones_scored": 1450,
-    "candidates": 63,
+    "clones_scored": 2291,
+    "candidates": 110,
     "labelled_scored": {
-      "untested": 1359,
-      "HPV": 58
+      "untested": 2178,
+      "HPV": 65
     },
     "labelled_min2_cells": {
-      "untested": 376,
-      "HPV": 48
+      "untested": 691,
+      "HPV": 56
     },
     "labelled_selected": {
-      "untested": 59,
-      "HPV": 4
+      "untested": 100,
+      "HPV": 10
     },
     "by_patient": {
       "HPV34": {
         "scored": {
-          "untested": 735,
-          "HPV": 29
+          "untested": 1155,
+          "HPV": 30
         },
         "min2_cells": {
-          "untested": 185,
-          "HPV": 24
+          "untested": 338,
+          "HPV": 28
         },
         "selected": {
-          "untested": 33,
-          "HPV": 4
+          "untested": 44,
+          "HPV": 6
         }
       },
       "HPV51": {
         "scored": {
-          "untested": 389,
-          "HPV": 2
+          "untested": 623,
+          "HPV": 3
         },
         "min2_cells": {
-          "untested": 118,
-          "HPV": 1
+          "untested": 207,
+          "HPV": 2
         },
         "selected": {
-          "untested": 17
+          "untested": 31,
+          "HPV": 1
         }
       },
       "HPV7": {
         "scored": {
-          "untested": 235,
-          "HPV": 27
+          "untested": 400,
+          "HPV": 32
         },
         "min2_cells": {
-          "untested": 73,
-          "HPV": 23
+          "untested": 146,
+          "HPV": 26
         },
         "selected": {
-          "untested": 9
+          "untested": 25,
+          "HPV": 3
         }
       }
     }
@@ -477,6 +549,89 @@
     "runs": {
       "default": {
         "arguments": [],
+        "patients": 11,
+        "cells_after_gex_qc": 54837,
+        "cells_retained": 11712,
+        "cell_filters": [
+          {
+            "filter": "lineage",
+            "before": 54837,
+            "after": 16662
+          },
+          {
+            "filter": "cd3",
+            "before": 16662,
+            "after": 15125
+          },
+          {
+            "filter": "alpha_cdr3",
+            "before": 15125,
+            "after": 12642
+          },
+          {
+            "filter": "beta_cdr3",
+            "before": 12642,
+            "after": 12181
+          },
+          {
+            "filter": "TRA_1_umis",
+            "before": 12181,
+            "after": 11734
+          },
+          {
+            "filter": "TRB_1_umis",
+            "before": 11734,
+            "after": 11712
+          }
+        ],
+        "clones_scored": 6184,
+        "candidates": 200,
+        "labelled_scored": {
+          "untested": 5982,
+          "NTR": 94,
+          "TR": 72
+        },
+        "labelled_min2_cells": {
+          "untested": 1327,
+          "NTR": 80,
+          "TR": 61
+        },
+        "labelled_min2_pass_any": {
+          "untested": 214,
+          "TR": 25,
+          "NTR": 19
+        },
+        "labelled_min2_pass_tumor_signature": {
+          "untested": 101,
+          "TR": 18,
+          "NTR": 12
+        },
+        "labelled_eligible": {
+          "untested": 180,
+          "TR": 24,
+          "NTR": 19
+        },
+        "labelled_selected": {
+          "untested": 160,
+          "TR": 21,
+          "NTR": 18
+        },
+        "labelled_top10_tumor_reactive_per_patient": {
+          "untested": 91,
+          "TR": 11,
+          "NTR": 8
+        },
+        "labelled_top20_tumor_reactive_per_patient": {
+          "untested": 188,
+          "TR": 16,
+          "NTR": 16
+        }
+      },
+      "cd3_10": {
+        "arguments": [
+          "--min-cd3",
+          "10"
+        ],
         "patients": 11,
         "cells_after_gex_qc": 54837,
         "cells_retained": 4925,
@@ -553,89 +708,6 @@
           "untested": 137,
           "NTR": 24,
           "TR": 20
-        }
-      },
-      "cd3_3": {
-        "arguments": [
-          "--min-cd3",
-          "3"
-        ],
-        "patients": 11,
-        "cells_after_gex_qc": 54837,
-        "cells_retained": 11712,
-        "cell_filters": [
-          {
-            "filter": "lineage",
-            "before": 54837,
-            "after": 16662
-          },
-          {
-            "filter": "cd3",
-            "before": 16662,
-            "after": 15125
-          },
-          {
-            "filter": "alpha_cdr3",
-            "before": 15125,
-            "after": 12642
-          },
-          {
-            "filter": "beta_cdr3",
-            "before": 12642,
-            "after": 12181
-          },
-          {
-            "filter": "TRA_1_umis",
-            "before": 12181,
-            "after": 11734
-          },
-          {
-            "filter": "TRB_1_umis",
-            "before": 11734,
-            "after": 11712
-          }
-        ],
-        "clones_scored": 6184,
-        "candidates": 200,
-        "labelled_scored": {
-          "untested": 5982,
-          "NTR": 94,
-          "TR": 72
-        },
-        "labelled_min2_cells": {
-          "untested": 1327,
-          "NTR": 80,
-          "TR": 61
-        },
-        "labelled_min2_pass_any": {
-          "untested": 214,
-          "TR": 25,
-          "NTR": 19
-        },
-        "labelled_min2_pass_tumor_signature": {
-          "untested": 101,
-          "TR": 18,
-          "NTR": 12
-        },
-        "labelled_eligible": {
-          "untested": 180,
-          "TR": 24,
-          "NTR": 19
-        },
-        "labelled_selected": {
-          "untested": 158,
-          "TR": 22,
-          "NTR": 19
-        },
-        "labelled_top10_tumor_reactive_per_patient": {
-          "untested": 91,
-          "TR": 11,
-          "NTR": 8
-        },
-        "labelled_top20_tumor_reactive_per_patient": {
-          "untested": 188,
-          "TR": 16,
-          "NTR": 16
         }
       },
       "cd3_0": {
@@ -725,7 +797,7 @@
         ],
         "patients": 11,
         "cells_after_gex_qc": 54837,
-        "cells_retained": 4925,
+        "cells_retained": 11712,
         "cell_filters": [
           {
             "filter": "lineage",
@@ -735,70 +807,70 @@
           {
             "filter": "cd3",
             "before": 16662,
-            "after": 5848
+            "after": 15125
           },
           {
             "filter": "alpha_cdr3",
-            "before": 5848,
-            "after": 5164
+            "before": 15125,
+            "after": 12642
           },
           {
             "filter": "beta_cdr3",
-            "before": 5164,
-            "after": 5023
+            "before": 12642,
+            "after": 12181
           },
           {
             "filter": "TRA_1_umis",
-            "before": 5023,
-            "after": 4929
+            "before": 12181,
+            "after": 11734
           },
           {
             "filter": "TRB_1_umis",
-            "before": 4929,
-            "after": 4925
+            "before": 11734,
+            "after": 11712
           }
         ],
-        "clones_scored": 3071,
-        "candidates": 62,
+        "clones_scored": 6184,
+        "candidates": 121,
         "labelled_scored": {
-          "untested": 2917,
-          "NTR": 65,
-          "TR": 65
+          "untested": 5982,
+          "NTR": 94,
+          "TR": 72
         },
         "labelled_min2_cells": {
-          "untested": 522,
-          "NTR": 53,
-          "TR": 52
+          "untested": 1327,
+          "NTR": 80,
+          "TR": 61
         },
         "labelled_min2_pass_any": {
-          "untested": 42,
-          "TR": 11,
-          "NTR": 9
+          "untested": 101,
+          "TR": 18,
+          "NTR": 12
         },
         "labelled_min2_pass_tumor_signature": {
-          "untested": 42,
-          "TR": 11,
-          "NTR": 9
+          "untested": 101,
+          "TR": 18,
+          "NTR": 12
         },
         "labelled_eligible": {
-          "untested": 42,
-          "TR": 11,
-          "NTR": 9
+          "untested": 91,
+          "TR": 18,
+          "NTR": 12
         },
         "labelled_selected": {
-          "untested": 42,
-          "TR": 11,
-          "NTR": 9
+          "untested": 91,
+          "TR": 18,
+          "NTR": 12
         },
         "labelled_top10_tumor_reactive_per_patient": {
-          "untested": 80,
-          "NTR": 13,
-          "TR": 13
+          "untested": 91,
+          "TR": 11,
+          "NTR": 8
         },
         "labelled_top20_tumor_reactive_per_patient": {
-          "untested": 137,
-          "NTR": 24,
-          "TR": 20
+          "untested": 188,
+          "TR": 16,
+          "NTR": 16
         }
       }
     }
@@ -820,76 +892,6 @@
     "runs": {
       "default": {
         "arguments": [],
-        "patients": 2,
-        "cells_after_gex_qc": 8311,
-        "cells_retained": 159,
-        "cell_filters": [
-          {
-            "filter": "lineage",
-            "before": 8311,
-            "after": 2866
-          },
-          {
-            "filter": "cd3",
-            "before": 2866,
-            "after": 241
-          },
-          {
-            "filter": "alpha_cdr3",
-            "before": 241,
-            "after": 196
-          },
-          {
-            "filter": "beta_cdr3",
-            "before": 196,
-            "after": 189
-          },
-          {
-            "filter": "TRA_1_umis",
-            "before": 189,
-            "after": 159
-          },
-          {
-            "filter": "TRB_1_umis",
-            "before": 159,
-            "after": 159
-          }
-        ],
-        "clones_scored": 110,
-        "candidates": 3,
-        "labelled_scored": {
-          "untested": 97,
-          "MCPyV": 4
-        },
-        "labelled_min2_cells": {
-          "untested": 14,
-          "MCPyV": 2
-        },
-        "labelled_min2_pass_any": {
-          "untested": 3,
-          "MCPyV": 1
-        },
-        "labelled_min2_pass_tumor_signature": {},
-        "labelled_eligible": {
-          "untested": 3
-        },
-        "labelled_selected": {
-          "untested": 3
-        },
-        "labelled_top10_tumor_reactive_per_patient": {
-          "untested": 9,
-          "MCPyV": 1
-        },
-        "labelled_top20_tumor_reactive_per_patient": {
-          "untested": 14,
-          "MCPyV": 2
-        }
-      },
-      "cd3_3": {
-        "arguments": [
-          "--min-cd3",
-          "3"
-        ],
         "patients": 2,
         "cells_after_gex_qc": 8311,
         "cells_retained": 652,
@@ -966,6 +968,76 @@
           "untested": 17,
           "MCPyV": 3,
           "other_virus": 2
+        }
+      },
+      "cd3_10": {
+        "arguments": [
+          "--min-cd3",
+          "10"
+        ],
+        "patients": 2,
+        "cells_after_gex_qc": 8311,
+        "cells_retained": 159,
+        "cell_filters": [
+          {
+            "filter": "lineage",
+            "before": 8311,
+            "after": 2866
+          },
+          {
+            "filter": "cd3",
+            "before": 2866,
+            "after": 241
+          },
+          {
+            "filter": "alpha_cdr3",
+            "before": 241,
+            "after": 196
+          },
+          {
+            "filter": "beta_cdr3",
+            "before": 196,
+            "after": 189
+          },
+          {
+            "filter": "TRA_1_umis",
+            "before": 189,
+            "after": 159
+          },
+          {
+            "filter": "TRB_1_umis",
+            "before": 159,
+            "after": 159
+          }
+        ],
+        "clones_scored": 110,
+        "candidates": 3,
+        "labelled_scored": {
+          "untested": 97,
+          "MCPyV": 4
+        },
+        "labelled_min2_cells": {
+          "untested": 14,
+          "MCPyV": 2
+        },
+        "labelled_min2_pass_any": {
+          "untested": 3,
+          "MCPyV": 1
+        },
+        "labelled_min2_pass_tumor_signature": {},
+        "labelled_eligible": {
+          "untested": 3
+        },
+        "labelled_selected": {
+          "untested": 3
+        },
+        "labelled_top10_tumor_reactive_per_patient": {
+          "untested": 9,
+          "MCPyV": 1
+        },
+        "labelled_top20_tumor_reactive_per_patient": {
+          "untested": 14,
+          "MCPyV": 2
         }
       },
       "cd3_0": {

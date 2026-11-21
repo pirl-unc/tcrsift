@@ -80,6 +80,32 @@ def test_round_robin_covers_samples_deduplicates_and_uses_one_total_budget():
     assert capped[capped.selected_for_review].donor.tolist() == ["p1", "p1", "p2"]
 
 
+def test_budget_ending_inside_a_round_is_shared_across_signatures_and_samples():
+    # Three signatures in four samples make twelve lists; a budget of six ends
+    # inside the first round. A prefix would give X four turns and Z none.
+    samples = [f"s{i}" for i in range(4)]
+    names = ["X", "Y", "Z"]
+    rows = [{"donor": "p1", "sample": sample, "lineage": "cd8", "CDR3ab": f"{sample}{name}",
+             "cells": 2, "frequency": 0.5,
+             **{f"signature_{other}": float(other == name) for other in names},
+             **{f"signature_{other}_percentile": 0.95 if other == name else 0.1 for other in names},
+             **{f"signature_{other}_noise_floor": 0.0 for other in names}}
+            for sample in samples for name in names]
+    scores = pd.DataFrame(rows)
+    scores = pd.concat([scores, scores.assign(
+        CDR3ab=scores.CDR3ab + "_low", **{f"signature_{name}": -1.0 for name in names},
+        **{f"signature_{name}_percentile": 0.1 for name in names})], ignore_index=True)
+    clones = scores[["donor", "CDR3ab"]].drop_duplicates().assign(eligible_for_review=True)
+    chosen = select_round_robin(clones, scores, names, 6)
+    chosen = chosen[chosen.selected_for_review]
+    assert chosen.selected_signature.value_counts().to_dict() == {"X": 2, "Y": 2, "Z": 2}
+    assert chosen.selected_sample.value_counts().max() == 2
+    assert chosen.selected_sample.nunique() == 4
+    # A budget that covers the round takes every list in the documented order.
+    full = select_round_robin(clones, scores, names, 12)
+    assert full[full.selected_for_review].selected_signature.tolist() == ["X"] * 4 + ["Y"] * 4 + ["Z"] * 4
+
+
 def test_round_robin_takes_top_of_distinct_signatures_and_handles_empty_lists():
     clones, scores = _ranking_tables()
     scores = scores[scores["sample"] == "s1"].copy()

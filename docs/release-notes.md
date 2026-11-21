@@ -7,6 +7,24 @@ current release. The complete per-release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.27.0
+
+Two changes that alter shortlists, both prompted by the
+[public-data evaluation](benchmarks.md#4-what-do-the-cell-gates-cost).
+
+- The default `--min-cd3` is 3, down from 10, matching the `run` and
+  `phenotype` commands. A floor of 10 removed 65% to 92% of CD8 cells in the
+  datasets evaluated and did not rank the same clones better. More cells and
+  clones are scored, so scores, cutoffs and shortlists change. Pass
+  `--min-cd3 10` for the previous behavior.
+- When the clone budget ends partway through a round, the remaining turns are
+  shared across signatures and samples: each goes to the signature, then the
+  sample, with the fewest turns in that round. Previously they went to the
+  first lists in signature order, so in a run with more qualifying lists than
+  budget the signatures listed last in the preset could supply no candidates.
+  Only the final, partial round of a selection changes; full rounds are
+  visited in the same order as before.
+
 ## 3.26.0
 
 Fixes found by running on public data ([evaluation](benchmarks.md)). None

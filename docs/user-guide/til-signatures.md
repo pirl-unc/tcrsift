@@ -58,8 +58,10 @@ has 137 rows, even with a cap of 200.
 
 Lists are visited in signature order (preset order below, or your
 `--signatures` order), then mean and subset evidence, then lexical patient,
-sample, and lineage order. A small
-budget can end partway through a round. Overlapping signatures are correlated
+sample, and lineage order. When the budget ends partway through a round, the
+remaining turns are shared out instead of going to the first lists: each turn
+goes to the signature with the fewest turns in that round, then to the sample
+with the fewest. Overlapping signatures are correlated
 views, not independent votes. Duplicate selections are skipped before taking
 the next qualifying clone from the same list.
 
@@ -353,7 +355,7 @@ are cohort-relative; the shortlist is for experimental review.
 | `--min-counts`, `--max-counts` | 500–100,000 total GEX UMI counts per cell, not sequencing reads. |
 | `--min-mito-pct`, `--max-mito-pct` | 0–8% mitochondrial counts; no mitochondrial floor by default. |
 | `--min-vdj-umis`, `--min-vdj-reads` | At least 2 UMIs in each primary alpha/beta chain; read gate disabled (0). |
-| `--min-cd3` | At least 10 summed CD3D/E/G raw GEX counts per cell; 0 disables. A raw-count floor scales with sequencing depth and can remove most cells of a shallow library; the command warns when it does. |
+| `--min-cd3` | At least 3 summed CD3D/E/G raw GEX counts per cell; 0 disables. A raw-count floor scales with sequencing depth, so a higher value can remove most cells of a shallow library; the command warns when it does. The default was 10 before 3.27.0. |
 | `--min-expression GENE=VALUE`, `--max-expression GENE=VALUE` | Optional per-cell log1p(CP10K) thresholds. Repeat for AND conditions. Missing genes are errors. |
 | `--include-v-gene`, `--exclude-v-gene` | Optional exact V calls in either chain, ignoring allele suffix and case. Repeat for multiple genes. |
 | `--include-j-gene`, `--exclude-j-gene` | Corresponding J-gene gates. Inclusion requires at least one listed gene; exclusion rejects any listed gene. Missing calls fail active gene filters. |

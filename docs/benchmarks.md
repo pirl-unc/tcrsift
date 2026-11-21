@@ -8,29 +8,33 @@ datasets, 33 patients in all, and reports what works and what does not.
 
 - **Ranking works where clones were tested against tumor.** The TumorReactive
   signature separates reactive from non-reactive clones in pancreatic cancer
-  (AUROC 0.81, 149 tested clones), melanoma (0.75, 130 tested clones) and lung
-  cancer (0.97, on only 19 labelled clones). NeoTCR8 follows at 0.79, 0.67 and
-  0.87.
+  (AUROC 0.81, 149 tested clones) and melanoma (0.79, 166 tested clones).
+  NeoTCR8 follows at 0.79 and 0.75.
+- **Lung cancer is weaker and has few labels.** On 31 labelled clones
+  TumorReactive reaches 0.69 (0.50 to 0.86). Twelve of those clones have a
+  median of one cell and score at chance; on the other 19 it is 0.88.
 - **It does not work in the two virus-driven tumors.** In HPV-positive head and
   neck cancer and in Merkel cell carcinoma, clones that bind virus multimers
-  score no higher than other clones (TumorReactive 0.50 and 0.53). Neither
-  dataset has tested negatives and the Merkel cell one is very small, but they
-  are not evidence in TCRsift's favor.
-- **Clone size alone is not informative** in any of the five.
-- **The shortlist enriches in one dataset and not in the other.** In
+  score no higher than other clones (TumorReactive 0.48 and 0.58, both
+  intervals spanning 0.5). Neither dataset has tested negatives and the Merkel
+  cell one has five labelled clones, but they are not evidence in TCRsift's
+  favor.
+- **Clone size alone is not informative** where clones were tested against
+  tumor (0.34 to 0.50). In the two virus-driven tumors the virus-specific
+  clones are larger than unlabelled ones (0.72 and 0.73).
+- **The cutoffs enrich in both datasets with tested negatives, unequally.** In
   pancreatic cancer 73% of reactive and 31% of non-reactive clones pass a
-  default cutoff. In melanoma it is 33% and 32%: reactive clones score above
-  the middle of their sample, but they are not the top-scoring clones, and the
-  cutoffs only keep the top.
-- **The `solid-tumor` preset dilutes short lists in pancreatic cancer.** At a
-  50-clone budget it picked 12 reactive and 3 non-reactive clones; the three
-  tumor-reactivity signatures alone picked 28 and 2. Melanoma does not confirm
-  this: neither list is enriched there.
-- **The CD3 floor is not settled.** It discards most CD8 cells in every
-  dataset. In lung the clones that remain are ranked far better. In melanoma
-  they are ranked slightly worse and a third of the tested non-reactive clones
-  are lost.
-  In Merkel cell carcinoma it leaves 159 cells.
+  default cutoff. In melanoma it is 41% and 24%.
+- **The `solid-tumor` preset dilutes short lists.** At a 50-clone budget in
+  pancreatic cancer it picked 11 reactive and 3 non-reactive clones; the three
+  tumor-reactivity signatures alone picked 27 and 2. Melanoma points the same
+  way, weakly.
+- **The default CD3 floor is now 3 counts, down from 10.** A floor of 10
+  discarded 65% to 92% of CD8 cells and did not rank the same clones any
+  better. Lowering it helps in melanoma, Merkel cell carcinoma and non-tumor
+  lung tissue. It costs the lung tumor shortlist, which held 6
+  neoantigen-specific clones at a floor of 10 and holds 1 now
+  ([section 4](#4-what-do-the-cell-gates-cost)).
 
 !!! warning "One result is circular"
     TCRsift's **MANAscore** proxy uses genes taken from a model that was trained
@@ -39,7 +43,7 @@ datasets, 33 patients in all, and reports what works and what does not.
     **circular** and should be ignored when judging the tool. No other
     signature was derived from a dataset used here.
 
-All results are from TCRsift 3.26.3, run from `benchmarks/public_til/`
+All results are from TCRsift 3.27.0, run from `benchmarks/public_til/`
 ([how to reproduce](#reproducing)). Nothing was tuned to these labels.
 
 ## The source studies
@@ -55,7 +59,7 @@ receptors recognize. The benchmark borrows those experimental labels.
 | Study | Tumor | Accession | Used here | Positives | Negatives | How TCRsift ran |
 | --- | --- | --- | --- | --- | --- | --- |
 | Meng et al. 2023 | Pancreatic adenocarcinoma | [GSE254250](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE254250) | 9 patients, 14,396 CD8 cells | 94 clones tested tumor-reactive | 55 clones tested non-reactive | Scoring, cutoff and selection functions on the authors' cells |
-| Chiffelle et al. 2024 | Melanoma, before TIL therapy | [GSE222448](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE222448) | 11 patients, 13 tumor samples | 65 clones tested tumor-reactive | 65 clones tested non-reactive | The unmodified `prioritize` command |
+| Chiffelle et al. 2024 | Melanoma, before TIL therapy | [GSE222448](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE222448) | 11 patients, 13 tumor samples | 72 clones tested tumor-reactive | 94 clones tested non-reactive | The unmodified `prioritize` command |
 | Caushi et al. 2021 | Non-small-cell lung, after anti-PD-1 | [GSE176021](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE176021) | 8 patients, 57 samples (tumor, metastasis, lymph node, normal lung) | Neoantigen-specific beta chains | Virus-specific beta chains | The unmodified `prioritize` command |
 | Eberhardt et al. 2021 | HPV-positive head and neck | [GSE180268](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE180268) | 3 patients, 6 bulk PD-1+ CD8 TIL samples | Beta chains found in HPV-tetramer sorts | None; compared with all unlabelled clones | The unmodified `prioritize` command |
 | Pulliam et al. 2024 | Merkel cell carcinoma | [GSE227708](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE227708) | 2 patients, 2 tumor samples | Beta chains of polyomavirus-multimer-binding clones | None in the same tumor; compared with unlabelled clones | The unmodified `prioritize` command |
@@ -96,8 +100,8 @@ therapy in melanoma](https://doi.org/10.1016/j.immuni.2024.08.014), *Immunity*
 - **What the data is.** Per-sample gene-by-cell count tables and unfiltered
   contig tables for the baseline tumors, and a supplementary table (S3) of
   123 reactive and 124 non-reactive clonotypes. This benchmark uses the 13
-  baseline tumor samples of the 11 patients with tested clonotypes; 65
-  reactive and 65 non-reactive ones are present among the cells that pass
+  baseline tumor samples of the 11 patients with tested clonotypes; 72
+  reactive and 94 non-reactive ones are present among the cells that pass
   TCRsift's gates.
 - **Why it is useful.** It is the second dataset with tested negatives, and
   the only one with tested negatives on which the whole `prioritize` command
@@ -178,8 +182,9 @@ to PD-1 blockade in Merkel cell carcinoma](https://doi.org/10.1016/j.xcrm.2024.1
   in a tumor sample whose hashtags match the deposited sample sheet. One tumor
   has 22 polyomavirus-specific beta chains; the other has only CMV-specific
   ones, so there are no negatives within a tumor. Because the sort enriched
-  for multimer binders, some unlabelled clones are probably virus-specific too. With the default cell gates
-  two labelled clones remain. Cells are assigned to a sample when their top
+  for multimer binders, some unlabelled clones are probably virus-specific
+  too. With the default cell gates five polyomavirus-specific clones with two
+  or more cells remain. Cells are assigned to a sample when their top
   hashtag has at least 10 counts and three times the runner-up.
 
 ### Cohorts that could not be used
@@ -230,8 +235,8 @@ the state signatures, so they are correlated views, not independent votes. Gene
 lists, scoring methods and citations are in the
 [signature reference](api/signatures.md).
 
-The one signature that is independent of every dataset and best in each
-tested one, across all five. Hollow points are datasets with no tested
+TumorReactive, which is independent of every dataset and leads in both
+datasets with tested negatives, across all five. Hollow points are datasets with no tested
 negatives, where positives are compared with unlabelled clones.
 
 ![TumorReactive AUROC by dataset](assets/figures/benchmark_auroc_by_dataset.svg)
@@ -245,54 +250,59 @@ circular row is drawn hollow, in orange, and starred.
 
 ![AUROC by signature, lung](assets/figures/benchmark_auroc_lung.svg)
 
-| Signature | Pancreatic (94 vs 55) | Melanoma (65 vs 65) | Lung tumor (10 vs 9) | Head and neck (48 vs 376 unlabelled) |
+| Signature | Pancreatic (94 vs 55) | Melanoma (72 vs 94) | Lung tumor (18 vs 13) | Head and neck (56 vs 691 unlabelled) |
 | --- | --- | --- | --- | --- |
-| TumorReactive | 0.81 (0.74 to 0.89) | 0.75 (0.66 to 0.84) | 0.97 (0.87 to 1.00) | 0.50 (0.43 to 0.58) |
-| MANAscore proxy | 0.80 (0.72 to 0.87) | 0.65 (0.55 to 0.74) | **circular** (0.94) | 0.39 (0.31 to 0.48) |
-| NeoTCR8 | 0.79 (0.71 to 0.87) | 0.67 (0.58 to 0.76) | 0.87 (0.67 to 1.00) | 0.40 (0.32 to 0.48) |
-| AcuteActivation | 0.70 (0.62 to 0.79) | 0.53 (0.43 to 0.62) | 0.90 (0.72 to 1.00) | 0.44 (0.36 to 0.52) |
-| Differentiated | 0.70 (0.61 to 0.80) | 0.58 (0.49 to 0.69) | 0.77 (0.52 to 0.94) | 0.32 (0.25 to 0.39) |
-| Cytolytic | 0.69 (0.60 to 0.78) | 0.57 (0.48 to 0.68) | 0.69 (0.42 to 0.91) | 0.35 (0.28 to 0.43) |
-| AntigenExperienced | 0.68 (0.58 to 0.77) | 0.56 (0.46 to 0.66) | 0.77 (0.52 to 0.96) | 0.33 (0.26 to 0.40) |
-| AIM | 0.64 (0.56 to 0.73) | 0.56 (0.46 to 0.66) | 0.96 (0.84 to 1.00) | 0.54 (0.45 to 0.63) |
-| Proliferation | 0.51 (0.41 to 0.60) | 0.55 (0.44 to 0.65) | 0.39 (0.15 to 0.65) | 0.57 (0.50 to 0.66) |
-| Clone size (baseline) | 0.34 (0.25 to 0.45) | 0.47 (0.37 to 0.57) | 0.66 (0.38 to 0.91) | 0.58 (0.49 to 0.67) |
+| TumorReactive | 0.81 (0.74 to 0.89) | 0.79 (0.71 to 0.85) | 0.69 (0.50 to 0.86) | 0.48 (0.41 to 0.55) |
+| MANAscore proxy | 0.80 (0.72 to 0.87) | 0.72 (0.64 to 0.79) | **circular** (0.80) | 0.43 (0.36 to 0.50) |
+| NeoTCR8 | 0.79 (0.71 to 0.87) | 0.75 (0.67 to 0.82) | 0.57 (0.37 to 0.77) | 0.41 (0.35 to 0.48) |
+| AcuteActivation | 0.70 (0.62 to 0.79) | 0.61 (0.53 to 0.70) | 0.76 (0.56 to 0.92) | 0.51 (0.45 to 0.58) |
+| Differentiated | 0.70 (0.61 to 0.80) | 0.63 (0.54 to 0.70) | 0.55 (0.34 to 0.75) | 0.36 (0.30 to 0.43) |
+| Cytolytic | 0.69 (0.60 to 0.78) | 0.61 (0.52 to 0.69) | 0.52 (0.31 to 0.72) | 0.37 (0.31 to 0.44) |
+| AntigenExperienced | 0.68 (0.58 to 0.77) | 0.63 (0.54 to 0.71) | 0.56 (0.35 to 0.76) | 0.36 (0.29 to 0.43) |
+| AIM | 0.64 (0.56 to 0.73) | 0.62 (0.53 to 0.70) | 0.85 (0.71 to 0.97) | 0.58 (0.52 to 0.64) |
+| Proliferation | 0.51 (0.41 to 0.60) | 0.58 (0.49 to 0.66) | 0.31 (0.14 to 0.51) | 0.64 (0.57 to 0.71) |
+| Clone size (baseline) | 0.34 (0.25 to 0.45) | 0.50 (0.42 to 0.59) | 0.41 (0.21 to 0.61) | 0.72 (0.64 to 0.78) |
 
 Reading the table:
 
-- In pancreatic, melanoma and lung tumors the three signatures that the
-  `solid-tumor` preset adds carry the signal, with TumorReactive first each
-  time. Proliferation is at chance in all three.
+- In pancreatic cancer and melanoma the three signatures that the
+  `solid-tumor` preset adds carry the signal, with TumorReactive first both
+  times. Proliferation is near chance in both.
 - Melanoma is the weaker of the two datasets with tested negatives. The six
-  general state signatures are at or near chance there (0.53 to 0.58), and
-  only TumorReactive has an interval clear of 0.6.
+  general state signatures sit between 0.58 and 0.63 there.
+- Lung is mixed. AIM (0.85) and AcuteActivation (0.76) lead, TumorReactive is
+  0.69 and NeoTCR8 0.57. The 31 labelled clones are two groups: 19 that also
+  survive a CD3 floor of 10, on which TumorReactive is 0.88 (0.70 to 1.00) and
+  NeoTCR8 0.86, and 12 with a median of one cell, on which they are 0.44 and
+  0.22. A clone of one cell cannot be shortlisted, so the first group is the
+  relevant one for selection, but it is small.
 - Clone size is below chance in pancreatic cancer, where the tested
   non-reactive clones tend to be the larger ones, and at chance in melanoma.
 - The pooled numbers hide patient-to-patient spread. Per-patient AUROC for
   TumorReactive runs from 0.39 to 1.00 across the eight pancreatic patients
-  with both labels (NeoTCR8: 0.44 to 1.00), and from 0.50 to 1.00 across the
-  ten such melanoma patients (NeoTCR8: 0.25 to 1.00), with 2 to 13 negatives
-  each.
+  with both labels (NeoTCR8: 0.44 to 1.00; 3 to 13 negatives each), and from
+  0.48 to 1.00 across the eleven melanoma patients (NeoTCR8: 0.31 to 1.00; 3
+  to 15 negatives each).
 - In head and neck cancer, tetramer-positive clones score *lower* than
-  unlabelled clones on most signatures, and none of the nine reaches 0.6.
+  unlabelled clones on most signatures. Only Proliferation (0.64) and clone
+  size (0.72) are clearly above chance.
   Three things could produce this without the signatures being wrong: the
   unlabelled clones are PD-1+ TIL that include other tumor- and virus-reactive
   clones; the bulk samples were depleted of tetramer-binding cells; and PD-1
   gating compresses the exhaustion axis these signatures read. None of that
   turns it into a positive result.
-- Merkel cell carcinoma cannot be scored at the default settings: two
-  polyomavirus-specific clones with two or more cells survive the cell gates.
-  With the CD3 floor removed there are 6, against 59 unlabelled clones from
-  the same tumor: TumorReactive 0.53 (0.35 to 0.69), MANAscore proxy 0.50,
-  NeoTCR8 0.36 (0.12 to 0.63). That tumor was not gated on PD-1 or depleted
-  of multimer-binding cells, so those two explanations for the head and neck
-  result do not apply here. Six clones settle nothing, but both virus-driven
-  tumors point the same way.
+- In Merkel cell carcinoma, 5 polyomavirus-specific clones with two or more
+  cells are compared with 51 unlabelled clones from the same tumors:
+  TumorReactive 0.58 (0.33 to 0.83), MANAscore proxy 0.58, NeoTCR8 0.41 (0.14
+  to 0.69). That tumor was not gated on PD-1 or depleted of multimer-binding
+  cells, so those two explanations for the head and neck result do not apply
+  here. Five clones settle nothing, but neither virus-driven tumor shows
+  enrichment.
 
-In lung, the ranking also holds outside the tumor, more weakly. In lymph node
-and adjacent normal lung (12 neoantigen-specific against 21 virus-specific
-clonotypes) the AUROC is 0.77 for TumorReactive and 0.78 for NeoTCR8. Lymph
-node alone is weaker for TumorReactive (0.61, 0.35 to 0.85).
+In lung, the ranking holds about as well outside the tumor. In lymph node and
+adjacent normal lung (16 neoantigen-specific against 31 virus-specific
+clonotypes) the AUROC is 0.77 for TumorReactive and 0.70 for NeoTCR8. Lymph
+node alone is weaker for TumorReactive (0.62, 0.42 to 0.82).
 
 ## 2. Do the default cutoffs keep reactive clones?
 
@@ -339,16 +349,16 @@ cells:
 
 | | Reactive passing | Non-reactive passing | Untested passing |
 | --- | --- | --- | --- |
-| All nine (`solid-tumor` preset) | 17 of 52 (33%) | 17 of 53 (32%) | 84 of 522 (16%) |
-| Three tumor-reactivity signatures | 11 of 52 | 9 of 53 | 42 of 522 |
+| All nine (`solid-tumor` preset) | 25 of 61 (41%) | 19 of 80 (24%) | 214 of 1,327 (16%) |
+| Three tumor-reactivity signatures | 18 of 61 | 12 of 80 | 101 of 1,327 |
 
-Tested clones pass twice as often as untested ones, and reactive clones pass
-no more often than non-reactive ones. This is not a contradiction of the
-AUROC of 0.75. The median reactive clone sits at the 69th percentile of its
-sample for TumorReactive and the median non-reactive clone at the 52nd, but a
-cutoff needs a clone in the top tenth of its sample, and at the top the two
-groups are mixed. In pancreatic cancer the reactive clones reach the top; in
-melanoma they are merely above average.
+Reactive clones pass more often than non-reactive ones, by a much smaller
+margin than in pancreatic cancer, and tested non-reactive clones still pass
+more often than untested ones. The median reactive clone sits at the 79th
+percentile of its sample for TumorReactive and the median non-reactive clone
+at the 51st, but a cutoff needs a clone in the top tenth of its sample, and at
+the top the two groups are more mixed. In pancreatic cancer most reactive
+clones reach the top; in melanoma many are merely above average.
 
 ## 3. What ends up on the shortlist?
 
@@ -363,17 +373,19 @@ pancreatic clones with at least two cells.
 
 | Clones chosen | Preset round-robin | Three tumor signatures, round-robin | Top TumorReactive score | Largest clones |
 | --- | --- | --- | --- | --- |
-| 25 | 3 reactive, 3 non-reactive | 14, 0 | 19, 0 | 6, 16 |
-| 50 | 12, 3 | 28, 2 | 27, 1 | 16, 23 |
-| 100 | 32, 7 | 43, 4 | 39, 1 | 32, 33 |
-| 200 | 56, 13 | 50, 4 (only 123 qualify) | 53, 2 | 45, 41 |
+| 25 | 6 reactive, 1 non-reactive | 12, 0 | 19, 0 | 6, 16 |
+| 50 | 11, 3 | 27, 2 | 27, 1 | 16, 23 |
+| 100 | 33, 7 | 42, 4 | 39, 1 | 32, 33 |
+| 200 | 57, 13 | 50, 4 (only 123 qualify) | 53, 2 | 45, 41 |
 
-- With a small budget the preset does poorly. Its lists are visited in order,
-  general state signatures first, so the early picks are spent on clones that
-  are differentiated or cytolytic but not tumor-reactive.
+- With a small budget the preset does worse than the narrower lists. A budget
+  smaller than the number of lists is shared across signatures and patients,
+  and six of the nine signatures are general state signatures, so most early
+  picks go to clones that are differentiated or cytolytic but not
+  tumor-reactive.
 - Restricting the same round-robin to the three tumor-reactivity signatures,
-  or simply ranking by TumorReactive, finds several times as many reactive
-  clones at 25 and 50.
+  or simply ranking by TumorReactive, finds two to three times as many
+  reactive clones at 25 and 50.
 - At 200 the preset catches up on reactive clones but carries more
   non-reactive ones.
 - Choosing the largest clones selects as many non-reactive as reactive ones.
@@ -386,35 +398,42 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor \
   --signatures TumorReactive MANAscore NeoTCR8
 ```
 
-The melanoma data do not confirm this (below), and in both datasets the authors
-chose which clones to test, so the preset has not been changed. The broad preset remains the safer choice when the aim is
-coverage of several cell states.
+The melanoma data point the same way only weakly (below), and in both datasets
+the authors chose which clones to test, so the preset has not been changed.
+The broad preset remains the safer choice when the aim is coverage of several
+cell states.
 
-On melanoma the full command shortlisted 118 clones: 16 of 52 reactive and 17
-of 53 non-reactive ones. Restricting it to the three tumor-reactivity
-signatures shortlisted 62: 11 reactive and 9 non-reactive. Taking each
-patient's ten highest TumorReactive clones gives 13 and 13. So the advantage
-of the narrower list in pancreatic cancer is not confirmed: on melanoma no way
-of choosing enriches for reactive clones at the top.
+On melanoma the full command shortlisted 200 clones: 21 of 61 reactive and 18
+of 80 non-reactive ones. Restricting it to the three tumor-reactivity
+signatures shortlisted 121: 18 reactive and 12 non-reactive. Taking each
+patient's ten highest TumorReactive clones gives 11 and 8. The narrower list
+is somewhat cleaner here too, by far less than in pancreatic cancer.
 
 On the lung tumors the full command, with its default 200-clone budget,
-shortlisted 5 of 10 neoantigen-specific clonotypes and 1 of 9 virus-specific
-ones, in a list holding 4% of all scored clones. The preset includes the
-circular MANAscore list, but none of those six clonotypes was supplied by it. In lymph node and normal lung
-it shortlisted 3 of 12 and 1 of 21. In head and neck it shortlisted 4 of 48
-tetramer-positive clonotypes with two or more cells (8%), against 59 of 376
-unlabelled ones (16%). In Merkel cell carcinoma, with the CD3 floor removed,
-it shortlisted 1 of 6 polyomavirus-specific clonotypes and 10 of 59 unlabelled
-ones.
+shortlisted 1 of 18 neoantigen-specific clonotypes and 1 of 13 virus-specific
+ones. Across 33 samples, 414 clones qualified for the 200 places. The one
+neoantigen-specific clonotype came from the TumorReactive list, not the
+circular MANAscore one. With `--min-cd3 10`, 237 clones qualified and the
+shortlist held 6 of 10 and 1 of 9. In lymph node and normal lung the default
+command shortlisted 7 of 16 and 1 of 31; one of those seven came from the
+circular MANAscore list. In head and neck it shortlisted 10 of 56
+tetramer-positive clonotypes with two or more cells (18%), against 100 of 691
+unlabelled ones (14%). In Merkel cell carcinoma it shortlisted 2 of 5
+polyomavirus-specific clonotypes and 8 of 51 unlabelled ones.
 
 ## 4. What do the cell gates cost?
 
-With defaults on the 33 lung tumor samples, 19,335 of 248,332 cells are
-retained (8%). The CD8 classification removes 58%, and the floor of ten CD3
-counts removes 72% of the CD8 cells that remain.
+With defaults on the 33 lung tumor samples, 45,821 of 248,332 cells are
+retained (18%). The CD8 classification removes 58%, the CD3 floor removes 14%
+of the CD8 cells that remain, and the paired-receptor gates remove about half
+of the rest.
 
-That floor is a raw count, so it behaves as a sequencing-depth filter. Lower
-settings keep more cells but rank validated clones worse:
+The CD3 floor is the sum of raw CD3D, CD3E and CD3G counts in a cell. Until
+3.27.0 the default was 10, and it is now 3. Because it is a raw count it acts
+as a sequencing-depth filter, and at 10 it removed most CD8 cells in every
+dataset run here.
+
+**Lung.**
 
 ![Cells kept by CD3 floor](assets/figures/benchmark_cd3_cells.svg)
 
@@ -422,16 +441,12 @@ settings keep more cells but rank validated clones worse:
 
 | `--min-cd3` | CD8 cells kept | Labelled clonotypes scored | TumorReactive AUROC | NeoTCR8 AUROC | Shortlisted (neoantigen, viral) |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 48,869 | 18 and 13 | 0.70 | 0.54 | 2, 2 |
-| 3 | 45,821 | 18 and 13 | 0.69 | 0.57 | 1, 2 |
-| 10 (default) | 19,335 | 10 and 9 | 0.97 | 0.87 | 5, 1 |
-| 0, but at least 4,000 UMIs per cell | 17,518 | 8 and 4 | 0.81 | 0.69 | 2, 1 |
+| 0 | 48,869 | 18 and 13 | 0.70 | 0.54 | 1, 1 |
+| 3 (default) | 45,821 | 18 and 13 | 0.69 | 0.57 | 1, 1 |
+| 10 | 19,335 | 10 and 9 | 0.97 | 0.87 | 6, 1 |
+| 0, but at least 4,000 UMIs per cell | 17,518 | 8 and 4 | 0.81 | 0.69 | 3, 1 |
 
-In lung, lower floors keep more cells and more labelled clones, and rank them
-worse. A plain depth filter that keeps a similar number of cells lands in
-between, with too few labels to say more.
-
-Melanoma, which has seven times as many labelled clones, shows the opposite:
+**Melanoma**, which has five times as many labelled clones:
 
 ![Cells kept by CD3 floor, melanoma](assets/figures/benchmark_cd3_cells_melanoma.svg)
 
@@ -440,25 +455,51 @@ Melanoma, which has seven times as many labelled clones, shows the opposite:
 | `--min-cd3` | CD8 cells kept | Labelled clonotypes scored | TumorReactive AUROC | NeoTCR8 AUROC | Shortlisted (reactive, non-reactive) |
 | --- | --- | --- | --- | --- | --- |
 | 0 | 12,395 | 72 and 95 | 0.79 | 0.73 | 22, 19 |
-| 3 | 11,712 | 72 and 94 | 0.79 | 0.75 | 22, 19 |
-| 10 (default) | 4,925 | 65 and 65 | 0.75 | 0.67 | 16, 17 |
+| 3 (default) | 11,712 | 72 and 94 | 0.79 | 0.75 | 21, 18 |
+| 10 | 4,925 | 65 and 65 | 0.75 | 0.67 | 16, 17 |
 
-There the default floor removes 65% of CD8 cells and a third of the tested
-non-reactive clones, and the ranking of what remains is slightly worse, though
-the intervals overlap. In Merkel cell carcinoma the floor removes 92% of CD8
-cells and leaves 159 cells in two tumors. So the lung result, on 19 clones, is
-the only support for a floor as high as ten, and the two newer datasets argue
-for a lower one. The default is unchanged pending a decision; `--min-cd3 3` is
-worth trying on any dataset where the command reports that the CD3 gate
-removed most cells. The command warns when any single gate removes
-more than half of the cells; the `cell_filters` block of `prioritization.json`
-records what each gate removed.
+**Does a floor of 10 rank clones better, or only score fewer of them?** The
+lung AUROC of 0.97 at a floor of 10 against 0.69 at 3 compares different sets
+of clones. Splitting the clones scored at 3 by whether they are also scored at
+10 separates the two effects:
 
-Every full-command run shows heavy attrition. Cells retained at the defaults:
-19,335 of 248,332 in lung, 4,925 of 54,837 in melanoma, 3,647 of 32,735 in head
-and neck, and 159 of 8,311 in Merkel cell carcinoma.
+| Clones, all scored at the default floor of 3 | Lung: TumorReactive | Lung: NeoTCR8 | Melanoma: TumorReactive | Melanoma: NeoTCR8 |
+| --- | --- | --- | --- | --- |
+| Also scored at a floor of 10 | 0.88 (10 vs 9) | 0.86 | 0.77 (65 vs 65) | 0.71 |
+| Dropped by a floor of 10 | 0.44 (8 vs 4) | 0.22 | 0.71 (7 vs 29) | 0.69 |
+| The same first group, scored at a floor of 10 | 0.97 | 0.87 | 0.75 | 0.67 |
 
-**Speed.** The 33-sample lung run (248,332 cells) took 115 seconds on a laptop
+- In lung, most of the gap comes from the 12 clones that a floor of 10 drops.
+  They have a median of one cell and rank at chance or worse. The other 19 fall from
+  0.97 to 0.88, which on 10 against 9 clones is within the interval (0.70 to
+  1.00).
+- In melanoma the same clones rank slightly better at the lower floor, and the
+  36 clones a floor of 10 drops still rank well above chance.
+
+So a floor of 10 does not make a given clone's score more reliable. It decides
+which clones are scored at all, and it removes 72% of CD8 cells in lung, 65% in
+melanoma and 92% in Merkel cell carcinoma, where it leaves 159 cells. A floor
+of 3 removes 14%, 9% and 45%.
+
+**What lowering it costs.** The lung tumor shortlist is worse at the new
+default: 1 neoantigen-specific clone among 200, against 6 at a floor of 10.
+More cells make more clones qualify (414 against 237) for the same 200 places.
+The other three comparisons go the other way: at 3 against 10 the shortlist
+holds 21 against 16 reactive clones in melanoma, 7 against 3
+neoantigen-specific clones in lymph node and normal lung, and 2 against 0
+polyomavirus-specific clones in Merkel cell carcinoma. For a deeply sequenced cohort of many
+samples, `--min-cd3 10` or a larger `--max-clones` is worth comparing.
+
+The command warns when any single gate removes more than half of the cells;
+the `cell_filters` block of `prioritization.json` records what each gate
+removed.
+
+Every full-command run still shows heavy attrition, most of it from the CD8
+classification and the paired-receptor gates. Cells retained at the defaults:
+45,821 of 248,332 in lung, 11,712 of 54,837 in melanoma, 8,198 of 32,735 in
+head and neck, and 652 of 8,311 in Merkel cell carcinoma.
+
+**Speed.** The 33-sample lung run (248,332 cells) took 165 seconds on a laptop
 with 32 GB of memory.
 
 ## What this does not show
@@ -473,10 +514,9 @@ with 32 GB of memory.
   no alternative score is offered here.
 - **Unbiased labels.** The original authors chose which clones to test, often
   among expanded or phenotypically interesting ones. In melanoma, tested
-  clones pass the cutoffs twice as often as untested ones whether or not they
-  proved reactive, which is what that selection would produce. Some Caushi
-  labels came
-  from receptors picked for their expression profile, which favors expression
+  clones that proved non-reactive still pass the cutoffs more often than
+  untested ones (24% against 16%), which is what that selection would
+  produce. Some Caushi labels came from receptors picked for their expression profile, which favors expression
   signatures.
 - **A comparison with other tools.** No trained predictor (predicTCR, TRTpred,
   TRACE, the original MANAscore model) was run. TCRsift's MANAscore is a
@@ -486,16 +526,17 @@ with 32 GB of memory.
 
 ## Open questions
 
-- Should the default `--min-cd3` come down from 10? Lung (19 labelled clones)
-  favors 10; melanoma (130 to 167) favors 3 or lower; Merkel cell carcinoma is
-  unusable at 10.
+- Is a raw CD3 count the right gate at all? It scales with sequencing depth. A
+  gate relative to each cell's depth has not been tried.
+- Should the 200-clone budget grow with the number of samples? In the
+  33-sample lung run 414 clones qualified for 200 places.
 - Should the `solid-tumor` preset lead with, or be limited to, the three
-  tumor-reactivity signatures? Pancreatic cancer argues for it. Melanoma
-  neither supports nor opposes it.
-- Why do reactive melanoma clones rank above average but not at the top? If
-  that is general, a cutoff at the top tenth of each sample is too strict for
-  some tumors, and the pancreatic sweep above says loosening it there costs
-  precision.
+  tumor-reactivity signatures? Pancreatic cancer argues for it and melanoma
+  weakly agrees.
+- Why do many reactive melanoma clones rank above average but not at the top?
+  If that is general, a cutoff at the top tenth of each sample is too strict
+  for some tumors, and the pancreatic sweep above says loosening it there
+  costs precision.
 - Is there a transcriptional state that marks virus-specific clones in
   virus-driven tumors? A dataset with tested negatives in such a tumor is
   needed to ask.

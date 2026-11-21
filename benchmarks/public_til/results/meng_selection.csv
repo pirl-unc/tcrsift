@@ -1,20 +1,20 @@
 budget,method,selected,TR,NTR,untested
-25,TCRsift round-robin,25,3.0,3.0,19.0
-25,"TCRsift round-robin, tumor-reactivity signatures only",25,14.0,0.0,11.0
+25,TCRsift round-robin,25,6.0,1.0,18.0
+25,"TCRsift round-robin, tumor-reactivity signatures only",25,12.0,0.0,13.0
 25,largest clones,25,6.0,16.0,3.0
 25,TumorReactive score only,25,19.0,0.0,6.0
 25,random abundant clones (mean of 500),25,1.8,1.232,21.968
-50,TCRsift round-robin,50,12.0,3.0,35.0
-50,"TCRsift round-robin, tumor-reactivity signatures only",50,28.0,2.0,20.0
+50,TCRsift round-robin,50,11.0,3.0,36.0
+50,"TCRsift round-robin, tumor-reactivity signatures only",50,27.0,2.0,21.0
 50,largest clones,50,16.0,23.0,11.0
 50,TumorReactive score only,50,27.0,1.0,22.0
 50,random abundant clones (mean of 500),50,3.69,2.5,43.81
-100,TCRsift round-robin,100,32.0,7.0,61.0
-100,"TCRsift round-robin, tumor-reactivity signatures only",100,43.0,4.0,53.0
+100,TCRsift round-robin,100,33.0,7.0,60.0
+100,"TCRsift round-robin, tumor-reactivity signatures only",100,42.0,4.0,54.0
 100,largest clones,100,32.0,33.0,35.0
 100,TumorReactive score only,100,39.0,1.0,60.0
 100,random abundant clones (mean of 500),100,7.198,5.088,87.714
-200,TCRsift round-robin,200,56.0,13.0,131.0
+200,TCRsift round-robin,200,57.0,13.0,130.0
 200,"TCRsift round-robin, tumor-reactivity signatures only",123,50.0,4.0,69.0
 200,largest clones,200,45.0,41.0,114.0
 200,TumorReactive score only,200,53.0,2.0,145.0
