@@ -177,7 +177,7 @@ def load_cellranger_vdj(
     # or left the cell with no CDR3 at all. Cell Ranger builds its own
     # clonotypes from productive contigs only; do the same.
     if "productive" in df.columns:
-        productive = df["productive"].astype(str).str.lower().eq("true")
+        productive = df["productive"].astype(str).str.lower().isin({"true", "t", "1", "yes", "y"})
         if verbose and not productive.all():
             logger.info(f"  Dropped {int((~productive).sum()):,} non-productive contigs")
         df = df[productive]
@@ -193,16 +193,12 @@ def load_cellranger_vdj(
     n_contigs = len(df)
     n_cells = df["barcode"].nunique()
     if "productive" in df.columns:
-        productive = df["productive"]
-        if productive.dtype == bool:
-            n_productive = int(productive.sum())
-        else:
-            n_productive = int((productive.astype(str) == "True").sum())
+        n_productive = "all productive"
     else:
-        n_productive = "unknown"
+        n_productive = "productivity not reported"
     if verbose:
         logger.info(
-            f"  Loaded {n_contigs:,} contigs from {n_cells:,} cells ({n_productive} productive)"
+            f"  Loaded {n_contigs:,} contigs from {n_cells:,} cells ({n_productive})"
         )
 
     # Validate chain types
@@ -567,7 +563,7 @@ def combine_gex_and_vdj(
                 candidates = vdj_by_base.get(base, [])
                 if len(candidates) == 1 and gex_base_counts[base] == 1:
                     barcode_to_vdj[bc] = candidates[0]
-        if not barcode_to_vdj:
+        if not barcode_to_vdj and adata.n_obs:
             logger.warning(
                 "  No GEX barcode matches any VDJ barcode "
                 f"(GEX e.g. {adata.obs_names[0]!r}, VDJ e.g. {min(vdj_barcodes)!r}); "
