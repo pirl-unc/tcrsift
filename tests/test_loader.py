@@ -412,6 +412,71 @@ class TestCombineGexAndVdjBarcodeMatching:
         assert combined.obs.loc["BBBB", "CDR3_beta"] == "CASSBBB"
 
 
+    @staticmethod
+    def _vdj(barcodes):
+        rows = []
+        for i, barcode in enumerate(barcodes):
+            rows += [(barcode, "TRA", f"CAV{i}F"), (barcode, "TRB", f"CASS{i}F")]
+        df = pd.DataFrame(rows, columns=["barcode", "chain", "cdr3"])
+        df["umis"], df["reads"] = 5, 50
+        df["contig_id"] = [f"c{i}" for i in range(len(df))]
+        for gene in ("v_gene", "d_gene", "j_gene", "c_gene"):
+            df[gene] = None
+        return df
+
+    @staticmethod
+    def _gex(barcodes):
+        return ad.AnnData(X=sp.csr_matrix((len(barcodes), 1)), obs=pd.DataFrame(index=barcodes),
+                          var=pd.DataFrame(index=["GENE1"]))
+
+    def test_receptor_is_not_shared_across_gem_groups(self):
+        """When barcodes already match exactly, AAAA-2 is a different cell
+        from AAAA-1 and must not inherit its receptor."""
+        combined = combine_gex_and_vdj(self._gex(["AAAA-1", "AAAA-2", "CCCC-1"]), self._vdj(["AAAA-1"]))
+        assert combined.obs.loc["AAAA-1", "CDR3ab"] == "CAV0F_CASS0F"
+        assert not bool(combined.obs.loc["AAAA-2", "has_TRA"])
+
+    def test_ambiguous_suffix_matches_are_left_unmatched(self):
+        combined = combine_gex_and_vdj(self._gex(["AAAA", "BBBB"]), self._vdj(["AAAA-1", "AAAA-2", "BBBB-1"]))
+        assert not bool(combined.obs.loc["AAAA", "has_TRA"])
+        assert combined.obs.loc["BBBB", "CDR3ab"] == "CAV2F_CASS2F"
+
+    def test_no_barcode_overlap_warns(self, caplog):
+        with caplog.at_level("WARNING", logger="tcrsift.loader"):
+            combined = combine_gex_and_vdj(self._gex(["s1_AAAA-1"]), self._vdj(["AAAA-1"]))
+        assert "No GEX barcode matches any VDJ barcode" in caplog.text
+        assert not bool(combined.obs.loc["s1_AAAA-1", "has_TRA"])
+
+
+class TestH5GeneAxis:
+    def test_h5_genes_are_indexed_by_ensembl_id_like_matrix_directories(self, tmp_path, monkeypatch):
+        """read_10x_h5 names genes by symbol, and symbols repeat in 10x
+        references. A repeated name made the marker lookup fail, and an h5
+        sample combined with a matrix-directory sample doubled the gene axis."""
+        import scanpy as sc
+
+        from tcrsift.loader import _extract_tcell_markers, load_cellranger_gex
+
+        gex_dir = tmp_path / "outs"
+        gex_dir.mkdir()
+        (gex_dir / "filtered_feature_bc_matrix.h5").write_bytes(b"placeholder")
+        symbols = ["CD3D", "CD3E", "CD3G", "CD4", "CD8A", "CD8B", "DUP", "DUP"]
+        ids = ["ENSG00000167286", "ENSG00000198851", "ENSG00000160654", "ENSG00000010610",
+               "ENSG00000153563", "ENSG00000172116", "ENSG00000000001", "ENSG00000000002"]
+        adata = ad.AnnData(X=sp.csr_matrix(np.arange(16, dtype=np.float32).reshape(2, 8)),
+                           obs=pd.DataFrame(index=["AAAA-1", "CCCC-1"]),
+                           var=pd.DataFrame({"gene_ids": ids}, index=symbols))
+        monkeypatch.setattr(sc, "read_10x_h5", lambda _: adata)
+
+        loaded = load_cellranger_gex(gex_dir, "S1", min_genes=0, min_counts=0, min_mito_pct=0, verbose=False)
+
+        assert loaded.var_names.is_unique
+        assert set(ids) <= set(loaded.var_names)
+        assert loaded.var.loc["ENSG00000010610", "gene_symbols"] == "CD4"
+        markers = _extract_tcell_markers(loaded)
+        assert markers.loc["CCCC-1", "CD4"] == 11
+
+
 class TestLoadSamplesWithSampleSheet:
     """Tests for load_samples accepting SampleSheet objects."""
 
@@ -531,6 +596,36 @@ class TestLoadSamplesWithSampleSheet:
 
         assert dict(zip(adata.var_names, adata.var["gene_symbols"])) == symbols
         assert set(adata_symbol_array(adata)) == {"CARS", "PLA2G16", "S2ONLY"}
+    def test_non_productive_contigs_never_become_the_primary_chain(self, temp_dir):
+        """Cell Ranger's filtered table lists non-productive contigs. Ranked by
+        UMIs alone they displaced the real chain or blanked the CDR3."""
+        vdj_dir = temp_dir / "vdj_nonproductive"
+        vdj_dir.mkdir()
+        rows = [
+            # barcode, chain, cdr3, productive, umis
+            ("CELL1-1", "TRA", "CAVNONPRODF", "False", 50),  # outranks the real alpha
+            ("CELL1-1", "TRA", "CAVGOODF", "True", 5),
+            ("CELL1-1", "TRB", "CASSGOODF", "True", 9),
+            ("CELL2-1", "TRA", "None", "False", 40),          # no CDR3 at all
+            ("CELL2-1", "TRA", "CAVOTHERF", "True", 4),
+            ("CELL2-1", "TRB", "CASSOTHERF", "True", 8),
+            ("CELL3-1", "TRB", "CASSONLYNPF", "false", 3),    # nothing productive
+        ]
+        df = pd.DataFrame(rows, columns=["barcode", "chain", "cdr3", "productive", "umis"])
+        df["contig_id"] = [f"{b}_contig_{i}" for i, b in enumerate(df.barcode, 1)]
+        df["reads"] = 100
+        for gene in ("v_gene", "d_gene", "j_gene", "c_gene"):
+            df[gene] = "None"
+        df.to_csv(vdj_dir / "filtered_contig_annotations.csv", index=False)
+
+        sheet = SampleSheet(samples=[Sample(sample="S1", vdj_dir=str(vdj_dir))])
+        adata = load_samples(sheet, show_progress=False, verbose=False)
+
+        assert sorted(adata.obs_names) == ["CELL1-1", "CELL2-1"]
+        assert adata.obs.loc["CELL1-1", "CDR3ab"] == "CAVGOODF_CASSGOODF"
+        assert adata.obs.loc["CELL2-1", "CDR3ab"] == "CAVOTHERF_CASSOTHERF"
+        assert not adata.obs["multi_TRA"].any()
+
     def test_unfiltered_contig_fallback_matches_filtered_semantics(self, temp_dir):
         """With only all_contig_annotations.csv present, keep called cells and
         high-confidence contigs and drop contigs with no chain call. Those rows

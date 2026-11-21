@@ -46,16 +46,16 @@ z
    </g>
    <g id="patch_4">
     <path d="M 83.759615 135.361838 
-L 322.979852 135.361838 
-L 322.979852 94.138162 
+L 323.498038 135.361838 
+L 323.498038 94.138162 
 L 83.759615 94.138162 
 z
 " clip-path="url(#p74a3d9ba56)" style="fill: #2a78d6"/>
    </g>
    <g id="patch_5">
     <path d="M 83.759615 204.067964 
-L 184.702922 204.067964 
-L 184.702922 162.844288 
+L 185.254451 204.067964 
+L 185.254451 162.844288 
 L 83.759615 162.844288 
 z
 " clip-path="url(#p74a3d9ba56)" style="fill: #2a78d6"/>
@@ -82,13 +82,13 @@ z
     </g>
    </g>
    <g id="text_4">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="347.026443" y="48.500593" transform="rotate(-0 347.026443 48.500593)">48,869  (47% of CD8)</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="346.903501" y="48.500593" transform="rotate(-0 346.903501 48.500593)">49,619  (48% of CD8)</text>
    </g>
    <g id="text_5">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="331.113581" y="117.206719" transform="rotate(-0 331.113581 117.206719)">45,821  (44% of CD8)</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="331.508823" y="117.206719" transform="rotate(-0 331.508823 117.206719)">46,625  (45% of CD8)</text>
    </g>
    <g id="text_6">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="192.836651" y="185.912845" transform="rotate(-0 192.836651 185.912845)">19,335  (19% of CD8)</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="193.265236" y="185.912845" transform="rotate(-0 193.265236 185.912845)">19,739  (19% of CD8)</text>
    </g>
    <g id="text_7">
     <text style="font-weight: 700; font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="83.759615" y="10.50024" transform="rotate(-0 83.759615 10.50024)">CD8 cells retained with a paired TCR</text>

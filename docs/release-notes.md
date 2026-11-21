@@ -7,6 +7,39 @@ current release. The complete per-release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.28.0
+
+Fixes that change which receptor a cell is assigned and which clones are
+shortlisted. Rerun analyses made with earlier versions.
+
+- **Non-productive contigs are dropped on load.** Cell Ranger's filtered contig
+  table lists them, and the loader ranked a cell's contigs by UMI count alone,
+  so a non-productive contig could become the cell's alpha or beta chain, hide
+  the real one, or leave the cell with no CDR3. In the public lung data 7% of
+  primary chains were non-productive. This applies to every command that loads
+  Cell Ranger VDJ output, including `run`.
+- **Barcodes are matched exactly unless nothing matches.** Suffix-insensitive
+  matching was applied per barcode, so a cell `X-2` could receive the receptor
+  of an unrelated cell `X-1`. It now applies only when a sample has no exact
+  match, skips ambiguous barcodes, and warns when nothing matches.
+- **`.h5` expression input is indexed by Ensembl id**, like matrix
+  directories. A repeated gene symbol made an `.h5`-only sample fail to load,
+  and mixing `.h5` and matrix-directory samples doubled the gene axis.
+- **Budget sharing, two corrections to 3.27.0.** A list whose only clone had
+  just been taken by another list could use up a turn, so a smaller
+  `--max-clones` was not always a prefix of a larger one. And
+  `--max-clones 0` was treated as a budget equal to the eligible count, which
+  changed `selection_rank` and the recorded signature compared with a large
+  cap.
+- **V and J gene filters with repeated barcodes.** When a clone's
+  highest-UMI cell shared its barcode with another cell of the clone in a
+  different sample, the clone's gene columns held several values, and
+  `--exclude-trav12-2`, `--exclude-v-gene` and `--include-v-gene` misjudged
+  it.
+- **Sample sheets.** A blank `source` cell uses the default instead of being
+  rejected, numeric YAML sample names are read as text, and a sample name
+  listed twice is reported when the sheet is read.
+
 ## 3.27.0
 
 Two changes that alter shortlists, both prompted by the

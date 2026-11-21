@@ -259,48 +259,56 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
                 if queue:
                     lists.append((signature, sample, lineage, route, queue))
     selected = set()
-    limit = max_clones if max_clones else len(eligible)
+    # No cap means no budget to share: a finite stand-in equal to the eligible
+    # count made the last rounds look like a budget running out.
+    limit = max_clones or float("inf")
+
+    def unseen(entry):
+        """Drop clones another list already supplied; True if any remain."""
+        queue = entry[-1]
+        while queue and queue[0][:2] in selected:
+            queue.popleft()
+        return bool(queue)
+
+    def take(entry):
+        signature, sample, lineage, route, queue = entry
+        donor, cdr3, row_id = queue.popleft()
+        clone = (donor, cdr3)
+        selected.add(clone)
+        idx = by_clone[clone]
+        result.loc[idx, ["selection_rank", "selected_signature", "selected_sample", "selected_lineage", "selected_evidence"]] = [
+            len(selected), signature, sample, lineage, route,
+        ]
+        row = scores.loc[row_id]
+        result.loc[idx, ["selected_cells", "selected_mean_score", "selected_high_cells", "selected_high_fraction"]] = [
+            row.cells, row[f"signature_{signature}"], row.get(f"signature_{signature}_high_cells", np.nan),
+            row.get(f"signature_{signature}_high_fraction", np.nan),
+        ]
+
     while len(selected) < limit:
         before = len(selected)
-        live = []
-        for entry in lists:
-            queue = entry[-1]
-            while queue and queue[0][:2] in selected:
-                queue.popleft()
-            if queue:
-                live.append(entry)
-        remaining = limit - len(selected)
-        if remaining < len(live):
+        live = [entry for entry in lists if unseen(entry)]
+        if limit - len(selected) >= len(live):
+            for entry in live:
+                if unseen(entry):
+                    take(entry)
+        else:
             # The budget ends inside this round. Taking a prefix would starve
             # the signatures listed last, so each turn goes to the signature,
             # then the sample, with the fewest turns so far in this round.
-            def stratum(entry):
-                return entry[-1][0][0], entry[1], entry[2]  # donor, sample, lineage
-
-            turns, pending, live = Counter(), live, []
-            for _ in range(remaining):
-                entry = min(pending, key=lambda item: (turns[item[0]], turns[stratum(item)]))
+            # Lists are re-checked before every turn: a list whose only clone
+            # was just taken by another list must not use up a turn.
+            turns, pending = Counter(), live
+            while len(selected) < limit:
+                pending = [entry for entry in pending if unseen(entry)]
+                if not pending:
+                    break
+                entry = min(pending, key=lambda item: (
+                    turns[item[0]], turns[(item[-1][0][0], item[1], item[2])]))  # donor, sample, lineage
                 pending = [item for item in pending if item is not entry]
                 turns[entry[0]] += 1
-                turns[stratum(entry)] += 1
-                live.append(entry)
-        for signature, sample, lineage, route, queue in live:
-            while queue and queue[0][:2] in selected:
-                queue.popleft()
-            if not queue:
-                continue
-            donor, cdr3, row_id = queue.popleft()
-            clone = (donor, cdr3)
-            selected.add(clone)
-            idx = by_clone[clone]
-            result.loc[idx, ["selection_rank", "selected_signature", "selected_sample", "selected_lineage", "selected_evidence"]] = [
-                len(selected), signature, sample, lineage, route,
-            ]
-            row = scores.loc[row_id]
-            result.loc[idx, ["selected_cells", "selected_mean_score", "selected_high_cells", "selected_high_fraction"]] = [
-                row.cells, row[f"signature_{signature}"], row.get(f"signature_{signature}_high_cells", np.nan),
-                row.get(f"signature_{signature}_high_fraction", np.nan),
-            ]
+                turns[(entry[-1][0][0], entry[1], entry[2])] += 1
+                take(entry)
         if len(selected) == before:
             break
     result["selected_for_review"] = result.selection_rank.notna()

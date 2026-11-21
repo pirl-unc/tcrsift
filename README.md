@@ -101,18 +101,19 @@ vdj_outs/
 └── filtered_contig.fasta             # Optional: for native leader extraction
 ```
 
-Required columns in `filtered_contig_annotations.csv`:
+Columns used from `filtered_contig_annotations.csv`:
 - `barcode`, `chain` (TRA/TRB)
 - `cdr3` (amino acid sequence)
-- `v_gene`, `j_gene`, `c_gene`
-- `umis`, `reads`
-- `productive`, `full_length`
+- `v_gene`, `d_gene`, `j_gene`, `c_gene`
+- `umis`, `reads`, `contig_id`
+- `productive`: when present, non-productive contigs are dropped before the
+  highest-UMI contig of each chain is chosen for a cell
 
 **GEX Directory** (from `cellranger count`):
 ```
 gex_outs/
-├── filtered_feature_bc_matrix.h5     # Preferred: HDF5 format
-└── filtered_feature_bc_matrix/       # Alternative: MTX directory
+├── filtered_feature_bc_matrix/       # Used when present: MTX directory
+└── filtered_feature_bc_matrix.h5     # Used otherwise: HDF5 format
     ├── matrix.mtx.gz
     ├── features.tsv.gz
     └── barcodes.tsv.gz
@@ -120,7 +121,7 @@ gex_outs/
 
 The GEX matrix must contain T cell marker genes (CD3D, CD3E, CD3G, CD4, CD8A, CD8B) for phenotyping. Gene names or ENSEMBL IDs are both supported.
 
-**Barcode Matching**: CellRanger VDJ and GEX may use different barcode suffixes (e.g., `ACGT-1` vs `ACGT-2`). TCRsift strips suffixes and matches on the core barcode.
+**Barcode Matching**: Barcodes are matched exactly. If no barcode in a sample matches, CellRanger VDJ and GEX were probably given different suffixes (e.g., `ACGT-1` vs `ACGT-2`), and TCRsift then matches on the core barcode, skipping any core barcode that occurs more than once. It warns when nothing matches at all.
 
 ## Installation
 
@@ -292,7 +293,7 @@ tcrsift load --sample-sheet samples.yaml -o loaded.h5ad
 
 **What happens:**
 1. Reads `filtered_contig_annotations.csv` for VDJ data
-2. Reads `filtered_feature_bc_matrix.h5` for gene expression
+2. Reads `filtered_feature_bc_matrix/` (or the `.h5` when the directory is absent) for gene expression
 3. Matches barcodes between VDJ and GEX
 4. Extracts CD3D/E/G, CD4, CD8A/B expression per cell
 5. Pivots VDJ to get one row per cell with TRA/TRB info
@@ -420,7 +421,7 @@ Manage the cache with the `tcrsift data` subcommand:
 
 ```bash
 tcrsift data list                  # show cached DBs, sizes, paths
-tcrsift data download              # auto-fetch supported DBs (VDJdb + IEDB)
+tcrsift data download              # auto-fetch every downloadable DB (VDJdb, IEDB, IMGT germlines)
 tcrsift data download --db iedb    # fetch one DB
 tcrsift data download --force      # refresh
 tcrsift data clear --db iedb       # remove one DB
@@ -559,8 +560,8 @@ Contexts: `generic`, `blood` (including vaccine studies), `blood-tumor`,
 workflow with `solid-tumor` as its default context.
 
 Defaults select **CD8**, up to **200 candidate rows total**, taking turns
-across each signature/sample list while its scores exceed zero and meet the
-top-decile cutoff. Flat or exhausted lists stop supplying clones; the others
+across each signature/sample list while its clones clear a size-matched
+background floor and the top-decile cutoff. Flat or exhausted lists stop supplying clones; the others
 continue until the total cap or exhaustion. Known MART-1 matches are excluded;
 viral matches are retained unless `--exclude-known-viral` is set. Reference
 files (`--vdjdb`, `--iedb`, `--cedar`) are needed to identify known matches.
