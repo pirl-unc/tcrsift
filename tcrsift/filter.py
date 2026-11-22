@@ -106,13 +106,19 @@ def clone_clears_tier(
     plot, the selection-route heatmap, and the funnel.
     """
     try:
-        if float(cells) < tier_def.get("min_cells", 0):
-            return False
-        if float(max_frequency) < tier_def.get("min_frequency", 0.0):
-            return False
+        c_val = float(cells)
+        f_val = float(max_frequency)
     except (TypeError, ValueError):
         return False
+    if np.isnan(c_val) or np.isnan(f_val):
+        return False
+    if c_val < tier_def.get("min_cells", 0):
+        return False
+    if f_val < tier_def.get("min_frequency", 0.0):
+        return False
     if n_conditions is not None:
+        if pd.isna(n_conditions):
+            return False
         max_c = tier_def.get("max_conditions")
         if max_c is not None and n_conditions > max_c:
             return False
@@ -234,6 +240,72 @@ def resolve_fdr_scope(
     return "global"
 
 
+def _recompute_subset_clone_stats(
+    sub_clones: pd.DataFrame,
+    group: pd.DataFrame,
+) -> pd.DataFrame:
+    """Recompute abundance/axis summary columns on ``sub_clones`` from ``group``."""
+    if sub_clones.empty or group.empty:
+        return sub_clones
+    out = sub_clones.copy()
+    keys = out["CDR3ab"].astype(str)
+    g = group.assign(_cdr3ab=group["CDR3ab"].astype(str))
+    if "cells" in g.columns and "cell_count" in out.columns:
+        cell_sums = g.groupby("_cdr3ab", observed=True)["cells"].sum()
+        orig_is_int = pd.api.types.is_integer_dtype(out["cell_count"].dtype)
+        mapped = keys.map(cell_sums).fillna(0)
+        out["cell_count"] = mapped.round().astype(int) if orig_is_int else mapped.astype(float)
+    if "frequency" in g.columns and "max_frequency" in out.columns:
+        freq_max = g.groupby("_cdr3ab", observed=True)["frequency"].max()
+        out["max_frequency"] = keys.map(freq_max).fillna(0.0).astype(float)
+        if "mean_frequency" in out.columns:
+            freq_mean = g.groupby("_cdr3ab", observed=True)["frequency"].mean()
+            out["mean_frequency"] = keys.map(freq_mean).fillna(0.0).astype(float)
+    if "sample" in g.columns and "n_samples" in out.columns:
+        n_samp = g.groupby("_cdr3ab", observed=True)["sample"].nunique()
+        out["n_samples"] = keys.map(n_samp).fillna(0).astype(int)
+        if "n_conditions" in out.columns and "n_antigens" not in out.columns:
+            out["n_conditions"] = out["n_samples"]
+    if "method" in g.columns:
+        gm = g.dropna(subset=["method"])
+        if "n_methods" in out.columns:
+            n_m = gm.groupby("_cdr3ab", observed=True)["method"].nunique()
+            out["n_methods"] = keys.map(n_m).fillna(0).astype(int)
+        if "max_methods_per_donor" in out.columns:
+            if "donor" in gm.columns:
+                mpd = (
+                    gm.dropna(subset=["donor"])
+                    .groupby(["_cdr3ab", "donor"], observed=True)["method"]
+                    .nunique()
+                    .groupby(level=0)
+                    .max()
+                )
+            else:
+                mpd = gm.groupby("_cdr3ab", observed=True)["method"].nunique()
+            out["max_methods_per_donor"] = keys.map(mpd).fillna(0).astype(int)
+        if "cells" in gm.columns and "max_cells_per_method" in out.columns:
+            cpm = (
+                gm.groupby(["_cdr3ab", "method"], observed=True)["cells"]
+                .sum()
+                .groupby(level=0)
+                .max()
+            )
+            orig_cpm_int = pd.api.types.is_integer_dtype(out["max_cells_per_method"].dtype)
+            mapped_cpm = keys.map(cpm).fillna(0)
+            out["max_cells_per_method"] = (
+                mapped_cpm.round().astype(int) if orig_cpm_int else mapped_cpm.astype(float)
+            )
+        if "frequency" in gm.columns and "max_frequency_per_method" in out.columns:
+            fpm = (
+                gm.groupby(["_cdr3ab", "method"], observed=True)["frequency"]
+                .max()
+                .groupby(level=0)
+                .max()
+            )
+            out["max_frequency_per_method"] = keys.map(fpm).fillna(0.0).astype(float)
+    return out
+
+
 def split_clonotypes_by_donor(
     clonotypes: pd.DataFrame,
     long_df: pd.DataFrame,
@@ -241,9 +313,10 @@ def split_clonotypes_by_donor(
     """Partition the clonotype table into per-donor subsets.
 
     Each donor gets every clone present in any of that donor's samples
-    (so a public clone appears under both donors). When ``long_df`` lacks
-    a ``donor`` column, returns ``{"all": clonotypes}`` so callers can
-    treat per-donor scope uniformly.
+    (so a public clone appears under both donors), with abundance and method
+    summary statistics recomputed over that donor's samples only. When
+    ``long_df`` lacks a ``donor`` column, returns ``{"all": clonotypes}`` so
+    callers can treat per-donor scope uniformly.
 
     Used by ``--fdr-scope per-donor`` to run the FDR filter against each
     donor's own pooled-across-methods null.
@@ -253,9 +326,8 @@ def split_clonotypes_by_donor(
     out: dict[str, pd.DataFrame] = {}
     for donor, group in long_df.groupby("donor", observed=True):
         donor_clones = set(group["CDR3ab"].astype(str).unique())
-        out[str(donor)] = clonotypes[
-            clonotypes["CDR3ab"].astype(str).isin(donor_clones)
-        ].copy()
+        sub = clonotypes[clonotypes["CDR3ab"].astype(str).isin(donor_clones)].copy()
+        out[str(donor)] = _recompute_subset_clone_stats(sub, group)
     return out
 
 
@@ -265,16 +337,16 @@ def split_clonotypes_by_sample(
 ) -> dict[str, pd.DataFrame]:
     """Partition the clonotype table into per-sample subsets.
 
-    Used by ``--fdr-scope per-sample`` — each sample gets its own FDR null.
+    Used by ``--fdr-scope per-sample`` — each sample gets its own FDR null
+    with sample-local abundance statistics.
     """
     if "sample" not in long_df.columns:
         return {"all": clonotypes.copy()}
     out: dict[str, pd.DataFrame] = {}
     for sample, group in long_df.groupby("sample", observed=True):
         sample_clones = set(group["CDR3ab"].astype(str).unique())
-        out[str(sample)] = clonotypes[
-            clonotypes["CDR3ab"].astype(str).isin(sample_clones)
-        ].copy()
+        sub = clonotypes[clonotypes["CDR3ab"].astype(str).isin(sample_clones)].copy()
+        out[str(sample)] = _recompute_subset_clone_stats(sub, group)
     return out
 
 NAMED_FILTER_MODE_DEFAULTS: dict[str, dict] = {
@@ -507,8 +579,9 @@ def filter_clonotypes_threshold(
     # Viral exclusion
     if exclude_viral and "is_viral" in df.columns:
         before = len(df)
-        n_viral = df["is_viral"].sum()
-        df = df[~df["is_viral"]]
+        is_viral = df["is_viral"].eq(True)
+        n_viral = int(is_viral.sum())
+        df = df[~is_viral]
         if verbose:
             logger.info(
                 f"  exclude_viral: {before:,} -> {len(df):,} ({n_viral:,} viral clones removed)"
@@ -574,7 +647,7 @@ def assign_tiers_threshold(
 
     # Apply viral exclusion if specified
     if exclude_viral and "is_viral" in df.columns:
-        viral_mask = ~df["is_viral"]
+        viral_mask = ~df["is_viral"].eq(True)
     else:
         viral_mask = pd.Series(True, index=df.index)
 
@@ -663,7 +736,7 @@ def filter_clonotypes_logistic(
     target_above_min = (df["max_frequency"] > min_freq_threshold).values
 
     if only_avoid_viral and "is_viral" in df.columns:
-        target = target_above_min & (~df["is_viral"]).values
+        target = target_above_min & (~df["is_viral"].eq(True)).values
     else:
         condition_counts, _ = _get_condition_count_info(df)
         if condition_counts is not None:
@@ -687,7 +760,7 @@ def filter_clonotypes_logistic(
         result_df.attrs["logistic_fallback_reason"] = "fit_failed"
         return result_df
 
-    if weight < 0:
+    if weight <= 0:
         logger.warning(
             "Data too noisy for adaptive thresholds, falling back to default frequency threshold"
         )
@@ -698,7 +771,7 @@ def filter_clonotypes_logistic(
         result_df.attrs["logistic_fallback_reason"] = "negative_weight"
         return result_df
 
-    # Calculate thresholds for each FDR level
+    # Calculate thresholds for each FDR level over the empirical frequency range
     x_range = np.linspace(df["max_frequency"].min(), df["max_frequency"].max(), 10000)
     y_pred = model.predict(x_range)
 
@@ -706,7 +779,7 @@ def filter_clonotypes_logistic(
     for fdr in fdr_tiers:
         y_target = 1.0 - fdr
         threshold_idx = np.argmin(np.abs(y_pred - y_target))
-        fdr_to_threshold[fdr] = max(min_freq_threshold, x_range[threshold_idx])
+        fdr_to_threshold[fdr] = max(min_freq_threshold, float(x_range[threshold_idx]))
 
     df = _assign_logistic_tiers_from_thresholds(df, fdr_to_threshold)
 
@@ -881,7 +954,7 @@ def filter_clonotypes(
         tier_counts = df["tier"].value_counts().sort_index()
         logger.info("  Tier distribution:")
         for tier, count in tier_counts.items():
-            if tier is not None:
+            if pd.notna(tier):
                 pct = count / len(df) * 100
                 logger.info(f"    {tier}: {count:,} ({pct:.1f}%)")
 
@@ -902,7 +975,7 @@ def split_by_tier(clonotypes: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
     result = {}
     for tier in clonotypes["tier"].unique():
-        if tier is not None:
+        if pd.notna(tier):
             result[tier] = clonotypes[clonotypes["tier"] == tier].copy()
 
     return result
@@ -955,7 +1028,7 @@ def get_filter_summary(clonotypes: pd.DataFrame) -> dict:
     }
 
     for tier in clonotypes["tier"].unique():
-        if tier is not None:
+        if pd.notna(tier):
             tier_df = clonotypes[clonotypes["tier"] == tier]
             summary[f"{tier}_cells"] = tier_df["cell_count"].sum()
             summary[f"{tier}_median_freq"] = (

@@ -68,7 +68,10 @@ def read_donor_clones(
     if "CDR3ab" not in df.columns:
         raise ValueError(f"{path} has no CDR3ab column")
 
-    out = pd.DataFrame({"CDR3ab": df["CDR3ab"].astype(str)})
+    raw_ab = df["CDR3ab"].where(df["CDR3ab"].notna(), "").astype(str).str.strip()
+    valid_ab = ~raw_ab.str.lower().isin({"", "_", "nan", "none", "<na>"})
+    df = df.loc[valid_ab].reset_index(drop=True)
+    out = pd.DataFrame({"CDR3ab": raw_ab.loc[valid_ab].reset_index(drop=True)})
     cells_col = next((c for c in _CELL_COUNT_COLS if c in df.columns), None)
     out["cells"] = (
         pd.to_numeric(df[cells_col], errors="coerce").fillna(0.0)
@@ -77,9 +80,11 @@ def read_donor_clones(
     # β-only key: explicit CDR3_beta column, else parse from CDR3ab
     # (``alpha_beta`` convention from build_clone_sample_long).
     if "CDR3_beta" in df.columns:
-        out["CDR3_beta"] = df["CDR3_beta"].astype(str)
+        raw_b = df["CDR3_beta"].where(df["CDR3_beta"].notna(), "").astype(str).str.strip()
+        out["CDR3_beta"] = raw_b.where(~raw_b.str.lower().isin({"nan", "none", "<na>"}), "")
     else:
-        out["CDR3_beta"] = out["CDR3ab"].str.split("_").str[-1]
+        parts = out["CDR3ab"].str.split("_", n=1, expand=True)
+        out["CDR3_beta"] = parts[1].fillna("") if parts.shape[1] > 1 else ""
     return out
 
 

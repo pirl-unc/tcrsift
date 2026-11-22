@@ -367,6 +367,10 @@ def train_model(
     else:
         raise ValueError(f"unknown backend {backend!r}")
     model.save(str(out))
+    # Evict any cached model for this (chain, backend, role, species, cache_dir)
+    cdir = str(cache_dir())
+    for k in [k for k in _CACHE if k[:4] == (chain.lower(), backend, role, sp) and (len(k) < 5 or k[4] == cdir)]:
+        _CACHE.pop(k, None)
     return out
 
 
@@ -404,7 +408,7 @@ def ensure_model(
     from .species import normalize_species
 
     sp = normalize_species(species)
-    key = (chain.lower(), backend, role, sp)
+    key = (chain.lower(), backend, role, sp, str(cache_dir()))
     if key in _CACHE:
         return _CACHE[key]
 

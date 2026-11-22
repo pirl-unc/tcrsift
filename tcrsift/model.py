@@ -208,6 +208,8 @@ def annotate_plot_with_thresholds_and_counts(
     fdrs = reversed(sorted(fdr_to_threshold))
     for i, (fdr, color) in enumerate(zip(fdrs, colors)):
         threshold = fdr_to_threshold[fdr]
+        if not np.isfinite(threshold):
+            continue
         n = threshold_to_count[threshold]
         ax.axvline(
             threshold,
@@ -218,7 +220,7 @@ def annotate_plot_with_thresholds_and_counts(
         ax.text(
             x=threshold + 0.03,
             y=0.3 + i * 0.12,
-            s=f"{100 * fdr:g}% FDR\nthreshold\n= {threshold:0.2}%\n(n={n})",
+            s=f"{100 * fdr:g}% FDR\nthreshold\n= {100 * threshold:0.2f}%\n(n={n})",
             fontweight="bold" if fdr == preferred_fdr else "medium",
             alpha=0.9 if fdr == preferred_fdr else 0.8,
         )

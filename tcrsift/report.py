@@ -25,6 +25,7 @@ import io
 import logging
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -282,24 +283,39 @@ def _rep_cell_both_alphas(obs, beta: str, a_lo: str, a_hi: str):
     per-α C-region extraction keeps its multi-contig consensus and maximal
     coverage, mirroring how the merged clone's contig list is built. The rep
     cell still supplies the VDJ/gene bytes (one coherent source)."""
-    s = obs.astype({c: str for c in ("TRA_1_cdr3", "TRA_2_cdr3", "TRB_1_cdr3") if c in obs.columns})
     if not {"TRA_1_cdr3", "TRA_2_cdr3", "TRB_1_cdr3"} <= set(obs.columns):
         return None
+    s = obs.assign(
+        **{
+            c: obs[c].astype("string").fillna("").astype(object)
+            for c in ("TRA_1_cdr3", "TRA_2_cdr3", "TRB_1_cdr3")
+        }
+    )
     m = (s["TRB_1_cdr3"] == beta) & (
         ((s["TRA_1_cdr3"] == a_lo) & (s["TRA_2_cdr3"] == a_hi))
         | ((s["TRA_1_cdr3"] == a_hi) & (s["TRA_2_cdr3"] == a_lo))
     )
-    cells = obs[m.values]
-    if not len(cells):
+    pos = np.flatnonzero(m.to_numpy(dtype=bool))
+    if len(pos) == 0:
         return None
-    tot = sum(
-        cells[c].fillna(0) for c in ("TRA_1_umis", "TRA_2_umis", "TRB_1_umis")
-        if c in cells.columns
-    )
-    cell = cells.loc[tot.idxmax()]
-    # Collect each α's contig ids across all co-expressing cells (the α may sit
-    # in TRA_1 in one cell, TRA_2 in another), de-duplicated, order-preserving.
-    s_cells = s.loc[cells.index]
+    cells = obs.iloc[pos]
+    s_cells = s.iloc[pos]
+    umi_present = [
+        c for c in ("TRA_1_umis", "TRA_2_umis", "TRB_1_umis") if c in cells.columns
+    ]
+    if umi_present:
+        tot = (
+            cells[umi_present]
+            .apply(pd.to_numeric, errors="coerce")
+            .fillna(0.0)
+            .sum(axis=1)
+            .to_numpy()
+        )
+        best_pos = int(np.argmax(tot))
+    else:
+        best_pos = 0
+    cell = cells.iloc[best_pos]
+    cell_s = s_cells.iloc[best_pos]
     alpha_contigs: dict[str, str] = {}
     for a in (a_lo, a_hi):
         ids: list[str] = []
@@ -307,12 +323,14 @@ def _rep_cell_both_alphas(obs, beta: str, a_lo: str, a_hi: str):
             cid_col = f"{slot}_contig_id"
             if cid_col not in cells.columns:
                 continue
-            hit = cells[cid_col][(s_cells[f"{slot}_cdr3"] == a).values]
+            hit = cells[cid_col].iloc[
+                np.flatnonzero((s_cells[f"{slot}_cdr3"] == a).to_numpy(dtype=bool))
+            ]
             for cid in hit.dropna().astype(str):
                 if cid and cid.lower() != "nan" and cid not in ids:
                     ids.append(cid)
         alpha_contigs[a] = ";".join(ids)
-    return {str(cell["TRA_1_cdr3"]): "TRA_1", str(cell["TRA_2_cdr3"]): "TRA_2"}, cell, alpha_contigs
+    return {str(cell_s["TRA_1_cdr3"]): "TRA_1", str(cell_s["TRA_2_cdr3"]): "TRA_2"}, cell, alpha_contigs
 
 
 def expand_dual_alpha_variants(

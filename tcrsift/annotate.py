@@ -2012,8 +2012,10 @@ def match_clonotypes(
             )
 
         for idx, row in row_iter:
-            alpha = row.get("CDR3_alpha", "") or ""
-            beta = row.get("CDR3_beta", "") or ""
+            raw_a = row.get("CDR3_alpha", "")
+            raw_b = row.get("CDR3_beta", "")
+            alpha = raw_a.strip() if isinstance(raw_a, str) else ""
+            beta = raw_b.strip() if isinstance(raw_b, str) else ""
 
             if alpha and (alpha, beta) in db_alpha_beta:
                 matches = database[
@@ -2028,7 +2030,7 @@ def match_clonotypes(
                     df, idx, matches, strength="b_only", partial=True, distance=0,
                     query_species=query_species,
                 )
-            elif beta_neighbor_index is not None and beta:
+            elif allow_b_fallback and beta_neighbor_index is not None and beta:
                 neighbors = _find_lev_neighbors(beta, beta_neighbor_index, max_distance)
                 if neighbors:
                     best_d = neighbors[0][1]
@@ -2052,8 +2054,9 @@ def match_clonotypes(
             )
 
         for idx, row in row_iter:
-            beta = row.get("CDR3_beta", "") or ""
-            if beta in db_beta_set:
+            raw_b = row.get("CDR3_beta", "")
+            beta = raw_b.strip() if isinstance(raw_b, str) else ""
+            if beta and beta in db_beta_set:
                 matches = database[database["cdr3_beta"] == beta]
                 _annotate_match(
                     df, idx, matches, strength="b_only", distance=0,
@@ -2122,8 +2125,9 @@ def _annotate_match(
     if "host_species" in antigen_matches.columns:
         hs = canonicalize_species_labels(antigen_matches["host_species"]).dropna()
         if len(hs) > 0:
-            df.loc[idx, "db_host_species"] = hs.mode().iloc[0]
-            if (hs != query_binomial).any():
+            picked_hs = hs.mode().iloc[0]
+            df.loc[idx, "db_host_species"] = picked_hs
+            if picked_hs != query_binomial:
                 strength = f"{strength}_cross"
 
     df.loc[idx, "db_match"] = True

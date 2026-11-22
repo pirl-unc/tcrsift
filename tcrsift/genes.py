@@ -438,12 +438,14 @@ def ensembl_ids_to_symbols(
         elif base in _STATIC_ENSEMBL_TO_SYMBOL:
             out[eid] = _STATIC_ENSEMBL_TO_SYMBOL[base]
 
-    if db_path is None and not out:
+    if db_path is None and len(out) < len(ids_list):
         rel_hint = release or (112 if sp == "mouse" else 110)
         logger.warning(
-            "No local pyensembl %s database installed; unmapped Ensembl IDs kept raw. "
+            "No local pyensembl %s database installed; %d of %d Ensembl ID(s) kept raw. "
             "Install offline index with: pyensembl install --species %s --release %d",
             sp,
+            len(ids_list) - len(out),
+            len(ids_list),
             species_to_pyensembl(sp),
             rel_hint,
         )
@@ -508,7 +510,7 @@ def harmonize_gene_symbols(symbols, wanted):
     present = set(symbols)
     wanted_upper = {str(g).upper() for g in wanted}
     renamed = {}
-    for gene in wanted_upper - present:
+    for gene in sorted(wanted_upper - present):
         for other in _SYNONYMS_OF.get(gene, ()):
             if other != gene and other in present and other not in wanted_upper:
                 symbols[symbols == other] = gene

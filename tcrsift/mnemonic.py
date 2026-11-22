@@ -414,7 +414,9 @@ def tcr_name(
         >>> tcr_name("CASSLAGAYEQYF")  # LAGA has original A
         'Lagaye Qy'
     """
-    if not seq:
+    if not isinstance(seq, str):
+        return "Anon"
+    if not seq.strip():
         return "Anon"
 
     # Handle multiple sequences separated by semicolon
@@ -443,7 +445,9 @@ def tcr_name(
             seq = seq[: -len(suffix)]
             break
 
-    if not seq:
+    if not isinstance(seq, str):
+        return "Anon"
+    if not seq.strip():
         return "Anon"
 
     # Make pronounceable and split into words

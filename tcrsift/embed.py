@@ -66,7 +66,15 @@ def embed_cells(adata, config=None):
         config = EmbedConfig()
 
     adata = adata.copy()
+    if adata.n_obs < 3:
+        raise ValueError(f"embed_cells: requires at least 3 cells, got {adata.n_obs}")
     if "counts" not in adata.layers:
+        x_min = float(adata.X.min()) if adata.n_obs and adata.n_vars else 0.0
+        if x_min < 0 or "log1p" in adata.uns:
+            raise ValueError(
+                "embed_cells requires raw non-negative counts in adata.X or "
+                "adata.layers['counts'] (adata appears already log-normalized or scaled)."
+            )
         adata.layers["counts"] = adata.X.copy()
 
     # Candidate pool for the clustering panel: drop TCR/Ig receptor transcripts
@@ -80,6 +88,11 @@ def embed_cells(adata, config=None):
     pool = adata[:, keep].copy()
     pool.X = pool.layers["counts"].copy()
     sc.pp.filter_genes(pool, min_cells=config.min_cells)
+    if pool.n_vars < 2:
+        raise ValueError(
+            f"embed_cells: fewer than 2 informative genes ({pool.n_vars}) remain "
+            f"after min_cells={config.min_cells} filtering."
+        )
 
     if config.informative_genes:
         want = {str(g).upper() for g in config.informative_genes}
@@ -111,6 +124,10 @@ def embed_cells(adata, config=None):
         panel = list(lognorm.var_names[lognorm.var["highly_variable"].to_numpy()])
 
     logger.info("embed_cells: clustering on %d informative genes", len(panel))
+    if len(panel) < 2:
+        raise ValueError(
+            f"embed_cells: PCA requires at least 2 informative genes, got {len(panel)}"
+        )
 
     # Embed on the Pearson residuals of the panel counts.
     emb = pool[:, panel].copy()
@@ -129,19 +146,31 @@ def embed_cells(adata, config=None):
             raise ValueError(
                 f"embed_cells: batch_key {config.batch_key!r} not in adata.obs"
             )
-        import harmonypy
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            ho = harmonypy.run_harmony(
-                emb.obsm["X_pca"], emb.obs, [config.batch_key],
-                max_iter_harmony=20,
+        n_batches = int(emb.obs[config.batch_key].nunique(dropna=True))
+        if n_batches < 2:
+            logger.warning(
+                "embed_cells: batch_key %r has %d batch(es); skipping Harmony",
+                config.batch_key, n_batches,
             )
-        Z = np.asarray(ho.Z_corr)
-        if Z.shape[0] != emb.n_obs:  # orientation guard (see docstring)
-            Z = Z.T
-        emb.obsm["X_pca_harmony"] = Z
-        rep = "X_pca_harmony"
+        else:
+            import inspect
+
+            import harmonypy
+
+            harmony_kwargs = {"max_iter_harmony": 20}
+            if "random_state" in inspect.signature(harmonypy.run_harmony).parameters:
+                harmony_kwargs["random_state"] = config.seed
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                ho = harmonypy.run_harmony(
+                    emb.obsm["X_pca"], emb.obs, [config.batch_key],
+                    **harmony_kwargs,
+                )
+            Z = np.asarray(ho.Z_corr)
+            if Z.shape[0] != emb.n_obs:  # orientation guard (see docstring)
+                Z = Z.T
+            emb.obsm["X_pca_harmony"] = Z
+            rep = "X_pca_harmony"
 
     n_neighbors = min(config.n_neighbors, max(2, emb.n_obs - 1))
     sc.pp.neighbors(
@@ -379,40 +408,42 @@ def refine_cluster(
     )
     compartment.obs["leiden"] = leiden
 
-    # --- relabel each sub-cluster via the callback ------------------------
+    # --- relabel each sub-cluster via the callback (positionally, so
+    # duplicate 10x barcodes across concatenated samples never cross-contaminate)
     if label_col not in adata.obs.columns:
         adata.obs[label_col] = pd.Series(
             [None] * adata.n_obs, index=adata.obs_names, dtype=object
         )
-    labels = adata.obs[label_col].astype(object)
-    finals = None
+    labels_arr = adata.obs[label_col].astype(object).to_numpy().copy()
+    finals_arr = None
     if final_cluster_col is not None:
         existing = adata.obs.get(final_cluster_col)
-        finals = (
-            existing.astype(object)
+        finals_arr = (
+            existing.astype(object).to_numpy().copy()
             if existing is not None
-            else pd.Series(
-                [None] * adata.n_obs, index=adata.obs_names, dtype=object
-            )
+            else np.array([None] * adata.n_obs, dtype=object)
         )
 
+    comp_pos = np.flatnonzero(sel)
     n_relabeled = 0
     for sub_cl in pd.unique(leiden):
         sc_mask = leiden == sub_cl
-        cell_names = compartment.obs_names[sc_mask]
+        sub_pos = comp_pos[sc_mask]
         result = relabel_fn(compartment[sc_mask].copy())
         if result is None:
             continue
         new_label, final_tag = result if isinstance(result, tuple) else (result, None)
         if new_label is not None:
-            labels.loc[cell_names] = new_label
-            n_relabeled += len(cell_names)
-        if finals is not None and final_tag is not None:
-            finals.loc[cell_names] = final_tag
+            labels_arr[sub_pos] = new_label
+            n_relabeled += int(len(sub_pos))
+        if finals_arr is not None and final_tag is not None:
+            finals_arr[sub_pos] = final_tag
 
-    adata.obs[label_col] = labels
-    if finals is not None:
-        adata.obs[final_cluster_col] = finals
+    adata.obs[label_col] = pd.Series(labels_arr, index=adata.obs_names, dtype=object)
+    if finals_arr is not None:
+        adata.obs[final_cluster_col] = pd.Series(
+            finals_arr, index=adata.obs_names, dtype=object
+        )
     logger.info(
         "refine_cluster: re-embedded %d cells into %d sub-clusters; "
         "relabeled %d",

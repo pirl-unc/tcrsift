@@ -467,8 +467,9 @@ class TestCanonicalMatchesPyensembl:
         "TRBC2": ("ENST00000466254", HUMAN_CONSTANT_ALLELES["TRBC2"]["03"]),
     }
 
+    @classmethod
     @pytest.fixture(scope="class")
-    def ensembl_release(self):
+    def ensembl_release(cls):
         pyensembl = pytest.importorskip("pyensembl")
         ens = pyensembl.EnsemblRelease(110)
         # Trigger a cheap lookup; if data isn't cached, skip rather than

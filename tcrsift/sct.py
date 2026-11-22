@@ -178,9 +178,8 @@ def load_sct(
         cols = ["CDR3_pair", "CDR3_alpha", "CDR3_beta", "complete", "high_quality", "chosen"]
         other_cols = [c for c in df.columns if c not in cols]
         df = df[cols + other_cols]
-
-    if verbose:
-        logger.info(f"  Complete pairs: {df['complete'].sum():,}")
+        if verbose:
+            logger.info(f"  Complete pairs: {df['complete'].sum():,}")
 
     return df
 
@@ -214,6 +213,7 @@ def aggregate_sct(
     pd.DataFrame
         Aggregated clonotype data with statistics
     """
+    df = df.copy()
     if group_cols is None:
         group_cols = ["CDR3_pair", "CDR3_alpha", "CDR3_beta"]
 
@@ -222,7 +222,8 @@ def aggregate_sct(
             c
             for c in df.columns
             if c not in group_cols
-            and df[c].dtype in ["int64", "float64"]
+            and pd.api.types.is_numeric_dtype(df[c])
+            and not pd.api.types.is_bool_dtype(df[c])
             and not c.endswith("_bool")
         ]
         # Filter to likely SCT columns
@@ -287,12 +288,16 @@ def aggregate_sct(
 
     result = result.reset_index()
 
-    # Extract mutation/specificity if consistent
+    # Extract mutation/specificity if consistent (preferring high_quality rows
+    # so a single low-SNR noise droplet cannot wipe out a clone's call).
     mutation_col = _find_column(df, ["Top1.mutation.PE", "mutation"])
     if mutation_col:
         mutation_map = {}
+        has_hq = "high_quality" in df.columns
         for pair, sub_df in df.groupby("CDR3_pair", observed=True):
-            mutations = sub_df[mutation_col].dropna().unique()
+            hq_sub = sub_df[sub_df["high_quality"].eq(True)] if has_hq else pd.DataFrame()
+            source_sub = hq_sub if len(hq_sub) > 0 else sub_df
+            mutations = source_sub[mutation_col].dropna().unique()
             if len(mutations) == 1:
                 mutation_map[pair] = mutations[0]
         result["mutation"] = result["CDR3_pair"].map(mutation_map)

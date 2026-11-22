@@ -207,22 +207,19 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         raise ValueError("--min-frequency must be in [0, 1]")
     if args.min_cells < 1:
         raise ValueError("--min-cells must be >= 1")
-    max_possible_names = (
-        max(
-            len(names),
-            len(
-                resolve_signatures(
-                    args.context,
-                    args.tcell_type,
-                    args.signatures,
-                    args.exclude_signatures,
-                    species="mouse",
-                )
-            ),
-        )
-        if arg_species == "auto"
-        else len(names)
-    )
+    max_possible_names = len(names)
+    if arg_species == "auto":
+        try:
+            mouse_names = resolve_signatures(
+                args.context,
+                args.tcell_type,
+                args.signatures,
+                args.exclude_signatures,
+                species="mouse",
+            )
+            max_possible_names = max(max_possible_names, len(mouse_names))
+        except ValueError:
+            pass
     if not 1 <= args.min_signature_support <= max_possible_names:
         raise ValueError(f"--min-signature-support must be between 1 and {max_possible_names}")
     for key in ("max_clones", "min_vdj_umis", "min_vdj_reads", "min_cd3",
@@ -420,8 +417,10 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
     ].rank(method="average", pct=True)
     clonotypes["high_publicness"] = False
     if args.exclude_public_quantile is not None:
+        donor_clone_counts = clonotypes.groupby("donor", observed=True)["CDR3ab"].transform("count")
         clonotypes["high_publicness"] = (
-            clonotypes["publicness_percentile"] >= args.exclude_public_quantile
+            (donor_clone_counts >= 2)
+            & (clonotypes["publicness_percentile"] >= args.exclude_public_quantile)
         ).fillna(False)
 
     clonotypes["signature_support_count"] = (
@@ -485,8 +484,9 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
     candidates.to_csv(args.output_dir / "candidate_clones.csv", index=False)
     from .version import __version__
 
+    func_name = getattr(getattr(args, "func", None), "__name__", "run_til_prioritize")
     config = {
-        "version": __version__, "arguments": vars(args) | {"func": args.func.__name__},
+        "version": __version__, "arguments": vars(args) | {"func": func_name},
         "species": resolved_species,
         "resolved_signatures": names, "signature_lineages": SIGNATURE_LINEAGE,
         "cell_filters": cell_filters, "sample_cell_counts": sample_counts,

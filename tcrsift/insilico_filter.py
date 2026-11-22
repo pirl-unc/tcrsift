@@ -181,7 +181,17 @@ def insilico_mask(
         return mask
     for pred in predicates:
         pr = _grouped_percentile_rank(df, pred, group_col)
-        mask &= pr <= pred.percentile
+        if pred.rank_method == "min":
+            best_tie = pr == 0.0
+        else:
+            min_pred = FilterPredicate(
+                score=pred.score,
+                direction=pred.direction,
+                percentile=pred.percentile,
+                rank_method="min",
+            )
+            best_tie = _grouped_percentile_rank(df, min_pred, group_col) == 0.0
+        mask &= (pr <= pred.percentile) | best_tie
     mask = mask.fillna(False)
     return mask
 

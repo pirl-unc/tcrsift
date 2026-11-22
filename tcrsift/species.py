@@ -76,9 +76,18 @@ _MOUSE_ONLY_V_PREFIXES = (
     "TRAV12N",
     "TRAV13D",
     "TRAV13N",
+    "TRAV15",
+    "TRAV16",
+    "TRBV12-1",
+    "TRBV12-2",
     "TRBV13-1",
     "TRBV13-2",
     "TRBV13-3",
+    "TRBV14",
+    "TRBV15",
+    "TRBV16",
+    "TRBV17",
+    "TRBV26",
     "TRBV31",
 )
 _HUMAN_ONLY_V_PREFIXES = (
@@ -171,7 +180,7 @@ def detect_vdj_species(df: pd.DataFrame | None) -> str | None:
 
     # 2. Species-unique IMGT V-gene subfamilies (works even when uppercased).
     upper_bases = [t.upper().split("*", 1)[0] for t in tokens]
-    n_mouse_v = sum(1 for u in upper_bases if u.startswith(_MOUSE_ONLY_V_PREFIXES))
+    n_mouse_v = sum(1 for u in upper_bases if u.startswith(_MOUSE_ONLY_V_PREFIXES) or "D-" in u)
     n_human_v = sum(1 for u in upper_bases if u.startswith(_HUMAN_ONLY_V_PREFIXES))
     if n_mouse_v > 0 and n_human_v == 0:
         return "mouse"

@@ -497,19 +497,32 @@ def score_signature(
             "clonotype/V-gene labels is circular. Remove them "
             "(see strip_receptor_genes)."
         )
-    # Per-condition baseline: z-score within each group, then stitch back.
+    # Per-condition baseline: z-score within each group positionally so duplicate
+    # 10x barcodes across concatenated samples never raise on .reindex / .loc.
     if groups is not None:
         if background is not None:
             raise ValueError("score_signature: pass groups OR background, not both")
-        glabels = groups.reindex(expr.index)
-        parts = [
-            score_signature(
-                expr.loc[idx], signature, combine=combine, log1p=log1p,
+        if len(groups) == len(expr) and groups.index.equals(expr.index):
+            g_arr = np.asarray(groups, dtype=object)
+        elif expr.index.is_unique and groups.index.is_unique:
+            g_arr = np.asarray(groups.reindex(expr.index), dtype=object)
+        elif len(groups) == len(expr):
+            g_arr = np.asarray(groups, dtype=object)
+        else:
+            raise ValueError(
+                f"score_signature: groups length ({len(groups)}) != expr rows ({len(expr)}) "
+                "with non-unique indices"
+            )
+        out_vals = np.full(len(expr), np.nan, dtype=float)
+        pos_s = pd.Series(g_arr)
+        for _, grp_idx in pos_s.groupby(pos_s, observed=True).groups.items():
+            pos_arr = np.asarray(grp_idx, dtype=int)
+            sub_scores = score_signature(
+                expr.iloc[pos_arr], signature, combine=combine, log1p=log1p,
                 on_missing=on_missing,
             )
-            for _, idx in glabels.groupby(glabels, observed=True).groups.items()
-        ]
-        return pd.concat(parts).reindex(expr.index)
+            out_vals[pos_arr] = sub_scores.to_numpy(dtype=float)
+        return pd.Series(out_vals, index=expr.index)
     cols = set(expr.columns)
     if background is not None:
         cols &= set(background.columns)
@@ -651,8 +664,22 @@ def signature_methods_long(
     cols = [clone_col, sample_col, "method", "cells", "frequency"]
     frames: list[pd.DataFrame] = []
     for sig, positive in positive_by_signature.items():
-        mask = positive.reindex(obs.index, fill_value=False).to_numpy()
-        pos = obs.loc[mask, [clone_col, sample_col]].dropna()
+        if len(positive) == len(obs) and positive.index.equals(obs.index):
+            mask = positive.fillna(False).to_numpy(dtype=bool)
+        elif obs.index.is_unique and positive.index.is_unique:
+            mask = positive.reindex(obs.index, fill_value=False).to_numpy(dtype=bool)
+        elif len(positive) == len(obs):
+            mask = positive.fillna(False).to_numpy(dtype=bool)
+        else:
+            raise ValueError(
+                f"signature_methods_long: positive mask length ({len(positive)}) "
+                f"!= obs length ({len(obs)}) on non-unique index"
+            )
+        pos = obs.iloc[np.flatnonzero(mask)][[clone_col, sample_col]].dropna()
+        if not pos.empty:
+            c_str = pos[clone_col].astype(str).str.strip()
+            valid_clone = (c_str != "") & (c_str != "_") & ~c_str.str.startswith("_") & ~c_str.str.endswith("_")
+            pos = pos[valid_clone]
         if pos.empty:
             continue
         counts = (
@@ -833,17 +860,40 @@ def score_weighted_z(
     *,
     log1p: bool = True,
     background: pd.DataFrame | None = None,
+    groups: pd.Series | None = None,
+    on_missing: str = "ignore",
 ) -> pd.Series:
-    """Signed-sum-of-z score (MANAscore-style): ``sum(sign * z_g) / sqrt(n)``.
+    """Signed-sum-of-z score (MANAscore-style): ``sum(sign * z_g) / sqrt(n)``."""
+    if groups is not None:
+        if background is not None:
+            raise ValueError("score_weighted_z: pass groups OR background, not both")
+        if len(groups) == len(expr):
+            g_arr = np.asarray(groups, dtype=object)
+        elif expr.index.is_unique and groups.index.is_unique:
+            g_arr = np.asarray(groups.reindex(expr.index), dtype=object)
+        else:
+            raise ValueError("score_weighted_z: incompatible groups/expr indices")
+        out_vals = np.full(len(expr), np.nan, dtype=float)
+        pos_s = pd.Series(g_arr)
+        for _, grp_idx in pos_s.groupby(pos_s, observed=True).groups.items():
+            pos_arr = np.asarray(grp_idx, dtype=int)
+            out_vals[pos_arr] = score_weighted_z(
+                expr.iloc[pos_arr], signature, log1p=log1p, on_missing=on_missing
+            ).to_numpy(dtype=float)
+        return pd.Series(out_vals, index=expr.index)
 
-    Each gene is z-scored (of ``log1p`` expression) across cells against
-    ``background`` (default: the input cells); ``genes_up`` contribute +1 and
-    ``genes_down`` -1; the signed sum is normalized by ``sqrt(n_present)`` so
-    the scale is comparable across signatures. For MANAscore (up=CXCL13,ENTPD1;
-    down=IL7R) this is exactly ``(z(CXCL13)+z(ENTPD1)-z(IL7R))/sqrt(3)``.
-    """
-    up = [g for g in signature.genes_up if g in expr.columns]
-    down = [g for g in signature.genes_down if g in expr.columns]
+    cols = set(expr.columns)
+    if background is not None:
+        cols &= set(background.columns)
+    up = [g for g in signature.genes_up if g in cols]
+    down = [g for g in signature.genes_down if g in cols]
+    missing = [g for g in signature.all_genes if g not in cols]
+    if missing:
+        msg = f"score_weighted_z[{signature.name}]: missing gene(s): {missing}"
+        if on_missing == "error":
+            raise KeyError(msg)
+        if on_missing == "warn":
+            logger.warning("%s", msg)
     genes = up + down
     if not genes:
         return pd.Series(0.0, index=expr.index)
@@ -861,19 +911,52 @@ def score_weighted_z(
     return z.mul(signs, axis=1).sum(axis=1) / np.sqrt(len(genes))
 
 
-def _score_genes_adata(adata, genes, *, on_missing: str = "warn") -> pd.Series:
-    """Control-subtracted module score via Scanpy (not scGSEA/rank enrichment).
-
-    Robust to Ensembl ``var_names``: signature symbols are mapped to the
-    matrix's actual var names via the shared symbol resolver before scoring.
-    Assumes ``adata.X`` is log-normalized (the state score_genes expects).
-    """
+def _score_genes_adata(
+    adata,
+    genes,
+    *,
+    on_missing: str = "warn",
+    layer: str | None = None,
+    groups: pd.Series | None = None,
+    apply_log1p: bool = False,
+) -> pd.Series:
+    """Control-subtracted module score via Scanpy (not scGSEA/rank enrichment)."""
     import scanpy as sc
 
     from .genes import adata_symbol_array, harmonize_gene_symbols
 
-    sym = harmonize_gene_symbols(adata_symbol_array(adata), genes)
-    var_names = list(adata.var_names)
+    index = adata.obs_names.astype(str)
+    if groups is not None:
+        g_arr = np.asarray(groups, dtype=object)
+        out_vals = np.full(adata.n_obs, np.nan, dtype=float)
+        pos_s = pd.Series(g_arr)
+        for _, grp_idx in pos_s.groupby(pos_s, observed=True).groups.items():
+            pos_arr = np.asarray(grp_idx, dtype=int)
+            out_vals[pos_arr] = _score_genes_adata(
+                adata[pos_arr].copy(),
+                genes,
+                on_missing=on_missing,
+                layer=layer,
+                apply_log1p=apply_log1p,
+            ).to_numpy(dtype=float)
+        return pd.Series(out_vals, index=index)
+
+    work = adata
+    if layer is not None or apply_log1p or not adata.var_names.is_unique:
+        work = adata.copy()
+        if not work.var_names.is_unique:
+            work.var_names_make_unique()
+        if layer is not None:
+            work.X = work.layers[layer].copy()
+        if apply_log1p:
+            x_min = float(work.X.min()) if work.n_obs and work.n_vars else 0.0
+            x_max = float(work.X.max()) if work.n_obs and work.n_vars else 0.0
+            if x_min >= 0 and x_max > 25:
+                sc.pp.normalize_total(work, target_sum=1e4)
+                sc.pp.log1p(work)
+
+    sym = harmonize_gene_symbols(adata_symbol_array(work), genes)
+    var_names = list(work.var_names)
     want = {str(g).upper() for g in genes}
     present_syms = set(sym)
     picked = [var_names[i] for i, s in enumerate(sym) if s in want]
@@ -884,13 +967,31 @@ def _score_genes_adata(adata, genes, *, on_missing: str = "warn") -> pd.Series:
             raise KeyError(msg)
         if on_missing == "warn":
             logger.warning("%s", msg)
-    index = adata.obs_names.astype(str)
     if not picked:
         return pd.Series(0.0, index=index)
+    n_pool = work.n_vars - len(picked)
+    if n_pool < 1:
+        sub_x = work[:, picked].X
+        arr = sub_x.toarray() if hasattr(sub_x, "toarray") else np.asarray(sub_x)
+        return pd.Series(np.asarray(arr, dtype=float).mean(axis=1), index=index)
+    ctrl = min(50, max(1, n_pool))
+    n_bins = min(25, max(2, work.n_vars - 1))
     tmp_key = "_tcrsift_geneset_score_tmp"
-    sc.tl.score_genes(adata, picked, score_name=tmp_key, ctrl_size=50, use_raw=False)
-    out = pd.Series(np.asarray(adata.obs[tmp_key]), index=index)
-    del adata.obs[tmp_key]
+    try:
+        sc.tl.score_genes(
+            work, picked, score_name=tmp_key, ctrl_size=ctrl, n_bins=n_bins, use_raw=False
+        )
+        out = pd.Series(np.asarray(work.obs[tmp_key]), index=index)
+    except (RuntimeError, ZeroDivisionError):
+        picked_set = set(picked)
+        pool = [v for v in work.var_names if v not in picked_set]
+        gx = work[:, picked].X
+        px = work[:, pool].X
+        g_arr = np.asarray(gx.toarray() if hasattr(gx, "toarray") else gx, dtype=float)
+        p_arr = np.asarray(px.toarray() if hasattr(px, "toarray") else px, dtype=float)
+        out = pd.Series(g_arr.mean(axis=1) - p_arr.mean(axis=1), index=index)
+    if work is adata and tmp_key in adata.obs.columns:
+        del adata.obs[tmp_key]
     return out
 
 
@@ -904,7 +1005,10 @@ def _score_frame(
     on_missing: str,
 ) -> pd.Series:
     if signature.method == "weighted_z":
-        return score_weighted_z(expr, signature, log1p=log1p, background=background)
+        return score_weighted_z(
+            expr, signature, log1p=log1p, background=background,
+            groups=groups, on_missing=on_missing,
+        )
     if signature.method in ("zscore", "mean"):
         return score_signature(
             expr, signature, combine="zscore" if signature.method == "zscore" else "mean",
@@ -975,11 +1079,18 @@ def score_by_name(
             warn_mismatch=False,
         )
     sig = _lookup_signature(name, registry, species=sp)
-    apply_log1p = (sig.units in ("log1p", "cp10k")) if log1p is None else log1p
+    if log1p is None:
+        already_logged = is_adata and layer is None and "log1p" in getattr(data, "uns", {})
+        apply_log1p = (sig.units in ("log1p", "cp10k")) and not already_logged
+    else:
+        apply_log1p = log1p
     if is_adata:
         index = data.obs_names.astype(str)
         if sig.method == "geneset_enrichment":
-            series = _score_genes_adata(data, sig.all_genes, on_missing=on_missing)
+            series = _score_genes_adata(
+                data, sig.all_genes, on_missing=on_missing,
+                layer=layer, groups=groups, apply_log1p=apply_log1p,
+            )
         else:
             expr = expression_frame_from_adata(
                 data, sig.all_genes, layer=layer, on_missing=on_missing
@@ -988,7 +1099,7 @@ def score_by_name(
                 expr, sig, log1p=apply_log1p, background=background,
                 groups=groups, on_missing=on_missing,
             )
-        series = series.reindex(index)
+        series = pd.Series(series.to_numpy(), index=index)
         if key_added is not None:
             data.obs[key_added] = series.to_numpy()
         return series

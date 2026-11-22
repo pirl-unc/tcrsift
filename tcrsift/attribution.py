@@ -57,46 +57,54 @@ def _make_key(alpha: str, beta: str) -> str:
     return f"{alpha}_{beta}"
 
 
-def attribute_cells(
+def _resolve_merge_components(
+    edges: list[tuple[str, str]],
+    prior_of: dict[str, int],
+) -> dict[str, str]:
+    """Build a transitive ``merge_map`` over connected dual-alpha pairs."""
+    parent: dict[str, str] = {}
+
+    def _find(x: str) -> str:
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+
+    for a, b in edges:
+        parent.setdefault(a, a)
+        parent.setdefault(b, b)
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    comps: dict[str, list[str]] = {}
+    for node in parent:
+        comps.setdefault(_find(node), []).append(node)
+
+    merge_map: dict[str, str] = {}
+    for members in comps.values():
+        # Pick highest complete-cell prior; lexical ascending tie-break.
+        canon = min(members, key=lambda k: (-prior_of.get(k, 0), k))
+        for m in members:
+            merge_map[m] = canon
+    return merge_map
+
+
+def _attribute_single_pool(
     df: pd.DataFrame,
     config,
-    group_by: str = "CDR3ab",
-    min_umi: int = 2,
-) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Distribute each cell's weight across complete paired clones.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Cell table (``adata.obs``), indexed by cell barcode. Uses
-        ``CDR3_alpha``/``CDR3_beta`` (primary chains), ``TRA_2_cdr3`` /
-        ``TRB_2_cdr3`` (secondary), and the matching ``*_umis`` columns.
-    config : AttributionConfig
-        Attribution settings.
-    group_by : str
-        Only ``"CDR3ab"`` (paired) is supported; other values return empty.
-    min_umi : int
-        Minimum per-chain UMI for a chain to count as present.
-
-    Returns
-    -------
-    (long_table, merge_map, merge_stats)
-        ``long_table`` columns: ``cell_barcode, CDR3ab, sample, weight, kind``;
-        one row per (cell, attributed clone), weights per cell summing to 1.0
-        (attributed) or 0.0 (dropped). ``merge_map`` maps each merged
-        constituent clone ID to its canonical (surviving) clone ID.
-        ``merge_stats`` maps each canonical merged clone ID to its dominance
-        audit: ``dual_alpha_cofraction`` (fraction of the beta's paired cells
-        carrying BOTH alphas — the #198 dominance), ``dual_alpha_beta_partners``
-        (distinct alphas the beta pairs with), and ``dual_alpha_n_dual_cells``.
-    """
-    if group_by != "CDR3ab":
-        return pd.DataFrame(columns=LONG_COLUMNS), {}, {}
-
+    min_umi: int,
+    cell_indices: np.ndarray,
+) -> tuple[pd.DataFrame, dict[str, str], dict[str, dict]]:
+    """Run attribution within a single donor pool (preserving global ``cell_indices``)."""
     n = len(df)
+    if n == 0:
+        return pd.DataFrame(columns=[*LONG_COLUMNS, "cell_idx"]), {}, {}
+
     bc = np.asarray(df.index.astype(str))
     sample = (
-        np.asarray(df["sample"].astype(str)) if "sample" in df.columns
+        np.asarray(df["sample"].fillna("").astype(str))
+        if "sample" in df.columns
         else np.array([""] * n)
     )
 
@@ -106,26 +114,61 @@ def attribute_cells(
         return pd.Series(pd.array([pd.NA] * n, dtype="string"), index=df.index)
 
     def _cdr3_valid(s: pd.Series) -> np.ndarray:
-        # Missing optional chains are invalid, including Arrow-backed strings.
-        present = s.fillna("")
-        return ((present.str.len() > 0) & (present.str.lower() != "nan")).to_numpy(
-            dtype=bool,
-        )
+        present = s.fillna("").str.strip()
+        lowered = present.str.lower()
+        return (
+            (present.str.len() > 0) & (~lowered.isin({"nan", "none", "<na>"}))
+        ).to_numpy(dtype=bool)
 
-    def _chain_valid(cdr3_col: str, umi_col: str) -> np.ndarray:
-        v = _cdr3_valid(_str(cdr3_col))
+    def _primary_str(primary_col: str, slot_col: str) -> pd.Series:
+        if primary_col in df.columns and slot_col in df.columns:
+            p = _str(primary_col)
+            s = _str(slot_col)
+            p_empty = p.fillna("").str.strip().eq("")
+            return p.where(~p_empty, s)
+        if primary_col in df.columns:
+            return _str(primary_col)
+        return _str(slot_col)
+
+    def _series_valid(s: pd.Series, umi_col: str) -> np.ndarray:
+        v = _cdr3_valid(s)
         if umi_col in df.columns:
-            v = v & (df[umi_col].fillna(0).to_numpy(dtype=float) >= min_umi)
+            v = v & (
+                pd.to_numeric(df[umi_col], errors="coerce").fillna(0).to_numpy(dtype=float)
+                >= min_umi
+            )
         return v
 
-    A1 = _str("CDR3_alpha").fillna("").to_numpy()
-    A2 = _str("TRA_2_cdr3").fillna("").to_numpy()
-    B1 = _str("CDR3_beta").fillna("").to_numpy()
-    B2 = _str("TRB_2_cdr3").fillna("").to_numpy()
-    va1 = _chain_valid("CDR3_alpha", "TRA_1_umis")
-    va2 = _chain_valid("TRA_2_cdr3", "TRA_2_umis")
-    vb1 = _chain_valid("CDR3_beta", "TRB_1_umis")
-    vb2 = _chain_valid("TRB_2_cdr3", "TRB_2_umis")
+    s_a1 = _primary_str("CDR3_alpha", "TRA_1_cdr3")
+    s_a2 = _str("TRA_2_cdr3")
+    s_b1 = _primary_str("CDR3_beta", "TRB_1_cdr3")
+    s_b2 = _str("TRB_2_cdr3")
+    A1 = s_a1.fillna("").str.strip().to_numpy(dtype=object)
+    A2 = s_a2.fillna("").str.strip().to_numpy(dtype=object)
+    B1 = s_b1.fillna("").str.strip().to_numpy(dtype=object)
+    B2 = s_b2.fillna("").str.strip().to_numpy(dtype=object)
+    va1 = _series_valid(s_a1, "TRA_1_umis")
+    va2 = _series_valid(s_a2, "TRA_2_umis")
+    vb1 = _series_valid(s_b1, "TRB_1_umis")
+    vb2 = _series_valid(s_b2, "TRB_2_umis")
+
+    # Collapse homotypic AA contigs within a cell (same AA, distinct NT/contig)
+    # so synonymous dual contigs aren't misclassified as dual-alpha/dual-beta.
+    va2 = va2 & ~(va1 & (A1 == A2))
+    vb2 = vb2 & ~(vb1 & (B1 == B2))
+
+    # Promote a valid secondary slot into an invalid primary slot so cells where
+    # slot 1 failed validity/UMI while slot 2 passed are never silently dropped.
+    swap_a = (~va1) & va2
+    if swap_a.any():
+        A1 = np.where(swap_a, A2, A1)
+        va1 = va1 | swap_a
+        va2 = va2 & (~swap_a)
+    swap_b = (~vb1) & vb2
+    if swap_b.any():
+        B1 = np.where(swap_b, B2, B1)
+        vb1 = vb1 | swap_b
+        vb2 = vb2 & (~swap_b)
 
     # --- Pass 1: priors from unambiguous complete-single cells -------------
     complete_single = va1 & vb1 & (~va2) & (~vb2)
@@ -141,15 +184,8 @@ def attribute_cells(
     # --- Dual-alpha recurrence-merge detection ----------------------------
     dual_alpha = va1 & va2 & vb1 & (~vb2)
     merge_map: dict[str, str] = {}
-    # Per merged clone: what fraction of the beta's paired cells carry BOTH
-    # alphas (the dominance the #198 gate enforced), + the beta's alpha-partner
-    # count — surfaced so chosen dual-alpha clones can be audited.
     merge_stats: dict[str, dict] = {}
     if config.dual_alpha_merge and dual_alpha.any():
-        # Per-beta stats for the dominance gate (#198): a real allelic-inclusion
-        # merge needs the dual to be the beta's *dominant* configuration, not a
-        # public beta's chance recurrence. Count, per beta, its paired cells
-        # (>=1 valid alpha) and its distinct alpha partners.
         beta_paired = vb1 & (va1 | va2)
         beta_cells: dict[str, int] = {}
         beta_alphas: dict[str, set] = {}
@@ -172,13 +208,11 @@ def attribute_cells(
             triples.append((a_lo, a_hi, B1[i]))
         triple_counts = pd.Series(triples).value_counts()
         n_rejected = 0
+        accepted_edges: list[tuple[str, str]] = []
+        accepted_meta: list[tuple[str, str, str, int, int]] = []
         for (a_lo, a_hi, b), count in triple_counts.items():
             if count < config.dual_alpha_min_cells:
                 continue
-            # Dominance gate (#198): reject public/promiscuous-beta coincidences.
-            # The merged pair must co-occur in >= min_fraction of the beta's
-            # paired cells (true allelic inclusion ~= every cell carries both),
-            # and the beta must not be promiscuous (<= max_partners alphas).
             denom = beta_cells.get(b, count)
             if min_fraction > 0 and denom and (count / denom) < min_fraction:
                 n_rejected += 1
@@ -187,20 +221,19 @@ def attribute_cells(
                 n_rejected += 1
                 continue
             k_lo, k_hi = _make_key(a_lo, b), _make_key(a_hi, b)
-            # Canonical = higher-abundance constituent (lexical tie-break) so
-            # the merged ID stays a real observed clonotype string.
-            p_lo, p_hi = prior_of.get(k_lo, 0), prior_of.get(k_hi, 0)
-            if (p_lo, k_hi) >= (p_hi, k_lo):
-                canon = k_lo
-            else:
-                canon = k_hi
-            merge_map[k_lo] = canon
-            merge_map[k_hi] = canon
-            merge_stats[canon] = {
-                "dual_alpha_cofraction": round(count / denom, 4) if denom else None,
-                "dual_alpha_beta_partners": len(beta_alphas.get(b, ())),
-                "dual_alpha_n_dual_cells": int(count),
-            }
+            accepted_edges.append((k_lo, k_hi))
+            accepted_meta.append((k_lo, k_hi, b, int(count), int(denom)))
+        if accepted_edges:
+            merge_map = _resolve_merge_components(accepted_edges, prior_of)
+            for k_lo, _k_hi, b, count, denom in accepted_meta:
+                canon = merge_map[k_lo]
+                prev_n = merge_stats.get(canon, {}).get("dual_alpha_n_dual_cells", 0)
+                total_n = prev_n + count
+                merge_stats[canon] = {
+                    "dual_alpha_cofraction": round(total_n / denom, 4) if denom else None,
+                    "dual_alpha_beta_partners": len(beta_alphas.get(b, ())),
+                    "dual_alpha_n_dual_cells": int(total_n),
+                }
         if n_rejected:
             logger.info(
                 "  Attribution: rejected %d recurrent dual-alpha triple(s) as "
@@ -219,8 +252,11 @@ def attribute_cells(
     uniform = config.share_weighting == "uniform"
 
     def _eff_prior(key: str) -> float:
-        return 1.0 if uniform else float(canon_prior.get(key, 0.0))
+        if uniform:
+            return 1.0 if key in canon_prior else 0.0
+        return float(canon_prior.get(key, 0.0))
 
+    rows_idx: list = []
     rows_bc: list = []
     rows_key: list = []
     rows_sample: list = []
@@ -228,6 +264,7 @@ def attribute_cells(
     rows_kind: list = []
 
     def _emit(idx, keys, weights, kind):
+        rows_idx.extend(cell_indices[idx])
         rows_bc.extend(bc[idx])
         rows_key.extend(keys)
         rows_sample.extend(sample[idx])
@@ -241,12 +278,6 @@ def attribute_cells(
         _emit(cs_idx, keys, np.ones(len(cs_idx)), "complete")
 
     def _split_fixed(mask, target_fns, kind_split, kind_primary, do_split):
-        """Split each masked cell across fixed candidate clones by prior.
-
-        ``target_fns`` is a list of callables i -> clone-key. When ``do_split``
-        is False, all weight goes to the first (primary) target. ``do_split`` is
-        the per-mechanism flag (dual_alpha_split / dual_beta_split, #181).
-        """
         idx = np.where(mask)[0]
         if not len(idx):
             return
@@ -261,8 +292,6 @@ def attribute_cells(
         totals = np.sum(target_pr, axis=0)
         m = len(target_fns)
         for j in range(m):
-            # Proportional where any prior is positive; uniform fallback when
-            # every candidate has zero prior.
             w = np.where(totals > 0, target_pr[j] / np.where(totals > 0, totals, 1), 1.0 / m)
             _emit(idx, target_keys[j], w, kind_split)
 
@@ -272,14 +301,14 @@ def attribute_cells(
         if merge_map:
             da_idx = np.where(dual_alpha)[0]
             for i in da_idx:
-                if _make_key(A1[i], B1[i]) in merge_map:
+                k1 = _make_key(A1[i], B1[i])
+                k2 = _make_key(A2[i], B1[i])
+                if (k1 in merge_map or k2 in merge_map) and _canon(k1) == _canon(k2):
                     merged_mask[i] = True
-        # Merged dual-alpha cells: weight 1.0 on the canonical merged clone.
         m_idx = np.where(merged_mask)[0]
         if len(m_idx):
             keys = [_canon(_make_key(A1[i], B1[i])) for i in m_idx]
             _emit(m_idx, keys, np.ones(len(m_idx)), "dual_alpha_merge")
-        # Non-merged dual-alpha: split (or primary).
         _split_fixed(
             dual_alpha & (~merged_mask),
             [lambda i: _make_key(A1[i], B1[i]), lambda i: _make_key(A2[i], B1[i])],
@@ -299,8 +328,6 @@ def attribute_cells(
     )
 
     # --- Category 4: quad (two alphas, two betas) -> split ----------------
-    # Orthogonal (#181): include the secondary alpha only if dual_alpha_split and
-    # the secondary beta only if dual_beta_split; both off -> primary pair only.
     quad = va1 & va2 & vb1 & vb2
     if quad.any():
         a_list = [A1] + ([A2] if config.dual_alpha_split else [])
@@ -316,7 +343,6 @@ def attribute_cells(
     n_dropped_beta = 0
     alpha_dropout = (~va1) & (~va2) & (vb1 | vb2)
     if alpha_dropout.any() and config.beta_sharing:
-        # Clone-by-beta lookup: each canonical complete clone and its beta.
         clone_keys = list(canon_prior.keys())
         if clone_keys:
             clone_beta = pd.DataFrame({
@@ -360,6 +386,7 @@ def attribute_cells(
         )
 
     long_table = pd.DataFrame({
+        "cell_idx": rows_idx,
         "cell_barcode": rows_bc,
         "CDR3ab": rows_key,
         "sample": rows_sample,
@@ -367,18 +394,61 @@ def attribute_cells(
         "kind": rows_kind,
     })
     if len(long_table):
-        # Collapse any within-cell duplicate clone targets (e.g. two split
-        # candidates that canonicalize to the same merged clone) by summing.
+        # Group by unique positional `cell_idx` (NOT `cell_barcode` alone, since
+        # 10x barcodes legitimately repeat across concatenated samples).
         long_table = (
             long_table.groupby(
-                ["cell_barcode", "CDR3ab", "sample", "kind"], as_index=False, observed=True
+                ["cell_idx", "cell_barcode", "CDR3ab", "sample", "kind"],
+                as_index=False,
+                observed=True,
             )["weight"].sum()
         )
-        # Drop zero-weight attributions — a proportional split sends 0 to a
-        # zero-prior candidate (e.g. a doublet's partner clone that was never
-        # observed complete), which would otherwise surface as a phantom clone
-        # with cell_count 0.0.
-        long_table = long_table[long_table["weight"] > 0]
-        long_table = long_table[LONG_COLUMNS].reset_index(drop=True)
+        long_table = long_table[long_table["weight"] > 0].reset_index(drop=True)
 
     return long_table, merge_map, merge_stats
+
+
+def attribute_cells(
+    df: pd.DataFrame,
+    config,
+    group_by: str = "CDR3ab",
+    min_umi: int = 2,
+    *,
+    include_cell_idx: bool = False,
+) -> tuple[pd.DataFrame, dict[str, str], dict[str, dict]]:
+    """Distribute each cell's weight across complete paired clones."""
+    out_cols = [*LONG_COLUMNS, "cell_idx"] if include_cell_idx else list(LONG_COLUMNS)
+    if group_by != "CDR3ab" or len(df) == 0:
+        return pd.DataFrame(columns=out_cols), {}, {}
+
+    all_indices = np.arange(len(df), dtype=np.int64)
+    if "patient_id" in df.columns:
+        pid = df["patient_id"]
+        bucket_keys = pd.Series(
+            np.where(pid.isna(), "__missing_patient_id__", pid.astype(str)),
+            index=df.index,
+        )
+        if bucket_keys.nunique() > 1:
+            tables: list[pd.DataFrame] = []
+            merged_all: dict[str, str] = {}
+            stats_all: dict[str, dict] = {}
+            for _bk, pos in pd.Series(all_indices).groupby(bucket_keys.to_numpy(), sort=False):
+                pos_arr = pos.to_numpy(dtype=np.int64)
+                sub_lt, sub_mm, sub_ms = _attribute_single_pool(
+                    df.iloc[pos_arr], config, min_umi, pos_arr
+                )
+                if len(sub_lt):
+                    tables.append(sub_lt)
+                merged_all.update(sub_mm)
+                stats_all.update(sub_ms)
+            long_table = (
+                pd.concat(tables, ignore_index=True)
+                if tables
+                else pd.DataFrame(columns=[*LONG_COLUMNS, "cell_idx"])
+            )
+            return long_table[out_cols].reset_index(drop=True), merged_all, stats_all
+
+    long_table, merge_map, merge_stats = _attribute_single_pool(
+        df, config, min_umi, all_indices
+    )
+    return long_table[out_cols].reset_index(drop=True), merge_map, merge_stats

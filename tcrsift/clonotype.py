@@ -302,7 +302,9 @@ def _aggregate_with_attribution(
     """
     from .attribution import attribute_cells
 
-    long_table, merge_map, merge_stats = attribute_cells(df, attribution, group_by, min_umi)
+    long_table, merge_map, merge_stats = attribute_cells(
+        df, attribution, group_by, min_umi, include_cell_idx=True
+    )
     if len(long_table) == 0:
         raise TCRsiftValidationError(
             "No complete clones found after attribution",
@@ -320,11 +322,13 @@ def _aggregate_with_attribution(
 
     # Expand: attribution targets + per-cell metadata (drop the cell's own
     # primary-pair identity columns; the target CDR3ab supplies them instead).
-    drop_cols = {"CDR3ab", "CDR3_alpha", "CDR3_beta", "sample", "weight", "kind"}
-    meta = df[[c for c in df.columns if c not in drop_cols]]
+    # Join positionally via cell_idx so identical 10x barcodes across samples
+    # never produce a Cartesian fan-out.
+    drop_cols = {"CDR3ab", "CDR3_alpha", "CDR3_beta", "sample", "weight", "kind", "cell_idx"}
+    meta = df[[c for c in df.columns if c not in drop_cols]].reset_index(drop=True)
     exp = long_table.merge(
-        meta, left_on="cell_barcode", right_index=True, how="left"
-    )
+        meta, left_on="cell_idx", right_index=True, how="left"
+    ).drop(columns=["cell_idx"])
     parts = exp["CDR3ab"].str.split("_", n=1, expand=True)
     exp["CDR3_alpha"] = parts[0]
     exp["CDR3_beta"] = parts[1] if parts.shape[1] > 1 else ""
@@ -382,12 +386,43 @@ def _aggregate_clone_data(
 
     clone_data = []
 
-    # Per-method total cell counts (denominator for max_frequency_per_method).
-    # Computed once outside the per-clone loop. Only meaningful when
-    # enrichment_method was populated in the sample sheet (#8).
+    # Precompute per-sample totals once outside the per-clone loop (O(n_cells)
+    # instead of O(n_clones * n_cells)).
+    sample_totals_map: dict = {}
+    if "sample" in df.columns:
+        if weighted:
+            if sample_weight_totals is not None:
+                sample_totals_map = sample_weight_totals.to_dict()
+            else:
+                sample_totals_map = df.groupby("sample", observed=True)["weight"].sum().to_dict()
+        elif "is_complete_clone" in df.columns:
+            sample_totals_map = (
+                df.groupby("sample", observed=True)["is_complete_clone"].sum().to_dict()
+            )
+        else:
+            sample_totals_map = df.groupby("sample", observed=True).size().to_dict()
+
+    # Per-(sample, method) or per-method total cell counts (denominator for
+    # max_frequency_per_method). Grouping by (sample, enrichment_method) when
+    # sample is present keeps within-sample denominators consistent with
+    # build_clone_method_long instead of diluting frequencies across donors.
+    sample_method_totals: pd.Series | None = None
     method_cell_totals: pd.Series | None = None
     if "enrichment_method" in df.columns:
-        if weighted:
+        if "sample" in df.columns:
+            if weighted:
+                sample_method_totals = (
+                    df.dropna(subset=["enrichment_method"])
+                    .groupby(["sample", "enrichment_method"], observed=True)["weight"]
+                    .sum()
+                )
+            else:
+                sample_method_totals = (
+                    df.dropna(subset=["enrichment_method"])
+                    .groupby(["sample", "enrichment_method"], observed=True)
+                    .size()
+                )
+        elif weighted:
             method_cell_totals = df.groupby(
                 "enrichment_method", observed=True
             )["weight"].sum()
@@ -500,9 +535,22 @@ def _aggregate_clone_data(
                 record["max_cells_per_method"] = (
                     int(method_cell_counts.max()) if len(method_cell_counts) else 0
                 )
-            if method_cell_totals is not None and len(method_cell_counts):
-                # Align by method, divide. Methods present in this clone are
-                # guaranteed to exist in method_cell_totals (same source df).
+            if sample_method_totals is not None and "sample" in clone_df.columns:
+                sub_m = clone_df.dropna(subset=["enrichment_method"])
+                if len(sub_m):
+                    sm_counts = (
+                        sub_m.groupby(["sample", "enrichment_method"], observed=True)["weight"].sum()
+                        if weighted
+                        else sub_m.groupby(["sample", "enrichment_method"], observed=True).size()
+                    )
+                    denoms = sample_method_totals.reindex(sm_counts.index)
+                    freqs = sm_counts / denoms.where(denoms > 0, np.nan)
+                    record["max_frequency_per_method"] = (
+                        float(freqs.max()) if freqs.notna().any() else 0.0
+                    )
+                else:
+                    record["max_frequency_per_method"] = 0.0
+            elif method_cell_totals is not None and len(method_cell_counts):
                 freqs = method_cell_counts / method_cell_totals.reindex(
                     method_cell_counts.index
                 )
@@ -638,7 +686,10 @@ def _aggregate_clone_data(
             prefix, rep = _pick_chain_representative(
                 clone_df, tr, record.get(f"CDR3_{chain}")
             )
-            for gene in ["v_gene", "j_gene", "c_gene"]:
+            genes_to_copy = ["v_gene", "j_gene", "c_gene"] + (
+                ["d_gene"] if chain == "beta" else []
+            )
+            for gene in genes_to_copy:
                 col = f"{prefix}_{gene}"
                 if col in clone_df.columns:
                     record[f"{chain}_{gene}"] = (
@@ -663,36 +714,40 @@ def _aggregate_clone_data(
                     record[f"{chain}_{metric}_mean"] = clone_df[col].mean()
                     record[f"{chain}_{metric}_sum"] = clone_df[col].sum()
 
-        # Contig IDs
-        for chain, prefix in [("alpha", "TRA_1"), ("beta", "TRB_1")]:
-            contig_col = f"{prefix}_contig_id"
-            if contig_col in clone_df.columns:
-                record[f"{chain}_contig_ids"] = ";".join(
-                    clone_df[contig_col].dropna().astype(str).tolist()
-                )
+        # Contig IDs (matching the clone's own CDR3 slot when slot CDR3 columns exist)
+        for chain, tr in [("alpha", "TRA"), ("beta", "TRB")]:
+            target_cdr3 = record.get(f"CDR3_{chain}")
+            has_slot_cdr3 = any(f"{tr}_{s}_cdr3" in clone_df.columns for s in ("1", "2"))
+            collected: list[str] = []
+            if has_slot_cdr3 and target_cdr3:
+                for slot in ("1", "2"):
+                    c_col = f"{tr}_{slot}_contig_id"
+                    s_col = f"{tr}_{slot}_cdr3"
+                    if c_col in clone_df.columns and s_col in clone_df.columns:
+                        matched_contigs = clone_df.loc[
+                            clone_df[s_col] == target_cdr3, c_col
+                        ].dropna().astype(str).tolist()
+                        collected.extend(matched_contigs)
+            if not collected and f"{tr}_1_contig_id" in clone_df.columns:
+                collected = clone_df[f"{tr}_1_contig_id"].dropna().astype(str).tolist()
+            if collected or f"{tr}_1_contig_id" in clone_df.columns:
+                record[f"{chain}_contig_ids"] = ";".join(dict.fromkeys(collected))
 
         # Doublet information
         if "is_doublet" in clone_df.columns:
             record["n_doublet_cells"] = clone_df["is_doublet"].sum()
 
         # Calculate clone frequency within each sample.
-        # OFF: numerator = cells of this clone in the sample, denominator =
-        # total complete-clone cells in the sample (outer 'df'). ON: both are
-        # attributed-weight sums, with the per-sample weight total as the
-        # denominator (restores the per-sample freq-sum=1.0 invariant, #175/#176).
         sample_freqs = []
         if weighted:
             clone_sample_w = clone_df.groupby("sample", observed=True)["weight"].sum()
             for sample, w in clone_sample_w.items():
-                sample_total = (
-                    sample_weight_totals.get(sample, 0.0)
-                    if sample_weight_totals is not None else 0.0
-                )
+                sample_total = sample_totals_map.get(sample, 0.0)
                 sample_freqs.append(safe_divide(w, sample_total, default=0.0))
         else:
-            for sample in clone_df["sample"].unique():
-                sample_total = df[df["sample"] == sample]["is_complete_clone"].sum()
-                sample_count = (clone_df["sample"] == sample).sum()
+            clone_sample_counts = clone_df["sample"].value_counts()
+            for sample, sample_count in clone_sample_counts.items():
+                sample_total = sample_totals_map.get(sample, 0)
                 sample_freqs.append(safe_divide(sample_count, sample_total, default=0.0))
         record["max_frequency"] = max(sample_freqs) if sample_freqs else 0
         record["mean_frequency"] = np.mean(sample_freqs) if sample_freqs else 0
@@ -721,17 +776,33 @@ def calculate_clone_frequencies(
     pd.DataFrame
         Clonotypes with additional frequency columns
     """
+    rehydrate_obs(adata)
     df = adata.obs.copy()
+    if "CDR3ab" not in df.columns:
+        a = df.get("CDR3_alpha", pd.Series("", index=df.index)).fillna("")
+        b = df.get("CDR3_beta", pd.Series("", index=df.index)).fillna("")
+        df["CDR3ab"] = a + "_" + b
+    if "is_complete_clone" not in df.columns:
+        if "CDR3_alpha" in df.columns and "CDR3_beta" in df.columns:
+            df["is_complete_clone"] = (
+                df["CDR3_alpha"].notna()
+                & (df["CDR3_alpha"] != "")
+                & df["CDR3_beta"].notna()
+                & (df["CDR3_beta"] != "")
+            )
+        else:
+            df["is_complete_clone"] = (df["CDR3ab"] != "") & (df["CDR3ab"] != "_")
 
     # Calculate total complete TCRs per sample
     sample_totals = df.groupby(
         "sample", observed=True,
     )["is_complete_clone"].sum().to_dict()
+    df_complete = df[df["is_complete_clone"].astype(bool)]
 
     freq_data = []
     for _, clone_row in clonotypes.iterrows():
         cdr3ab = clone_row["CDR3ab"]
-        clone_cells = df[df["CDR3ab"] == cdr3ab]
+        clone_cells = df_complete[df_complete["CDR3ab"] == cdr3ab]
 
         sample_freqs = {}
         for sample in clone_cells["sample"].unique():
@@ -863,7 +934,9 @@ def build_clone_sample_long(adata: ad.AnnData, attribution=None, *, min_umi: int
         # complete clones. Per-sample weighted frequencies still sum to 1.0.
         from .attribution import attribute_cells
 
-        long_table, _, _ = attribute_cells(obs, attribution, "CDR3ab", min_umi=min_umi)
+        long_table, _, _ = attribute_cells(
+            obs, attribution, "CDR3ab", min_umi=min_umi, include_cell_idx=True
+        )
         if len(long_table) == 0:
             out = pd.DataFrame(columns=["CDR3ab", "sample", "cells", "frequency"])
         else:
@@ -876,8 +949,9 @@ def build_clone_sample_long(adata: ad.AnnData, attribution=None, *, min_umi: int
             )
             umi_cols = [c for c in ("TRA_1_umis", "TRB_1_umis") if c in obs.columns]
             if umi_cols:
+                umi_meta = obs[umi_cols].reset_index(drop=True)
                 umi_src = long_table.merge(
-                    obs[umi_cols], left_on="cell_barcode", right_index=True, how="left"
+                    umi_meta, left_on="cell_idx", right_index=True, how="left"
                 )
                 for src, dst in (("TRA_1_umis", "n_alpha_umis"), ("TRB_1_umis", "n_beta_umis")):
                     if src in obs.columns:
@@ -1033,16 +1107,20 @@ def compute_sample_overlap_matrices(
         ``{"jaccard": …, "cell_weighted_jaccard": …}``. Diagonal is
         always 1.0.
     """
-    sub = long_df
+    valid_all = long_df.dropna(subset=[sample_col, clone_col])
+    sub = valid_all
     if restrict_clones is not None:
         sub = sub[sub[clone_col].isin(restrict_clones)]
 
-    samples = sorted(long_df[sample_col].astype(str).unique())
+    samples = sorted(valid_all[sample_col].astype(str).unique())
     if not samples or sub.empty:
         empty = pd.DataFrame(0.0, index=samples, columns=samples)
         for s in samples:
             empty.loc[s, s] = 1.0
         return {"jaccard": empty, "cell_weighted_jaccard": empty}
+
+    # Cast sample_col to str so integer sample/donor IDs align with `samples`.
+    sub = sub.assign(**{sample_col: sub[sample_col].astype(str)})
 
     # Pivot to (sample × clone) matrix of cell counts.
     pivot = (
@@ -1417,21 +1495,39 @@ def export_clonotypes_airr(clonotypes: pd.DataFrame, output_path: str):
         "cell_count": "clone_count",
     }
 
-    airr_df = pd.DataFrame()
+    airr_df = pd.DataFrame(index=clonotypes.index)
     for src_col, dst_col in airr_mapping.items():
         if src_col in clonotypes.columns:
             airr_df[dst_col] = clonotypes[src_col]
 
+    # Ensure core AIRR schema columns exist even when exporting an empty table.
+    for req_col in ("clone_id", "junction_aa_tra", "junction_aa_trb"):
+        if req_col not in airr_df.columns:
+            airr_df[req_col] = pd.Series(dtype=object)
+
+    # Normalize MGI TitleCase V/D/J calls (e.g. Trav14-1*01 -> TRAV14-1*01) to IMGT uppercase.
+    for call_col in ("v_call_tra", "j_call_tra", "v_call_trb", "d_call_trb", "j_call_trb"):
+        if call_col in airr_df.columns:
+            airr_df[call_col] = airr_df[call_col].map(
+                lambda v: v.strip().upper() if isinstance(v, str) and v.strip() else v
+            )
+
     # AIRR clone_count is an integer; round the (possibly fractional under
     # attribution, #176) weighted cell_count at export only.
     if "clone_count" in airr_df.columns:
-        airr_df["clone_count"] = airr_df["clone_count"].round().astype(int)
+        airr_df["clone_count"] = (
+            pd.to_numeric(airr_df["clone_count"], errors="coerce")
+            .fillna(0)
+            .round()
+            .astype(int)
+        )
 
     # Add required AIRR fields with defaults
     if "sequence_id" not in airr_df.columns:
         airr_df["sequence_id"] = [f"clone_{i}" for i in range(len(airr_df))]
     if "productive" not in airr_df.columns:
-        airr_df["productive"] = "T"
+        airr_df["productive"] = ["T"] * len(airr_df)
 
+    airr_df = airr_df.reset_index(drop=True)
     airr_df.to_csv(output_path, sep="\t", index=False)
     logger.info(f"Exported {len(airr_df)} clonotypes to AIRR format: {output_path}")

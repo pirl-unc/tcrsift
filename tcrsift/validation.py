@@ -22,6 +22,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
@@ -406,19 +407,18 @@ def validate_cdr3_dataframe(
     >>> valid_df = df[df['cdr3_valid']]
     """
     warnings = []
-    valid_mask = pd.Series(True, index=df.index)
-
+    valid_arr = np.ones(len(df), dtype=bool)
     for col, chain in [(alpha_col, "alpha"), (beta_col, "beta")]:
         if col not in df.columns:
             continue
 
-        for idx, seq in df[col].items():
+        for pos, (idx, seq) in enumerate(df[col].items()):
             if not validate_cdr3_sequence(seq, chain=chain, strict=strict):
-                valid_mask[idx] = False
+                valid_arr[pos] = False
                 warnings.append(f"Row {idx}: Invalid CDR3 {chain} sequence: {seq}")
 
     df = df.copy()
-    df["cdr3_valid"] = valid_mask
+    df["cdr3_valid"] = valid_arr
 
     return df, warnings
 
@@ -675,9 +675,9 @@ def canonicalize_clonotype_columns(
     ):
         if out is df:  # don't mutate the caller's frame
             out = df.copy()
-        out["CDR3ab"] = (
-            out["CDR3_alpha"].fillna("") + "_" + out["CDR3_beta"].fillna("")
-        )
+        a_str = out["CDR3_alpha"].astype("string").fillna("").astype(object)
+        b_str = out["CDR3_beta"].astype("string").fillna("").astype(object)
+        out["CDR3ab"] = a_str + "_" + b_str
     return out
 
 
@@ -829,7 +829,8 @@ def parse_til_sample_spec(spec: str) -> tuple[str, str, Path]:
     sample_name = None
     source_spec = spec
 
-    if "=" in spec:
+    prefix_before_colon = spec.split(":", 1)[0]
+    if "=" in prefix_before_colon:
         sample_name, source_spec = spec.split("=", 1)
         sample_name = sample_name.strip()
         if not sample_name:
@@ -1047,26 +1048,25 @@ def validate_assemble_args(args) -> None:
     TCRsiftValidationError
         If required arguments are missing
     """
-    # Check if --leaders-from-contigs requires --contigs-dir
-    validate_cli_conditional_requirement(
-        args,
-        required_arg="contigs_dir",
-        condition_args=["leaders_from_contigs"],
-        condition_description="when using --leaders-from-contigs",
+    needs_contig_leaders = bool(getattr(args, "leaders_from_contigs", False)) or (
+        getattr(args, "alpha_leader", None) == "from_contig"
+        or getattr(args, "beta_leader", None) == "from_contig"
     )
-
-    # Check if --alpha-leader=from_contig or --beta-leader=from_contig requires --contigs-dir
-    validate_cli_conditional_requirement(
-        args,
-        required_arg="contigs_dir",
-        condition_args=["alpha_leader", "beta_leader"],
-        condition_values=["from_contig"],
-        condition_description="when using --alpha-leader=from_contig or --beta-leader=from_contig",
+    has_contig_source = bool(
+        getattr(args, "contigs_dir", None) or getattr(args, "cellranger_dir", None)
     )
+    if needs_contig_leaders and not has_contig_source:
+        raise TCRsiftValidationError(
+            "--contigs-dir is required when extracting leaders from contigs "
+            "(with --leaders-from-contigs or --*-leader=from_contig), unless --cellranger-dir is provided",
+            hint="Provide --contigs-dir <path> or --cellranger-dir <path>.",
+        )
 
-    # Validate contigs-dir exists if provided
+    # Validate contigs-dir / cellranger-dir exists if provided
     if getattr(args, "contigs_dir", None):
         validate_directory_exists(args.contigs_dir, "contigs directory")
+    if getattr(args, "cellranger_dir", None):
+        validate_directory_exists(args.cellranger_dir, "CellRanger directory")
 
 
 def validate_annotate_gex_args(args) -> None:
@@ -1101,22 +1101,19 @@ def validate_run_args(args) -> None:
     TCRsiftValidationError
         If required arguments are missing
     """
-    # Check if --leaders-from-contigs requires --contigs-dir
-    validate_cli_conditional_requirement(
-        args,
-        required_arg="contigs_dir",
-        condition_args=["leaders_from_contigs"],
-        condition_description="when using --leaders-from-contigs",
+    needs_contig_leaders = bool(getattr(args, "leaders_from_contigs", False)) or (
+        getattr(args, "alpha_leader", None) == "from_contig"
+        or getattr(args, "beta_leader", None) == "from_contig"
     )
-
-    # Check if --alpha-leader=from_contig or --beta-leader=from_contig requires --contigs-dir
-    validate_cli_conditional_requirement(
-        args,
-        required_arg="contigs_dir",
-        condition_args=["alpha_leader", "beta_leader"],
-        condition_values=["from_contig"],
-        condition_description="when using --alpha-leader=from_contig or --beta-leader=from_contig",
+    has_contig_source = bool(
+        getattr(args, "contigs_dir", None) or getattr(args, "cellranger_dir", None)
     )
+    if needs_contig_leaders and not has_contig_source:
+        raise TCRsiftValidationError(
+            "--contigs-dir is required when extracting leaders from contigs "
+            "(with --leaders-from-contigs or --*-leader=from_contig), unless --cellranger-dir is provided",
+            hint="Provide --contigs-dir <path> or --cellranger-dir <path>.",
+        )
 
     # Validate sample sheet exists
     validate_file_exists(args.sample_sheet, "sample sheet (--sample-sheet)")
@@ -1129,9 +1126,11 @@ def validate_run_args(args) -> None:
             "or repeat --til-sample (direct source specs), not both.",
         )
 
-    # Validate contigs-dir exists if provided
+    # Validate contigs-dir / cellranger-dir exists if provided
     if getattr(args, "contigs_dir", None):
         validate_directory_exists(args.contigs_dir, "contigs directory (--contigs-dir)")
+    if getattr(args, "cellranger_dir", None):
+        validate_directory_exists(args.cellranger_dir, "CellRanger directory (--cellranger-dir)")
 
     # Validate direct TIL sample specs if provided
     if getattr(args, "til_sample", None):

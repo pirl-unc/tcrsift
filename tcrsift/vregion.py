@@ -104,10 +104,21 @@ def _parse_vregion_fasta(text: str) -> dict[str, list[tuple[str, str, str]]]:
             chunks.append(line.strip())
     _flush()
 
+    for gene_key in list(ref):
+        ref[gene_key].sort(
+            key=lambda item: (
+                0 if item[1].startswith("F") else (1 if item[1].startswith("ORF") else 2),
+                item[0],
+            )
+        )
+
     prefix_targets: dict[str, set[str]] = {}
-    for gene in ref:
+    for gene in list(ref):
         if "/" in gene:
             prefix_targets.setdefault(gene.split("/")[0], set()).add(gene)
+            slashless = gene.replace("/", "")
+            if slashless not in ref:
+                ref[slashless] = ref[gene]
     for prefix, fulls in prefix_targets.items():
         if len(fulls) == 1 and prefix not in ref:
             ref[prefix] = ref[next(iter(fulls))]
@@ -208,25 +219,21 @@ def germline_compare_vregion(
     candidates = germline_vregion(v_gene, species=species, data_dir=data_dir)
     if not candidates:
         return None
-    best = None  # (identity, allele, germline_overlap)
-    for allele, _func, g in candidates:
+    best = None  # (rank_score, identity, allele, germline_overlap)
+    for allele, func, g in candidates:
         n = min(len(fr), len(g))
         if n == 0:
             continue
         matches = sum(a == b for a, b in zip(fr[:n], g[:n]))
-        # Normalize by the donor framework length, NOT the overlap: the IMGT
-        # V-REGION dump carries many partial alleles that are short prefixes of
-        # the full one. Over the overlap a truncated allele scores a spurious
-        # 1.0 and hijacks the tie-break — reporting the wrong allele AND silently
-        # dropping any donor SNP past its truncated end. Penalizing the residues
-        # it doesn't cover lets the full-length allele win and the real
-        # divergence surface (#vregion-allele).
         identity = matches / len(fr)
-        key = (identity, allele)
-        if best is None or key > (best[0], best[1]):
-            best = (identity, allele, g[: len(fr)])
-    if best is None or best[0] < GERMLINE_MIN_IDENTITY:
+        func_rank = 2 if str(func).startswith("F") else (1 if str(func).startswith("ORF") else 0)
+        # Prefer higher identity first, then functional alleles, keeping the
+        # earliest (*01) allele on exact ties instead of lexicographically largest.
+        score = (identity, func_rank)
+        if best is None or score > best[0]:
+            best = (score, identity, allele, g[: len(fr)])
+    if best is None or best[1] < GERMLINE_MIN_IDENTITY:
         return None
-    identity, allele, g_overlap = best
+    _score, identity, allele, g_overlap = best
     diff = _diff_vs_germline(fr, g_overlap) or "identical"
     return allele, g_overlap, identity, diff

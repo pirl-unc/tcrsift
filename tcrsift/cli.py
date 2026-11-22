@@ -1458,11 +1458,44 @@ def cmd_run(args):
                 tier_counts[f"{tier}_{safe_key}"] = len(tier_df)
                 print(f"  {label}={key} {tier}: {len(tier_df)} clonotypes")
 
-        filtered = (
-            pd.concat(per_subset_filtered, ignore_index=True)
-            if per_subset_filtered
-            else pd.DataFrame()
-        )
+        if per_subset_filtered:
+            combined_sub = pd.concat(per_subset_filtered, ignore_index=True)
+            scope_col = f"scope_{label}"
+            tier_rank_map = {"tier1": 1, "tier2": 2, "tier3": 3, "tier4": 4, "tier5": 5}
+            if "CDR3ab" in combined_sub.columns and combined_sub["CDR3ab"].duplicated().any():
+                # Collapse public clones that survived in >=2 donors/samples back to
+                # one row per CDR3ab, restoring cohort-level clonotype stats while
+                # keeping the strictest achieved tier and joining surviving scopes.
+                combined_sub = combined_sub.assign(
+                    _trank=combined_sub.get("tier", pd.Series(dtype=object)).map(
+                        lambda t: tier_rank_map.get(t, 99)
+                    )
+                ).sort_values(["_trank", "max_frequency"], ascending=[True, False], kind="mergesort")
+                scopes_by_clone = (
+                    combined_sub.groupby("CDR3ab", observed=True)[scope_col]
+                    .apply(lambda s: ";".join(dict.fromkeys(str(x) for x in s.dropna())))
+                    .to_dict()
+                )
+                deduped = combined_sub.drop_duplicates("CDR3ab", keep="first").drop(columns=["_trank"]).copy()
+                deduped[scope_col] = deduped["CDR3ab"].map(scopes_by_clone)
+                # Restore cohort-wide abundance columns from `clonotypes` for downstream steps
+                cohort_cols = [
+                    c for c in (
+                        "cell_count", "max_frequency", "mean_frequency", "n_samples",
+                        "n_conditions", "n_methods", "max_methods_per_donor",
+                        "max_cells_per_method", "max_frequency_per_method",
+                    )
+                    if c in clonotypes.columns and c in deduped.columns
+                ]
+                if cohort_cols:
+                    base_lookup = clonotypes.set_index("CDR3ab")[cohort_cols]
+                    for c in cohort_cols:
+                        deduped[c] = deduped["CDR3ab"].map(base_lookup[c]).values
+                filtered = deduped.reset_index(drop=True)
+            else:
+                filtered = combined_sub
+        else:
+            filtered = pd.DataFrame()
 
     # Mode-named output for non-FDR modes (#15 chunk 4). Lets users find the
     # "shared-high-freq passes" set without having to read tier CSVs that
@@ -1604,7 +1637,9 @@ def cmd_run(args):
     vdjdb_path = config.annotate.vdjdb_path or ensure_cached("vdjdb", cache_dir, auto_download=auto_dl)
     iedb_path = config.annotate.iedb_path or ensure_cached("iedb", cache_dir, auto_download=auto_dl)
     cedar_path = config.annotate.cedar_path or ensure_cached("cedar", cache_dir, auto_download=auto_dl)
-    iedb_epitope_path = ensure_cached("iedb_epitope", cache_dir, auto_download=auto_dl)
+    iedb_epitope_path = getattr(config.annotate, "iedb_epitope_path", None) or ensure_cached(
+        "iedb_epitope", cache_dir, auto_download=auto_dl
+    )
     annotated = filtered
     has_annotation = vdjdb_path or iedb_path or cedar_path
     if has_annotation:
@@ -1749,6 +1784,18 @@ def cmd_run(args):
             if _sample_name_from == "sheet"
             else None
         )
+        _needs_leader_contigs = (
+            config.assemble.alpha_leader == "from_contig"
+            or config.assemble.beta_leader == "from_contig"
+        )
+        if _needs_leader_contigs and not (
+            _contigs_dir or getattr(config.assemble, "cellranger_dir", None)
+        ):
+            raise TCRsiftValidationError(
+                "Contigs directory required when extracting native leaders from contigs",
+                hint="Provide --contigs-dir, --cellranger-dir, set assemble.contigs_dir "
+                "in your config, or populate vdj_dir in your sample sheet.",
+            )
         assembled = assemble_full_sequences(
             til_matched,
             contigs_dir=_contigs_dir,
@@ -1811,6 +1858,7 @@ def cmd_run(args):
         # block is present, match/rank the assembled clones against the
         # selection rules and emit selected_clones.csv (selection columns
         # first, then full seqs), ordered by global_rank.
+        rules = None
         if config.selection.get("rules") and long_df is not None:
             from .selection import select_from_clone_sample_long
             # Gene-expression signatures as synthetic methods (#sig). When
@@ -1831,6 +1879,14 @@ def cmd_run(args):
                     g for n in sig_names for g in sig_registry[n].all_genes
                 })
                 expr = expression_frame_from_adata(adata, genes, on_missing="ignore")
+                already_log1p = "log1p" in getattr(adata, "uns", {})
+                if not already_log1p and getattr(adata, "X", None) is not None and adata.n_vars > 0:
+                    import numpy as np
+
+                    raw_sums = np.asarray(adata.X.sum(axis=1)).ravel().astype(float)
+                    if np.nanmin(raw_sums) >= 0 and np.nanmax(raw_sums) > 50:
+                        lib_safe = np.where(raw_sums > 0, raw_sums, np.nan)
+                        expr = expr.div(lib_safe, axis=0).fillna(0.0) * 1e4
                 obs_sig = adata.obs
                 if "CDR3ab" not in obs_sig.columns and {
                     "CDR3_alpha", "CDR3_beta"
@@ -1847,6 +1903,7 @@ def cmd_run(args):
                     )
                 sig_long = build_signature_methods(
                     expr, obs_sig, signatures=sig_names,
+                    log1p=not already_log1p,
                     positive_method=config.selection.get(
                         "signature_positive_method", "gap"
                     ),
@@ -1879,8 +1936,9 @@ def cmd_run(args):
                     # remove them. Keep the DB-annotation columns when present.
                     audit_cols = [
                         c for c in (
-                            "CDR3ab", "is_viral", "antigen", "antigen_species",
-                            "epitope", "database", "annotation_category",
+                            "CDR3ab", "CDR3_alpha", "CDR3_beta", "is_viral",
+                            "db_protein_canonical", "db_antigen_gene", "db_protein",
+                            "db_species", "db_epitope", "db_database", "db_category",
                         )
                         if c in til_matched.columns
                     ]
@@ -1924,8 +1982,12 @@ def cmd_run(args):
                 )
                 cml = attach_method_tiers(build_clone_method_long(long_df))
                 sel_df = (
-                    select_from_clone_sample_long(long_df, config.selection)
-                    if config.selection.get("rules") else None
+                    rules
+                    if rules is not None
+                    else (
+                        select_from_clone_sample_long(long_df, config.selection)
+                        if config.selection.get("rules") else None
+                    )
                 )
                 pdf_annotations = build_pdf_annotations(cml, selection_df=sel_df)
             # strict="skip": render the valid clones and drop+warn any that
@@ -2559,6 +2621,12 @@ def cmd_report_selected(args):
         assemble_kwargs["constant_species"] = args.constant_species
     if getattr(args, "codon_species", None) is not None:
         assemble_kwargs["codon_species"] = args.codon_species
+    if getattr(args, "codon_optimization", None) is not None:
+        assemble_kwargs["codon_optimization"] = args.codon_optimization
+    if getattr(args, "max_codon_repeats", None) is not None:
+        assemble_kwargs["max_codon_repeats"] = args.max_codon_repeats
+    if getattr(args, "avoid_enzymes", None) is not None:
+        assemble_kwargs["avoid_enzymes"] = tuple(args.avoid_enzymes)
 
     prov_cols = [c for c in selected.columns if c != "CDR3ab"]
     build_selected_report(
@@ -2710,10 +2778,12 @@ def cmd_cells_qc(args):
     adata = ad.read_h5ad(args.input)
     print(f"Loaded {adata.n_obs} cells from {args.input}")
 
+    explicit_sp = getattr(args, "species", None)
     resolved_sp = resolve_species(
-        getattr(args, "species", None) or getattr(adata, "uns", {}).get("species", "auto"),
+        explicit_sp or getattr(adata, "uns", {}).get("species", "auto"),
         adata=adata,
-        warn_mismatch=False,
+        warn_mismatch=bool(explicit_sp not in (None, "auto")),
+        context="cells qc",
     )
     kwargs = {
         param: getattr(args, cli_name)
@@ -2753,11 +2823,14 @@ def cmd_cells_embed(args):
     setup_logging(args.verbose)
     adata = ad.read_h5ad(args.input)
     print(f"Loaded {adata.n_obs} cells from {args.input}")
+    explicit_sp = getattr(args, "species", None)
     resolved_sp = resolve_species(
-        getattr(args, "species", None) or getattr(adata, "uns", {}).get("species", "auto"),
+        explicit_sp or getattr(adata, "uns", {}).get("species", "auto"),
         adata=adata,
-        warn_mismatch=False,
+        warn_mismatch=bool(explicit_sp not in (None, "auto")),
+        context="cells embed",
     )
+    adata.uns["species"] = resolved_sp
 
     config = EmbedConfig(
         enabled=True,
@@ -2789,10 +2862,12 @@ def cmd_cells_annotate(args):
     atlas = ad.read_h5ad(args.input)
     print(f"Loaded {atlas.n_obs} cells from {args.input}")
 
+    explicit_sp = getattr(args, "species", None)
     resolved_sp = resolve_species(
-        getattr(args, "species", None) or getattr(atlas, "uns", {}).get("species", "auto"),
+        explicit_sp or getattr(atlas, "uns", {}).get("species", "auto"),
         adata=atlas,
-        warn_mismatch=False,
+        warn_mismatch=bool(explicit_sp not in (None, "auto")),
+        context="cells annotate",
     )
     reference = (
         cell_type_signatures_for_species(resolved_sp, solid_tumor=True)
@@ -3215,6 +3290,7 @@ def create_parser():
     # Report command (#123): unified reporting (cohort figure bundle)
     # -------------------------------------------------------------------------
     p_report = subparsers.add_parser("report", help="Unified reporting (figure bundles)")
+    p_report.set_defaults(func=lambda _a: p_report.print_help())
     p_report_sub = p_report.add_subparsers(dest="report_command")
     pb = p_report_sub.add_parser(
         "bundle",
@@ -3302,6 +3378,26 @@ def create_parser():
         choices=["human", "mouse"],
         default=None,
         help="Codon-optimization table override ('human' or 'mouse'; overrides config)",
+    )
+    ps.add_argument(
+        "--codon-optimization",
+        choices=["focal", "full"],
+        default=None,
+        help="How full_*_nt_optimized is generated ('focal' or 'full'; overrides config)",
+    )
+    ps.add_argument(
+        "--max-codon-repeats",
+        type=int,
+        default=None,
+        help="Longest allowed run of identical consecutive codons in focal/full recoding",
+    )
+    ps.add_argument(
+        "--avoid-enzymes",
+        action="extend",
+        nargs="+",
+        default=None,
+        metavar="ENZYME",
+        help="Restriction enzyme name(s) or ACGT site(s) to recode out of constructs",
     )
     ps.add_argument("--output-dir", "-o", required=True, help="Output directory")
     ps.add_argument(
@@ -4506,6 +4602,12 @@ CONDITIONALLY REQUIRED:
     annot_group = p_run.add_argument_group("Annotation options")
     annot_group.add_argument("--vdjdb", dest="vdjdb_path", help="Path to VDJdb (overrides cache)")
     annot_group.add_argument("--iedb", dest="iedb_path", help="Path to IEDB (overrides cache)")
+    annot_group.add_argument(
+        "--iedb-epitope",
+        dest="iedb_epitope_path",
+        default=None,
+        help="Path to IEDB epitope_full_v3.csv (overrides cache)",
+    )
     annot_group.add_argument("--cedar", dest="cedar_path", help="Path to CEDAR (overrides cache)")
     annot_group.add_argument(
         "--cache-dir",
@@ -4632,6 +4734,56 @@ CONDITIONALLY REQUIRED:
         choices=["human", "mouse"],
         default=None,
         help="Codon-optimization table override ('human' or 'mouse').",
+    )
+    asm_group.add_argument(
+        "--leader-fallback",
+        choices=["germline", "keep", *_LEADER_CHOICES],
+        default=None,
+        help="Fallback leader when a native from_contig leader is rejected (default: germline).",
+    )
+    asm_group.add_argument(
+        "--force-alpha-leader",
+        choices=["germline", *_LEADER_CHOICES],
+        default=None,
+        help="Force this leader on alpha chains.",
+    )
+    asm_group.add_argument(
+        "--force-beta-leader",
+        choices=["germline", *_LEADER_CHOICES],
+        default=None,
+        help="Force this leader on beta chains.",
+    )
+    asm_group.add_argument(
+        "--secondary-alpha-leader",
+        choices=["germline", *_LEADER_CHOICES],
+        default=None,
+        help="Emit secondary construct twin using this leader on alpha.",
+    )
+    asm_group.add_argument(
+        "--secondary-beta-leader",
+        choices=["germline", *_LEADER_CHOICES],
+        default=None,
+        help="Emit secondary construct twin using this leader on beta.",
+    )
+    asm_group.add_argument(
+        "--codon-optimization",
+        choices=["focal", "full"],
+        default=None,
+        help="Codon optimization mode: 'focal' (default) or 'full'.",
+    )
+    asm_group.add_argument(
+        "--max-codon-repeats",
+        type=int,
+        default=None,
+        help="Longest allowed run of identical consecutive codons (default: 1; 0 disables).",
+    )
+    asm_group.add_argument(
+        "--avoid-enzymes",
+        action="extend",
+        nargs="+",
+        default=None,
+        metavar="ENZYME",
+        help="Restriction enzyme name(s) or ACGT site(s) to recode out of constructs.",
     )
 
     # Output options

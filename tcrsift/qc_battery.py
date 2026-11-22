@@ -102,6 +102,8 @@ def _tr(nt: str) -> str:
 def _nz(a) -> str:
     """Stringify and strip a trailing stop ('*') so a translated CDS with its
     terminal stop compares equal to the stored stop-free AA."""
+    if a is None or pd.isna(a):
+        return ""
     return str(a).rstrip("*")
 
 
@@ -157,19 +159,30 @@ _CDR3_COLS = [
 
 
 def check_assembly(d: pd.DataFrame) -> QCResult:
-    """A. Every translation exact, recomposition byte-for-byte, M-start, T2A."""
+    """A. Every translation exact, recomposition byte-for-byte, M-start, 2A linker."""
     miss = _missing(d, _ASSEMBLY_COLS)
     if miss:
         return QCResult(
             "A. Assembly integrity", "SKIP", f"missing columns: {', '.join(miss)}"
         )
+    if len(d) == 0:
+        return QCResult("A. Assembly integrity", "SKIP", "0 rows")
+    from .assemble import LINKERS
+
+    valid_linkers = {v["aa"] for v in LINKERS.values()} | {EXPECTED_T2A}
+    if "linker" in d.columns:
+        valid_linkers |= {str(x) for x in d["linker"].dropna() if str(x)}
     bad = 0
     linkers: set[str] = set()
+    n_sc = 0
     for _, r in d.iterrows():
         for ntc, aac in [
             ("single_chain_nt", "single_chain_aa"),
+            ("single_chain_nt_optimized", "single_chain_aa"),
             ("full_beta_nt", "full_beta_aa"),
+            ("full_beta_nt_optimized", "full_beta_aa"),
             ("full_alpha_nt", "full_alpha_aa"),
+            ("full_alpha_nt_optimized", "full_alpha_aa"),
             ("VDJ_beta_nt", "VDJ_beta_aa"),
             ("VDJ_alpha_nt", "VDJ_alpha_aa"),
             ("beta_leader_nt", "beta_leader_aa"),
@@ -178,27 +191,35 @@ def check_assembly(d: pd.DataFrame) -> QCResult:
             if (
                 pd.notna(r.get(ntc))
                 and pd.notna(r.get(aac))
+                and str(r.get(ntc)) != ""
                 and _nz(_tr(r[ntc])) != _nz(r[aac])
             ):
                 bad += 1
         for ch in ("alpha", "beta"):
-            full = _nz(r[f"full_{ch}_aa"])
-            lead = str(r[f"{ch}_leader_aa"])
-            vdj = str(r[f"VDJ_{ch}_aa"])
-            const = _nz(r.get(f"{ch}_constant_aa", ""))
+            full = _nz(r.get(f"full_{ch}_aa"))
+            if not full:
+                continue
+            lead = _nz(r.get(f"{ch}_leader_aa"))
+            vdj = _nz(r.get(f"VDJ_{ch}_aa"))
+            const = _nz(r.get(f"{ch}_constant_aa"))
             if lead + vdj + const != full:
                 bad += 1
-        sc, fb, fa = _nz(r["single_chain_aa"]), _nz(r["full_beta_aa"]), _nz(r["full_alpha_aa"])
-        if not (sc.startswith(fb) and fa in sc and sc.startswith("M")):
+        sc, fb, fa = _nz(r.get("single_chain_aa")), _nz(r.get("full_beta_aa")), _nz(r.get("full_alpha_aa"))
+        if sc:
+            n_sc += 1
+            expect_m = bool(_nz(r.get("beta_leader_aa")))
+            if not (sc.startswith(fb) and fa in sc and (not expect_m or sc.startswith("M"))):
+                bad += 1
+            if sc.startswith(fb) and fa in sc:
+                linkers.add(sc[len(fb) : sc.rindex(fa)])
+        elif fb and fa:
             bad += 1
-        if sc.startswith(fb) and fa in sc:
-            linkers.add(sc[len(fb) : sc.rindex(fa)])
-        if any(
-            "*" in _nz(r[c]) or "X" in str(r[c])
-            for c in ["full_beta_aa", "full_alpha_aa", "single_chain_aa"]
-        ):
-            bad += 1
-    ok = bad == 0 and linkers == {EXPECTED_T2A}
+        for c in ["full_beta_aa", "full_alpha_aa", "single_chain_aa"]:
+            val = _nz(r.get(c))
+            if val and ("*" in val or "X" in val):
+                bad += 1
+    linkers_ok = (not n_sc) or (bool(linkers) and linkers <= valid_linkers)
+    ok = bad == 0 and linkers_ok
     return QCResult(
         "A. Assembly integrity",
         "PASS" if ok else "FAIL",

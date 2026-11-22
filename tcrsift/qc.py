@@ -426,11 +426,12 @@ def validate_clonotypes(
             if n_low > 0:
                 report.add_warning(f"{n_low} clonotypes with {col} < {min_umis}")
 
-    # Cell count check
-    if "n_cells" in df.columns:
-        zero_cells = df["n_cells"] == 0
+    # Cell count check (supports both legacy `n_cells` and standard `cell_count`)
+    cell_col = "n_cells" if "n_cells" in df.columns else ("cell_count" if "cell_count" in df.columns else None)
+    if cell_col is not None:
+        zero_cells = pd.to_numeric(df[cell_col], errors="coerce").fillna(0) <= 0
         add_flag(zero_cells, "zero_cells")
-        n_zero = zero_cells.sum()
+        n_zero = int(zero_cells.sum())
         report.add_result(
             QCResult(
                 n_zero == 0,
@@ -463,7 +464,11 @@ def validate_clonotypes(
                     )
                 )
 
-            dna_col = f"full_{chain}_dna"
+            dna_col = (
+                f"full_{chain}_dna"
+                if f"full_{chain}_dna" in df.columns
+                else f"full_{chain}_nt"
+            )
             if dna_col in df.columns:
                 dna_seqs = df[dna_col].fillna("")
                 valid_dna = dna_seqs != ""
@@ -530,15 +535,23 @@ def get_qc_summary(clonotypes: pd.DataFrame) -> dict:
             summary["n_qc_pass"] / len(clonotypes) if len(clonotypes) > 0 else 0
         )
 
-    # Chain completeness
-    if "CDR3_alpha" in clonotypes.columns:
-        summary["n_with_alpha"] = clonotypes["CDR3_alpha"].notna().sum()
-    if "CDR3_beta" in clonotypes.columns:
-        summary["n_with_beta"] = clonotypes["CDR3_beta"].notna().sum()
-    if "CDR3_alpha" in clonotypes.columns and "CDR3_beta" in clonotypes.columns:
-        summary["n_complete"] = (
-            clonotypes["CDR3_alpha"].notna() & clonotypes["CDR3_beta"].notna()
-        ).sum()
+    # Chain completeness (treat empty strings as missing, not complete)
+    alpha_valid = (
+        clonotypes["CDR3_alpha"].notna() & (clonotypes["CDR3_alpha"].astype(str).str.strip() != "")
+        if "CDR3_alpha" in clonotypes.columns
+        else None
+    )
+    beta_valid = (
+        clonotypes["CDR3_beta"].notna() & (clonotypes["CDR3_beta"].astype(str).str.strip() != "")
+        if "CDR3_beta" in clonotypes.columns
+        else None
+    )
+    if alpha_valid is not None:
+        summary["n_with_alpha"] = int(alpha_valid.sum())
+    if beta_valid is not None:
+        summary["n_with_beta"] = int(beta_valid.sum())
+    if alpha_valid is not None and beta_valid is not None:
+        summary["n_complete"] = int((alpha_valid & beta_valid).sum())
 
     # CDR3 length statistics
     for chain, col in [("alpha", "CDR3_alpha"), ("beta", "CDR3_beta")]:
@@ -898,7 +911,7 @@ def lineage_programs_for_species(
     return SOLID_TUMOR_LINEAGE_PROGRAMS if solid_tumor else DEFAULT_LINEAGE_PROGRAMS
 
 
-def _gene_vector(adata, gene: str) -> np.ndarray:
+def _gene_vector(adata, gene: str, *, layer: str | None = None) -> np.ndarray:
     """Dense per-cell expression for one gene (zeros if absent).
 
     Resolves symbols across HGNC, MGI title-case, and Ensembl ``ENSG*``/``ENSMUSG*``
@@ -913,8 +926,12 @@ def _gene_vector(adata, gene: str) -> np.ndarray:
         vname = sym_to_var.get(str(gene).upper())
         if vname is None:
             return np.zeros(adata.n_obs)
-    x = adata[:, vname].X
-    return x.toarray().ravel() if hasattr(x, "toarray") else np.asarray(x).ravel()
+    sub = adata[:, vname]
+    x = sub.layers[layer] if (layer is not None and layer in sub.layers) else sub.X
+    arr = x.toarray() if hasattr(x, "toarray") else np.asarray(x)
+    if arr.ndim == 2 and arr.shape[1] > 1:
+        return arr.sum(axis=1).ravel()
+    return arr.ravel()
 
 
 def cross_lineage_doublets(
@@ -940,14 +957,22 @@ def cross_lineage_doublets(
     from .species import resolve_species
 
     if lineage_sets is None:
-        sp = resolve_species(species or "auto", adata=adata, warn_mismatch=False)
+        uns_sp = getattr(adata, "uns", {}).get("species")
+        sp = resolve_species(species or uns_sp or "auto", adata=adata, warn_mismatch=False)
         lineage_sets = lineage_programs_for_species(sp)
     tmp = adata.copy()
-    if counts_layer is not None:
-        tmp.X = tmp.layers[counts_layer].copy()
+    if not tmp.var_names.is_unique:
+        tmp.var_names_make_unique()
+    eff_layer = counts_layer if (counts_layer is not None and counts_layer in tmp.layers) else (
+        "counts" if (counts_layer is None and "counts" in tmp.layers) else None
+    )
+    if eff_layer is not None:
+        tmp.X = tmp.layers[eff_layer].copy()
+        tmp.uns.pop("log1p", None)
     total = np.asarray(tmp.X.sum(axis=1)).ravel()
-    sc.pp.normalize_total(tmp, target_sum=1e4)
-    sc.pp.log1p(tmp)
+    if eff_layer is not None or "log1p" not in tmp.uns:
+        sc.pp.normalize_total(tmp, target_sum=1e4)
+        sc.pp.log1p(tmp)
 
     all_wanted = [g for genes in lineage_sets.values() for g in genes]
     _, sym_to_var = resolve_adata_var_map(tmp, all_wanted)
@@ -982,19 +1007,15 @@ def cd4_cd8_doublet_mask(
     cd3_gene: str = "CD3E",
     cd4_gene: str = "CD4",
     cd8_genes: tuple[str, ...] = ("CD8A", "CD8B"),
+    counts_layer: str | None = None,
 ) -> np.ndarray:
-    """Mask of CD4⁺CD8⁺ double-positive T cells — gated on CD3 (#314).
-
-    Mature T cells are single-positive, so CD4 and CD8 in one CD3⁺ barcode is a
-    T-T doublet. The CD3 gate is essential: CD4 is also a monocyte/macrophage/DC
-    marker, so without it a myeloid cell plus one ambient CD8 UMI would be
-    wrongly flagged. Returns a boolean mask aligned to ``adata.n_obs``.
-    """
-    cd3 = _gene_vector(adata, cd3_gene)
-    cd4 = _gene_vector(adata, cd4_gene)
+    """Mask of CD4⁺CD8⁺ double-positive T cells — gated on CD3 (#314)."""
+    eff_layer = counts_layer if counts_layer is not None else ("counts" if "counts" in adata.layers else None)
+    cd3 = _gene_vector(adata, cd3_gene, layer=eff_layer)
+    cd4 = _gene_vector(adata, cd4_gene, layer=eff_layer)
     cd8 = np.zeros(adata.n_obs)
     for g in cd8_genes:
-        cd8 = np.maximum(cd8, _gene_vector(adata, g))
+        cd8 = np.maximum(cd8, _gene_vector(adata, g, layer=eff_layer))
     return (cd3 >= 1) & (cd4 >= 1) & (cd8 >= 1)
 
 
@@ -1121,12 +1142,25 @@ def cell_qc_funnel(
     max_mito_pct = _resolve(max_mito_pct, "max_mito_pct", 8.0)
 
     from .genes import adata_mito_mask
+    from .species import resolve_species
 
     adata = adata.copy()
+    if not adata.var_names.is_unique:
+        adata.var_names_make_unique()
+    resolved_sp = resolve_species(
+        species or getattr(adata, "uns", {}).get("species", "auto"),
+        adata=adata,
+        warn_mismatch=False,
+    )
+    adata.uns["species"] = resolved_sp
     adata.var["mt"] = adata_mito_mask(adata)
-    counts = np.asarray(adata.X.sum(axis=1)).ravel()
-    n_genes = np.asarray((adata.X > 0).sum(axis=1)).ravel()
-    mt_counts = np.asarray(adata[:, adata.var["mt"].to_numpy()].X.sum(axis=1)).ravel()
+    count_mat = adata.layers["counts"] if "counts" in adata.layers else adata.X
+    counts = np.asarray(count_mat.sum(axis=1)).ravel()
+    n_genes = np.asarray((count_mat > 0).sum(axis=1)).ravel()
+    mt_mask = adata.var["mt"].to_numpy()
+    mt_sub = adata[:, mt_mask]
+    mt_mat = mt_sub.layers["counts"] if "counts" in mt_sub.layers else mt_sub.X
+    mt_counts = np.asarray(mt_mat.sum(axis=1)).ravel()
     with np.errstate(invalid="ignore", divide="ignore"):
         pct_mt = np.where(counts > 0, 100.0 * mt_counts / counts, 0.0)
     adata.obs["_n_counts"] = counts
@@ -1179,18 +1213,20 @@ def cell_qc_funnel(
     if trb_doublet_col in adata.obs.columns:
         drop(adata.obs[trb_doublet_col].fillna(False).astype(bool), "tcr_2b",
              ">=2 productive TRB (T-T)")
+    c_layer = "counts" if "counts" in adata.layers else None
     drop(
         cd4_cd8_doublet_mask(
-            adata, cd3_gene=cd3_gene, cd4_gene=cd4_gene, cd8_genes=cd8_genes
+            adata, cd3_gene=cd3_gene, cd4_gene=cd4_gene, cd8_genes=cd8_genes,
+            counts_layer=c_layer,
         ),
         "cd4cd8_dp", "CD4+CD8 double-positive",
     )
     if adata.n_obs:
         drop(
             cross_lineage_doublets(
-                adata, lineage_sets, species=species, score_min=xlineage_score_min,
+                adata, lineage_sets, species=resolved_sp, score_min=xlineage_score_min,
                 min_programs=xlineage_min_programs, require_high_umi=require_high_umi,
-                umi_outlier_mult=umi_outlier_mult,
+                umi_outlier_mult=umi_outlier_mult, counts_layer=c_layer,
             ),
             "xlineage", f">={xlineage_min_programs} disjoint lineages",
         )

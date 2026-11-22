@@ -30,6 +30,7 @@ from anndata.experimental import concat_on_disk
 from scipy.sparse import csr_matrix, issparse
 from tqdm.auto import tqdm
 
+from ._dtypes import rehydrate_obs
 from .genes import TCELL_MARKERS, adata_mito_mask, find_column_for_gene, resolve_adata_var_map
 from .sample_sheet import Sample, SampleSheet, load_sample_sheet
 from .species import resolve_species
@@ -44,6 +45,11 @@ from .validation import (
 logger = logging.getLogger(__name__)
 
 
+_LIST_METADATA_COLS = frozenset(
+    {"antigen_names", "antigen_sequences", "epitope_sequences"}
+)
+
+
 def _add_obs_columns(adata: ad.AnnData, new_cols: dict) -> None:
     """Add/overwrite multiple ``adata.obs`` columns in a single concat.
 
@@ -51,13 +57,17 @@ def _add_obs_columns(adata: ad.AnnData, new_cols: dict) -> None:
     pandas' "DataFrame is highly fragmented" PerformanceWarning once obs grows
     past ~100 columns. Building one frame and concatenating it in one shot
     avoids the repeated inserts (and the warnings). Scalar values broadcast to
-    ``n_obs``; existing same-named columns are overwritten.
+    ``n_obs``; sample-level list metadata fields are ``;``-joined so they
+    broadcast cleanly across cells and serialize to h5ad.
     """
     if not new_cols:
         return
     built: dict = {}
     for key, val in new_cols.items():
-        if np.isscalar(val) or val is None:
+        if key in _LIST_METADATA_COLS and isinstance(val, (list, tuple)):
+            joined = ";".join(str(x) for x in val if x is not None and str(x) != "")
+            built[key] = [joined] * adata.n_obs
+        elif np.isscalar(val) or val is None:
             built[key] = [val] * adata.n_obs
         else:
             built[key] = val
@@ -217,7 +227,14 @@ def load_cellranger_vdj(
         logger.info(f"Loading clonotypes from {clonotypes_path}")
         df_clonotypes = pd.read_csv(clonotypes_path)
         # Clonotypes contain MAIT/NKT evidence
-        if "mait_evidence" in df_clonotypes.columns or "inkt_evidence" in df_clonotypes.columns:
+        if (
+            "clonotype_id" in df_clonotypes.columns
+            and "raw_clonotype_id" in df.columns
+            and (
+                "mait_evidence" in df_clonotypes.columns
+                or "inkt_evidence" in df_clonotypes.columns
+            )
+        ):
             # Merge clonotype info
             clonotype_cols = ["clonotype_id"]
             if "mait_evidence" in df_clonotypes.columns:
@@ -628,11 +645,10 @@ def _pivot_vdj_by_barcode(vdj_df: pd.DataFrame) -> pd.DataFrame:
         if seg_col in vdj_df.columns and seg_col not in pivot_cols:
             pivot_cols.append(seg_col)
 
-    # Add combined VDJ sequences
-    if "vdj_aa" in vdj_df.columns:
-        pivot_cols.append("vdj_aa")
-    if "vdj_nt" in vdj_df.columns:
-        pivot_cols.append("vdj_nt")
+    # Add combined VDJ sequences and clonotype innate-T evidence
+    for extra_col in ("vdj_aa", "vdj_nt", "mait_evidence", "inkt_evidence"):
+        if extra_col in vdj_df.columns and extra_col not in pivot_cols:
+            pivot_cols.append(extra_col)
 
     # Filter to only include first 2 entries per chain (to handle doublets)
     vdj_df = vdj_df[vdj_df["entry_id"] <= 2]
@@ -921,9 +937,15 @@ def load_samples(
 
             if adata is None:
                 continue
+            if adata.n_obs == 0:
+                logger.warning(
+                    f"  Sample {sample.sample}: 0 cells remain after loading/QC; skipping"
+                )
+                continue
 
             _ensure_x(adata)
-            sample_keys.append(adata.obs["sample"].iloc[0])
+            rehydrate_obs(adata)
+            sample_keys.append(str(sample.sample))
             if "gene_symbols" in adata.var.columns:
                 gene_symbols.update(zip(adata.var_names, adata.var["gene_symbols"].astype(str)))
             total_cells += adata.n_obs
