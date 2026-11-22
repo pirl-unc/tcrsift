@@ -28,7 +28,10 @@ log10 Pgen(CDR3, V, J, chain)
 
 Estimated non-templated nucleotide insertions (`n_inserted`, inferred from CDR3
 length minus typical germline V/D/J contribution) carry the largest weight, as
-zero-insertion rearrangements arise convergently across donors.
+zero-insertion rearrangements arise convergently across donors. Both human
+(`species="human"`) and mouse (`species="mouse"`, using murine `TRAV`/`TRAJ` and
+`TRBV`/`TRBJ` usage priors and case-insensitive gene normalization) are
+supported.
 
 ## Scale and calibration
 

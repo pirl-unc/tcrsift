@@ -204,6 +204,47 @@ SIGNATURES: dict[str, Signature] = {
     s.name: s for s in (_INVARIANT_SIGNATURES + _COMPOSITE_SIGNATURES)
 }
 
+# Mouse (*Mus musculus*) counterparts for signatures whose human gene list
+# includes primate-restricted effectors (GNLY, GZMH) or human-CD8-biased CXCL13.
+MOUSE_SIGNATURES: dict[str, Signature] = {
+    **SIGNATURES,
+    "CytolyticBroad": Signature(
+        "CytolyticBroad",
+        ("PRF1", "GZMB", "GZMC", "NKG7", "GZMA", "KLRD1", "FASL"),
+        panel="broad",
+        description="Broad murine cytotoxic-effector panel (Gzmc/Fasl in place of primate GNLY/GZMH).",
+    ),
+    "Differentiated": Signature(
+        "Differentiated",
+        ("IFNG", "GZMB", "PRF1", "NKG7", "GZMA"),
+        ("TCF7", "LEF1", "CCR7", "SELL"),
+        panel="broad",
+        description="Murine effector−naïve differentiation contrast.",
+    ),
+    "DifferentiatedBroad": Signature(
+        "DifferentiatedBroad",
+        ("IFNG", "GZMB", "PRF1", "NKG7", "GZMA", "GZMC", "KLRG1",
+         "CX3CR1", "TBX21", "PRDM1"),
+        ("TCF7", "LEF1", "CCR7", "SELL", "IL7R", "CD27", "CD28"),
+        panel="broad",
+        description="Broad murine effector−naïve contrast.",
+    ),
+    "TumorReactive": Signature(
+        "TumorReactive",
+        ("ENTPD1", "PDCD1", "LAG3", "HAVCR2", "TIGIT", "TOX",
+         "CTLA4", "ITGAE", "CCL3", "CCL4"),
+        panel="broad",
+        description="Murine chronic in-situ tumor-reactive exhaustion program "
+        "(CD39/CD103/TOX/CCL3/CCL4; replaces human T-cell CXCL13).",
+    ),
+    "AntigenExperienced": Signature(
+        "AntigenExperienced",
+        ("IFNG", "GZMB", "PRF1", "NKG7", "GZMA"),
+        panel="broad",
+        description="Murine effector program of antigen-experienced cells.",
+    ),
+}
+
 # Convenience grouping of the headline selection composites. Differentiated
 # (eff−naïve) is the best axis for in-vitro antigen-expanded clones (#141);
 # AntigenExperienced is its effector-only subset; TumorReactive is for fresh
@@ -213,6 +254,26 @@ SELECTION_SIGNATURES: dict[str, Signature] = {
     "TumorReactive": SIGNATURES["TumorReactive"],
     "AntigenExperienced": SIGNATURES["AntigenExperienced"],
 }
+
+MOUSE_SELECTION_SIGNATURES: dict[str, Signature] = {
+    "Differentiated": MOUSE_SIGNATURES["Differentiated"],
+    "TumorReactive": MOUSE_SIGNATURES["TumorReactive"],
+    "AntigenExperienced": MOUSE_SIGNATURES["AntigenExperienced"],
+}
+
+
+def signatures_for_species(
+    species: str = "human",
+    *,
+    include_neoantigen: bool = False,
+) -> dict[str, Signature]:
+    """Return signature registry for ``'human'`` or ``'mouse'``."""
+    from .species import normalize_species
+
+    base = MOUSE_SIGNATURES if normalize_species(species) == "mouse" else SIGNATURES
+    if include_neoantigen:
+        return {**base, **NEOANTIGEN_SIGNATURES}
+    return dict(base)
 
 
 @dataclass(frozen=True)
@@ -621,11 +682,13 @@ def build_signature_methods(
     on_missing: str = "error",
     clone_col: str = "CDR3ab",
     sample_col: str = "sample",
+    species: str = "human",
 ) -> pd.DataFrame:
     """Score → call-positive → emit synthetic-method rows for each signature.
 
     ``signatures`` is an iterable of :class:`Signature` (or names in
-    :data:`SIGNATURES`), defaulting to :data:`SELECTION_SIGNATURES`. Each is
+    :data:`SIGNATURES`), defaulting to :data:`SELECTION_SIGNATURES` (or
+    :data:`MOUSE_SELECTION_SIGNATURES` when ``species="mouse"``). Each is
     scored (z-score of log1p TPM, mean across genes), thresholded
     (``positive_method``: ``gap``/``otsu``/``quantile``), and emitted as a
     synthetic method ready to concat with the real clone-sample-long table.
@@ -636,10 +699,18 @@ def build_signature_methods(
     the per-condition z-score baseline (#144): each gene is standardized
     within each group rather than against the pooled cells.
     """
+    from .species import normalize_species
+
+    sp = normalize_species(species)
+    reg = signatures_for_species(sp)
     if signatures is None:
-        signatures = SELECTION_SIGNATURES.values()
+        signatures = (
+            MOUSE_SELECTION_SIGNATURES.values()
+            if sp == "mouse"
+            else SELECTION_SIGNATURES.values()
+        )
     resolved = [
-        SIGNATURES[s] if isinstance(s, str) else s for s in signatures
+        reg[s] if isinstance(s, str) else s for s in signatures
     ]
     groups = obs[background_by] if background_by is not None else None
     positive_by_signature: dict[str, pd.Series] = {}
@@ -730,15 +801,20 @@ NEOANTIGEN_SIGNATURES: dict[str, Signature] = {
 }
 
 
-def _combined_signature_registry() -> dict[str, Signature]:
+def _combined_signature_registry(species: str = "human") -> dict[str, Signature]:
     """All known signatures: the selection composites + the neoantigen set."""
-    return {**SIGNATURES, **NEOANTIGEN_SIGNATURES}
+    return signatures_for_species(species, include_neoantigen=True)
 
 
-def _lookup_signature(name, registry: dict[str, Signature] | None = None) -> Signature:
+def _lookup_signature(
+    name,
+    registry: dict[str, Signature] | None = None,
+    *,
+    species: str = "human",
+) -> Signature:
     if isinstance(name, Signature):
         return name
-    reg = registry if registry is not None else _combined_signature_registry()
+    reg = registry if registry is not None else _combined_signature_registry(species)
     if name in reg:
         return reg[name]
     # Case-insensitive fallback so "manascore" resolves to "MANAscore".
@@ -864,6 +940,7 @@ def score_by_name(
     on_missing: str = "warn",
     layer: str | None = None,
     key_added: str | None = None,
+    species: str | None = None,
 ) -> pd.Series:
     """Score a registered signature on cells, dispatched by its ``method`` (#309).
 
@@ -882,9 +959,23 @@ def score_by_name(
     to override. ``key_added`` (AnnData only) writes the score to
     ``adata.obs[key_added]`` in addition to returning it.
     """
-    sig = _lookup_signature(name, registry)
-    apply_log1p = (sig.units in ("log1p", "cp10k")) if log1p is None else log1p
+    from .species import resolve_species
+
     is_adata = hasattr(data, "obs") and hasattr(data, "var_names")
+    if species is None:
+        if is_adata:
+            uns_sp = getattr(data, "uns", {}).get("species")
+            sp = resolve_species(uns_sp or "auto", adata=data, warn_mismatch=False)
+        else:
+            sp = "human"
+    else:
+        sp = resolve_species(
+            species,
+            adata=data if is_adata else None,
+            warn_mismatch=False,
+        )
+    sig = _lookup_signature(name, registry, species=sp)
+    apply_log1p = (sig.units in ("log1p", "cp10k")) if log1p is None else log1p
     if is_adata:
         index = data.obs_names.astype(str)
         if sig.method == "geneset_enrichment":

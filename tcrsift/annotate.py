@@ -43,6 +43,7 @@ def _apply_publicness(
     v_gene_col: str,
     j_gene_col: str,
     log_summary: bool,
+    species: str = "human",
 ) -> pd.DataFrame:
     """Helper used by ``annotate_clonotypes`` to add publicness on
     both the no-DB short-circuit path and the post-match path."""
@@ -53,7 +54,11 @@ def _apply_publicness(
         )
         return df
     df = _annotate_publicness(
-        df, cdr3_col=cdr3_col, v_gene_col=v_gene_col, j_gene_col=j_gene_col
+        df,
+        cdr3_col=cdr3_col,
+        v_gene_col=v_gene_col,
+        j_gene_col=j_gene_col,
+        species=species,
     )
     if log_summary:
         n_public = int((df["publicness"] >= 0.5).sum())
@@ -68,10 +73,12 @@ def _apply_publicness(
 VIRAL_SPECIES_PATTERNS = [
     "cmv",
     "cytomegalovirus",
+    "mcmv",
     "ebv",
     "epstein-barr",
     "hiv",
     "human immunodeficiency",
+    "htlv",
     "flu",
     "influenza",
     "sars",
@@ -86,29 +93,48 @@ VIRAL_SPECIES_PATTERNS = [
     "dengue",
     "zika",
     "yellow fever",
+    "west nile",
+    "lcmv",
+    "lymphocytic choriomeningitis",
+    "mammarenavirus choriomeningitidis",
+    "vesicular stomatitis",
+    "vsv",
+    "sendai",
+    "respirovirus",
+    "vaccinia",
+    "ectromelia",
+    "murine leukemia",
+    "mulv",
+    "polyomavirus",
+    "adenovirus",
+    "norovirus",
+    "rotavirus",
+    "parvovirus",
 ]
 
 # Tumor-associated self antigens. Patterns are case-insensitive regex
 # fragments matched against antigen_gene / Source Molecule, anchored at
 # word boundaries (``\b``) so short tokens like ``wt1`` / ``her2`` /
-# ``tert`` / ``psa`` only fire on standalone occurrences. Without that,
-# 4-letter substrings would false-positive on unrelated gene names that
-# happen to contain the fragment (``interterritorial`` → ``tert``, etc.).
-# Multi-word patterns embed an explicit ``[- _]`` so they match
-# ``ny-eso-1`` / ``ny eso 1`` / ``ny_eso_1`` uniformly.
+# ``tert`` / ``psa`` / ``dct`` only fire on standalone occurrences.
 TUMOR_SELF_ANTIGEN_PATTERNS = [
     r"\bmart-?1\b",
     r"\bmlana\b",
     r"\bmelan-?a\b",
     r"\bny[- _]eso[- _]?1?\b",
-    r"\bctag1b\b",
+    r"\bctag1[ab]?\b",
+    r"\bctag2\b",
+    r"\blage[- _]?[12]\b",
     r"\bcancer[/-]?testis\b",
-    r"\bmage-?a\d*\b",
+    r"\bmage[- _]?[abc]\d*\b",
     r"\bgp100\b",
     r"\bpmel\b",
     r"\btyrosinase\b",
+    r"\bdct\b",
+    r"\bdopachrome tautomerase\b",
+    r"\btrp[- _]?[12]\b",
+    r"\btyrp[12]\b",
     r"\bceacam5\b",
-    r"\bcarcinoembryonic\b",
+    r"\bcarcinoembryonic antigen(?:\b|[- ]related cell adhesion molecule 5\b)",
     r"\bwt1\b",
     r"\bwilms\b",
     r"\btelomerase\b",
@@ -119,7 +145,16 @@ TUMOR_SELF_ANTIGEN_PATTERNS = [
     r"\bsurvivin\b",
     r"\bbirc5\b",
     r"\bpsa\b",
+    r"\bklk3\b",
     r"\bprostate[- ]specific antigen\b",
+    r"\bssx2\b",
+    r"\bprame\b",
+    r"\bfolh1\b",
+    r"\bpsma\b",
+    r"\bmsln\b",
+    r"\bmesothelin\b",
+    r"\bafp\b",
+    r"\balpha[- ]fetoprotein\b",
 ]
 
 # Bacterial species patterns — used to derive db_category="bacterial".
@@ -233,6 +268,27 @@ CANONICAL_SPECIES_ALIASES: dict[str, str] = {
     "zikavirus": "Zika virus",
     "yellowfever": "Yellow fever virus",
     "yellowfevervirus": "Yellow fever virus",
+    "gallusgallus": "Gallus gallus",
+    "chicken": "Gallus gallus",
+    "lcmv": "LCMV",
+    "lymphocyticchoriomeningitisvirus": "LCMV",
+    "lymphocyticchoriomeningitismammarenavirus": "LCMV",
+    "mammarenaviruschoriomeningitidis": "LCMV",
+    "sendai": "Sendai virus",
+    "sendaivirus": "Sendai virus",
+    "murinerespirovirus": "Sendai virus",
+    "vsv": "VSV",
+    "vesicularstomatitisvirus": "VSV",
+    "vesicularstomatitisindianavirus": "VSV",
+    "vaccinia": "Vaccinia virus",
+    "vacciniavirus": "Vaccinia virus",
+    "ectromelia": "Ectromelia virus",
+    "ectromeliavirus": "Ectromelia virus",
+    "mulv": "MuLV",
+    "murineleukemiavirus": "MuLV",
+    "friendmurineleukemiavirus": "MuLV",
+    "moloneymurineleukemiavirus": "MuLV",
+    "mousepolyomavirus": "Mouse polyomavirus",
 }
 
 # Substring aliases are ordered most-specific first so strains and longer
@@ -267,6 +323,15 @@ CANONICAL_SPECIES_CONTAINS: tuple[tuple[str, str], ...] = (
     ("denguevirus", "Dengue virus"),
     ("zikavirus", "Zika virus"),
     ("yellowfevervirus", "Yellow fever virus"),
+    ("lymphocyticchoriomeningitis", "LCMV"),
+    ("mammarenaviruschoriomeningitidis", "LCMV"),
+    ("vesicularstomatitis", "VSV"),
+    ("sendaivirus", "Sendai virus"),
+    ("murinerespirovirus", "Sendai virus"),
+    ("vacciniavirus", "Vaccinia virus"),
+    ("ectromeliavirus", "Ectromelia virus"),
+    ("murineleukemiavirus", "MuLV"),
+    ("gallusgallus", "Gallus gallus"),
 )
 
 CATEGORY_VIRAL = "viral"
@@ -535,155 +600,426 @@ def _summarize_match_categories(
     return CATEGORY_CONTRADICTORY, None, CATEGORY_CONTRADICTORY, counts_text
 
 
-# Ordered list of (pattern, canonical) pairs for collapsing the many
-# free-text Source-Molecule strings IEDB/VDJdb emit into the short
-# symbols people read papers in. Order matters: first matching pattern
-# wins (#55). Patterns are case-insensitive substrings, matched against
-# the raw antigen_gene field — this is more forgiving than word
-# boundaries given how messy these strings are (``Spike glycoprotein
-# [Severe acute respiratory syndrome coronavirus 2]`` etc).
-#
-# Specificity rule of thumb: list LONGER and more specific patterns
-# BEFORE shorter, more ambiguous ones. ``Spike glycoprotein`` should be
-# checked before ``Spike`` alone, ``Cancer/testis antigen 1`` before
-# ``Cancer/testis antigen``. Where short tokens collide across species
-# (``pp65`` is CMV; ``M1`` is Flu), the organism prefix is baked into
-# the canonical form (``CMV pp65``, ``Flu M1``) so downstream plots
-# stay unambiguous.
-#
-# This is intentionally a static seed list. The right long-term answer
-# is an HGNC/UniProt join, but until that lands a curated table covers
-# the antigens that actually show up in TIL / vaccine cohorts.
+# Word-bounded regex rules for canonicalizing protein / proteoform / antigen
+# labels (db_protein_canonical). Distinct from encoding gene symbols
+# (db_antigen_gene, resolved by resolve_antigen_gene): e.g. CTAG1A and CTAG1B
+# are two paralogous X-linked genes that encode the identical NY-ESO-1 protein,
+# whereas CTAG2 encodes LAGE-1.
+_HOST_SPECIES_SET = frozenset(
+    {"Homo sapiens", "Mus musculus", "Macaca mulatta", "Macaca fascicularis", "Rattus norvegicus"}
+)
+
+_SELF_TUMOR_PROTEIN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"melanoma antigen recognized by t-cells|\bmelan-?a\b|\bmlana\b|\bmart-?1\b", re.I), "MART-1"),
+    (re.compile(r"cancer/testis antigen 2\b|\bctag2\b|\blage[- _]?1[ab]?\b", re.I), "LAGE-1"),
+    (re.compile(r"cancer/testis antigen 1\b|\bctag1[ab]?\b|\bny[- _]eso[- _]?1\b|\blage[- _]?2[ab]?\b", re.I), "NY-ESO-1"),
+    (re.compile(r"melanocyte protein pmel|melanocyte-specific secreted glycoprotein|\bgp100\b|\bpmel\b|\bsilv\b", re.I), "gp100"),
+    (re.compile(r"dopachrome tautomerase|\bdct\b|\btrp[- _]?2\b|\btyrp2\b", re.I), "TRP-2"),
+    (re.compile(r"5,6-dihydroxyindole-2-carboxylic acid oxidase|\btyrp1\b|\btrp[- _]?1\b", re.I), "TRP-1"),
+    (re.compile(r"\btyrosinase\b|\btyr\b", re.I), "Tyrosinase"),
+    (re.compile(r"\bwilms[' ]*tumor\b|\bwt1\b", re.I), "WT1"),
+    (re.compile(r"\btelomerase\b|\bh?tert\b", re.I), "TERT"),
+    (re.compile(r"receptor tyrosine-protein kinase erbb-2|\berbb2\b|\bher2(?:/neu)?\b", re.I), "HER2"),
+    (re.compile(r"\bsurvivin\b|\bbirc5\b", re.I), "Survivin"),
+    (re.compile(r"prostate[- ]specific antigen|\bklk3\b|\bpsa\b", re.I), "PSA"),
+    (re.compile(r"\bny-?br-?1\b|\bankrd30a\b", re.I), "NY-BR-1"),
+    (re.compile(r"bone marrow stromal antigen 2|\btetherin\b|\bbst2\b", re.I), "BST2"),
+    (re.compile(r"preferentially expressed antigen in melanoma|\bprame\b", re.I), "PRAME"),
+    (re.compile(r"\bssx2\b", re.I), "SSX2"),
+    (re.compile(r"\bmesothelin\b|\bmsln\b", re.I), "Mesothelin"),
+    (re.compile(r"alpha[- ]fetoprotein|\bafp\b", re.I), "AFP"),
+    (re.compile(r"\bovalbumin\b|\bserpinb14\b|\bova\b", re.I), "OVA"),
+    (re.compile(r"\binsulin\b", re.I), "Insulin"),
+    (re.compile(r"beta-2-microglobulin|\bb2m\b", re.I), "B2M"),
+    (re.compile(r"hla class i histocompatibility antigen|mhc class i(?: protein)?\b", re.I), "MHC class I"),
+    (re.compile(r"hla class ii|mhc class ii\b", re.I), "MHC class II"),
+)
+
+_MAGE_NUMBERED_RE = re.compile(r"\bmage[- _]?([abc])(\d+)\b", re.I)
+_MAGE_A_BARE_RE = re.compile(r"\bmage[- _]?a\b", re.I)
+_CEA_MATCH_RE = re.compile(r"\bceacam5\b|\bcarcinoembryonic\b", re.I)
+_CEA_OTHER_PARALOG_RE = re.compile(
+    r"\bceacam(?!5\b)\d+\b|adhesion molecule (?!5\b)\d+\b", re.I
+)
+_INLINE_BRACKET_ORG_RE = re.compile(r"\[([^\]]+)\]\s*$")
+
+# Back-compat tuple of (substring, canonical) retained for external callers that
+# inspect CANONICAL_ANTIGEN_ALIASES directly.
 CANONICAL_ANTIGEN_ALIASES: tuple[tuple[str, str], ...] = (
-    # ─── Tumor-associated self antigens (TIL cohorts) ───
-    ("melanoma antigen recognized by t-cells", "MART-1"),
     ("melan-a", "MART-1"),
     ("mlana", "MART-1"),
     ("mart-1", "MART-1"),
-    ("mart1", "MART-1"),
-    ("cancer/testis antigen 1", "NY-ESO-1"),
+    ("ctag1a", "NY-ESO-1"),
     ("ctag1b", "NY-ESO-1"),
     ("ny-eso-1", "NY-ESO-1"),
-    ("ny eso 1", "NY-ESO-1"),
-    ("ny_eso_1", "NY-ESO-1"),
-    ("mage-a3", "MAGE-A3"),
-    ("magea3", "MAGE-A3"),
-    ("mage-a4", "MAGE-A4"),
-    ("magea4", "MAGE-A4"),
-    ("mage-a1", "MAGE-A1"),
-    ("magea1", "MAGE-A1"),
-    ("mage-a", "MAGE-A"),
-    ("melanocyte protein pmel", "gp100"),
-    ("melanocyte-specific secreted glycoprotein", "gp100"),
+    ("ctag2", "LAGE-1"),
+    ("lage-1", "LAGE-1"),
     ("gp100", "gp100"),
     ("pmel", "gp100"),
-    ("tyrosinase", "Tyrosinase"),
-    ("ceacam5", "CEACAM5"),
-    ("carcinoembryonic", "CEA"),
-    ("wilms tumor", "WT1"),
+    ("dct", "TRP-2"),
+    ("trp-2", "TRP-2"),
+    ("ceacam5", "CEA"),
     ("wt1", "WT1"),
-    ("telomerase", "TERT"),
-    ("htert", "TERT"),
+    ("tert", "TERT"),
     ("erbb2", "HER2"),
     ("her2", "HER2"),
-    ("survivin", "Survivin"),
     ("birc5", "Survivin"),
-    ("prostate-specific antigen", "PSA"),
-    ("ny-br-1", "NY-BR-1"),
-    ("bone marrow stromal antigen 2", "BST2"),
-    ("tetherin", "BST2"),
+    ("klk3", "PSA"),
     ("bst2", "BST2"),
-    # ─── HLA class I / MHC ───
-    ("hla class i histocompatibility antigen", "MHC class I"),
-    ("mhc class i protein", "MHC class I"),
-    ("mhc class i", "MHC class I"),
-    ("hla class ii", "MHC class II"),
-    # ─── Viral — CMV (HHV-5) ───
-    ("65 kda phosphoprotein", "CMV pp65"),
-    ("phosphoprotein 65", "CMV pp65"),
-    ("cmv pp65", "CMV pp65"),
+    ("ovalbumin", "OVA"),
     ("pp65", "CMV pp65"),
-    ("55 kda immediate-early", "CMV IE1"),
-    ("regulatory protein ie1", "CMV IE1"),
-    ("immediate-early protein 1", "CMV IE1"),
-    ("immediate early 1", "CMV IE1"),
     ("cmv ie1", "CMV IE1"),
-    # ─── Viral — EBV (HHV-4) ───
-    ("nuclear antigen ebna-3", "EBV EBNA-3"),
     ("ebna-3", "EBV EBNA-3"),
-    ("ebna3", "EBV EBNA-3"),
     ("ebna-1", "EBV EBNA-1"),
-    ("nuclear antigen ebna-1", "EBV EBNA-1"),
     ("bzlf1", "EBV BZLF1"),
     ("bmlf1", "EBV BMLF1"),
-    ("brlf1", "EBV BRLF1"),
-    ("lmp1", "EBV LMP1"),
-    ("lmp2", "EBV LMP2"),
-    # ─── Viral — Influenza ───
     ("matrix protein 1", "Flu M1"),
-    ("matrix protein m1", "Flu M1"),
-    ("m1 protein", "Flu M1"),
-    ("influenza a virus matrix", "Flu M1"),
     ("nucleoprotein", "Flu NP"),
-    ("hemagglutinin", "Flu HA"),
-    # ─── Viral — SARS-CoV-2 ───
     ("spike glycoprotein", "SARS-CoV-2 Spike"),
-    ("surface glycoprotein", "SARS-CoV-2 Spike"),
-    ("spike protein", "SARS-CoV-2 Spike"),
-    ("sars-cov-2 spike", "SARS-CoV-2 Spike"),
-    ("replicase polyprotein 1ab", "SARS-CoV-2 ORF1ab"),
-    ("replicase polyprotein 1a", "SARS-CoV-2 ORF1ab"),
-    ("orf1ab polyprotein", "SARS-CoV-2 ORF1ab"),
     ("orf1ab", "SARS-CoV-2 ORF1ab"),
     ("nucleocapsid", "SARS-CoV-2 N"),
-    # ─── Viral — HIV ───
-    ("gag polyprotein", "HIV Gag"),
-    ("nef protein", "HIV Nef"),
-    # ─── Viral — HTLV ───
     ("protein tax-1", "HTLV-1 Tax"),
-    ("transcriptional activator tax", "HTLV-1 Tax"),
-    ("tax-1", "HTLV-1 Tax"),
-    # ─── Viral — HCV ───
     ("ns3", "HCV NS3"),
-    ("ns5b", "HCV NS5B"),
-    # ─── Bacterial ───
-    ("esat-6", "ESAT-6"),
-    ("listeriolysin", "LLO"),
-    # ─── Common self ───
-    ("insulin", "Insulin"),
-    ("beta-2-microglobulin", "B2M"),
     ("b2m", "B2M"),
 )
 
 
-def canonicalize_antigen(antigen: str | None) -> str | None:
-    """Map a raw antigen string to its canonical short symbol, if known.
+def _extract_org_hint(raw: str, species: object = None) -> str | None:
+    """Resolve canonical organism context from explicit ``species`` or inline ``[...]``."""
+    org = canonicalize_species(species) if species is not None and not pd.isna(species) else None
+    if org:
+        return org
+    m = _INLINE_BRACKET_ORG_RE.search(raw)
+    if m:
+        return canonicalize_species(m.group(1))
+    return None
 
-    Returns the canonical symbol when the input matches any pattern in
-    :data:`CANONICAL_ANTIGEN_ALIASES` (case-insensitive substring,
-    first match wins); returns the input unchanged otherwise. ``None``
-    and empty strings pass through.
 
-    Designed for messy free-text inputs from VDJdb's ``antigen.gene``
-    and IEDB's ``Source Molecule`` — both routinely include
-    ``[organism]`` suffixes, "protein" descriptors, capitalization
-    variants, and parenthetical synonyms that should be ignored.
+def canonicalize_antigen(
+    antigen: str | None, species: str | None = None
+) -> str | None:
+    """Map a raw antigen/protein string to its canonical protein/antigen label.
+
+    Strictly word-bounded and organism-aware:
+
+    - Distinguishes proteins/proteoforms from encoding genes: both ``CTAG1A`` and
+      ``CTAG1B`` canonicalize to ``"NY-ESO-1"``, whereas ``CTAG2`` canonicalizes to
+      ``"LAGE-1"``; ``CEACAM5`` and ``Carcinoembryonic antigen`` canonicalize to
+      ``"CEA"`` while ``CEACAM1``/``CEACAM6`` stay untouched; ``ERBB2`` → ``"HER2"``
+      while ``ERBB2IP`` stays untouched; ``MAGE-A10`` / ``MAGEA12`` keep their
+      exact paralog numbers rather than collapsing into ``MAGE-A1``.
+    - Disambiguates shared viral protein names (``Nucleoprotein``,
+      ``Nucleocapsid``, ``NS3``, ``Spike``, ``IE1``) using ``species`` (or an
+      inline ``[organism]`` suffix), and never maps host self proteins such as
+      human ``Small nuclear ribonucleoprotein G`` (``SNRPG``) onto viral labels.
     """
     if pd.isna(antigen):
         return None
     raw = str(antigen).strip()
     if not raw:
-        return raw
-    lowered = raw.lower()
-    for pattern, canonical in CANONICAL_ANTIGEN_ALIASES:
-        if pattern in lowered:
+        return ""
+    org = _extract_org_hint(raw, species)
+    is_host_org = org in _HOST_SPECIES_SET
+
+    # Strip trailing [organism] before matching so organism names inside brackets
+    # don't accidentally match protein patterns.
+    clean = _INLINE_BRACKET_ORG_RE.sub("", raw).strip() or raw
+
+    # 1. Dynamic numbered MAGE family (MAGE-A1..A12, MAGE-B*, MAGE-C*).
+    m_mage = _MAGE_NUMBERED_RE.search(clean)
+    if m_mage:
+        return f"MAGE-{m_mage.group(1).upper()}{int(m_mage.group(2))}"
+    if _MAGE_A_BARE_RE.search(clean):
+        return "MAGE-A"
+
+    # 2. CEA / CEACAM5 (excluding other CEACAM paralogs like CEACAM1/CEACAM6).
+    if _CEA_MATCH_RE.search(clean) and not _CEA_OTHER_PARALOG_RE.search(clean):
+        return "CEA"
+
+    # 3. Curated tumor/self/model proteins.
+    for rx, canonical in _SELF_TUMOR_PROTEIN_RULES:
+        if rx.search(clean):
             return canonical
+
+    # Host proteins that didn't hit a curated self/tumor alias stay verbatim
+    # (never fall through to viral protein heuristics).
+    if is_host_org:
+        return raw
+
+    lowered = clean.lower()
+
+    # 4. Murine viral antigens (LCMV, MCMV, MuLV, Sendai, VSV).
+    if org == "Mouse CMV" or re.search(r"\bmcmv\b", lowered):
+        if re.search(r"\bm45\b", lowered):
+            return "MCMV M45"
+        if re.search(r"\bm38\b", lowered):
+            return "MCMV M38"
+        if re.search(r"\bm139\b", lowered):
+            return "MCMV m139"
+        if re.search(r"\bm57\b", lowered):
+            return "MCMV M57"
+        if re.search(r"\bie1\b|immediate[- ]early", lowered):
+            return "MCMV IE1"
+
+    if org == "LCMV" or re.search(r"\blcmv\b", lowered):
+        if re.search(r"glycoprotein|\bgpc?\b|\bgp(?:33|61|276)\b", lowered):
+            return "LCMV GP"
+        if re.search(r"\bnucleoprotein\b|\bnucleocapsid\b|\bnp\b", lowered):
+            return "LCMV NP"
+
+    if org == "MuLV" or re.search(r"\bmulv\b|murine leukemia", lowered):
+        if re.search(r"\bp15e\b", lowered):
+            return "MuLV p15E"
+        if re.search(r"\bgp70\b|\bah1\b", lowered):
+            return "MuLV gp70"
+        if re.search(r"\benv(?:elope)?\b", lowered):
+            return "MuLV Env"
+    elif re.search(r"\bp15e\b", lowered):
+        return "MuLV p15E"
+
+    # 5. Human & shared viral / bacterial antigens (word-bounded + species-aware).
+    if re.search(r"65 kda phosphoprotein|phosphoprotein 65|\bcmv pp65\b|\bpp65\b|\bul83\b", lowered):
+        return "CMV pp65"
+    if re.search(
+        r"55 kda immediate-early|regulatory protein ie1|immediate[- ]early (?:protein )?1\b|\bcmv ie1\b|\bul123\b",
+        lowered,
+    ):
+        return "MCMV IE1" if org == "Mouse CMV" else "CMV IE1"
+
+    if re.search(r"nuclear antigen ebna-?3|\bebna-?3[abc]?\b", lowered):
+        return "EBV EBNA-3"
+    if re.search(r"nuclear antigen ebna-?1|\bebna-?1\b", lowered):
+        return "EBV EBNA-1"
+    if re.search(r"\bbzlf1\b", lowered):
+        return "EBV BZLF1"
+    if re.search(r"\bbmlf1\b", lowered):
+        return "EBV BMLF1"
+    if re.search(r"\bbrlf1\b", lowered):
+        return "EBV BRLF1"
+    if re.search(r"\blmp1\b", lowered):
+        return "EBV LMP1"
+    if re.search(r"\blmp2a?\b", lowered):
+        return "EBV LMP2"
+
+    if re.search(r"matrix protein 1\b|matrix protein m1\b|\bm1 protein\b|influenza a virus matrix", lowered):
+        return "Flu M1"
+    if re.search(r"\bhemagglutinin\b", lowered):
+        return "Flu HA"
+
+    if re.search(r"\bnucleoprotein\b|\bnp protein\b", lowered):
+        if org in (None, "", "Influenza", "Influenza A", "Influenza B"):
+            return "Flu NP"
+        if org == "Sendai virus":
+            return "Sendai NP"
+        if org == "VSV":
+            return "VSV N"
+        if org == "SARS-CoV-2":
+            return "SARS-CoV-2 N"
+        if org == "SARS-CoV-1":
+            return "SARS-CoV-1 N"
+        return f"{org} NP"
+
+    if re.search(r"replicase polyprotein 1ab?\b|orf1ab(?: polyprotein)?\b", lowered):
+        return "SARS-CoV-1 ORF1ab" if org == "SARS-CoV-1" else "SARS-CoV-2 ORF1ab"
+
+    if re.search(r"spike glycoprotein|surface glycoprotein|\bspike protein\b|sars-cov-2 spike", lowered):
+        if org == "SARS-CoV-1":
+            return "SARS-CoV-1 Spike"
+        if org == "VSV":
+            return "VSV G"
+        if org in (None, "", "SARS-CoV-2") or (
+            species is None and org in ("Pangolin coronavirus", "Bat coronavirus")
+        ):
+            return "SARS-CoV-2 Spike"
+        return f"{org} Spike"
+
+    if re.search(r"\bnucleocapsid\b", lowered):
+        if org == "SARS-CoV-1":
+            return "SARS-CoV-1 N"
+        if org == "HBV":
+            return "HBV Core"
+        if org == "VSV":
+            return "VSV N"
+        if org in (None, "", "SARS-CoV-2"):
+            return "SARS-CoV-2 N"
+        return f"{org} N"
+
+    if re.search(r"\bgag polyprotein\b|\bhiv[- ]?1? gag\b", lowered):
+        return "HIV Gag"
+    if re.search(r"\bnef protein\b|\bhiv[- ]?1? nef\b", lowered):
+        return "HIV Nef"
+    if re.search(r"protein tax-1\b|transcriptional activator tax\b|\btax-1\b", lowered):
+        return "HTLV-1 Tax"
+
+    if re.search(r"\bns3\b|non[- ]?structural protein (?:ns)?3\b", lowered):
+        if org == "Dengue virus":
+            return "Dengue NS3"
+        if org == "Zika virus":
+            return "Zika NS3"
+        if org == "Yellow fever virus":
+            return "YFV NS3"
+        if org in (None, "", "HCV"):
+            return "HCV NS3"
+        return f"{org} NS3"
+    if re.search(r"\bns5b\b", lowered):
+        return "HCV NS5B"
+
+    if re.search(r"\besat-?6\b|\besxa\b", lowered):
+        return "ESAT-6"
+    if re.search(r"\blisteriolysin\b|\bhly\b", lowered):
+        return "LLO"
+
     return raw
 
 
-def canonicalize_antigens(antigens: pd.Series) -> pd.Series:
-    """Vectorized :func:`canonicalize_antigen` over a Series."""
-    return antigens.map(canonicalize_antigen)
+def canonicalize_antigens(
+    antigens: pd.Series, species: pd.Series | str | None = None
+) -> pd.Series:
+    """Vectorized :func:`canonicalize_antigen` over a Series (with optional species)."""
+    if species is None or isinstance(species, str):
+        return antigens.map(lambda a: canonicalize_antigen(a, species=species))
+    return pd.Series(
+        [canonicalize_antigen(a, s) for a, s in zip(antigens, species)],
+        index=antigens.index,
+        dtype=object,
+    )
+
+
+# Official HGNC and MGI gene symbols for curated endogenous self/tumor proteins.
+# Note NY-ESO-1 is encoded identically by two X-linked paralogs (CTAG1A, CTAG1B);
+# when the raw DB string names a specific paralog we preserve it, otherwise we
+# emit "CTAG1A;CTAG1B" so gene-level ambiguity is explicit rather than erased.
+_CANONICAL_PROTEIN_TO_GENE_HGNC: dict[str, str] = {
+    "MART-1": "MLANA",
+    "LAGE-1": "CTAG2",
+    "NY-ESO-1": "CTAG1A;CTAG1B",
+    "gp100": "PMEL",
+    "TRP-2": "DCT",
+    "TRP-1": "TYRP1",
+    "Tyrosinase": "TYR",
+    "CEA": "CEACAM5",
+    "WT1": "WT1",
+    "TERT": "TERT",
+    "HER2": "ERBB2",
+    "Survivin": "BIRC5",
+    "PSA": "KLK3",
+    "NY-BR-1": "ANKRD30A",
+    "BST2": "BST2",
+    "PRAME": "PRAME",
+    "SSX2": "SSX2",
+    "Mesothelin": "MSLN",
+    "AFP": "AFP",
+    "Insulin": "INS",
+    "B2M": "B2M",
+}
+
+_CANONICAL_PROTEIN_TO_GENE_MGI: dict[str, str] = {
+    "MART-1": "Mlana",
+    "gp100": "Pmel",
+    "TRP-2": "Dct",
+    "TRP-1": "Tyrp1",
+    "Tyrosinase": "Tyr",
+    "WT1": "Wt1",
+    "TERT": "Tert",
+    "HER2": "Erbb2",
+    "Survivin": "Birc5",
+    "BST2": "Bst2",
+    "Mesothelin": "Msln",
+    "AFP": "Afp",
+    "Insulin": "Ins2",
+    "B2M": "B2m",
+}
+
+_BARE_HGNC_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9-]{1,14}$")
+_BARE_MGI_SYMBOL_RE = re.compile(r"^[A-Z][a-z0-9-]{1,14}$")
+_NON_GENE_BARE_TOKENS = frozenset({"MHC", "HLA", "OVA", "UNKNOWN", "NONE", "NA", "NAN"})
+
+
+def resolve_antigen_gene(
+    antigen: str | None,
+    canonical_protein: str | None = None,
+    species: str | None = None,
+) -> str | None:
+    """Resolve the official encoding gene symbol (HGNC/MGI) for an endogenous antigen.
+
+    Returns ``None`` for viral, bacterial, and foreign exogenous antigens (such as
+    chicken ``OVA`` or ``CMV pp65``) so ``db_antigen_gene`` strictly holds host
+    or tumor gene symbols while ``db_protein_canonical`` holds the protein or
+    antigen name.
+    """
+    if pd.isna(antigen) and pd.isna(canonical_protein):
+        return None
+    raw = "" if pd.isna(antigen) else str(antigen).strip()
+    clean = _INLINE_BRACKET_ORG_RE.sub("", raw).strip() if raw else ""
+    org = _extract_org_hint(raw, species) if raw else canonicalize_species(species)
+
+    # Foreign / pathogen species do not map to endogenous host gene symbols.
+    if org is not None and org not in {"Homo sapiens", "Mus musculus"}:
+        return None
+
+    is_mouse = org == "Mus musculus"
+    canon = (
+        canonical_protein
+        if (isinstance(canonical_protein, str) and canonical_protein)
+        else canonicalize_antigen(raw, species=species)
+    )
+    if canon == "OVA":
+        return None
+
+    # Paralog-exact CTAG1A vs CTAG1B preservation before generic NY-ESO-1 lookup.
+    if re.search(r"\bctag1a\b", clean, re.I):
+        return None if is_mouse else "CTAG1A"
+    if re.search(r"\bctag1b\b", clean, re.I):
+        return None if is_mouse else "CTAG1B"
+
+    # Dynamic MAGE paralogs (MAGE-A1 -> MAGEA1, MAGE-A10 -> MAGEA10, etc.).
+    if isinstance(canon, str):
+        m_mage = re.match(r"^MAGE-([ABC])(\d+)$", canon)
+        if m_mage:
+            sub, num = m_mage.group(1), m_mage.group(2)
+            return f"Mage{sub.lower()}{num}" if is_mouse else f"MAGE{sub}{num}"
+
+    if isinstance(canon, str):
+        table = _CANONICAL_PROTEIN_TO_GENE_MGI if is_mouse else _CANONICAL_PROTEIN_TO_GENE_HGNC
+        if canon in table:
+            return table[canon]
+
+    # When the source organism is explicitly human or mouse and the raw field is
+    # already a clean bare HGNC/MGI gene symbol (e.g. SNRPG, ERBB2IP, TP53, Adpgk,
+    # Trp53), preserve it verbatim.
+    if org == "Homo sapiens" and clean and clean.upper() not in _NON_GENE_BARE_TOKENS:
+        if _BARE_HGNC_SYMBOL_RE.match(clean):
+            return clean
+    if org == "Mus musculus" and clean and clean.upper() not in _NON_GENE_BARE_TOKENS:
+        if _BARE_MGI_SYMBOL_RE.match(clean):
+            return clean
+        if _BARE_HGNC_SYMBOL_RE.match(clean):
+            return clean[0].upper() + clean[1:].lower()
+    return None
+
+
+def resolve_antigen_genes(
+    antigens: pd.Series,
+    canonical_proteins: pd.Series | None = None,
+    species: pd.Series | str | None = None,
+) -> pd.Series:
+    """Vectorized :func:`resolve_antigen_gene` over Series inputs."""
+    c_iter = (
+        canonical_proteins
+        if canonical_proteins is not None
+        else [None] * len(antigens)
+    )
+    if species is None or isinstance(species, str):
+        return pd.Series(
+            [resolve_antigen_gene(a, c, species=species) for a, c in zip(antigens, c_iter)],
+            index=antigens.index,
+            dtype=object,
+        )
+    return pd.Series(
+        [resolve_antigen_gene(a, c, s) for a, c, s in zip(antigens, c_iter, species)],
+        index=antigens.index,
+        dtype=object,
+    )
 
 
 def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
@@ -980,6 +1316,70 @@ def _looks_like_iedb_v3(path: Path) -> bool:
     return first.startswith("Receptor,Receptor")
 
 
+def _infer_iedb_host_species(
+    host_name: pd.Series, host_iri: pd.Series, mhc_allele: pd.Series
+) -> pd.Series:
+    """Infer TCR host species on IEDB/CEDAR v3 exports from Host Name, Host IRI, or MHC."""
+    out = pd.Series([pd.NA] * len(host_name), index=host_name.index, dtype=object)
+    for idx in out.index:
+        hn = host_name.at[idx]
+        if pd.notna(hn) and str(hn).strip():
+            canon = canonicalize_species(hn)
+            if canon:
+                out.at[idx] = canon
+                continue
+        iri = str(host_iri.at[idx]).strip() if pd.notna(host_iri.at[idx]) else ""
+        if iri:
+            if "NCBITaxon_9606" in iri:
+                out.at[idx] = "Homo sapiens"
+                continue
+            # IEDB mouse strain IRIs use NCBITaxon_10090 or ONTIE inbred mouse strain IDs.
+            if "NCBITaxon_10090" in iri or "/ONTIE_" in iri:
+                out.at[idx] = "Mus musculus"
+                continue
+            if "NCBITaxon_9544" in iri:
+                out.at[idx] = "Macaca mulatta"
+                continue
+            if "NCBITaxon_10116" in iri:
+                out.at[idx] = "Rattus norvegicus"
+                continue
+        mhc = str(mhc_allele.at[idx]).strip().upper() if pd.notna(mhc_allele.at[idx]) else ""
+        if mhc.startswith("HLA-"):
+            out.at[idx] = "Homo sapiens"
+        elif mhc.startswith(("H2-", "H-2")):
+            out.at[idx] = "Mus musculus"
+        elif mhc.startswith("MAMU-"):
+            out.at[idx] = "Macaca mulatta"
+    return out
+
+
+def _upgrade_iedb_cdr3_with_junction(
+    cdr3: pd.Series, junction: pd.Series
+) -> pd.Series:
+    """Restore C...F/W anchors on IEDB v3 CDR3s when Curated/Calculated stripped them.
+
+    Over half of IEDB v3 entries store anchorless core CDR3s (e.g. ``ASSIRSSYEQY``)
+    in ``CDR3 Curated`` / ``CDR3 Calculated`` while storing the IMGT-anchored
+    sequence (``CASSIRSSYEQYF``) in ``Junction Calculated``; CellRanger and VDJdb
+    always emit IMGT-anchored ``C...F/W`` CDR3s. Upgrade to ``Junction Calculated``
+    when it starts with ``C`` and either ``cdr3`` is missing or lacks a leading ``C``
+    while appearing inside ``Junction Calculated``.
+    """
+    out = cdr3.astype(object).copy()
+    for idx in out.index:
+        c_val = out.at[idx]
+        j_val = junction.at[idx] if idx in junction.index else pd.NA
+        c_str = str(c_val).strip() if pd.notna(c_val) else ""
+        j_str = str(j_val).strip() if pd.notna(j_val) else ""
+        if not j_str or not j_str.startswith("C"):
+            continue
+        if not c_str:
+            out.at[idx] = j_str
+        elif not c_str.startswith("C") and c_str in j_str:
+            out.at[idx] = j_str
+    return out
+
+
 def _load_iedb_v3(path: Path) -> pd.DataFrame:
     raw = pd.read_csv(path, header=[0, 1], low_memory=False)
 
@@ -998,26 +1398,50 @@ def _load_iedb_v3(path: Path) -> pd.DataFrame:
                 return raw[key]
         return pd.Series([pd.NA] * len(raw), index=raw.index)
 
-    # Prefer "CDR3 Curated" (manually validated) over "CDR3 Calculated"
-    # (algorithmic), matching how VDJdb prioritizes curated entries.
-    # ``combine_first`` and not ``fillna``: an all-missing curated column is
-    # float64, and pandas will stop accepting strings as its fill value.
-    cdr3_alpha = _pick("Chain 1", "CDR3 Curated").combine_first(
+    cdr3_alpha_raw = _pick("Chain 1", "CDR3 Curated").combine_first(
         _pick("Chain 1", "CDR3 Calculated")
     )
-    cdr3_beta = _pick("Chain 2", "CDR3 Curated").combine_first(
+    cdr3_beta_raw = _pick("Chain 2", "CDR3 Curated").combine_first(
         _pick("Chain 2", "CDR3 Calculated")
+    )
+    cdr3_alpha = _upgrade_iedb_cdr3_with_junction(
+        cdr3_alpha_raw, _pick("Chain 1", "Junction Calculated", "Junction Curated")
+    )
+    cdr3_beta = _upgrade_iedb_cdr3_with_junction(
+        cdr3_beta_raw, _pick("Chain 2", "Junction Calculated", "Junction Curated")
+    )
+    v_alpha = _pick("Chain 1", "Curated V Gene").combine_first(
+        _pick("Chain 1", "Calculated V Gene")
+    )
+    v_beta = _pick("Chain 2", "Curated V Gene").combine_first(
+        _pick("Chain 2", "Calculated V Gene")
+    )
+    mhc_allele = _pick("Assay", "MHC Allele Names")
+    host_name = _pick("Host", "Name").combine_first(
+        _pick("Assay", "Host Name", "Host")
+    )
+    host_iri = _pick("Host", "IRI", "IEDB IRI").combine_first(
+        _pick("Assay", "Host IRI")
+    )
+    host_species = _infer_iedb_host_species(
+        host_name,
+        host_iri,
+        mhc_allele,
     )
 
     out = pd.DataFrame(
         {
             "cdr3_alpha": cdr3_alpha,
             "cdr3_beta": cdr3_beta,
+            "v_alpha": v_alpha,
+            "v_beta": v_beta,
             "epitope": _pick("Epitope", "Name"),
             "epitope_iri": _pick("Epitope", "IEDB IRI"),
             "antigen_gene": _pick("Epitope", "Source Molecule"),
             "species": _pick("Epitope", "Source Organism"),
-            "mhc_allele": _pick("Assay", "MHC Allele Names"),
+            "host_species": host_species,
+            "mhc_allele": mhc_allele,
+            "reference": _pick("Reference", "IEDB IRI", "PMID"),
         }
     )
     # Drop rows with no CDR3 at all — they can't participate in matching.
@@ -1206,30 +1630,22 @@ def _flag_viral(df: pd.DataFrame) -> pd.Series:
     return is_viral
 
 
-def classify_category(species: pd.Series, antigen_gene: pd.Series) -> pd.Series:
+def classify_category(
+    species: pd.Series,
+    antigen_gene: pd.Series,
+    *,
+    query_species: str = "human",
+) -> pd.Series:
     """Classify each entry into a coarse specificity category.
 
     Categories (precedence, low → high): ``unknown`` < ``other`` <
-    ``viral`` / ``bacterial`` < ``self`` < ``tumor_self``. The tumor-self
-    bucket is the last assignment and overrides *every* other category —
-    a curated antigen-name match (MART-1, NY-ESO-1, MAGE, etc.) wins
-    over whatever the species column says. In practice tumor antigens
-    are Homo sapiens so this only overrides ``self``, but the rule is
-    "trust the antigen name when it's on the curated list".
-
-    Parameters
-    ----------
-    species : pd.Series
-        Source organism per entry (VDJdb's ``antigen.species`` /
-        IEDB's ``Epitope - Source Organism``).
-    antigen_gene : pd.Series
-        Source protein per entry. Used only for the tumor-self override.
-
-    Returns
-    -------
-    pd.Series
-        Category string per entry, same index as inputs.
+    ``viral`` / ``bacterial`` < ``self`` < ``tumor_self``. ``self`` matches
+    the query organism's binomial (``Homo sapiens`` for ``query_species='human'``,
+    ``Mus musculus`` for ``query_species='mouse'``).
     """
+    from .species import species_to_binomial
+
+    self_binomial = species_to_binomial(query_species)
     species_canonical = canonicalize_species_labels(species)
     species_lower = species_canonical.fillna("").astype(str).str.lower()
     antigen_lower = antigen_gene.fillna("").astype(str).str.lower()
@@ -1253,13 +1669,11 @@ def classify_category(species: pd.Series, antigen_gene: pd.Series) -> pd.Series:
         is_bacterial |= species_lower.str.contains(pattern, na=False, regex=False)
     category[is_bacterial & ~is_viral] = CATEGORY_BACTERIAL
 
-    # Human synonyms are normalized before this point, including VDJdb's
-    # compact ``HomoSapiens`` label.
-    is_self = species_canonical == "Homo sapiens"
+    is_self = species_canonical == self_binomial
     category[is_self & ~is_viral & ~is_bacterial] = CATEGORY_SELF
 
     # Tumor-self override: regex patterns anchored at word boundaries so
-    # short tokens (her2, tert, psa, wt1) don't false-positive on
+    # short tokens (her2, tert, psa, wt1, dct) don't false-positive on
     # unrelated gene names containing them as substrings.
     is_tumor_self = pd.Series(False, index=species.index)
     for pattern in TUMOR_SELF_ANTIGEN_PATTERNS:
@@ -1327,6 +1741,9 @@ def match_clonotypes(
     max_distance: int = 1,
     verbose: bool = True,
     show_progress: bool = True,
+    *,
+    species: str = "human",
+    host_species_filter: str = "all",
 ) -> pd.DataFrame:
     """
     Match clonotypes against public database.
@@ -1435,11 +1852,18 @@ def match_clonotypes(
             f"(strictness={strictness}, mode={match_mode})"
         )
 
+    from .species import resolve_species, species_to_binomial
+
+    query_species = resolve_species(species, df=clonotypes, warn_mismatch=False)
+    if host_species_filter not in ("all", "same"):
+        raise TCRsiftValidationError(
+            f"Invalid host_species_filter: {host_species_filter!r}",
+            hint="Valid options are: ['all', 'same']",
+        )
+
     df = clonotypes.copy()
 
-    # Initialize annotation columns. New columns added in #48; existing
-    # ones (db_match, db_match_partial, db_epitope, db_species,
-    # db_database, is_viral) kept for back-compat.
+    # Initialize annotation columns.
     df["db_match"] = False
     df["db_match_partial"] = False
     df["db_match_strength"] = None
@@ -1451,6 +1875,7 @@ def match_clonotypes(
     df["db_epitope"] = None
     df["db_protein"] = None
     df["db_protein_canonical"] = None
+    df["db_antigen_gene"] = None
     df["db_species"] = None
     df["db_host_species"] = None
     df["db_mhc"] = None
@@ -1461,13 +1886,6 @@ def match_clonotypes(
     df["db_database"] = None
     df["is_viral"] = False
 
-    # Defensive check: the upstream `load_vdjdb` / `load_iedb` / `load_cedar`
-    # loaders standardize column names via mappings keyed on header strings
-    # they expect. When a database file's format drifts (e.g. IEDB's v3 CSV
-    # export with hierarchical headers vs the older flat-header TSV the
-    # loader was written for, #46), the standardization silently does
-    # nothing and the resulting `database` lacks `cdr3_alpha`/`cdr3_beta`.
-    # Catch that here with a clear warning rather than `KeyError` later.
     required = {"cdr3_beta"} if strictness == "b_only" else {"cdr3_alpha", "cdr3_beta"}
     missing = required - set(database.columns)
     if missing:
@@ -1482,11 +1900,19 @@ def match_clonotypes(
 
     database = _canonicalize_database_species(database)
 
-    # Pre-classify the entire database once so the per-clone match path
-    # picks db_category / db_protein_canonical as modes like any other
-    # field — avoids invoking the classifiers with a 1-row Series per
-    # match (#48 follow-up). `database.assign` returns a copy so the
-    # caller's df isn't mutated.
+    if host_species_filter == "same" and "host_species" in database.columns:
+        target_host = species_to_binomial(query_species)
+        database = database[
+            database["host_species"].isna() | (database["host_species"] == target_host)
+        ]
+        if database.empty:
+            if verbose:
+                logger.info(
+                    "  No database entries remain after host_species_filter='same' (%s)",
+                    target_host,
+                )
+            return df
+
     species_col = (
         database["species"]
         if "species" in database.columns
@@ -1499,17 +1925,21 @@ def match_clonotypes(
     )
     new_columns: dict[str, pd.Series] = {}
     if "db_category" not in database.columns:
-        new_columns["db_category"] = classify_category(species_col, antigen_col)
+        new_columns["db_category"] = classify_category(
+            species_col, antigen_col, query_species=query_species
+        )
     if "db_protein_canonical" not in database.columns:
-        new_columns["db_protein_canonical"] = canonicalize_antigens(antigen_col)
+        new_columns["db_protein_canonical"] = canonicalize_antigens(
+            antigen_col, species=species_col
+        )
+    canon_col = new_columns.get("db_protein_canonical", database.get("db_protein_canonical"))
+    if "db_antigen_gene" not in database.columns:
+        new_columns["db_antigen_gene"] = resolve_antigen_genes(
+            antigen_col, canonical_proteins=canon_col, species=species_col
+        )
     if new_columns:
         database = database.assign(**new_columns)
 
-    # Build lookup sets for fast matching. #57: when match_mode is
-    # ``"levenshtein"``, also build the β-only deletion-canonical
-    # neighbor index used as a fuzzy fallback for clones that don't hit
-    # exactly. αβ matching stays strict-exact regardless of match_mode
-    # — fuzzy αβ would inflate spurious cross-paper near-hits.
     beta_neighbor_index: dict[str, set[str]] | None = (
         _build_cdr3_neighbor_index(database["cdr3_beta"])
         if match_mode == "levenshtein"
@@ -1518,12 +1948,6 @@ def match_clonotypes(
 
     if strictness in ("strict_ab", "ab_with_partial"):
         allow_b_fallback = strictness == "ab_with_partial"
-        # Only genuine paired (αβ) DB rows seed the paired-match set. A DB row
-        # with an empty/NA alpha is NOT a paired entry — including it would let
-        # an alpha-less clone (alpha="") match ("", beta) and be mislabeled as a
-        # full-confidence "ab" hit instead of beta-only (and, because the later
-        # row-filter `cdr3_alpha == ""` matches no NA rows, get no annotation at
-        # all in ab_with_partial). See the `alpha and ...` guard below.
         _db_paired = database[
             database["cdr3_alpha"].notna()
             & (database["cdr3_alpha"].astype(str) != "")
@@ -1551,15 +1975,16 @@ def match_clonotypes(
                 matches = database[
                     (database["cdr3_alpha"] == alpha) & (database["cdr3_beta"] == beta)
                 ]
-                _annotate_match(df, idx, matches, strength="ab", distance=0)
+                _annotate_match(
+                    df, idx, matches, strength="ab", distance=0, query_species=query_species
+                )
             elif allow_b_fallback and beta and beta in db_beta_values:
                 matches = database[database["cdr3_beta"] == beta]
                 _annotate_match(
                     df, idx, matches, strength="b_only", partial=True, distance=0,
+                    query_species=query_species,
                 )
             elif beta_neighbor_index is not None and beta:
-                # #57: Lev-1 β neighbor fallback. Find the nearest
-                # database β CDR3 and aggregate matches against it.
                 neighbors = _find_lev_neighbors(beta, beta_neighbor_index, max_distance)
                 if neighbors:
                     best_d = neighbors[0][1]
@@ -1568,6 +1993,7 @@ def match_clonotypes(
                     _annotate_match(
                         df, idx, matches,
                         strength="b_only_near", partial=True, distance=best_d,
+                        query_species=query_species,
                     )
 
     else:  # strictness == "b_only"
@@ -1585,7 +2011,10 @@ def match_clonotypes(
             beta = row.get("CDR3_beta", "") or ""
             if beta in db_beta_set:
                 matches = database[database["cdr3_beta"] == beta]
-                _annotate_match(df, idx, matches, strength="b_only", distance=0)
+                _annotate_match(
+                    df, idx, matches, strength="b_only", distance=0,
+                    query_species=query_species,
+                )
             elif beta_neighbor_index is not None and beta:
                 neighbors = _find_lev_neighbors(beta, beta_neighbor_index, max_distance)
                 if neighbors:
@@ -1595,6 +2024,7 @@ def match_clonotypes(
                     _annotate_match(
                         df, idx, matches,
                         strength="b_only_near", distance=best_d,
+                        query_species=query_species,
                     )
 
     n_matches = df["db_match"].sum()
@@ -1612,40 +2042,17 @@ def _annotate_match(
     strength: str = "ab",
     partial: bool = False,
     distance: int | None = None,
+    *,
+    query_species: str = "human",
 ):
-    """Annotate a single clonotype with match information.
+    """Annotate a single clonotype with match information."""
+    from .species import species_to_binomial
 
-    For multi-row matches, the antigen-identity columns
-    (``db_protein``, ``db_protein_canonical``, ``db_species``,
-    ``db_epitope``, ``db_mhc``) are taken from a single picked DB row
-    so the canonical name doesn't get crossed with another antigen's
-    raw protein / species (#88). The picking rule:
-
-    1. Pick the most common ``db_protein_canonical`` (the user-facing
-       antigen label) — that's the "winning" antigen.
-    2. Restrict the match frame to rows tagged with that canonical
-       antigen, and take ``antigen_gene`` / ``species`` / ``epitope`` /
-       ``mhc_allele`` modes from that subset.
-
-    Two unrelated multi-row aggregations stay as-is (#83):
-
-    - ``db_category`` is set to :data:`CATEGORY_CONTRADICTORY` when
-      matches disagree on an informative category, while
-      ``db_category_dominant`` / ``db_category_detail`` / counts retain
-      the most common informative label when there is one.
-    - ``db_match_strength`` gets an ``_cross`` suffix when any matched
-      row carries a non-human host species (``host_species``). Lets
-      downstream filters distinguish a confident human-vs-human match
-      from a cross-species curiosity.
-    """
     if len(matches) == 0:
         return
 
-    # Antigen-identity columns: pick a single representative DB row
-    # group so canonical/protein/species/epitope all describe the same
-    # antigen (#88). Try db_protein_canonical first (it's the
-    # user-facing label); fall back to antigen_gene when the canonical
-    # column is absent or all-NaN for this match set.
+    query_binomial = species_to_binomial(query_species)
+
     antigen_matches = matches
     for group_col in ("db_protein_canonical", "antigen_gene"):
         if group_col not in matches.columns:
@@ -1657,12 +2064,6 @@ def _annotate_match(
         antigen_matches = matches[matches[group_col] == picked]
         break
 
-    # If we grouped on antigen_gene because canonical was unavailable,
-    # the antigen_gene-restricted subset may still carry mixed
-    # db_protein_canonical values (e.g. "SARS-CoV Spike" and
-    # "SARS-CoV-2 Spike" sharing antigen_gene="Spike glycoprotein").
-    # Drill down so the written canonical matches the rows the rest
-    # of the antigen-identity columns come from.
     if (
         "db_protein_canonical" in antigen_matches.columns
         and antigen_matches["db_protein_canonical"].nunique(dropna=True) > 1
@@ -1674,16 +2075,11 @@ def _annotate_match(
                 antigen_matches["db_protein_canonical"] == picked_canonical
             ]
 
-    # Cross-species detection. Pulled from the antigen-restricted
-    # subset so the host_species and _cross suffix describe the same
-    # antigen group as db_protein / db_species (same archetype as #88).
-    # A mouse-model row that contributed nothing to the picked antigen
-    # mustn't flip the host call or add ``_cross`` to the strength.
     if "host_species" in antigen_matches.columns:
         hs = canonicalize_species_labels(antigen_matches["host_species"]).dropna()
         if len(hs) > 0:
             df.loc[idx, "db_host_species"] = hs.mode().iloc[0]
-            if (hs != "Homo sapiens").any():
+            if (hs != query_binomial).any():
                 strength = f"{strength}_cross"
 
     df.loc[idx, "db_match"] = True
@@ -1709,6 +2105,17 @@ def _annotate_match(
         canonicals = antigen_matches["db_protein_canonical"].dropna()
         if len(canonicals) > 0:
             df.loc[idx, "db_protein_canonical"] = canonicals.mode().iloc[0]
+
+    if "db_antigen_gene" in antigen_matches.columns:
+        ag_genes = antigen_matches["db_antigen_gene"].dropna()
+        if len(ag_genes) > 0:
+            df.loc[idx, "db_antigen_gene"] = ag_genes.mode().iloc[0]
+    else:
+        df.loc[idx, "db_antigen_gene"] = resolve_antigen_gene(
+            df.loc[idx, "db_protein"],
+            canonical_protein=df.loc[idx, "db_protein_canonical"],
+            species=df.loc[idx, "db_species"],
+        )
 
     if "mhc_allele" in antigen_matches.columns:
         mhcs = antigen_matches["mhc_allele"].dropna()
@@ -1855,48 +2262,13 @@ def annotate_clonotypes(
     publicness_cdr3_col: str = "CDR3_beta",
     publicness_v_gene_col: str = "beta_v_gene",
     publicness_j_gene_col: str = "beta_j_gene",
+    species: str = "human",
+    host_species_filter: str = "all",
 ) -> pd.DataFrame:
-    """
-    Main annotation function.
+    """Main annotation function."""
+    from .species import resolve_species
 
-    Parameters
-    ----------
-    clonotypes : pd.DataFrame
-        Clonotype DataFrame
-    vdjdb_path, iedb_path, cedar_path : str or Path, optional
-        Paths to databases
-    iedb_epitope_path : str or Path, optional
-        Path to the IEDB epitope-level table (companion to
-        ``iedb_path``). When provided, IEDB receptor-row antigen/species
-        strings are overridden with the epitope-table's typically
-        shorter and more canonical equivalents (#54).
-    match_by : str
-        Legacy matching strategy. Prefer ``match_strictness`` for new code.
-    match_strictness : str, optional
-        Explicit matching strictness — ``"strict_ab"`` /
-        ``"ab_with_partial"`` / ``"b_only"``. Overrides ``match_by``
-        when set. See :func:`match_clonotypes`.
-    exclude_viral : bool
-        Remove clones matching viral epitopes
-    flag_only : bool
-        Just flag viral, don't remove
-    add_publicness : bool
-        When True, add ``log10_pgen`` and ``publicness`` columns from
-        :func:`tcrsift.pgen.annotate_publicness` (#58). High-publicness
-        sequences are likely to be public; downstream callers can
-        discount DB matches against them by multiplying any per-match
-        score by ``(1 - publicness)``.
-    publicness_cdr3_col, publicness_v_gene_col, publicness_j_gene_col : str
-        Columns Pgen estimator should read.
-
-    Returns
-    -------
-    pd.DataFrame
-        Annotated clonotypes
-    """
-    # Columns that get initialized on the no-database short-circuit.
-    # Mirrors the column set produced by match_clonotypes so downstream
-    # code can rely on these always being present.
+    resolved_species = resolve_species(species, df=clonotypes, warn_mismatch=False)
     _DEFAULT_ANNOTATION_COLUMNS = {
         "db_match": False,
         "db_match_partial": False,
@@ -1909,6 +2281,7 @@ def annotate_clonotypes(
         "db_epitope": None,
         "db_protein": None,
         "db_protein_canonical": None,
+        "db_antigen_gene": None,
         "db_species": None,
         "db_host_species": None,
         "db_mhc": None,
@@ -1920,7 +2293,6 @@ def annotate_clonotypes(
         "is_viral": False,
     }
 
-    # Annotation is optional: if no databases are provided, return input with default annotation columns.
     if not any([vdjdb_path, iedb_path, cedar_path]):
         logger.info("No annotation database paths provided; returning input with empty annotations")
         df = clonotypes.copy()
@@ -1934,10 +2306,10 @@ def annotate_clonotypes(
                 v_gene_col=publicness_v_gene_col,
                 j_gene_col=publicness_j_gene_col,
                 log_summary=False,
+                species=resolved_species,
             )
         return df
 
-    # Load databases
     database = load_databases(
         vdjdb_path=vdjdb_path,
         iedb_path=iedb_path,
@@ -1945,7 +2317,6 @@ def annotate_clonotypes(
         iedb_epitope_path=iedb_epitope_path,
     )
 
-    # Match clonotypes
     df = match_clonotypes(
         clonotypes,
         database,
@@ -1953,17 +2324,15 @@ def annotate_clonotypes(
         match_strictness=match_strictness,
         match_mode=match_mode,
         max_distance=max_distance,
+        species=resolved_species,
+        host_species_filter=host_species_filter,
     )
 
-    # Handle viral exclusion
     if exclude_viral and not flag_only:
         initial = len(df)
         df = df[~df["is_viral"]]
         logger.info(f"Excluded {initial - len(df)} viral clones")
 
-    # Publicness annotation (#58). Computed after match filtering so
-    # the resulting Pgen/publicness columns align with the final row
-    # set.
     if add_publicness:
         df = _apply_publicness(
             df,
@@ -1971,6 +2340,7 @@ def annotate_clonotypes(
             v_gene_col=publicness_v_gene_col,
             j_gene_col=publicness_j_gene_col,
             log_summary=True,
+            species=resolved_species,
         )
 
     return df

@@ -126,19 +126,15 @@ def augment_with_gex(
         logger.info(f"Loading gene expression from {gex_path}")
 
     # Load expression matrix
+    from .genes import adata_mito_mask, resolve_adata_var_map
+
     adata = sc.read_10x_h5(str(gex_path))
     gene_names = adata.var_names
 
-    # Handle duplicated gene symbols
+    # Handle duplicated gene symbols for informational logging
     duplicated = gene_names[gene_names.duplicated()].unique().tolist()
-    gene_to_best_idx: dict[str, int] = {}
-    if duplicated:
-        if verbose:
-            logger.info(f"  Found {len(duplicated)} duplicated gene symbols")
-        for symbol in duplicated:
-            locs = np.where(gene_names == symbol)[0]
-            means = np.asarray(adata.X[:, locs].mean(axis=0)).ravel()
-            gene_to_best_idx[symbol] = locs[np.argmax(means)]
+    if duplicated and verbose:
+        logger.info(f"  Found {len(duplicated)} duplicated gene symbols")
 
     # Compute per-cell QC metrics
     if issparse(adata.X):
@@ -148,11 +144,11 @@ def augment_with_gex(
         total_counts = adata.X.sum(axis=1).astype(int)
         n_genes_detected = (adata.X > 0).sum(axis=1).astype(int)
 
-    # Mitochondrial percentage
-    mito_mask = gene_names.str.upper().str.startswith("MT-")
+    # Mitochondrial percentage (supports human MT-*, mouse mt-*, and Ensembl IDs)
+    mito_mask = adata_mito_mask(adata)
     if mito_mask.any():
         mito_counts = (
-            adata.X[:, mito_mask].sum(axis=1).A.ravel()
+            np.asarray(adata.X[:, mito_mask].sum(axis=1)).ravel()
             if issparse(adata.X)
             else adata.X[:, mito_mask].sum(axis=1)
         )
@@ -160,19 +156,22 @@ def augment_with_gex(
     else:
         pct_mito = np.full(len(total_counts), np.nan)
 
-    # Map genes to indices
+    # Map requested genes (with HGNC/MGI/Ensembl + duplicate resolution) to column indices
+    sym_upper, _ = resolve_adata_var_map(adata, gene_list)
     available_genes = []
     missing_genes = []
     gene_to_idx: dict[str, int] = {}
     for gene in gene_list:
-        if gene in duplicated:
-            gene_to_idx[gene] = gene_to_best_idx[gene]
-            available_genes.append(gene)
-        elif gene in gene_names:
-            gene_to_idx[gene] = gene_names.get_loc(gene)
+        locs = np.where(sym_upper == str(gene).upper())[0]
+        if locs.size == 0:
+            missing_genes.append(gene)
+        elif locs.size == 1:
+            gene_to_idx[gene] = int(locs[0])
             available_genes.append(gene)
         else:
-            missing_genes.append(gene)
+            means = np.asarray(adata.X[:, locs].mean(axis=0)).ravel()
+            gene_to_idx[gene] = int(locs[int(np.argmax(means))])
+            available_genes.append(gene)
 
     if missing_genes and verbose:
         logger.info(f"  {len(missing_genes)} genes not found: {missing_genes[:5]}...")
@@ -334,6 +333,7 @@ def compute_signature_scores_per_clonotype(
     cd8_only: bool | None = None,
     cd8_col: str | None = None,
     zscore: bool = False,
+    species: str = "human",
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Compute per-clonotype signature scores (#74).
@@ -384,9 +384,14 @@ def compute_signature_scores_per_clonotype(
         NaN for every clone (with a single warning log line).
     """
     if signatures is None:
-        from .signatures import T_CELL_SIGNATURES
+        from .signatures import MOUSE_T_CELL_SIGNATURES, T_CELL_SIGNATURES
+        from .species import normalize_species
 
-        signatures = T_CELL_SIGNATURES
+        signatures = (
+            MOUSE_T_CELL_SIGNATURES
+            if normalize_species(species) == "mouse"
+            else T_CELL_SIGNATURES
+        )
 
     if group_col not in df.columns:
         raise ValueError(
@@ -468,6 +473,7 @@ def compute_signature_scores_per_cell(
     layer: str | None = None,
     key_prefix: str = "signature_",
     on_missing: str = "warn",
+    species: str | None = None,
     verbose: bool = True,
 ):
     """Per-CELL signature scores written to ``adata.obs`` (#313).
@@ -495,9 +501,19 @@ def compute_signature_scores_per_cell(
     from .signature_methods import expression_frame_from_adata
 
     if signatures is None:
-        from .signatures import T_CELL_SIGNATURES
+        from .signatures import MOUSE_T_CELL_SIGNATURES, T_CELL_SIGNATURES
+        from .species import resolve_species
 
-        signatures = T_CELL_SIGNATURES
+        resolved_species = resolve_species(
+            species or getattr(adata, "uns", {}).get("species", "auto"),
+            adata=adata,
+            warn_mismatch=False,
+        )
+        signatures = (
+            MOUSE_T_CELL_SIGNATURES
+            if resolved_species == "mouse"
+            else T_CELL_SIGNATURES
+        )
 
     all_genes = sorted({g for genes in signatures.values() for g in genes})
     expr = expression_frame_from_adata(

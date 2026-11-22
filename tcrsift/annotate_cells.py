@@ -41,19 +41,26 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from .genes import resolve_adata_var_map
 from .signatures import (
-    B_STATE_SIGNATURES,
-    CELL_TYPE_SIGNATURES,
-    LINEAGE_GENES,
     PROTECTED_SUBTYPES,
-    T_STATE_SIGNATURES,
+    b_state_signatures_for_species,
+    cell_type_signatures_for_species,
+    lineage_genes_for_species,
+    t_state_signatures_for_species,
 )
+from .species import normalize_species, resolve_species
 
 logger = logging.getLogger(__name__)
 
 # Genes that must never become a cluster's distinguishing suffix: clonal TCR/Ig
-# V/D/J/C segments (clonotype, not cell type).
-_TOP_GENE_EXCLUDE = re.compile(r"^(TR[ABGD][VDJ]|IG[HKL][VDJ]|IGKC|IGLC|IGLL|JCHAIN)")
+# V/D/J/C segments (clonotype, not cell type). Case-insensitive across HGNC/MGI;
+# word/digit-bounded so TRADD, TRAF1, and IGHMBP2 are never excluded.
+_TOP_GENE_EXCLUDE = re.compile(
+    r"^(?:TR[ABGD][VDJ](?:\d|$)|TR[ABGD]C(?:\d|$)|IG[HKL][VDJ](?:\d|$)"
+    r"|IGH(?:A\d?|D|E|G\d?[ABC]?|M)$|IGKC|IGLC|IGLL|JCHAIN)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -79,6 +86,7 @@ class AnnotationGates:
     gd_tcr_min: float = 0.5
     mait_gene: str = "SLC4A10"
     mait_min: float = 0.3
+    mait_klrb1_genes: tuple = ("KLRB1",)
     mait_klrb1_min: float = 1.0
     # Cell-type argmax gates.
     other_threshold: float = 0.04
@@ -87,6 +95,14 @@ class AnnotationGates:
 
 
 DEFAULT_GATES = AnnotationGates()
+MOUSE_GATES = AnnotationGates(
+    mait_klrb1_genes=("KLRB1C", "KLRB1B", "KLRB1F", "ZBTB16", "IL18R1"),
+)
+
+
+def gates_for_species(species: str = "human") -> AnnotationGates:
+    """Return default :class:`AnnotationGates` for ``'human'`` or ``'mouse'``."""
+    return MOUSE_GATES if normalize_species(species) == "mouse" else DEFAULT_GATES
 
 
 @dataclass
@@ -165,7 +181,8 @@ def tumor_override(
     ``gene_set`` defaults to oncoref's pan-cancer cancer-testis-antigen panel —
     :func:`oncoref.CTA_gene_names` (HPA-filtered + expressed) **unioned with**
     :func:`oncoref.cta_clinical_target_gene_names` (canonical clinically-expressed
-    CTAs — NY-ESO-1/CTAG2, MAGEA11, … — that testis-restriction filtering excludes
+    CTA genes — ``CTAG1A``/``CTAG1B`` [encoding NY-ESO-1], ``CTAG2`` [LAGE-1],
+    ``MAGEA11``, … — that testis-restriction filtering excludes
     but are real tumor markers, #350). CTAs are shared across solid tumors, so the
     **panel is reused across cancers** and only ``lineage_tfs`` (the rescue) is
     tissue-specific. tcrsift owns the counting + relabel mechanism; the curated CTA
@@ -188,10 +205,10 @@ def tumor_override(
         import oncoref
 
         # oncoref's testis-restricted default (CTA_gene_names) drops several
-        # canonical clinically-expressed CTAs (NY-ESO-1/CTAG2, MAGEA11, …) that are
-        # bona-fide tumor markers; union in the clinical-target set so the default
-        # doesn't undercount tumor (#350). Sorted for a reproducible override
-        # (order is immaterial to the marker count).
+        # canonical clinically-expressed CTA genes (CTAG1A/CTAG1B [NY-ESO-1],
+        # CTAG2 [LAGE-1], MAGEA11, …) that are bona-fide tumor markers; union in
+        # the clinical-target set so the default doesn't undercount tumor (#350).
+        # Sorted for a reproducible override (order is immaterial to the marker count).
         gene_set = sorted(
             set(oncoref.CTA_gene_names())
             | set(oncoref.cta_clinical_target_gene_names())
@@ -211,13 +228,36 @@ def tumor_override(
     )
 
 
-def _distinct_marker_counts(adata, gene_set, min_expr: float = 0.0) -> np.ndarray:
+def _resolve_present_vars(adata, genes, _var_map: dict[str, str] | None = None) -> list[str]:
+    """Resolve requested gene symbols (HGNC/MGI/Ensembl) to present ``adata.var_names``."""
+    var_set = set(adata.var_names)
+    if all(g in var_set for g in genes):
+        return list(dict.fromkeys(genes))
+    if _var_map is None:
+        _, _var_map = resolve_adata_var_map(adata, genes)
+    out: list[str] = []
+    seen: set[str] = set()
+    for g in genes:
+        vn = g if g in var_set else _var_map.get(str(g).upper())
+        if vn is not None and vn not in seen:
+            out.append(vn)
+            seen.add(vn)
+    return out
+
+
+def _distinct_marker_counts(
+    adata,
+    gene_set,
+    min_expr: float = 0.0,
+    *,
+    _var_map: dict[str, str] | None = None,
+) -> np.ndarray:
     """Per-cell count of DISTINCT genes from ``gene_set`` expressed (> ``min_expr``).
 
     Genes absent from the matrix are skipped; detection (``> min_expr`` with the
     default ``0.0``) is orientation-invariant between raw counts and log1p.
     """
-    present = [g for g in gene_set if g in adata.var_names]
+    present = _resolve_present_vars(adata, gene_set, _var_map)
     if not present:
         return np.zeros(adata.n_obs, dtype=int)
     X = adata[:, present].X
@@ -300,10 +340,11 @@ def _warn_dropped_states(adata, prefix: str, registry) -> None:
         )
 
 
-def gates_from_phenotype_config(config) -> AnnotationGates:
+def gates_from_phenotype_config(config, *, species: str = "human") -> AnnotationGates:
     """Build :class:`AnnotationGates` from a :class:`tcrsift.config.PhenotypeConfig`
     (#312), so the annotator's floors are configured through the one phenotype
     section rather than a parallel config."""
+    base = gates_for_species(species)
     return AnnotationGates(
         state_defining_genes={
             "Treg": ("FOXP3", config.treg_foxp3_min),
@@ -313,15 +354,23 @@ def gates_from_phenotype_config(config) -> AnnotationGates:
         },
         gd_tcr_min=config.gd_tcr_min,
         mait_min=config.mait_min,
+        mait_klrb1_genes=base.mait_klrb1_genes,
         activation_min=config.activation_min,
     )
 
 
-def _cluster_gene_mean(adata, gene: str, leiden_col: str) -> dict:
+def _cluster_gene_mean(
+    adata,
+    gene: str,
+    leiden_col: str,
+    *,
+    _var_map: dict[str, str] | None = None,
+) -> dict:
     """Per-cluster mean expression of one gene (empty dict if absent)."""
-    if gene not in adata.var_names:
+    present = _resolve_present_vars(adata, [gene], _var_map)
+    if not present:
         return {}
-    v = adata[:, gene].X
+    v = adata[:, present[0]].X
     v = v.toarray().ravel() if hasattr(v, "toarray") else np.asarray(v).ravel()
     return (
         pd.Series(v, index=adata.obs.index)
@@ -331,14 +380,28 @@ def _cluster_gene_mean(adata, gene: str, leiden_col: str) -> dict:
     )
 
 
-def _block_mean(adata, genes: list[str]) -> np.ndarray:
+def _block_mean(
+    adata,
+    genes: list[str],
+    *,
+    _var_map: dict[str, str] | None = None,
+) -> np.ndarray:
     """Per-cell mean expression over a gene block (zeros if none present)."""
-    present = [g for g in genes if g in adata.var_names]
+    present = _resolve_present_vars(adata, genes, _var_map)
     if not present:
         return np.zeros(adata.n_obs)
     X = adata[:, present].X
     X = X.toarray() if hasattr(X, "toarray") else np.asarray(X)
     return X.mean(axis=1)
+
+
+def _effective_adata_species(adata, species: str | None) -> str:
+    if species is not None:
+        return resolve_species(species, adata=adata, warn_mismatch=False)
+    uns_sp = getattr(adata, "uns", {}).get("species")
+    if uns_sp:
+        return normalize_species(uns_sp)
+    return resolve_species("auto", adata=adata, warn_mismatch=False)
 
 
 def score_reference(
@@ -348,6 +411,7 @@ def score_reference(
     t_states: dict | None = None,
     b_states: dict | None = None,
     lineage_genes: dict | None = None,
+    species: str | None = None,
 ) -> None:
     """Score every cell-type / T-state / B-state signature and lineage mean into
     ``adata.obs`` (columns ``ct::`` / ``st::`` / ``bt::`` / ``lin::``).
@@ -357,27 +421,42 @@ def score_reference(
     log1p-CP10K gene-block means (for the absolute-threshold gates). Expects
     ``adata.X`` log-normalized (see :func:`annotate_cells`, which handles it).
     Gene sets come from :mod:`tcrsift.signatures` — defined once, shared with
-    the per-clone/per-cell scorers.
+    the per-clone/per-cell scorers, and auto-resolved for human vs mouse when
+    ``species`` is omitted or ``"auto"``.
     """
     import scanpy as sc
 
-    cell_types = cell_types if cell_types is not None else CELL_TYPE_SIGNATURES
-    t_states = t_states if t_states is not None else T_STATE_SIGNATURES
-    b_states = b_states if b_states is not None else B_STATE_SIGNATURES
-    lineage_genes = lineage_genes if lineage_genes is not None else LINEAGE_GENES
+    sp = _effective_adata_species(adata, species)
+    cell_types = (
+        cell_types if cell_types is not None else cell_type_signatures_for_species(sp)
+    )
+    t_states = t_states if t_states is not None else t_state_signatures_for_species(sp)
+    b_states = b_states if b_states is not None else b_state_signatures_for_species(sp)
+    lineage_genes = (
+        lineage_genes if lineage_genes is not None else lineage_genes_for_species(sp)
+    )
 
-    present = set(adata.var_names)
+    all_wanted = sorted(
+        {
+            g
+            for reg in (cell_types, t_states, b_states, lineage_genes)
+            for genes in reg.values()
+            for g in genes
+        }
+    )
+    _, var_map = resolve_adata_var_map(adata, all_wanted)
+
     ctrl = min(50, max(1, adata.n_vars - 1))
     for prefix, registry in (("ct", cell_types), ("st", t_states), ("bt", b_states)):
         for name, genes in registry.items():
             col = f"{prefix}::{name}"
-            g = [x for x in genes if x in present]
+            g = _resolve_present_vars(adata, genes, var_map)
             if g:
                 sc.tl.score_genes(adata, g, score_name=col, ctrl_size=ctrl)
             else:
                 adata.obs[col] = np.nan
     for lin, genes in lineage_genes.items():
-        adata.obs[f"lin::{lin}"] = _block_mean(adata, genes)
+        adata.obs[f"lin::{lin}"] = _block_mean(adata, genes, _var_map=var_map)
 
 
 def annotate_clusters(
@@ -388,18 +467,18 @@ def annotate_clusters(
     t_state_reference: dict | None = None,
     b_state_reference: dict | None = None,
     allowed_types=None,
-    gates: AnnotationGates = DEFAULT_GATES,
+    gates: AnnotationGates | None = None,
     overrides=None,
+    species: str | None = None,
 ) -> dict:
     """Label each Leiden cluster: cell-type signature argmax → label; T clusters
     get CD8/CD4 + a gated dominant state; weakly-typed clusters → ``"Other"``.
 
-    ``reference`` is the cell-type registry (default
-    :data:`tcrsift.signatures.CELL_TYPE_SIGNATURES`); ``t_state_reference`` /
-    ``b_state_reference`` are the T-state / B-state registries read for the
-    per-cluster state call (defaults
-    :data:`tcrsift.signatures.T_STATE_SIGNATURES` /
-    :data:`~tcrsift.signatures.B_STATE_SIGNATURES`). Pass your own to have
+    ``reference`` is the cell-type registry (default species-resolved
+    :data:`tcrsift.signatures.CELL_TYPE_SIGNATURES` or
+    :data:`~tcrsift.signatures.MOUSE_CELL_TYPE_SIGNATURES`);
+    ``t_state_reference`` / ``b_state_reference`` are the T-state / B-state
+    registries read for the per-cluster state call. Pass your own to have
     caller-defined states considered — the registries must match those given to
     :func:`score_reference`, or a scored ``st::``/``bt::`` state absent from the
     active registry is ignored (a WARNING flags this drift, #337).
@@ -412,11 +491,21 @@ def annotate_clusters(
     override's per-cell distinct-marker count to ``adata.obs``. Requires
     :func:`score_reference` to have run. Returns ``{cluster -> label}``.
     """
-    reference = reference if reference is not None else CELL_TYPE_SIGNATURES
-    t_state_reference = (t_state_reference if t_state_reference is not None
-                         else T_STATE_SIGNATURES)
-    b_state_reference = (b_state_reference if b_state_reference is not None
-                         else B_STATE_SIGNATURES)
+    sp = _effective_adata_species(adata, species)
+    gates = gates if gates is not None else gates_for_species(sp)
+    reference = (
+        reference if reference is not None else cell_type_signatures_for_species(sp)
+    )
+    t_state_reference = (
+        t_state_reference
+        if t_state_reference is not None
+        else t_state_signatures_for_species(sp)
+    )
+    b_state_reference = (
+        b_state_reference
+        if b_state_reference is not None
+        else b_state_signatures_for_species(sp)
+    )
     types = list(reference) if allowed_types is None else [
         t for t in reference if t in allowed_types
     ]
@@ -433,19 +522,44 @@ def annotate_clusters(
                 if c in adata.obs.columns]
     linm = grp[lin_cols].mean()
 
+    gate_wanted = sorted(
+        {
+            *(gene for gene, _ in gates.state_defining_genes.values()),
+            *gates.activation_genes,
+            *gates.gd_tcr_genes,
+            gates.mait_gene,
+            *gates.mait_klrb1_genes,
+        }
+    )
+    _, var_map = resolve_adata_var_map(adata, gate_wanted)
+
     gate_means = {
-        gene: _cluster_gene_mean(adata, gene, leiden_col)
+        gene: _cluster_gene_mean(adata, gene, leiden_col, _var_map=var_map)
         for gene, _ in gates.state_defining_genes.values()
     }
-    act_each = [_cluster_gene_mean(adata, g, leiden_col) for g in gates.activation_genes]
+    act_each = [
+        _cluster_gene_mean(adata, g, leiden_col, _var_map=var_map)
+        for g in gates.activation_genes
+    ]
     act_each = [m for m in act_each if m]
     act_mean = (
         {cl: float(np.mean([m.get(cl, 0.0) for m in act_each])) for cl in ctm.index}
         if act_each else {}
     )
-    gd_means = {g: _cluster_gene_mean(adata, g, leiden_col) for g in gates.gd_tcr_genes}
-    mait_mean = _cluster_gene_mean(adata, gates.mait_gene, leiden_col)
-    klrb1_mean = _cluster_gene_mean(adata, "KLRB1", leiden_col)
+    gd_means = {
+        g: _cluster_gene_mean(adata, g, leiden_col, _var_map=var_map)
+        for g in gates.gd_tcr_genes
+    }
+    mait_mean = _cluster_gene_mean(adata, gates.mait_gene, leiden_col, _var_map=var_map)
+    klrb1_each = [
+        _cluster_gene_mean(adata, g, leiden_col, _var_map=var_map)
+        for g in gates.mait_klrb1_genes
+    ]
+    klrb1_each = [m for m in klrb1_each if m]
+    klrb1_mean = (
+        {cl: float(max(m.get(cl, 0.0) for m in klrb1_each)) for cl in ctm.index}
+        if klrb1_each else {}
+    )
     has_nk = "ct::NK cell" in ctm.columns
 
     labels: dict = {}
@@ -579,11 +693,12 @@ def annotate_cells(
     t_state_reference: dict | None = None,
     b_state_reference: dict | None = None,
     allowed_types=None,
-    gates: AnnotationGates = DEFAULT_GATES,
+    gates: AnnotationGates | None = None,
     overrides=None,
     normalize: bool = True,
     min_subtype_frac: float = 0.01,
     add_suffix: bool = True,
+    species: str | None = None,
 ):
     """One-call annotator: score → per-cluster type/state → composed labels (#312).
 
@@ -594,7 +709,7 @@ def annotate_cells(
     ``b_state_reference`` override the cell-type / T-state / B-state registries;
     they are threaded to **both** :func:`score_reference` and
     :func:`annotate_clusters`, so a caller-defined type or state is consistently
-    scored *and* read (default registries are PBMC/blood-oriented — see #340).
+    scored *and* read (default registries auto-resolve human vs mouse).
     ``overrides`` (a list of :class:`MarkerCountOverride`) relabels clusters on
     positive marker-count evidence (e.g. CTA→Tumor, #325) and adds a per-cell
     distinct-marker-count column to ``adata.obs``. ``normalize=True`` scores on a
@@ -605,6 +720,7 @@ def annotate_cells(
         raise ValueError(
             f"annotate_cells: {leiden_col!r} not in obs — run embed_cells first"
         )
+    sp = _effective_adata_species(adata, species)
     scored = adata
     if normalize:
         import scanpy as sc
@@ -618,11 +734,13 @@ def annotate_cells(
     score_reference(
         scored, cell_types=reference,
         t_states=t_state_reference, b_states=b_state_reference,
+        species=sp,
     )
     labels = annotate_clusters(
         scored, leiden_col=leiden_col, reference=reference,
         t_state_reference=t_state_reference, b_state_reference=b_state_reference,
         allowed_types=allowed_types, gates=gates, overrides=overrides,
+        species=sp,
     )
     # Propagate each override's per-cell distinct-marker count from the scored
     # copy back onto the returned adata (score_reference writes to `scored`).

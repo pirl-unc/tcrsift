@@ -47,9 +47,20 @@ logger = logging.getLogger(__name__)
 
 # Data-cache DB keys (registered in datacache.DATABASES); one HTML per locus.
 VREGION_DBS = {"TRAV": "imgt_trav_vregion", "TRBV": "imgt_trbv_vregion"}
+VREGION_DBS_MOUSE = {
+    "TRAV": "imgt_trav_vregion_mouse",
+    "TRBV": "imgt_trbv_vregion_mouse",
+}
+VREGION_DBS_BY_SPECIES = {
+    "human": VREGION_DBS,
+    "mouse": VREGION_DBS_MOUSE,
+}
 
 # Memoized parsed reference: gene -> [(allele, functionality, vregion_aa), ...].
+# ``_REFERENCE`` holds human (kept under its legacy name for test monkeypatching);
+# ``_MOUSE_REFERENCE`` holds mouse so the two species never collide.
 _REFERENCE: dict[str, list[tuple[str, str, str]]] | None = None
+_MOUSE_REFERENCE: dict[str, list[tuple[str, str, str]]] | None = None
 
 
 def _parse_vregion_fasta(text: str) -> dict[str, list[tuple[str, str, str]]]:
@@ -73,7 +84,8 @@ def _parse_vregion_fasta(text: str) -> dict[str, list[tuple[str, str, str]]]:
         fields = header.split("|")
         if len(fields) < 4:
             return
-        gene, _, allele = fields[1].partition("*")
+        gene_raw, _, allele = fields[1].partition("*")
+        gene = gene_raw.strip().upper()
         functionality = fields[3].strip()
         nt = "".join(chunks)
         if not nt:
@@ -91,23 +103,37 @@ def _parse_vregion_fasta(text: str) -> dict[str, list[tuple[str, str, str]]]:
         elif line.strip():
             chunks.append(line.strip())
     _flush()
+
+    prefix_targets: dict[str, set[str]] = {}
+    for gene in ref:
+        if "/" in gene:
+            prefix_targets.setdefault(gene.split("/")[0], set()).add(gene)
+    for prefix, fulls in prefix_targets.items():
+        if len(fulls) == 1 and prefix not in ref:
+            ref[prefix] = ref[next(iter(fulls))]
     return ref
 
 
-def _load_reference(data_dir=None, *, force: bool = False) -> dict[str, list[tuple[str, str, str]]]:
+def _load_reference(
+    data_dir=None, *, force: bool = False, species: str = "human"
+) -> dict[str, list[tuple[str, str, str]]]:
     """Load + memoize the V-REGION reference from the data cache.
 
     Returns ``{}`` when the reference HTML isn't cached (download via
-    ``tcrsift data download --db imgt_trav_vregion imgt_trbv_vregion``), so every
-    caller degrades to a no-op rather than raising.
+    ``tcrsift data download --group germline`` or ``--group germline_mouse``),
+    so every caller degrades to a no-op rather than raising.
     """
-    global _REFERENCE
-    if _REFERENCE is not None and not force:
-        return _REFERENCE
+    global _REFERENCE, _MOUSE_REFERENCE
     from .datacache import cached_path
+    from .species import normalize_species
+
+    sp = normalize_species(species)
+    cached_memo = _MOUSE_REFERENCE if sp == "mouse" else _REFERENCE
+    if cached_memo is not None and not force and data_dir is None:
+        return cached_memo
 
     ref: dict[str, list[tuple[str, str, str]]] = {}
-    for _locus, db in VREGION_DBS.items():
+    for _locus, db in VREGION_DBS_BY_SPECIES[sp].items():
         path = cached_path(db, data_dir)
         if path is None:
             continue
@@ -115,16 +141,22 @@ def _load_reference(data_dir=None, *, force: bool = False) -> dict[str, list[tup
             ref.update(_parse_vregion_fasta(path.read_text(errors="replace")))
         except Exception as e:  # a corrupt cache file must not break assembly
             logger.warning("V-REGION reference %s unreadable: %s", path, e)
-    _REFERENCE = ref
+    if data_dir is None:
+        if sp == "mouse":
+            _MOUSE_REFERENCE = ref
+        else:
+            _REFERENCE = ref
     return ref
 
 
-def reference_is_available(data_dir=None) -> bool:
+def reference_is_available(data_dir=None, *, species: str = "human") -> bool:
     """True when at least one locus of the V-REGION reference is cached."""
-    return bool(_load_reference(data_dir))
+    return bool(_load_reference(data_dir, species=species))
 
 
-def germline_vregion(v_gene: str | None) -> list[tuple[str, str, str]]:
+def germline_vregion(
+    v_gene: str | None, *, species: str = "human", data_dir=None
+) -> list[tuple[str, str, str]]:
     """Reference V-REGIONs for a V gene → ``[(allele, functionality, aa), …]``.
 
     Resolves the IMGT slash name (``TRAV14/DV4``) and a bare-prefix call. Empty
@@ -133,7 +165,7 @@ def germline_vregion(v_gene: str | None) -> list[tuple[str, str, str]]:
     gene = normalize_vgene(v_gene)
     if gene is None:
         return []
-    return _load_reference().get(gene, [])
+    return _load_reference(data_dir, species=species).get(gene, [])
 
 
 def _framework(vdj_aa: str | None, cdr3: str | None) -> str | None:
@@ -148,7 +180,12 @@ def _framework(vdj_aa: str | None, cdr3: str | None) -> str | None:
 
 
 def germline_compare_vregion(
-    vdj_aa: str | None, cdr3: str | None, v_gene: str | None
+    vdj_aa: str | None,
+    cdr3: str | None,
+    v_gene: str | None,
+    *,
+    species: str = "human",
+    data_dir=None,
 ):
     """Compare a clone's framework (FR1–FR3) to the closest germline V-REGION.
 
@@ -161,7 +198,7 @@ def germline_compare_vregion(
     fr = _framework(vdj_aa, cdr3)
     if not fr:
         return None
-    candidates = germline_vregion(v_gene)
+    candidates = germline_vregion(v_gene, species=species, data_dir=data_dir)
     if not candidates:
         return None
     best = None  # (identity, allele, germline_overlap)

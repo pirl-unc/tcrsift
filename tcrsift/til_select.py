@@ -150,7 +150,12 @@ def load_vdjdb(path: str | Path) -> pd.DataFrame:
     """Load VDJdb TSV and normalize core columns."""
     path = Path(path)
     if path.is_dir():
-        candidates = list(path.glob("vdjdb*.txt")) + list(path.glob("vdjdb*.tsv"))
+        full_file = path / "vdjdb_full.txt"
+        candidates = (
+            [full_file]
+            if full_file.is_file()
+            else list(path.glob("vdjdb*.txt")) + list(path.glob("vdjdb*.tsv"))
+        )
         if not candidates:
             raise TCRsiftValidationError(f"No VDJdb files found in directory: {path}")
         db_file = candidates[0]
@@ -161,8 +166,12 @@ def load_vdjdb(path: str | Path) -> pd.DataFrame:
     if df.empty:
         raise TCRsiftValidationError(f"VDJdb file is empty: {db_file}")
 
+    if "cdr3.beta" not in df.columns and "gene" in df.columns and "cdr3" in df.columns:
+        df = df[df["gene"] == "TRB"].copy()
+
     column_mapping = {
         "cdr3": "cdr3_beta",
+        "cdr3.beta": "cdr3_beta",
         "cdr3.alpha": "cdr3_alpha",
         "antigen.epitope": "epitope",
         "antigen.gene": "antigen_gene",
@@ -186,8 +195,11 @@ def load_vdjdb(path: str | Path) -> pd.DataFrame:
 
 
 def _load_iedb_cedar_multiheader(path: Path, label: str) -> pd.DataFrame:
-    """Load IEDB/CEDAR format with multi-index header."""
-    df = pd.read_csv(path, sep="\t", header=[0, 1], low_memory=False)
+    """Load IEDB/CEDAR format with multi-index header (CSV v3 or TSV)."""
+    from .annotate import _looks_like_iedb_v3
+
+    sep = "," if _looks_like_iedb_v3(path) else "\t"
+    df = pd.read_csv(path, sep=sep, header=[0, 1], low_memory=False)
     if df.empty:
         raise TCRsiftValidationError(f"{label} file is empty: {path}")
     if df.columns.nlevels != 2:
@@ -219,7 +231,7 @@ def _load_iedb_cedar_multiheader(path: Path, label: str) -> pd.DataFrame:
             "chain2_type": df.get(_col("Chain 2", "Type")),
         }
     )
-    if "chain2_type" in out.columns:
+    if "chain2_type" in out.columns and out["chain2_type"].notna().any():
         mask = out["chain2_type"].fillna("").str.lower().isin(["beta", "trb"])
         out = out[mask]
     out = out.drop(columns=["chain1_type", "chain2_type"])
@@ -870,6 +882,8 @@ def _load_10x_h5_marker_counts(gex_h5_path: Path, marker_genes: list[str]) -> pd
         if "feature_type" in features:
             feature_types = _decode_bytes(features["feature_type"][()])
 
+    from .genes import GENE_SYNONYMS
+
     gene_to_index: dict[str, int] = {}
     for idx, name in enumerate(feature_names):
         if feature_types is not None and feature_types[idx] != "Gene Expression":
@@ -877,6 +891,13 @@ def _load_10x_h5_marker_counts(gex_h5_path: Path, marker_genes: list[str]) -> pd
         key = str(name).strip().upper()
         if key and key not in gene_to_index:
             gene_to_index[key] = idx
+    for alias_key, canonical_val in GENE_SYNONYMS.items():
+        ak = alias_key.upper()
+        cv = canonical_val.upper()
+        if ak in gene_to_index and cv not in gene_to_index:
+            gene_to_index[cv] = gene_to_index[ak]
+        elif cv in gene_to_index and ak not in gene_to_index:
+            gene_to_index[ak] = gene_to_index[cv]
 
     out = pd.DataFrame({"barcode": barcodes})
     total_umis = np.asarray(matrix.sum(axis=0)).ravel().astype(float)
@@ -2342,8 +2363,15 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
         harmonized, marker_scores_by_timepoint, timepoint_order
     )
 
+    from .datacache import ensure_cached
+
     annotated = harmonized.copy()
-    database = load_databases(getattr(args, "vdjdb", None), getattr(args, "iedb", None), getattr(args, "cedar", None))
+    cache_dir = getattr(args, "cache_dir", None)
+    auto_dl = bool(getattr(args, "auto_download", False))
+    vdjdb_p = getattr(args, "vdjdb", None) or ensure_cached("vdjdb", cache_dir, auto_download=auto_dl)
+    iedb_p = getattr(args, "iedb", None) or ensure_cached("iedb", cache_dir, auto_download=auto_dl)
+    cedar_p = getattr(args, "cedar", None) or ensure_cached("cedar", cache_dir, auto_download=auto_dl)
+    database = load_databases(vdjdb_p, iedb_p, cedar_p)
     if database is not None:
         annotated = match_clonotypes(harmonized, database, match_by=getattr(args, "match_by", "CDR3b_only"))
         if "db_species" in annotated.columns:

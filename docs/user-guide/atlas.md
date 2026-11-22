@@ -72,13 +72,21 @@ annotate_cells(atlas, reference=SOLID_TUMOR_CELL_TYPE_SIGNATURES)
 `PBMC_CELL_TYPE_SIGNATURES` is exported as an explicit alias for
 `CELL_TYPE_SIGNATURES`.
 
+**Mouse (`Mus musculus`) datasets:** `cell_qc_funnel`, `embed_cells`, and
+`annotate_cells` auto-detect mouse `AnnData` inputs (from `mt-*` mitochondrial
+prefixes, MGI Title-case symbols such as `Cd8b1`, or `ENSMUSG*` Ensembl IDs; override
+with `species="mouse"` or `--species mouse`) and switch automatically to the
+murine marker registries (`MOUSE_CELL_TYPE_SIGNATURES`,
+`MOUSE_SOLID_TUMOR_CELL_TYPE_SIGNATURES`, `MOUSE_LINEAGE_PROGRAMS`, and
+`MOUSE_GATES`, including NK1.1/`Klrb1c`, `Ncr1`, `Foxp3`, and `Trdc` gates).
+
 ## Identifying malignant clusters with `tumor_override`
 
 Neither cell-type registry includes a generic malignant signature, because
 malignant transcriptional programs vary widely by cancer type and collagen-rich
 tumor clusters otherwise score as fibroblasts. Instead, `tumor_override` labels
-malignant clusters from cancer-testis antigen (CTA) co-expression and optional
-lineage transcription factors:
+malignant clusters from cancer-testis antigen (CTA) gene co-expression and
+optional lineage transcription factors:
 
 - **Primary rule:** relabel a cluster `Tumor` when at least a target fraction
   of cells each express ≥2 distinct genes from the marker panel.
@@ -87,10 +95,10 @@ lineage transcription factors:
   cells (recovering lower-coverage malignant clusters).
 
 By default, the marker panel combines `oncoref.CTA_gene_names()` with
-`oncoref.cta_clinical_target_gene_names()` (retaining clinically validated CTAs
-such as `CTAG1B` [NY-ESO-1], `CTAG2` [LAGE-1], and `MAGEA11` alongside strictly
-testis-restricted genes). Only the rescue transcription factors need to be
-specified per tumor histology:
+`oncoref.cta_clinical_target_gene_names()` (retaining clinically targeted CTA
+genes such as `CTAG1A`/`CTAG1B` [encoding NY-ESO-1], `CTAG2` [encoding LAGE-1],
+and `MAGEA11` alongside strictly testis-restricted genes). Only the rescue
+transcription factors need to be specified per tumor histology:
 
 ```python
 import oncoref

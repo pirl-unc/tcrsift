@@ -1,7 +1,8 @@
 # TCRsift
 
 Prioritize T-cell receptor clonotypes from paired 10x Genomics single-cell VDJ
-and gene-expression data.
+and gene-expression data in **human** (*Homo sapiens*) and **mouse** (*Mus
+musculus*) studies.
 
 ## Overview
 

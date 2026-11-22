@@ -59,17 +59,23 @@ logger = logging.getLogger(__name__)
 PRISM_DEFAULT_PREDICATES = PRISM_PREDICATES
 
 
-def naive_signature():
+def naive_signature(species: str = "human"):
     """The naïve/stem signature used for ``naive_score`` (#141/#145).
 
     The down-pole of the Differentiated contrast: TCF7, LEF1, CCR7, SELL,
-    IL7R, CD27, CD28.
+    IL7R, CD27, CD28 (or MGI orthologs when ``species == 'mouse'``).
     """
     from .signature_methods import Signature
+    from .species import normalize_species
 
+    genes = (
+        ("Tcf7", "Lef1", "Ccr7", "Sell", "Il7r", "Cd27", "Cd28")
+        if normalize_species(species) == "mouse"
+        else ("TCF7", "LEF1", "CCR7", "SELL", "IL7R", "CD27", "CD28")
+    )
     return Signature(
         "Naive",
-        ("TCF7", "LEF1", "CCR7", "SELL", "IL7R", "CD27", "CD28"),
+        genes,
         panel="broad",
         description="Naïve/stem-memory program (#141/#145) for naive_score.",
     )
@@ -85,42 +91,34 @@ def add_pgen_ppost(
     with_ppost: bool = True,
     with_q: bool = True,
     auto_train: bool = True,
+    species: str = "human",
 ) -> pd.DataFrame:
-    """Add per-chain log-probability and selection-factor columns.
-
-    The historically named ``pgen_<chain>`` and ``ppost_<chain>`` columns hold
-    **natural-log probabilities**, not raw probabilities. Ppost uses an
-    observed-repertoire background and is the default publicness measure; Pgen
-    uses the OLGA-generated background. ``log_q`` is ``ln(Ppost) - ln(Pgen)``.
-    ``cdr3_cols`` maps chain → CDR3 column (default ``CDR3_<chain>``). Chains
-    whose CDR3 column is absent are skipped. Returns a copy.
-    """
+    """Add per-chain log-probability and selection-factor columns."""
     from .pgen_models import ensure_model
+    from .species import resolve_species
 
+    sp = resolve_species(species, df=df, warn_mismatch=False)
     out = df.copy()
     cdr3_cols = cdr3_cols or {}
 
     def _resolve(chain: str, role: str):
-        """(model, estimator) honestly, or (None, None) if unavailable.
-
-        Pgen may fall back across *estimators* (tcrpeg→k-mer) — still genuine
-        Pgen. Ppost is role-pure: never substituted by Pgen, so an absent
-        Ppost stays unavailable (→ NaN) rather than masquerading as Pgen.
-        """
+        """(model, estimator) honestly, or (None, None) if unavailable."""
         try:
-            return ensure_model(chain, backend=backend, role=role,
-                                auto_train=auto_train), backend
+            return ensure_model(
+                chain, backend=backend, role=role,
+                auto_train=auto_train, species=sp,
+            ), backend
         except (ImportError, ValueError) as exc:  # Pgen can't be (re)trained
             if role == "pgen":
                 logger.warning("%s; using shipped k-mer Pgen for %s", exc, chain)
                 from .seqprob import load_background_model
-                return load_background_model(chain, "kmer", "pgen"), "kmer"
+                return load_background_model(chain, "kmer", "pgen", species=sp), "kmer"
             return None, None
         except FileNotFoundError as exc:
             if role == "pgen" and backend != "kmer":
                 from .seqprob import load_background_model
                 try:
-                    return load_background_model(chain, "kmer", "pgen"), "kmer"
+                    return load_background_model(chain, "kmer", "pgen", species=sp), "kmer"
                 except FileNotFoundError:
                     pass
             logger.warning("add_pgen_ppost: %s %s unavailable for %s (%s) → NaN",
@@ -138,19 +136,18 @@ def add_pgen_ppost(
             model, pgen_est = _resolve(chain, "pgen")
             out[f"pgen_{chain}"] = (
                 seqprob.score_log_prob(out, chain=chain, cdr3_col=cdr3_col,
-                                       model=model, out_col=f"pgen_{chain}")
+                                       model=model, out_col=f"pgen_{chain}",
+                                       species=sp)
                 if model is not None else np.nan
             )
         if with_ppost:
             model, ppost_est = _resolve(chain, "ppost")
             out[f"ppost_{chain}"] = (
                 seqprob.score_log_prob(out, chain=chain, cdr3_col=cdr3_col,
-                                       model=model, out_col=f"ppost_{chain}")
+                                       model=model, out_col=f"ppost_{chain}",
+                                       species=sp)
                 if model is not None else np.nan
             )
-        # Q = log Ppost − log Pgen is only meaningful within one estimator;
-        # don't emit a cross-estimator ratio. (Rank on Ppost, not Q — Q alone
-        # is the weaker signal; publicness lives in the observed frequency.)
         if with_q and with_pgen and with_ppost:
             if pgen_est is not None and pgen_est == ppost_est:
                 out[f"log_q_{chain}"] = out[f"ppost_{chain}"] - out[f"pgen_{chain}"]
@@ -168,23 +165,35 @@ def score_gex_signature_per_clone(
     gex_prefix: str = "gex",
     log1p: bool = True,
     out_col: str | None = None,
+    species: str = "human",
 ) -> pd.Series:
-    """Per-clone GEX signature score, z-scored within sample/donor groups.
+    """Per-clone GEX signature score, z-scored within sample/donor groups."""
+    from .signature_methods import score_signature, signatures_for_species
 
-    ``per_cell`` is a per-cell frame with ``{gex_prefix}.<SYMBOL>`` columns,
-    a ``clone_col`` and (optionally) a ``group_col`` (sample or donor). Each
-    signature gene is z-scored across cells **within each group** (so a
-    high-baseline sample doesn't dominate, #144/#145), averaged across the
-    signature's genes per cell, then averaged across each clone's cells.
-
-    ``signature`` is a :class:`tcrsift.signature_methods.Signature` or a name
-    in its registry. Returns a per-clone Series indexed by clone id.
-    """
-    from .signature_methods import SIGNATURES, score_signature
-
-    sig = SIGNATURES[signature] if isinstance(signature, str) else signature
+    registry = signatures_for_species(species)
+    sig = registry[signature] if isinstance(signature, str) else signature
     cols = {g: f"{gex_prefix}.{g}" for g in sig.all_genes}
     present = {g: c for g, c in cols.items() if c in per_cell.columns}
+    if not present:
+        # Case-insensitive / synonym fallback on gex.<gene> columns
+        from .genes import GENE_SYNONYMS
+
+        col_lookup = {
+            c[len(gex_prefix) + 1:].upper(): c
+            for c in per_cell.columns
+            if c.startswith(f"{gex_prefix}.")
+        }
+        for group in GENE_SYNONYMS:
+            upper_group = [m.upper() for m in group]
+            found_col = next((col_lookup[m] for m in upper_group if m in col_lookup), None)
+            if found_col is not None:
+                for m in upper_group:
+                    col_lookup.setdefault(m, found_col)
+        present = {
+            g: col_lookup[g.upper()]
+            for g in sig.all_genes
+            if g.upper() in col_lookup
+        }
     if not present:
         raise ValueError(
             f"score_gex_signature_per_clone: none of {sig.name}'s genes "
@@ -212,25 +221,19 @@ def add_gex_signature_scores(
     clone_col: str = "CDR3ab",
     group_col: str | None = None,
     gex_prefix: str = "gex",
+    species: str = "human",
 ) -> pd.DataFrame:
-    """Join per-clone, group-z-scored signature scores onto ``df``.
-
-    ``signatures`` maps output column → signature (name or object); defaults
-    to ``{"antigen_response_score": "AcuteActivation", "naive_score":
-    "DifferentiatedNaive"}`` analogues. ``group_col`` is the sample/donor
-    column in ``per_cell`` to z-score within. Returns a copy of ``df`` with
-    the score columns joined on ``clone_col``.
-    """
+    """Join per-clone, group-z-scored signature scores onto ``df``."""
     if signatures is None:
         signatures = {
             "antigen_response_score": "AcuteActivation",
-            "naive_score": naive_signature(),
+            "naive_score": naive_signature(species=species),
         }
     out = df.copy()
     for out_col, sig in signatures.items():
         per_clone = score_gex_signature_per_clone(
             per_cell, sig, clone_col=clone_col, group_col=group_col,
-            gex_prefix=gex_prefix, out_col=out_col,
+            gex_prefix=gex_prefix, out_col=out_col, species=species,
         )
         out[out_col] = out[clone_col].map(per_clone)
     return out
@@ -409,14 +412,12 @@ def annotate_tcrs(
     clone_col: str = "CDR3ab",
     group_col: str | None = None,
     gex_prefix: str = "gex",
+    species: str = "human",
 ) -> pd.DataFrame:
-    """Add the requested annotation columns to a TCR table (#158).
+    """Add the requested annotation columns to a TCR table (#158)."""
+    from .species import resolve_species
 
-    ``methods`` subset of ``{"pgen", "ppost", "promiscuity", "gex_signatures",
-    "prism"}`` (default all that are computable). ``per_cell`` (with
-    ``{gex_prefix}.`` columns + ``clone_col`` + ``group_col``) is required for
-    ``gex_signatures``/``prism``. Returns a copy with the columns added.
-    """
+    sp = resolve_species(species, df=df, warn_mismatch=False)
     methods = methods or ["pgen", "ppost", "promiscuity", "gex_signatures", "prism"]
     out = df.copy()
     if "pgen" in methods or "ppost" in methods:
@@ -424,15 +425,14 @@ def annotate_tcrs(
             out, chains=chains, backend=backend,
             with_pgen=("pgen" in methods or "prism" in methods),
             with_ppost=("ppost" in methods or "prism" in methods),
+            species=sp,
         )
-    # α–β pairing promiscuity (#148): a no-op when the CDR3 columns are absent,
-    # so it's safe to include by default alongside the sequence-axis features.
     if "promiscuity" in methods:
         out = add_pairing_promiscuity(out)
     if ("gex_signatures" in methods or "prism" in methods) and per_cell is not None:
         out = add_gex_signature_scores(
             out, per_cell, clone_col=clone_col, group_col=group_col,
-            gex_prefix=gex_prefix,
+            gex_prefix=gex_prefix, species=sp,
         )
     if "prism" in methods:
         have = [p.score for p in PRISM_DEFAULT_PREDICATES if p.score in out.columns]

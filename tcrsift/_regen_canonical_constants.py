@@ -1,20 +1,12 @@
-"""Regenerate ``tcrsift/data/canonical_constants.fasta`` from pyensembl.
+"""Regenerate packaged ``canonical_constants*.fasta`` from pyensembl.
 
 Run as::
 
-    python -m tcrsift._regen_canonical_constants [--release 110] [--out PATH]
+    python -m tcrsift._regen_canonical_constants [--species human|mouse] [--release 112] [--out PATH]
 
-Fetches each canonical TCR-constant transcript's ``protein_sequence``
-from pyensembl, strips the leading ``X`` splice-boundary placeholder,
-and writes a FASTA with the prepend-E convention for β chains.
-
-The output is the source of truth for :data:`tcrsift.assemble.HUMAN_TRAC_AA`,
-:data:`tcrsift.assemble.HUMAN_TRBC1_AA`, and :data:`tcrsift.assemble.HUMAN_TRBC2_AA`
-at runtime. See #100 for the motivation; previous hand-typed strings drifted
-from UniProt at seven positions across the three genes.
-
-CI runs the same fetch and asserts the packaged FASTA hasn't moved
-(see ``tests/test_assemble_constants.py::test_canonical_matches_pyensembl``).
+Fetches each canonical TCR-constant transcript's ``protein_sequence`` from
+pyensembl, strips the leading ``X`` splice-boundary placeholder, and writes a
+bare-mature FASTA.
 """
 
 from __future__ import annotations
@@ -24,83 +16,122 @@ import logging
 import sys
 from pathlib import Path
 
+from .species import normalize_species, species_to_pyensembl
+
 logger = logging.getLogger(__name__)
 
-# Canonical transcripts and their UniProt cross-references. Stable across
-# Ensembl releases at least through 114 (last verified 2026-05-28).
-CANONICAL_TRANSCRIPTS: dict[str, dict[str, str]] = {
-    "TRAC":  {"ensembl": "ENST00000611116", "uniprot": "P01848"},
-    "TRBC1": {"ensembl": "ENST00000633705", "uniprot": "P01850"},
-    "TRBC2": {"ensembl": "ENST00000466254", "uniprot": "A0A5B9"},
+# Canonical transcripts and their UniProt cross-references.
+CANONICAL_TRANSCRIPTS_BY_SPECIES: dict[str, dict[str, dict[str, str]]] = {
+    "human": {
+        "TRAC": {"ensembl": "ENST00000611116", "uniprot": "P01848"},
+        "TRBC1": {"ensembl": "ENST00000633705", "uniprot": "P01850"},
+        "TRBC2": {"ensembl": "ENST00000466254", "uniprot": "A0A5B9"},
+    },
+    "mouse": {
+        "TRAC": {"ensembl": "ENSMUST00000198398", "uniprot": "P01849"},
+        "TRBC1": {"ensembl": "ENSMUST00000192856", "uniprot": "P01852"},
+        "TRBC2": {"ensembl": "ENSMUST00000103299", "uniprot": "A0A075B5J4"},
+    },
 }
 
+# Backwards-compatible alias for human transcripts.
+CANONICAL_TRANSCRIPTS: dict[str, dict[str, str]] = CANONICAL_TRANSCRIPTS_BY_SPECIES["human"]
 
-def fetch_canonical_constants(release: int = 110) -> dict[str, str]:
+
+def _resolve_protein_sequence(genome, tx) -> str | None:
+    """Return ``tx.protein_sequence``, falling back to version-stripped
+    ``protein_sequences.fasta_dictionary`` lookup for Ensembl >=112 where FASTA
+    headers carry version suffixes (e.g. ``ENSMUSP00000143014.2``).
+    """
+    seq = tx.protein_sequence
+    if seq:
+        return seq
+    pid = getattr(tx, "protein_id", None)
+    if not pid:
+        return None
+    fdict = genome.protein_sequences.fasta_dictionary
+    if pid in fdict:
+        return fdict[pid]
+    prefix = f"{pid}."
+    for k, v in fdict.items():
+        if k.startswith(prefix):
+            return v
+    return None
+
+
+def fetch_canonical_constants(
+    release: int = 110,
+    *,
+    species: str = "human",
+) -> dict[str, str]:
     """Fetch canonical TCR constant-region AA sequences from pyensembl.
 
     Strips the leading ``X`` (splice-boundary partial codon) that pyensembl
     emits and returns the bare mature C-region for all three genes.
-    The J→C junction residue (universally E for β chains, J-dependent for
-    α chains) is no longer baked into the canonical sequence; it's read
-    per-clone from the CellRanger contig at assembly time (see #105).
-    Pre-2.0 versions prepended a synthetic E to β chains.
-
-    Parameters
-    ----------
-    release : int
-        Ensembl release to query. Defaults to 110 — matches the rest of
-        the tcrsift CLI's pyensembl-release default.
-
-    Returns
-    -------
-    dict[str, str]
-        ``{"TRAC": ..., "TRBC1": ..., "TRBC2": ...}``.
     """
     try:
         import pyensembl
-    except ImportError as exc:
+    except ImportError as e:
         raise RuntimeError(
-            "pyensembl is required for regenerating canonical constants. "
-            "Reinstall tcrsift with its core dependencies."
-        ) from exc
-    ens = pyensembl.EnsemblRelease(release)
+            "pyensembl is required to regenerate canonical_constants.fasta. "
+            "Install with: pip install pyensembl"
+        ) from e
+
+    sp = normalize_species(species)
+    transcripts = CANONICAL_TRANSCRIPTS_BY_SPECIES[sp]
+    genome = pyensembl.EnsemblRelease(release, species=species_to_pyensembl(sp))
+    genome.download()
+    genome.index()
+
     out: dict[str, str] = {}
-    for gene, ids in CANONICAL_TRANSCRIPTS.items():
-        tx = ens.transcript_by_id(ids["ensembl"])
-        prot = tx.protein_sequence
-        if prot is None:
+    for gene, ids in transcripts.items():
+        tx = genome.transcript_by_id(ids["ensembl"])
+        seq = _resolve_protein_sequence(genome, tx)
+        if not seq:
             raise RuntimeError(
-                f"pyensembl returned no protein_sequence for {gene} ({ids['ensembl']})"
+                f"No protein_sequence for {gene} ({ids['ensembl']}) in "
+                f"{sp} Ensembl release {release}"
             )
-        if prot.startswith("X"):
-            prot = prot[1:]
-        out[gene] = prot
+        if not seq.startswith("X"):
+            raise RuntimeError(
+                f"Expected leading 'X' splice placeholder on {gene} "
+                f"({ids['ensembl']}); got start {seq[:10]!r}. Check whether "
+                f"Ensembl's convention changed in release {release}."
+            )
+        out[gene] = seq[1:]
     return out
 
 
-def write_fasta(constants: dict[str, str], path: Path, release: int) -> None:
-    """Write the canonical-constants FASTA with provenance headers."""
+def write_fasta(
+    constants: dict[str, str],
+    path: Path,
+    release: int,
+    *,
+    species: str = "human",
+) -> None:
+    """Write ``constants`` to ``path`` with provenance comments."""
+    sp = normalize_species(species)
+    transcripts = CANONICAL_TRANSCRIPTS_BY_SPECIES[sp]
+    uniprot_summary = ", ".join(
+        f"{info['uniprot']} ({gene})" for gene, info in transcripts.items()
+    )
     lines = [
-        "# tcrsift canonical TCR constant-region AA sequences",
+        f"# tcrsift canonical {sp} TCR constant-region AA sequences",
         f"# Source: Ensembl release {release} protein_sequence for each canonical transcript",
-        "# Verified against UniProt P01848 (TRAC), P01850 (TRBC1), A0A5B9 (TRBC2)",
+        f"# Verified against UniProt {uniprot_summary}",
         "#",
-        "# pyensembl's protein_sequence emits a leading 'X' for the J-C splice-boundary",
-        "# partial codon. We strip that X and instead retain tcrsift's prepend-E convention",
-        "# for β-chain C-regions (the splice junction residue is E for the canonical",
-        "# TRBJ-TRBC1/2 pairs). α-chain stores the bare mature sequence (no prepend).",
+        "# All sequences are BARE MATURE protein (leading splice-boundary 'X' stripped).",
         "#",
         "# To regenerate this file:",
-        "#   python -m tcrsift._regen_canonical_constants",
+        f"#   python -m tcrsift._regen_canonical_constants --species {sp} --release {release}",
     ]
     for gene, seq in constants.items():
-        ids = CANONICAL_TRANSCRIPTS[gene]
+        ids = transcripts[gene]
         header = (
             f">{gene}|UniProt:{ids['uniprot']}|Ensembl:{ids['ensembl']}|"
-            f"release:{release}|prepended-E:{str(gene.startswith('TRBC')).lower()}"
+            f"release:{release}|allele:01"
         )
         lines.append(header)
-        # 60-char-wrapped FASTA body
         for i in range(0, len(seq), 60):
             lines.append(seq[i : i + 60])
     path.write_text("\n".join(lines) + "\n")
@@ -108,19 +139,33 @@ def write_fasta(constants: dict[str, str], path: Path, release: int) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release", type=int, default=110, help="Ensembl release")
+    parser.add_argument(
+        "--species",
+        choices=("human", "mouse"),
+        default="human",
+        help="Target species (default: human)",
+    )
+    parser.add_argument("--release", type=int, default=None, help="Ensembl release")
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path(__file__).parent / "refseqs" / "canonical_constants.fasta",
+        default=None,
         help="Output FASTA path",
     )
     args = parser.parse_args(argv)
+    sp = normalize_species(args.species)
+    release = args.release if args.release is not None else (110 if sp == "human" else 112)
+    default_name = (
+        "canonical_constants.fasta"
+        if sp == "human"
+        else "canonical_constants_mouse.fasta"
+    )
+    out_path = args.out or (Path(__file__).parent / "refseqs" / default_name)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    constants = fetch_canonical_constants(release=args.release)
-    write_fasta(constants, args.out, release=args.release)
-    logger.info("Wrote %s (%d genes)", args.out, len(constants))
+    constants = fetch_canonical_constants(release=release, species=sp)
+    write_fasta(constants, out_path, release=release, species=sp)
+    logger.info("Wrote %s (%d genes)", out_path, len(constants))
     return 0
 
 

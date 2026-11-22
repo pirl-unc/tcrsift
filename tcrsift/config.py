@@ -191,6 +191,8 @@ class AnnotateConfig:
     match_by: str = "CDR3ab"
     exclude_viral: bool = False
     flag_only: bool = False
+    host_species_filter: str = "all"
+    auto_download: bool = False
 
 
 @dataclass
@@ -310,6 +312,10 @@ class AssembleConfig:
     # Shorthand: a raw CellRanger per_sample_outs dir; implies
     # sample_name_from="grandparent".
     cellranger_dir: str | None = None
+    # Optional species overrides for chimeric constructs (e.g. human VDJ +
+    # mouse constant region via constant_species="mouse").
+    constant_species: str | None = None
+    codon_species: str | None = None
 
 
 @dataclass
@@ -391,6 +397,7 @@ class TCRsiftConfig:
     insilico_filter: dict[str, Any] = field(default_factory=dict)
 
     # Global options
+    species: str = "auto"
     verbose: bool = False
 
     @classmethod
@@ -484,6 +491,8 @@ class TCRsiftConfig:
             "match_by": ("annotate", "match_by"),
             "exclude_viral": ("annotate", "exclude_viral"),
             "flag_only": ("annotate", "flag_only"),
+            "host_species_filter": ("annotate", "host_species_filter"),
+            "auto_download": ("annotate", "auto_download"),
             # TIL
             "til_match_by": ("til", "match_by"),
             "min_til_cells": ("til", "min_til_cells"),
@@ -526,6 +535,8 @@ class TCRsiftConfig:
             "contigs_dir": ("assemble", "contigs_dir"),
             "sample_name_from": ("assemble", "sample_name_from"),
             "cellranger_dir": ("assemble", "cellranger_dir"),
+            "constant_species": ("assemble", "constant_species"),
+            "codon_species": ("assemble", "codon_species"),
             "single_chain": ("assemble", "single_chain"),
             # Output
             "generate_plots": ("output", "generate_plots"),
@@ -577,6 +588,10 @@ class TCRsiftConfig:
                     nested[key].update(value)
             elif key == "verbose":
                 global_opts["verbose"] = value
+            elif key == "species":
+                from .species import normalize_species
+
+                global_opts["species"] = normalize_species(value, allow_auto=True)
             elif key == "selection":
                 # Free-form nested selection-rule config (#122).
                 global_opts["selection"] = value if isinstance(value, dict) else {}
@@ -635,6 +650,7 @@ class TCRsiftConfig:
             "output": dataclasses.asdict(self.output),
             "selection": self.selection,
             "insilico_filter": self.insilico_filter,
+            "species": self.species,
             "verbose": self.verbose,
         }
 

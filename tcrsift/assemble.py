@@ -157,6 +157,24 @@ DEFAULT_LEADERS = {
         "source": "Human CD28 signal peptide (UniProt P10747)",
         "species": "human",
     },
+    "mCD8B": {
+        "aa": "MQPWLWLVFSMKLAALWSSAA",
+        "dna": "ATGCAGCCTTGGCTGTGGCTCGTGTTCAGCATGAAGCTGGCCGCTCTGTGGAGCTCCGCCGCT",
+        "source": "Murine Cd8b1 signal peptide (UniProt P10300)",
+        "species": "mouse",
+    },
+    "mCD28": {
+        "aa": "MTLRLLFLALNFFSVQVTE",
+        "dna": "ATGACCCTGAGACTGCTCTTCCTGGCCCTCAACTTCTTTAGCGTGCAGGTGACCGAG",
+        "source": "Murine Cd28 signal peptide (UniProt P31041)",
+        "species": "mouse",
+    },
+    "H2Kb": {
+        "aa": "MVPCTLLLLLAAALAPTQTRA",
+        "dna": "ATGGTGCCCTGCACCCTGCTCCTGCTTCTGGCCGCTGCCCTCGCTCCTACCCAGACAAGAGCC",
+        "source": "Murine H2-K1 (H-2Kb) signal peptide (UniProt P01901)",
+        "species": "mouse",
+    },
     "IgK": {
         "aa": "METDTLLLWVLLLWVPGSTG",
         "dna": "ATGGAGACAGACACACTCCTGCTATGGGTACTGCTGCTCTGGGTTCCAGGTTCCACTGGT",
@@ -167,16 +185,25 @@ DEFAULT_LEADERS = {
     "TRAC": {
         "aa": "MAGTWLLLLLALGCPALPTG",
         "dna": "ATGGCTGGCACCTGGCTGCTGCTGCTGCTGGCCCTGGGATGCCCAGCACTGCCCACAGGC",
-        "source": "Human TRAC native signal peptide",
+        "source": "Synthetic TCR alpha-chain leader peptide (legacy key TRAC)",
         "species": "human",
     },
     "TRBC": {
         "aa": "MGTSLLCWMALCLLGADHADG",
         "dna": "ATGGGCACCAGCCTGCTGTGCTGGATGGCCCTGTGCCTGCTGGGAGCAGACCACGCCGATGGC",
-        "source": "Human TRBC native signal peptide",
+        "source": "Synthetic TCR beta-chain leader peptide (legacy key TRBC)",
         "species": "human",
     },
 }
+
+_DEFAULT_LEADERS_CASEFOLD: dict[str, tuple[str, dict]] = {
+    k.upper(): (k, v) for k, v in DEFAULT_LEADERS.items()
+}
+
+
+def _lookup_default_leader(name: str) -> tuple[str, dict] | None:
+    """Case-insensitive lookup into :data:`DEFAULT_LEADERS` → ``(canonical_key, info)``."""
+    return _DEFAULT_LEADERS_CASEFOLD.get(str(name).strip().upper())
 
 # --- Signal-peptide (leader) QC + Kozak start selection (#263) -------------
 #
@@ -298,20 +325,9 @@ def _record_leader(
     v_gene: str | None = None,
     kozak_score: int | None = None,
     support: str | None = None,
+    species: str = "human",
 ) -> None:
-    """Central sink for EVERY signal-peptide derivation path (#263/#267).
-
-    All four routes — germline anchor, Kozak/h-region heuristic, curated default
-    leader, and curated fallback — write the leader through here, so the
-    ``{chain}_leader_*`` columns and the shared :func:`_classify_leader` QC
-    verdict are recorded identically regardless of how the SP was chosen.
-
-    The germline columns are ALWAYS emitted (NaN when the V gene isn't in the
-    reference) from a universal comparison of the shipped leader to the closest
-    germline allele — so even a heuristic- or curated-derived leader is QC'd for
-    divergence from the native germline, not only the anchored ones. Kozak score
-    / contig support are emitted only for the from_contig routes that supply them.
-    """
+    """Central sink for EVERY signal-peptide derivation path (#263/#267)."""
     result[f"{chain}_leader_aa"] = leader_aa
     if leader_nt is not None:
         result[f"{chain}_leader_nt"] = leader_nt
@@ -323,7 +339,7 @@ def _record_leader(
     if support is not None:
         result[f"{chain}_leader_support"] = support
     # Universal germline comparison (always present; NaN when gene absent).
-    cmp = germline_compare_leader(leader_aa, v_gene)
+    cmp = germline_compare_leader(leader_aa, v_gene, species=species)
     g_allele = g_aa = identity = diff = None
     if cmp is not None:
         allele, g_aa, identity, diff = cmp
@@ -377,6 +393,17 @@ CONSTANT_REGION_ENDINGS = {
     "TRAC": "LLMTLRLWSS",
     "TRBC1": "VKRKDF",
     "TRBC2": "VKRKDSRG",
+}
+
+MOUSE_CONSTANT_REGION_ENDINGS = {
+    "TRAC": "LLMTLRLWSS",
+    "TRBC1": "VKRKNS",
+    "TRBC2": "VKKKNS",
+}
+
+CONSTANT_REGION_ENDINGS_BY_SPECIES = {
+    "human": CONSTANT_REGION_ENDINGS,
+    "mouse": MOUSE_CONSTANT_REGION_ENDINGS,
 }
 
 # Minimum plausible length of the mature constant region per chain.
@@ -433,17 +460,16 @@ _VALID_AA_CHARS = frozenset("ACDEFGHIKLMNPQRSTVWYX*")
 
 _CANONICAL_CONSTANTS_FASTA = "canonical_constants.fasta"
 _CANONICAL_ALLELES_FASTA = "canonical_constants_alleles.fasta"
+_CANONICAL_CONSTANTS_MOUSE_FASTA = "canonical_constants_mouse.fasta"
+_CANONICAL_ALLELES_MOUSE_FASTA = "canonical_constants_alleles_mouse.fasta"
 
 
-def _load_canonical_constants_fasta() -> dict[str, str]:
-    """Parse the packaged canonical-constants FASTA into a {gene: AA} dict.
-
-    The FASTA is shipped in ``tcrsift/data/`` and is the runtime source of
-    truth for the human canonical TCR constant-region AA sequences. See
-    the module-level note above for the provenance chain.
-    """
+def _load_canonical_constants_fasta(
+    filename: str = _CANONICAL_CONSTANTS_FASTA,
+) -> dict[str, str]:
+    """Parse a packaged canonical-constants FASTA into a ``{gene: AA}`` dict."""
     fasta_text = (
-        _pkg_files("tcrsift.refseqs").joinpath(_CANONICAL_CONSTANTS_FASTA).read_text()
+        _pkg_files("tcrsift.refseqs").joinpath(filename).read_text()
     )
     out: dict[str, str] = {}
     name: str | None = None
@@ -455,7 +481,6 @@ def _load_canonical_constants_fasta() -> dict[str, str]:
         if line.startswith(">"):
             if name is not None:
                 out[name] = "".join(seq_parts)
-            # Header format: >NAME|...|... — first token after ">" is the gene name
             name = line[1:].split("|", 1)[0].strip()
             seq_parts = []
         else:
@@ -466,33 +491,27 @@ def _load_canonical_constants_fasta() -> dict[str, str]:
     missing = expected - out.keys()
     if missing:
         raise RuntimeError(
-            f"{_CANONICAL_CONSTANTS_FASTA} is missing canonical entries: {sorted(missing)}"
+            f"{filename} is missing canonical entries: {sorted(missing)}"
         )
     return out
 
 
-_canonical = _load_canonical_constants_fasta()
+_canonical = _load_canonical_constants_fasta(_CANONICAL_CONSTANTS_FASTA)
 HUMAN_TRAC_AA: str = _canonical["TRAC"]
 HUMAN_TRBC1_AA: str = _canonical["TRBC1"]
 HUMAN_TRBC2_AA: str = _canonical["TRBC2"]
 del _canonical
 
-# Fallback J→C junction residue used when no contig C-region NT is available to
-# read the donor's actual residue. β is invariant (E, GAG — the splice spells it
-# the same in every clone); α is J-dependent (N/Y/D/H) so without the contig we
-# use the most common (N). Prepending this keeps the assembled chain the correct
-# length instead of 1 aa short at the J→C seam (#105/#235). The contig path
-# overrides it per-clone when C-region NT is present.
+_mouse_canonical = _load_canonical_constants_fasta(_CANONICAL_CONSTANTS_MOUSE_FASTA)
+MOUSE_TRAC_AA: str = _mouse_canonical["TRAC"]
+MOUSE_TRBC1_AA: str = _mouse_canonical["TRBC1"]
+MOUSE_TRBC2_AA: str = _mouse_canonical["TRBC2"]
+del _mouse_canonical
+
+# Fallback J→C junction residue used when no contig C-region NT is available.
 _FALLBACK_JUNCTION_RESIDUE: dict[str, str] = {"alpha": "N", "beta": "E"}
 
-# Per-TRAJ α J→C junction residue (#242). The α junction is J-gene-determined (a
-# splice product, NOT present in the germline J protein), so when no contig
-# covers the seam we infer it from the J gene rather than a blanket "N" (wrong
-# for ~30% of α — the Y/D/H J-genes). Derived from the contig-READ junctions of
-# the B1 cohort (B1-2/B1-3/B1-4): the residue is consistent across all observed
-# clones per gene, so this table generalizes. Covers the 52 TRAJ with productive
-# usage; a J-gene absent here falls back to "N" flagged low-confidence. Keys are
-# allele-stripped, upper-cased TRAJ names.
+# Human per-TRAJ α J→C junction residue (#242).
 TRAJ_JUNCTION_RESIDUES: dict[str, str] = {
     "TRAJ3": "N", "TRAJ4": "Y", "TRAJ5": "N", "TRAJ6": "Y", "TRAJ7": "N", "TRAJ8": "N",
     "TRAJ9": "N", "TRAJ10": "N", "TRAJ11": "D", "TRAJ12": "D", "TRAJ13": "N", "TRAJ15": "N",
@@ -505,66 +524,61 @@ TRAJ_JUNCTION_RESIDUES: dict[str, str] = {
     "TRAJ54": "N", "TRAJ56": "D", "TRAJ57": "Y", "TRAJ58": "D",
 }
 
+# Mouse (GRCm39 Ensembl 112) per-TRAJ α J→C splice-junction residue: terminal
+# J nucleotide + Trac exon 1 5' dinucleotide "AT" -> AAT/AAC (N), GAT/GAC (D),
+# TAT/TAC (Y), or CAT/CAC (H).
+MOUSE_TRAJ_JUNCTION_RESIDUES: dict[str, str] = {
+    "TRAJ1": "D", "TRAJ2": "D", "TRAJ3": "H", "TRAJ4": "Y", "TRAJ5": "N",
+    "TRAJ6": "Y", "TRAJ7": "N", "TRAJ8": "Y", "TRAJ9": "N", "TRAJ11": "D",
+    "TRAJ12": "D", "TRAJ13": "N", "TRAJ14": "H", "TRAJ15": "N", "TRAJ16": "H",
+    "TRAJ17": "D", "TRAJ18": "D", "TRAJ19": "N", "TRAJ20": "D", "TRAJ21": "N",
+    "TRAJ22": "D", "TRAJ23": "N", "TRAJ24": "D", "TRAJ25": "N", "TRAJ26": "Y",
+    "TRAJ27": "N", "TRAJ28": "N", "TRAJ29": "N", "TRAJ30": "N", "TRAJ31": "N",
+    "TRAJ32": "N", "TRAJ33": "D", "TRAJ34": "N", "TRAJ35": "Y", "TRAJ36": "H",
+    "TRAJ37": "D", "TRAJ38": "N", "TRAJ39": "D", "TRAJ40": "H", "TRAJ41": "D",
+    "TRAJ42": "N", "TRAJ43": "N", "TRAJ44": "D", "TRAJ45": "Y", "TRAJ46": "N",
+    "TRAJ47": "H", "TRAJ48": "N", "TRAJ49": "N", "TRAJ50": "N", "TRAJ51": "N",
+    "TRAJ52": "N", "TRAJ53": "N", "TRAJ54": "N", "TRAJ55": "N", "TRAJ56": "D",
+    "TRAJ57": "Y", "TRAJ58": "D", "TRAJ59": "Y", "TRAJ60": "Y", "TRAJ61": "N",
+}
 
-def _traj_junction_residue(j_gene: object) -> str | None:
+
+def _traj_junction_residue(j_gene: object, species: str = "human") -> str | None:
     """Look up the α J→C junction residue for a TRAJ gene (allele-insensitive),
     or None when the gene is unknown/unmapped."""
     if j_gene is None or (isinstance(j_gene, float) and pd.isna(j_gene)):
         return None
     key = str(j_gene).strip().upper().split("*", 1)[0]
-    return TRAJ_JUNCTION_RESIDUES.get(key)
+    table = MOUSE_TRAJ_JUNCTION_RESIDUES if species == "mouse" else TRAJ_JUNCTION_RESIDUES
+    return table.get(key)
 
 
-# Biologically valid J→C junction residues per chain (the residue spelled by the
-# J segment's terminal nt + the C exon's start). β is invariantly E across the
-# B1 audit; α is J-dependent N/Y/D/H. Used by validate_sequences to GUARD that
-# the seam residue is actually present — a self-consistency check against the
-# row's own constant_aa can't catch a uniformly-dropped junction (#235).
 _VALID_JUNCTION_RESIDUES: dict[str, frozenset] = {
     "alpha": frozenset("NYDH"),
     "beta": frozenset("E"),
 }
 
 
-def _fallback_junction_residue(chain: str, j_gene: object = None) -> tuple[str, str]:
-    """J→C junction residue + provenance when no contig covers the seam (#242).
-
-    Returns ``(residue, source)``:
-    - β → ``("E", "canonical_fallback")`` — invariant, always correct.
-    - α with a J-gene in :data:`TRAJ_JUNCTION_RESIDUES` →
-      ``("<r>", "j_inferred")`` — the germline residue for that J gene.
-    - α otherwise → ``("N", "canonical_fallback")`` — most-common, flagged
-      low-confidence (the J gene couldn't be inferred).
-    """
+def _fallback_junction_residue(
+    chain: str, j_gene: object = None, *, species: str = "human"
+) -> tuple[str, str]:
+    """J→C junction residue + provenance when no contig covers the seam (#242)."""
     if chain == "alpha":
-        r = _traj_junction_residue(j_gene)
+        r = _traj_junction_residue(j_gene, species=species)
         if r:
             return r, "j_inferred"
         return "N", "canonical_fallback"
     return _FALLBACK_JUNCTION_RESIDUE.get(chain, ""), "canonical_fallback"
 
 
-def _apply_cohort_alpha_junctions(df: pd.DataFrame) -> pd.DataFrame:
+def _apply_cohort_alpha_junctions(
+    df: pd.DataFrame, *, codon_species: str = "human"
+) -> pd.DataFrame:
     """Replace the blanket-``N`` α junction fallback with a per-J consensus read
-    from the donor's OWN contig-verified clones (#242).
-
-    The α J→C junction residue is J-dependent (N/Y/D/H) and a splice product, so
-    it can't be inferred from germline protein and isn't recoverable when a clone
-    has no contig. But within one assembly the contig-verified α clones DO reveal
-    the residue per ``alpha_j_gene``; we apply that cohort consensus to no-contig
-    α clones of the same J gene. This is self-validating (donor's own sequence)
-    and corrects the ~30% of fallback α junctions the blanket ``N`` gets wrong.
-
-    The swap is localized to the seam (first residue of the constant / first
-    codon of its NT), so the rest of the construct is untouched. Clones whose J
-    gene has no contig-verified example keep the flagged ``N``. The provenance is
-    ``cohort_j_consensus`` (still NOT this clone's own contig → still treated as
-    unverified by the fidelity gate, just a better residue).
-    """
+    from the donor's OWN contig-verified clones (#242)."""
     src_col, j_col = "alpha_junction_residue_source", "alpha_j_gene"
     if src_col not in df.columns or j_col not in df.columns or df.empty:
         return df
-    # Consensus residue per J gene from this clone's-own-contig reads.
     by_j: dict = {}
     verified = df[df[src_col] == "contig"]
     for j_gene, grp in verified.groupby(j_col, dropna=True):
@@ -579,7 +593,6 @@ def _apply_cohort_alpha_junctions(df: pd.DataFrame) -> pd.DataFrame:
         cur = df.at[idx, "alpha_junction_residue"]
         if not r or r == cur:
             continue
-        # Localized seam swap: residue [0] of the constant, codon [0] of its NT.
         const_aa = df.at[idx, "alpha_constant_aa"]
         if isinstance(const_aa, str) and const_aa:
             new_aa = r + const_aa[1:]
@@ -587,8 +600,7 @@ def _apply_cohort_alpha_junctions(df: pd.DataFrame) -> pd.DataFrame:
             full_aa = df.at[idx, "full_alpha_aa"]
             if isinstance(full_aa, str) and full_aa.endswith(const_aa):
                 df.at[idx, "full_alpha_aa"] = full_aa[: -len(const_aa)] + new_aa
-        new_codon = back_translate(r)
-        # Capture full_nt and the ORIGINAL constant NT before mutating columns.
+        new_codon = back_translate(r, species=codon_species)
         full_nt = df.at[idx, "full_alpha_nt"] if "full_alpha_nt" in df.columns else None
         old_const_nt = df.at[idx, "alpha_constant_nt"] if "alpha_constant_nt" in df.columns else None
         if isinstance(full_nt, str) and isinstance(old_const_nt, str) and full_nt.endswith(old_const_nt):
@@ -604,21 +616,12 @@ def _apply_cohort_alpha_junctions(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _load_canonical_alleles_fasta() -> dict[str, dict[str, str]]:
-    """Parse the packaged multi-allele FASTA into a {gene: {allele: AA}}
-    nested dict. Used by the per-clone allele picker (#113).
-
-    Header convention: ``>{GENE}*{NN}|provenance|notes`` — e.g.
-    ``>TRBC2*01|NCBI:AAA60662|note:major-allele``. The loader keys on
-    everything before the first ``|``, splits ``GENE`` from ``allele``
-    around ``*``, and ignores allele *numbers* — only the protein
-    sequence matters. Multiple IMGT allele numbers can collapse to the
-    same protein form (TRBC2 *01/*02/*04 all encode the same mature
-    protein); we ship them as a single entry under the lowest-numbered
-    allele label.
-    """
+def _load_canonical_alleles_fasta(
+    filename: str = _CANONICAL_ALLELES_FASTA,
+) -> dict[str, dict[str, str]]:
+    """Parse a packaged multi-allele FASTA into a ``{gene: {allele: AA}}`` dict."""
     fasta_text = (
-        _pkg_files("tcrsift.refseqs").joinpath(_CANONICAL_ALLELES_FASTA).read_text()
+        _pkg_files("tcrsift.refseqs").joinpath(filename).read_text()
     )
     out: dict[str, dict[str, str]] = {}
     name: str | None = None
@@ -647,16 +650,22 @@ def _load_canonical_alleles_fasta() -> dict[str, dict[str, str]]:
     missing = expected - out.keys()
     if missing:
         raise RuntimeError(
-            f"{_CANONICAL_ALLELES_FASTA} is missing canonical gene entries: "
+            f"{filename} is missing canonical gene entries: "
             f"{sorted(missing)}"
         )
     return out
 
 
-# Per-gene allele dict: ``HUMAN_CONSTANT_ALLELES[gene][allele] = AA``.
-# Populated at import. Users can extend in-place to register their own
-# alleles before calling :func:`assemble_full_sequences`.
-HUMAN_CONSTANT_ALLELES: dict[str, dict[str, str]] = _load_canonical_alleles_fasta()
+HUMAN_CONSTANT_ALLELES: dict[str, dict[str, str]] = _load_canonical_alleles_fasta(
+    _CANONICAL_ALLELES_FASTA
+)
+MOUSE_CONSTANT_ALLELES: dict[str, dict[str, str]] = _load_canonical_alleles_fasta(
+    _CANONICAL_ALLELES_MOUSE_FASTA
+)
+CONSTANT_ALLELES_BY_SPECIES: dict[str, dict[str, dict[str, str]]] = {
+    "human": HUMAN_CONSTANT_ALLELES,
+    "mouse": MOUSE_CONSTANT_ALLELES,
+}
 
 
 # Allele-called-reason enum (#118). Surfaces the *cause* of every
@@ -955,6 +964,17 @@ for _gene, _aa in (
             f"{_CANONICAL_CONSTANTS_FASTA}: {_gene} canonical AA tail {_aa[-15:]!r} "
             f"doesn't match CONSTANT_REGION_ENDINGS[{_gene!r}]={_expected_tail!r}"
         )
+for _gene, _aa in (
+    ("TRAC", MOUSE_TRAC_AA),
+    ("TRBC1", MOUSE_TRBC1_AA),
+    ("TRBC2", MOUSE_TRBC2_AA),
+):
+    _expected_tail = MOUSE_CONSTANT_REGION_ENDINGS[_gene]
+    if not _aa.endswith(_expected_tail):
+        raise RuntimeError(
+            f"{_CANONICAL_CONSTANTS_MOUSE_FASTA}: {_gene} canonical AA tail {_aa[-15:]!r} "
+            f"doesn't match MOUSE_CONSTANT_REGION_ENDINGS[{_gene!r}]={_expected_tail!r}"
+        )
 del _gene, _aa, _expected_tail
 
 HUMAN_CONSTANT_REGIONS_AA: dict[str, str] = {
@@ -963,12 +983,19 @@ HUMAN_CONSTANT_REGIONS_AA: dict[str, str] = {
     "TRBC2": HUMAN_TRBC2_AA,
 }
 
+MOUSE_CONSTANT_REGIONS_AA: dict[str, str] = {
+    "TRAC": MOUSE_TRAC_AA,
+    "TRBC1": MOUSE_TRBC1_AA,
+    "TRBC2": MOUSE_TRBC2_AA,
+}
 
-# Codon table for back-translating canonical AA constants to NT for
-# downstream consumers that need DNA. Picks the most frequent human
-# codon per residue (CCDS-weighted, GenScript table). This is
-# representative — not authoritative for nucleotide-level work.
-# Stop codon "*" maps to TAA.
+CONSTANT_REGIONS_AA_BY_SPECIES: dict[str, dict[str, str]] = {
+    "human": HUMAN_CONSTANT_REGIONS_AA,
+    "mouse": MOUSE_CONSTANT_REGIONS_AA,
+}
+
+
+# Codon tables for human and mouse (CCDS / Kazusa CAI-ordered).
 HUMAN_PREFERRED_CODONS: dict[str, str] = {
     "A": "GCC", "R": "CGG", "N": "AAC", "D": "GAC", "C": "TGC",
     "Q": "CAG", "E": "GAG", "G": "GGC", "H": "CAC", "I": "ATC",
@@ -977,17 +1004,19 @@ HUMAN_PREFERRED_CODONS: dict[str, str] = {
     "*": "TAA",
 }
 
+MOUSE_PREFERRED_CODONS: dict[str, str] = {
+    "A": "GCC", "R": "AGA", "N": "AAC", "D": "GAC", "C": "TGC",
+    "Q": "CAG", "E": "GAG", "G": "GGC", "H": "CAC", "I": "ATC",
+    "L": "CTG", "K": "AAG", "M": "ATG", "F": "TTC", "P": "CCC",
+    "S": "AGC", "T": "ACC", "W": "TGG", "Y": "TAC", "V": "GTG",
+    "*": "TAA",
+}
 
-# Synonymous codon alternatives per AA, ordered by human CAI descending.
-# Used by :func:`optimize_codons` for motif-aware back-translation: if the
-# CAI-best codon would create a forbidden motif in the surrounding
-# context, the picker walks down the list until it finds one that
-# doesn't. Falls back to the lowest-CAI option when every alternative
-# fails (rare; only possible when all synonyms share a problematic
-# common prefix — practically never for the motifs we forbid).
-#
-# Sources: CCDS-weighted human codon usage (GenScript table) cross-
-# checked against the Kazusa Codon Usage Database.
+PREFERRED_CODONS_BY_SPECIES: dict[str, dict[str, str]] = {
+    "human": HUMAN_PREFERRED_CODONS,
+    "mouse": MOUSE_PREFERRED_CODONS,
+}
+
 HUMAN_CODON_ALTERNATIVES: dict[str, list[str]] = {
     "A": ["GCC", "GCT", "GCA", "GCG"],
     "R": ["CGG", "AGG", "CGC", "AGA", "CGA", "CGT"],
@@ -1010,6 +1039,35 @@ HUMAN_CODON_ALTERNATIVES: dict[str, list[str]] = {
     "Y": ["TAC", "TAT"],
     "V": ["GTG", "GTC", "GTT", "GTA"],
     "*": ["TAA", "TGA", "TAG"],
+}
+
+MOUSE_CODON_ALTERNATIVES: dict[str, list[str]] = {
+    "A": ["GCC", "GCT", "GCA", "GCG"],
+    "R": ["AGA", "AGG", "CGG", "CGC", "CGA", "CGT"],
+    "N": ["AAC", "AAT"],
+    "D": ["GAC", "GAT"],
+    "C": ["TGC", "TGT"],
+    "Q": ["CAG", "CAA"],
+    "E": ["GAG", "GAA"],
+    "G": ["GGC", "GGA", "GGG", "GGT"],
+    "H": ["CAC", "CAT"],
+    "I": ["ATC", "ATT", "ATA"],
+    "L": ["CTG", "CTC", "CTT", "TTG", "CTA", "TTA"],
+    "K": ["AAG", "AAA"],
+    "M": ["ATG"],
+    "F": ["TTC", "TTT"],
+    "P": ["CCC", "CCT", "CCA", "CCG"],
+    "S": ["AGC", "TCC", "TCT", "AGT", "TCA", "TCG"],
+    "T": ["ACC", "ACA", "ACT", "ACG"],
+    "W": ["TGG"],
+    "Y": ["TAC", "TAT"],
+    "V": ["GTG", "GTC", "GTT", "GTA"],
+    "*": ["TAA", "TGA", "TAG"],
+}
+
+CODON_ALTERNATIVES_BY_SPECIES: dict[str, dict[str, list[str]]] = {
+    "human": HUMAN_CODON_ALTERNATIVES,
+    "mouse": MOUSE_CODON_ALTERNATIVES,
 }
 
 
@@ -1068,23 +1126,11 @@ DEFAULT_GC_TARGET_WINDOW: int = 60
 DEFAULT_GC_TARGET_RANGE: tuple[float, float] = (0.40, 0.65)
 
 
-def back_translate(aa: str) -> str:
-    """Reverse-translate a polypeptide to DNA via :data:`HUMAN_PREFERRED_CODONS`.
-
-    The result is one of many valid back-translations; this is the naive
-    "single best codon per AA" version. For motif-aware back-translation
-    that avoids creating restriction sites and homopolymer runs at codon
-    boundaries, use :func:`optimize_codons` instead — which is what the
-    assembly path calls.
-
-    This function is kept for backward compatibility with external
-    callers (and a few internal sites where motif checks would be
-    counter-productive — e.g. when the caller is back-translating a
-    single forced codon for a junction residue). Unknown residues fall
-    back to NNN.
-    """
+def back_translate(aa: str, *, species: str = "human") -> str:
+    """Reverse-translate a polypeptide to DNA via preferred codons for ``species``."""
+    preferred = PREFERRED_CODONS_BY_SPECIES.get(species, HUMAN_PREFERRED_CODONS)
     fallback = "NNN"
-    out = [HUMAN_PREFERRED_CODONS.get(r, fallback) for r in aa]
+    out = [preferred.get(r, fallback) for r in aa]
     return "".join(out)
 
 
@@ -1096,73 +1142,16 @@ def optimize_codons(
     context_window: int = 8,
     gc_target_window: int = DEFAULT_GC_TARGET_WINDOW,
     gc_target_range: tuple[float, float] = DEFAULT_GC_TARGET_RANGE,
+    species: str = "human",
 ) -> str:
     """Back-translate ``aa_sequence`` to DNA with motif avoidance and
-    GC-content balancing.
-
-    For each residue, score synonymous codons (see
-    :data:`HUMAN_CODON_ALTERNATIVES`) by three filters applied in
-    order:
-
-    1. **Motif avoidance (hard)** — reject codons that introduce a
-       new forbidden substring in the trailing ``context_window`` nt.
-       Default forbidden set covers homopolymer runs, common Type-II
-       restriction sites, cryptic polyA signals, and canonical 5′
-       splice donors (see :data:`DEFAULT_FORBIDDEN_MOTIFS`).
-    2. **1-codon lookahead (soft preference)** — prefer codons that
-       leave at least one valid motif-free choice for the next
-       residue. Without lookahead, F+P+P in TRBC1 collapses into a
-       6-mer C run.
-    3. **GC-content windowing (soft preference)** — prefer codons
-       that keep the trailing ``gc_target_window`` nt within
-       ``gc_target_range``. Mammalian expression suffers at GC
-       extremes (Kudla et al. 2006); the default ``(0.40, 0.65)``
-       window is permissive but breaks ties.
-
-    Final tiebreaker: CAI rank (first matching candidate wins).
-    Deterministic: same input always produces the same output.
-
-    Parameters
-    ----------
-    aa_sequence : str
-        AA sequence. Standard 20 + ``*`` (stop). Other characters
-        map to ``NNN``.
-    prefix_nt : str
-        Existing NT to keep in the buffer. Useful when optimizing a
-        constant region appended to a VDJ — pass the trailing nt of
-        VDJ so boundary motifs are caught.
-    forbidden_motifs : tuple of str
-        Substrings to avoid. Pass ``()`` to skip motif avoidance
-        (equivalent to :func:`back_translate`).
-    context_window : int
-        Trailing nt retained for motif checks. Default 8 catches
-        common 6-mer sites + 5-mer runs.
-    gc_target_window : int
-        Sliding-window length (nt) for GC balancing. Default 60.
-    gc_target_range : tuple of float
-        ``(low, high)`` GC fraction. Default ``(0.40, 0.65)``.
-        Pass ``(0.0, 1.0)`` to disable GC balancing entirely.
-
-    Notes
-    -----
-    For deeper expression optimization (mRNA 5' secondary-structure
-    minimization, codon-pair bias, tAI — Tuller et al. 2010; Goodman
-    et al. 2013), use a constraint solver like ``dnachisel``. The
-    in-house optimizer here covers what synthesis vendors filter on
-    by default (motifs, GC) plus the two highest-leverage expression
-    pathologies (polyA + splice donors). For short C-region
-    sequences (≤180 aa), this is empirically competitive with vendor
-    tools on every restriction-site / polyA benchmark we've
-    checked.
-
-    Motifs already present in the prefix buffer are treated as
-    pre-existing and not blamed on subsequent codons (which can't
-    rewrite them anyway).
-    """
+    GC-content balancing for ``species`` ('human' or 'mouse')."""
     if gc_target_range[0] > gc_target_range[1]:
         raise ValueError(
             f"gc_target_range must be (low, high); got {gc_target_range}"
         )
+    codon_alts = CODON_ALTERNATIVES_BY_SPECIES.get(species, HUMAN_CODON_ALTERNATIVES)
+    preferred_codons = PREFERRED_CODONS_BY_SPECIES.get(species, HUMAN_PREFERRED_CODONS)
     gc_balancing_active = gc_target_range != (0.0, 1.0)
 
     def _new_motifs(buffer_with_codon: str, baseline: set[str]) -> bool:
@@ -1172,7 +1161,7 @@ def optimize_codons(
         )
 
     def _has_valid_next(next_aa: str, new_buffer: str) -> bool:
-        next_alts = HUMAN_CODON_ALTERNATIVES.get(next_aa)
+        next_alts = codon_alts.get(next_aa)
         if not next_alts:
             return True
         baseline = {m for m in forbidden_motifs if m in new_buffer}
@@ -1193,13 +1182,12 @@ def optimize_codons(
 
     nt_parts: list[str] = []
     buffer = prefix_nt[-context_window:] if prefix_nt else ""
-    # GC tracking uses a longer trailing window than motif checks.
     gc_buffer = prefix_nt[-gc_target_window:] if prefix_nt else ""
     preexisting = {m for m in forbidden_motifs if m in buffer}
     for i, aa in enumerate(aa_sequence):
-        alternatives = HUMAN_CODON_ALTERNATIVES.get(aa)
+        alternatives = codon_alts.get(aa)
         if not alternatives:
-            codon = HUMAN_PREFERRED_CODONS.get(aa, "NNN")
+            codon = preferred_codons.get(aa, "NNN")
             nt_parts.append(codon)
             buffer = (buffer + codon)[-context_window:]
             gc_buffer = (gc_buffer + codon)[-gc_target_window:]
@@ -1246,32 +1234,12 @@ def recode_codons(
     *,
     max_codon_repeats: int = 1,
     restriction_sites: tuple[str, ...] = (),
+    species: str = "human",
 ) -> tuple[str, list[int]]:
-    """Minimal synonymous recoding of an in-frame coding NT (#293).
-
-    Keeps every original codon EXCEPT those that violate a constraint, swapping
-    only those to the synonymous alternative that clears the violation without
-    creating a new one. The protein is preserved exactly. Returns
-    ``(recoded_nt, changed_offsets)`` where ``changed_offsets`` lists the 0-based
-    NT offsets of the codons that were swapped (empty when nothing changed).
-
-    Constraints:
-
-    * ``max_codon_repeats`` — the longest allowed run of **identical consecutive
-      codons**. Default ``1`` = no codon may immediately repeat, so a native
-      triple ``GGG·GGG·GGG`` becomes e.g. ``GGG·GGA·GGG``, breaking the poly-G
-      that trips the homopolymer hazard. ``0``/``None`` disables it.
-    * ``restriction_sites`` — recognition sequences to keep out, checked on
-      **both strands** (the reverse complement is added automatically). Empty =
-      avoid none.
-
-    This is the surgical counterpart to :func:`optimize_codons` (a full recode):
-    it preserves the donor's native codons everywhere except the few that violate,
-    so the synthesis-ready construct is hazard-clean while staying byte-faithful
-    to the contig wherever it can.
-    """
+    """Minimal synonymous recoding of an in-frame coding NT (#293)."""
     if not isinstance(nt, str) or len(nt) < 3:
         return nt or "", []
+    codon_alts = CODON_ALTERNATIVES_BY_SPECIES.get(species, HUMAN_CODON_ALTERNATIVES)
     forbidden: set[str] = set()
     for site in restriction_sites:
         s = str(site).upper()
@@ -1283,12 +1251,12 @@ def recode_codons(
 
     out: list[str] = []
     changed: list[int] = []
-    buf = ""  # trailing recoded nt, ≥ max_site-1 for boundary motif checks
+    buf = ""
     n_codons = len(nt) // 3
     for i in range(n_codons):
         orig = nt[3 * i: 3 * i + 3]
         aa = CODON_TABLE.get(orig)
-        alts = HUMAN_CODON_ALTERNATIVES.get(aa, [])
+        alts = codon_alts.get(aa, [])
         # Prefer the original codon; only consider synonyms if it violates.
         candidates = [orig, *[c for c in alts if c != orig]]
         chosen = None
@@ -1341,6 +1309,7 @@ class CodonOptimization:
     mode: str = "focal"
     max_codon_repeats: int = 1
     avoid_enzymes: tuple[str, ...] = ()
+    codon_species: str = "human"
 
     def restriction_sites(self) -> tuple[str, ...]:
         sites: list[str] = []
@@ -1378,40 +1347,30 @@ def stop_codons_nt(stop_codons: tuple[str, ...]) -> str:
 
 
 def pick_canonical_constant(
-    chain: str, c_gene: str | None = None, j_gene: str | None = None
+    chain: str,
+    c_gene: str | None = None,
+    j_gene: str | None = None,
+    *,
+    species: str = "human",
 ) -> tuple[str, str]:
-    """Choose the canonical constant-region AA for a chain.
-
-    - Alpha → always TRAC.
-    - Beta → J family decides when known (TRBJ1-* with TRBC1, TRBJ2-*
-      with TRBC2), because the in-cis J→C pairing is locus-determined
-      and reliable. ``c_gene`` is only consulted when ``j_gene`` is
-      missing or its family can't be parsed; CellRanger's TRBC1/TRBC2
-      call is unreliable (the two C genes share ~95% NT identity) and
-      gets silently overridden when it contradicts J (#90). Aggregate
-      override counts are surfaced at the assembly orchestrator level
-      so a per-row override doesn't produce a log flood.
-
-    Returns ``(gene_name, canonical_aa)``.
-    """
+    """Choose the canonical constant-region AA for a chain and species."""
+    regions = CONSTANT_REGIONS_AA_BY_SPECIES.get(species, HUMAN_CONSTANT_REGIONS_AA)
     if chain == "alpha":
-        return "TRAC", HUMAN_TRAC_AA
+        return "TRAC", regions["TRAC"]
 
     j_family = _beta_j_family(j_gene)
     expected_c = BETA_JC_PARITY.get(j_family) if j_family else None
     if expected_c == "TRBC1":
-        return "TRBC1", HUMAN_TRBC1_AA
+        return "TRBC1", regions["TRBC1"]
     if expected_c == "TRBC2":
-        return "TRBC2", HUMAN_TRBC2_AA
+        return "TRBC2", regions["TRBC2"]
 
-    # J family unknown — fall back to the (less reliable) c_gene call.
     c_base = _beta_c_base(c_gene)
     if c_base == "TRBC2":
-        return "TRBC2", HUMAN_TRBC2_AA
+        return "TRBC2", regions["TRBC2"]
     if c_base == "TRBC1":
-        return "TRBC1", HUMAN_TRBC1_AA
-    # Default to TRBC1 when nothing else is known.
-    return "TRBC1", HUMAN_TRBC1_AA
+        return "TRBC1", regions["TRBC1"]
+    return "TRBC1", regions["TRBC1"]
 
 
 def _beta_j_family(j_gene: str | None) -> str:
@@ -1736,39 +1695,19 @@ def load_contigs(
 def get_constant_region_sequences(
     *,
     stop_codons: tuple[str, ...] = ("TAA", "TGA"),
+    species: str = "human",
+    codon_species: str | None = None,
 ) -> dict[str, str]:
-    """
-    Return human TCR constant-region CDS (DNA) via codon-aware back-
-    translation.
+    """Return TCR constant-region CDS (DNA) via codon-aware back-translation."""
+    from .species import normalize_species
 
-    Sources NT from :data:`HUMAN_CONSTANT_REGIONS_AA` and
-    :func:`optimize_codons` (motif-aware — avoids 5+ mononucleotide
-    runs and common Type-II restriction sites; see #116). The earlier
-    pyensembl-backed implementation read the full mRNA at frame
-    offset 2 and silently truncated TRAC / TRBC1 / TRBC2 to 2–11
-    residues for every assembled clonotype (#66). Hardcoding
-    eliminates the frame bug, drops the pyensembl dependency, and
-    matches the canonical sequences that downstream cloning
-    constructs need (#67).
-
-    Parameters
-    ----------
-    stop_codons : tuple of str, default ``("TAA", "TGA")``
-        Stop codons to append to each CDS. Default is the two
-        non-redundant stops (different release factors → reduces
-        read-through in synthesized constructs).
-
-    Returns
-    -------
-    dict
-        Gene name → CDS (DNA, post-junction-codon-aligned … stop).
-        Each CDS is the codon-optimized translation of the canonical
-        AA plus the requested stop codons.
-    """
+    const_sp = normalize_species(species)
+    cod_sp = normalize_species(codon_species) if codon_species else const_sp
     stops_nt = stop_codons_nt(stop_codons)
+    regions = CONSTANT_REGIONS_AA_BY_SPECIES[const_sp]
     out: dict[str, str] = {}
-    for name, aa in HUMAN_CONSTANT_REGIONS_AA.items():
-        out[name] = optimize_codons(aa) + stops_nt
+    for name, aa in regions.items():
+        out[name] = optimize_codons(aa, species=cod_sp) + stops_nt
     return out
 
 
@@ -1797,6 +1736,9 @@ def assemble_full_sequences(
     codon_optimization: str = "focal",
     max_codon_repeats: int = 1,
     avoid_enzymes: tuple[str, ...] = (),
+    species: str = "human",
+    constant_species: str | None = None,
+    codon_species: str | None = None,
 ) -> pd.DataFrame:
     """
     Assemble full-length TCR sequences.
@@ -1923,8 +1865,13 @@ def assemble_full_sequences(
     ...     beta_leader="from_contig",
     ... )
     """
+    from .species import normalize_species, resolve_species
+
     # Validate inputs
     clonotypes = validate_clonotype_df(clonotypes, for_assembly=True)
+    vdj_sp = resolve_species(species, df=clonotypes, warn_mismatch=False)
+    const_sp = normalize_species(constant_species) if constant_species else vdj_sp
+    cod_sp = normalize_species(codon_species) if codon_species else const_sp
 
     # Validate stop_codons early so users get the error before any
     # heavy lifting. Empty tuple is allowed (caller wants no stops).
@@ -1933,6 +1880,7 @@ def assemble_full_sequences(
         mode=codon_optimization,
         max_codon_repeats=max_codon_repeats,
         avoid_enzymes=tuple(avoid_enzymes or ()),
+        codon_species=cod_sp,
     )
 
     valid_constant_sources = ["canonical", "ensembl", "from-data"]
@@ -1942,12 +1890,6 @@ def assemble_full_sequences(
             hint=f"Valid options are: {valid_constant_sources}",
         )
 
-    # #113: warn if the user combined ``constant_source="from-data"``
-    # with an explicit allele override — the from-data path reads the
-    # constant directly from the input frame and doesn't consult the
-    # packaged FASTA, so allele kwargs are silently ignored. Surfacing
-    # this loudly prevents a "I set --trbc2-allele 03 but my output is
-    # still *01" confusion.
     if constant_source == "from-data" and any(
         a != "auto" for a in (trac_allele, trbc1_allele, trbc2_allele)
     ):
@@ -1972,18 +1914,23 @@ def assemble_full_sequences(
                     hint="Provide contigs_dir/cellranger_dir with CellRanger FASTA files, or use a default leader like 'CD8A'",
                 )
             leader_config[chain] = "from_contig"
-        elif leader_param.upper() in DEFAULT_LEADERS:
-            leader_config[chain] = DEFAULT_LEADERS[leader_param.upper()]
         else:
-            raise TCRsiftValidationError(
-                f"Unknown {chain}_leader: '{leader_param}'",
-                hint=f"Valid options are: None, 'from_contig', or one of {list(DEFAULT_LEADERS.keys())}",
-            )
+            hit = _lookup_default_leader(leader_param)
+            if hit is not None:
+                leader_config[chain] = hit[1]
+            else:
+                raise TCRsiftValidationError(
+                    f"Unknown {chain}_leader: '{leader_param}'",
+                    hint=f"Valid options are: None, 'from_contig', or one of {list(DEFAULT_LEADERS.keys())}",
+                )
 
     if verbose:
         alpha_desc = _describe_leader(alpha_leader, leader_config["alpha"])
         beta_desc = _describe_leader(beta_leader, leader_config["beta"])
-        logger.info(f"Assembling full sequences for {len(clonotypes):,} clonotypes")
+        logger.info(
+            f"Assembling full sequences for {len(clonotypes):,} clonotypes "
+            f"(species={vdj_sp}, constant_species={const_sp}, codon_species={cod_sp})"
+        )
         logger.info(f"  Alpha leader: {alpha_desc}")
         logger.info(f"  Beta leader: {beta_desc}")
         logger.info(f"  Constant regions: {include_constant} (source: {constant_source})")
@@ -1991,18 +1938,16 @@ def assemble_full_sequences(
 
     df = clonotypes.copy()
 
-    # Load constant regions if needed. "canonical" / "ensembl" both
-    # hit the same hardcoded-AA path now (#66, #67); "ensembl" is
-    # retained as a back-compat alias and emits an info note.
     constant_seqs = {}
     if include_constant and constant_source in ("canonical", "ensembl"):
         if constant_source == "ensembl" and verbose:
             logger.info(
                 "  constant_source='ensembl' is now an alias for 'canonical' "
-                "(#66) — splicing canonical TRAC / TRBC1 / TRBC2 from "
-                "HUMAN_CONSTANT_REGIONS_AA."
+                f"(#66) — splicing canonical {const_sp} TRAC / TRBC1 / TRBC2."
             )
-        constant_seqs = get_constant_region_sequences(stop_codons=stop_codons)
+        constant_seqs = get_constant_region_sequences(
+            stop_codons=stop_codons, species=const_sp, codon_species=cod_sp
+        )
         if verbose:
             logger.info(
                 f"    Loaded {len(constant_seqs)} canonical constant region sequences"
@@ -2097,6 +2042,9 @@ def assemble_full_sequences(
             allele_overrides=allele_overrides,
             stops_nt=stops_nt,
             recode=recode,
+            vdj_species=vdj_sp,
+            constant_species=const_sp,
+            codon_species=cod_sp,
         )
         assembly_results.append(result)
 
@@ -2111,16 +2059,14 @@ def assemble_full_sequences(
             logger.info(f"  Creating single-chain constructs with {linker} linker...")
         df = _add_single_chain(df, linker)
 
-    # Leader policy (#270): keep an SP-sound, consistent contig leader; warn +
-    # switch a bad/inconsistent one to the germline (or configured) leader;
-    # honor per-chain force / secondary-construct directives. The default runs
-    # on every from_contig assembly (no-op when nothing needs changing).
+    # Leader policy (#270)
     df = apply_leader_policy(
         df, linker,
         leader_fallback=leader_fallback or "germline",
         force_alpha=force_alpha_leader, force_beta=force_beta_leader,
         secondary_alpha=secondary_alpha_leader, secondary_beta=secondary_beta_leader,
         verbose=verbose,
+        species=vdj_sp,
     )
 
     # Summary
@@ -2196,7 +2142,7 @@ def assemble_full_sequences(
     # any flagged construct so a vendor-rejection risk isn't silent.
     # Correct blanket-N α junctions using a per-J consensus from this cohort's
     # contig-verified clones, before QC/provenance (#242).
-    df = _apply_cohort_alpha_junctions(df)
+    df = _apply_cohort_alpha_junctions(df, codon_species=cod_sp)
 
     df = add_synthesis_qc(df)
 
@@ -2248,7 +2194,7 @@ def assemble_full_sequences(
     # divergence for the `framework` rows of collect_germline_variants. No-op
     # (adds no columns) unless the V-REGION reference is cached
     # (`tcrsift data download --db imgt_trav_vregion imgt_trbv_vregion`).
-    df = annotate_vregion_divergence(df)
+    df = annotate_vregion_divergence(df, species=vdj_sp)
 
     # Schema stability (#278). `qc_warnings` is stashed per-clone only when a
     # warning fires, so the column is absent on a clean cohort and present on a
@@ -2262,23 +2208,15 @@ def assemble_full_sequences(
     return df
 
 
-def annotate_vregion_divergence(df: pd.DataFrame) -> pd.DataFrame:
-    """Add ``{chain}_vregion_*`` framework-divergence columns (#286 follow-up).
-
-    For each clone+chain, compares the V-domain framework (FR1–FR3, the V(D)J
-    amino acids up to the CDR3) to the closest germline IMGT V-REGION and records
-    ``{chain}_vregion_allele / _germline_aa / _donor_aa / _identity /
-    _vs_germline``. CDR3 is excluded (junction, not germline-templated).
-
-    No-op when the V-REGION reference isn't cached — adds no columns, so the
-    framework comparison is simply inert until ``tcrsift data download --db
-    imgt_trav_vregion imgt_trbv_vregion`` is run. Only emits a row's columns when
-    the chain is comparable (gene in reference + CDR3 locatable + identity above
-    the floor); incomparable clones get NaN, identical ones get ``identical``.
-    """
+def annotate_vregion_divergence(
+    df: pd.DataFrame, *, species: str = "human"
+) -> pd.DataFrame:
+    """Add ``{chain}_vregion_*`` framework-divergence columns (#286 follow-up)."""
+    from .species import resolve_species
     from .vregion import germline_compare_vregion, reference_is_available
 
-    if not len(df) or not reference_is_available():
+    sp = resolve_species(species, df=df, warn_mismatch=False)
+    if not len(df) or not reference_is_available(species=sp):
         return df
     for chain in ("alpha", "beta"):
         vdj_col, cdr_col, v_col = (
@@ -2288,7 +2226,9 @@ def annotate_vregion_divergence(df: pd.DataFrame) -> pd.DataFrame:
             continue
         alleles, germs, donors, idents, diffs = [], [], [], [], []
         for _, r in df.iterrows():
-            res = germline_compare_vregion(r.get(vdj_col), r.get(cdr_col), r.get(v_col))
+            res = germline_compare_vregion(
+                r.get(vdj_col), r.get(cdr_col), r.get(v_col), species=sp
+            )
             if res is None:
                 for col in (alleles, germs, donors, idents, diffs):
                     col.append(None)
@@ -2320,18 +2260,14 @@ def _assemble_clone(
     allele_overrides: dict[str, str] | None = None,
     stops_nt: str = "TAATGA",
     recode: CodonOptimization | None = None,
+    *,
+    vdj_species: str = "human",
+    constant_species: str = "human",
+    codon_species: str = "human",
 ) -> dict:
     """Assemble full sequence for a single clone."""
     result = {}
 
-    # Try to get full sequence from VDJ columns if available.
-    # Note (#91): the CellRanger-produced ``VDJ_*_nt`` typically has a
-    # +1 trailing nucleotide past the J segment — a contig artifact
-    # that does not encode any AA. If we leave it in, splicing
-    # leader + VDJ + constant frame-shifts everything past the VDJ→C
-    # boundary. Trim to ``3 * len(vdj_aa)`` here so the canonical
-    # stored ``vdj_*_nt`` is always a clean ORF and every downstream
-    # NT concatenation translates back to the assembled AA.
     for chain in ["alpha", "beta"]:
         vdj_col = f"VDJ_{chain}_aa"
         vdj_nt_col = f"VDJ_{chain}_nt"
@@ -2345,56 +2281,43 @@ def _assemble_clone(
                 vdj_nt = vdj_nt[: 3 * len(vdj_aa)]
             result[f"vdj_{chain}_nt"] = vdj_nt
 
-        # Get C gene and J gene for constant-region lookup. J gene is
-        # needed by ``pick_canonical_constant`` to override
-        # CellRanger's unreliable TRBC call via locus-determined
-        # J-family parity (#90); without it the J-based override is
-        # silently bypassed in the real assembly path.
         for gene in ("c_gene", "j_gene"):
             col = f"{chain}_{gene}"
             if col in row:
                 result[col] = row[col]
 
-    # Add leader sequences based on per-chain config
     for chain in ["alpha", "beta"]:
         chain_leader = leader_config.get(chain)
         if chain_leader is None:
             continue
         elif chain_leader == "from_contig":
-            # Extract + QC native leader from contigs (Kozak leaky-scan). The
-            # keep-vs-switch / force / secondary decisions are applied later by
-            # apply_leader_policy (it needs cross-clone consistency).
-            _extract_leader_from_contigs_single(row, sample_contigs, result, chain)
+            _extract_leader_from_contigs_single(
+                row, sample_contigs, result, chain, species=vdj_species
+            )
         elif isinstance(chain_leader, dict):
-            # Curated default leader (CD28/CD8A/…) — routed through the same
-            # central recorder + QC as every other path (#267 review). The
-            # germline comparison shows how the (synthetic) default diverges from
-            # the chain's native V-leader.
             _record_leader(
                 result, chain, chain_leader["aa"], chain_leader["dna"],
                 "curated_default", v_gene=row.get(f"{chain}_v_gene"),
+                species=vdj_species,
             )
 
-    # Add constant regions
     if include_constant:
         if constant_source == "from-data":
-            _add_constant_from_row(row, result)
+            _add_constant_from_row(row, result, species=constant_species)
         else:
-            # ``canonical`` / ``ensembl`` (back-compat alias) flow:
-            # pick the canonical TRAC / TRBC1 / TRBC2, splice the AA
-            # in, and verify against the contig start when available.
             _add_constant_regions(
                 result, constant_seqs,
                 row=row, sample_contigs=sample_contigs,
                 allele_overrides=allele_overrides,
                 stops_nt=stops_nt,
+                vdj_species=vdj_species,
+                constant_species=constant_species,
+                codon_species=codon_species,
             )
 
-    # Determine which chains have leaders for building full sequences
     include_alpha_leader = leader_config.get("alpha") is not None
     include_beta_leader = leader_config.get("beta") is not None
 
-    # Build full sequences
     _build_full_sequences(
         result, include_alpha_leader, include_beta_leader, include_constant, recode=recode,
     )
@@ -2490,6 +2413,8 @@ def _extract_leader_from_contigs_single(
     sample_contigs: dict,
     result: dict,
     chain: str,
+    *,
+    species: str = "human",
 ):
     """Extract + QC the signal peptide from contigs for a single chain (#263).
 
@@ -2543,7 +2468,9 @@ def _extract_leader_from_contigs_single(
                 # donor's native suffix whose length/start match the germline
                 # V-leader. Falls back (None) when the gene/allele is absent or
                 # the contig is too divergent → Kozak + h-region heuristic (#263).
-                anchored = germline_anchor_leader(orig_leader, v_gene)
+                anchored = germline_anchor_leader(
+                    orig_leader, v_gene, species=species
+                )
                 if anchored is not None:
                     leader_aa = anchored[0]
                     start_k = orig_len - len(leader_aa)
@@ -2565,6 +2492,7 @@ def _extract_leader_from_contigs_single(
     _record_leader(
         result, chain, leader_aa, leader_nt, source,
         v_gene=v_gene, kozak_score=score, support=f"{support}/{n_total}",
+        species=species,
     )
 
 
@@ -2575,55 +2503,31 @@ def _add_constant_regions(
     sample_contigs: dict | None = None,
     allele_overrides: dict[str, str] | None = None,
     stops_nt: str = "TAATGA",
+    *,
+    vdj_species: str = "human",
+    constant_species: str = "human",
+    codon_species: str = "human",
 ):
     """Add constant-region sequences and verify against the observed
-    CellRanger contig start where possible.
-
-    Strategy: pick the canonical TRAC / TRBC1 / TRBC2 via
-    :func:`pick_canonical_constant` using ``c_gene`` (with J-gene
-    fallback for β), splice the canonical AA in as the constant, and —
-    if contigs are available — pull the first ~15 residues observed
-    after the VDJ in the contig and verify they match the canonical
-    start. Mismatches surface as ``{chain}_constant_qc`` warnings on
-    the result; the canonical is still used so downstream
-    cloning-construct outputs are at least biologically valid.
-
-    ``allele_overrides`` controls per-gene allele picking (#113). Each
-    key is a gene name (``"TRAC"`` / ``"TRBC1"`` / ``"TRBC2"``); each
-    value is either ``"auto"`` (default — score every packaged allele
-    against the contig translation and pick the best), or an explicit
-    allele label (e.g. ``"01"`` or ``"03"``) to force a specific
-    canonical. Missing keys default to ``"auto"``.
-
-    ``stops_nt`` is the pre-validated, pre-concatenated NT string for
-    stop codons (e.g. ``"TAATGA"`` for the default
-    ``("TAA", "TGA")``). It's appended to every codon-optimized
-    canonical NT — including the picker-override and J-junction
-    branches that previously dropped stops (#116). Pass ``""`` for no
-    stops.
-    """
+    CellRanger contig start where possible (including chimeric constructs)."""
     allele_overrides = allele_overrides or {}
+    is_chimeric = constant_species != vdj_species
+    species_allele_pools = CONSTANT_ALLELES_BY_SPECIES.get(
+        constant_species, HUMAN_CONSTANT_ALLELES
+    )
     for chain in ["alpha", "beta"]:
         c_gene = result.get(f"{chain}_c_gene")
         j_gene = result.get(f"{chain}_j_gene")
-        canonical_name, canonical_aa = pick_canonical_constant(chain, c_gene, j_gene)
+        canonical_name, canonical_aa = pick_canonical_constant(
+            chain, c_gene, j_gene, species=constant_species
+        )
 
-        # `constant_seqs` already holds codon-optimized back-translated
-        # DNA for the canonical AA (built via `optimize_codons` with
-        # the same stop_codons config — see #116); fall back to a
-        # fresh `optimize_codons + stops_nt` build in case a caller
-        # patched the dict with a missing key.
         canonical_nt_codon_opt = constant_seqs.get(
-            canonical_name, optimize_codons(canonical_aa) + stops_nt
+            canonical_name,
+            optimize_codons(canonical_aa, species=codon_species) + stops_nt,
         )
         result[f"{chain}_c_gene_canonical"] = canonical_name
 
-        # If we have CellRanger contigs for this clone, splice the
-        # donor's actual NT at the J→C junction into the front of the C
-        # region NT (see :func:`_blend_constant_nt_with_contig` for the
-        # full strategy). This keeps the assembled NT faithful to the
-        # donor at the boundary, while the deep C region — invariant
-        # across donors — stays codon-optimized for synthesis.
         contig_nt_past_vdj = (
             _extract_c_region_nt_from_contig(
                 row, sample_contigs, result.get(f"vdj_{chain}_nt", ""), chain
@@ -2632,28 +2536,14 @@ def _add_constant_regions(
             else None
         )
 
-        # Allele auto-detect (#113). After 2.3, ``HUMAN_TRBC2_AA``
-        # defaults to the TRBC2*01-protein form (E at mature pos 9 —
-        # major-allele in humans), but the auto-detect can pick the
-        # TRBC2*03-protein form (K at pos 9) for the ~1% of donors who
-        # carry it. ``allele_overrides[gene]`` controls the call:
-        # ``"auto"`` scores all packaged alleles against contig
-        # translation; an explicit allele label forces that allele.
         allele_choice = allele_overrides.get(canonical_name, "auto")
-        allele_pool = HUMAN_CONSTANT_ALLELES.get(canonical_name, {})
+        allele_pool = species_allele_pools.get(canonical_name, {})
         allele_called: str | None = None
         allele_score: float | None = None
         allele_alternatives: dict[str, float] = {}
         allele_called_reason: str | None = None
-        # Best-fit allele AA used as the reference for per-position divergence
-        # reporting. Set whenever the picker has a frame-valid best fit — even
-        # when the *call* is punted (divergent-at-polymorphic-position), so the
-        # divergence that caused the no-call is still recorded (#187 fidelity).
         divergence_ref_aa: str | None = None
 
-        # Translate the contig past the J→C junction codon up-front so
-        # every code path can use it for #120's per-clone audit
-        # (observed_constant_aa_start, allele_divergence_positions).
         contig_post_junction_nt = (
             contig_nt_past_vdj[3:] if contig_nt_past_vdj else ""
         )
@@ -2665,19 +2555,16 @@ def _add_constant_regions(
         if not allele_pool:
             allele_called_reason = ALLELE_REASON_NO_ALLELE_POOL
         elif allele_choice != "auto":
-            # Explicit user override. Validate against the pool
-            # so a typo like ``trbc2_allele='3'`` (vs the right
-            # ``'03'``) doesn't silently fall through to the default.
             if allele_choice in allele_pool:
                 canonical_aa = allele_pool[allele_choice]
                 canonical_nt_codon_opt = (
-                    optimize_codons(canonical_aa) + stops_nt
+                    optimize_codons(canonical_aa, species=codon_species) + stops_nt
                 )
                 allele_called = allele_choice
-                allele_score = 1.0  # by definition; user chose it
+                allele_score = 1.0
                 allele_called_reason = ALLELE_REASON_OVERRIDDEN
-                # Report contig divergence vs the user-chosen allele too.
-                divergence_ref_aa = canonical_aa
+                if not is_chimeric:
+                    divergence_ref_aa = canonical_aa
             else:
                 allele_called_reason = ALLELE_REASON_INVALID_OVERRIDE
                 result.setdefault("qc_warnings", []).append(
@@ -2686,30 +2573,32 @@ def _add_constant_regions(
                     f"{sorted(allele_pool.keys())}); falling back to "
                     f"default allele."
                 )
+        elif is_chimeric:
+            # Heterologous constant region (e.g. human VDJ + mouse constant):
+            # donor contigs encode the donor's native constant, not the chimeric
+            # constant, so commit the canonical chimeric allele directly.
+            default_allele = next(iter(allele_pool.keys()))
+            canonical_aa = allele_pool[default_allele]
+            canonical_nt_codon_opt = (
+                optimize_codons(canonical_aa, species=codon_species) + stops_nt
+            )
+            allele_called = default_allele
+            allele_score = 1.0
+            allele_called_reason = ALLELE_REASON_OVERRIDDEN
         elif not contig_nt_past_vdj:
             allele_called_reason = ALLELE_REASON_NO_CONTIG
             if sample_contigs:
-                # contigs_dir was given but this clone has no contig
-                # post-VDJ — surface it so #119 cohort aggregation can
-                # split "no-contig" clones from "divergent" ones.
                 result.setdefault("qc_warnings", []).append(
                     f"{chain}: allele not called — no contig coverage "
                     f"past VDJ for this clone."
                 )
-            # else: no contigs_dir at all — silent (user opted out).
         else:
-            # Auto-detect. Pool exists, contig exists → run the picker.
             best_allele, best_score, all_scores = _pick_best_allele(
                 contig_aa_past_junction, canonical_name, allele_pool,
             )
             if best_allele is None:
-                # Picker punted. Either the contig translation was
-                # empty (rare; handled below as "sparse") or
-                # ``n_compared`` was below the floor for every allele.
                 n_codons = len(contig_aa_past_junction) if contig_aa_past_junction else 0
                 allele_called_reason = ALLELE_REASON_SPARSE_CONTIG
-                # #118 ask 1: uniformly emit a qc_warning for sparse
-                # contigs (Mode 2 was previously silent).
                 result.setdefault("qc_warnings", []).append(
                     f"{chain}: allele not called — contig covers only "
                     f"{n_codons} codons past VDJ; need "
@@ -2717,8 +2606,6 @@ def _add_constant_regions(
                     f"detection."
                 )
             elif best_score <= 0:
-                # Contig translates but disagrees at every comparable
-                # position — likely a novel divergent allele or noise.
                 allele_called_reason = ALLELE_REASON_DIVERGENT_CONTIG
                 result.setdefault("qc_warnings", []).append(
                     f"{chain}: allele not called — contig disagrees with "
@@ -2726,7 +2613,6 @@ def _add_constant_regions(
                 )
             else:
                 candidate_aa = allele_pool[best_allele]
-                # NT-level frame sanity check (#115).
                 if not _verify_first_codon_frame(
                     contig_post_junction_nt, candidate_aa,
                 ):
@@ -2741,29 +2627,6 @@ def _add_constant_regions(
                         "back to default."
                     )
                 else:
-                    # #120 ask 4: tighten tolerance at allele-
-                    # distinguishing positions. If the picked allele
-                    # disagrees with the contig at one of the positions
-                    # where alleles DIFFER from each other, that's a
-                    # strong signal the donor has a novel variant —
-                    # punt the *call* rather than silently committing.
-                    #
-                    # Note: "punt to NaN" means the allele audit
-                    # columns go NaN. The constant region BYTES
-                    # (canonical_aa / canonical_nt_codon_opt / the
-                    # final ``{chain}_constant_*`` outputs) still
-                    # use the default allele's canonical — so a
-                    # downstream consumer that synthesizes from
-                    # ``_constant_nt_optimized`` gets the default
-                    # allele's residue at the polymorphic position
-                    # even though the contig had a different one.
-                    # Surfacing this is the point of
-                    # ``_observed_constant_aa_start`` and the
-                    # ``divergent_at_polymorphic_position`` reason;
-                    # the user is expected to inspect those before
-                    # ordering a construct.
-                    # Frame check passed → this best-fit allele is the
-                    # reference for divergence reporting, called or not.
                     divergence_ref_aa = candidate_aa
                     polymorphic = _polymorphic_positions(allele_pool)
                     disagreed_at_polymorphic = sorted(
@@ -2789,40 +2652,18 @@ def _add_constant_regions(
                             f"{positions_str} (canonical AA / observed AA). "
                             f"Possible novel allele; falling back to default."
                         )
-                        # Keep allele_alternatives populated so the
-                        # downstream cohort audit (#119) can see the
-                        # picker's runner-up scores even when no call
-                        # was committed.
                         allele_alternatives = all_scores
                     else:
                         canonical_aa = candidate_aa
                         canonical_nt_codon_opt = (
-                            optimize_codons(canonical_aa) + stops_nt
+                            optimize_codons(canonical_aa, species=codon_species)
+                            + stops_nt
                         )
                         allele_called = best_allele
                         allele_score = best_score
                         allele_alternatives = all_scores
                         allele_called_reason = ALLELE_REASON_AUTO_DETECTED
 
-        # J→C junction residue, peeled from the contig — UNIFORMLY for
-        # both chains (#105 in 2.0). The mature TCR mRNA in the donor
-        # encodes a residue at the J→C splice that is NOT part of the
-        # C-exon's canonical AA: the splice combines the J segment's
-        # terminal partial codon (1-2 nt) with the C-exon's first 1-2
-        # nt to spell the junction codon. For β chains the result is
-        # universally E (GAG, across 118/118 audited B1 clones). For α
-        # the junction is J-dependent — N (most common), Y, D, or H.
-        #
-        # Pre-2.0 versions baked an E into the stored HUMAN_TRBC1/2_AA;
-        # α had no analogous handling and every α chain was 1 aa short.
-        # Reading the junction codon from the contig handles both
-        # chains the same way and lets β's per-clone junction NT be
-        # the donor's actual bytes instead of codon-optimized AAC.
-        # Identity of the J→C junction residue. Prefer the donor's actual
-        # residue read from the contig's first codon past the junction; when the
-        # contig can't supply it, fall back to the canonical residue so the chain
-        # is NEVER left 1 aa short at the seam (β invariant E; α default N).
-        # (#105/#235)
         junction_residue: str | None = None
         junction_from_contig = False
         fallback_source = "canonical_fallback"
@@ -2839,15 +2680,10 @@ def _add_constant_regions(
                     f"{translated!r}"
                 )
         elif sample_contigs:
-            # Contigs were loaded but this clone's didn't cover the J→C seam
-            # (the #235 secondary: 10x C-region coverage / extraction).
             fallback_reason = "no contig C-region coverage past VDJ"
         if junction_residue is None:
-            # No contig residue → infer from the J gene (#242). For α this is the
-            # per-TRAJ germline residue when the J gene is mapped (j_inferred),
-            # else most-common N (canonical_fallback, low-confidence); β is E.
             junction_residue, fallback_source = _fallback_junction_residue(
-                chain, result.get(f"{chain}_j_gene"),
+                chain, result.get(f"{chain}_j_gene"), species=vdj_species
             )
             junction_residue = junction_residue or None
             if junction_residue is not None and fallback_reason is not None:
@@ -2865,25 +2701,19 @@ def _add_constant_regions(
                 )
         if junction_residue:
             canonical_aa = junction_residue + canonical_aa
-            # Prepend the codon for the junction residue. `back_translate`
-            # (single-best codon, no motif logic) is intentional: it's one codon
-            # at the start of the construct, and `canonical_nt_codon_opt` already
-            # has its own motif-optimized body. Stops are already on its tail —
-            # don't re-append.
             canonical_nt_codon_opt = (
-                back_translate(junction_residue) + canonical_nt_codon_opt
+                back_translate(junction_residue, species=codon_species)
+                + canonical_nt_codon_opt
             )
         result[f"{chain}_junction_residue"] = junction_residue
         result[f"{chain}_junction_residue_source"] = (
             "contig" if junction_from_contig else fallback_source
         )
 
-        # Record the allele-picker audit (#113, expanded #118/#120).
         result[f"{chain}_allele_called"] = (
             f"{canonical_name}*{allele_called}" if allele_called else None
         )
         result[f"{chain}_allele_score"] = allele_score
-        # #118: machine-readable reason for the call (or no-call).
         result[f"{chain}_allele_called_reason"] = allele_called_reason
         if allele_alternatives:
             result[f"{chain}_allele_alternatives"] = ";".join(
@@ -2895,22 +2725,13 @@ def _add_constant_regions(
         else:
             result[f"{chain}_allele_alternatives"] = None
 
-        # #120 ask 1: raw observed AA past the J→C junction codon.
-        # Lets downstream consumers see the donor's actual residues
-        # regardless of whether the picker matched a packaged allele.
-        # Capped at 15 residues — past that contig coverage is rare
-        # and the residues are dominated by invariant regions.
         result[f"{chain}_observed_constant_aa_start"] = (
-            contig_aa_past_junction[:15] if contig_aa_past_junction else None
+            contig_aa_past_junction[:15]
+            if (contig_aa_past_junction and not is_chimeric)
+            else None
         )
 
-        # #120 ask 2: per-position divergences between the best-fit
-        # allele and the observation. Format: "3:N->K;7:V->I". None
-        # when there's no frame-valid best fit OR no divergence. Reported
-        # against ``divergence_ref_aa`` (the best fit) even when the call
-        # was punted for divergence at a polymorphic position — that is
-        # exactly the divergence #187's fidelity warning must surface.
-        if divergence_ref_aa is not None and contig_aa_past_junction:
+        if divergence_ref_aa is not None and contig_aa_past_junction and not is_chimeric:
             divs = _divergence_positions(divergence_ref_aa, contig_aa_past_junction)
             result[f"{chain}_allele_divergence_positions"] = (
                 _format_divergence_positions(divs)
@@ -2919,43 +2740,36 @@ def _add_constant_regions(
             result[f"{chain}_allele_divergence_positions"] = None
 
         result[f"{chain}_constant_aa"] = canonical_aa
+        contig_for_blend = (
+            (contig_nt_past_vdj[:3] if (contig_nt_past_vdj and len(contig_nt_past_vdj) >= 3) else "")
+            if is_chimeric
+            else (contig_nt_past_vdj or "")
+        )
         blended_nt, blend_debug = _blend_constant_nt_with_contig(
-            contig_nt_past_vdj or "",
+            contig_for_blend,
             canonical_aa,
             canonical_nt_codon_opt,
+            codon_species=codon_species,
         )
 
-        # New (#116) NT triad. Three views of the constant-region NT:
-        # (1) ``_contig`` — pure CellRanger contig bytes past the J→C
-        #     junction. **Truncated at contig coverage** — typically
-        #     covers 30-150 nt of the ~430-530 nt C region (i.e.,
-        #     does NOT reach the stop). Useful for QC, allele
-        #     detection, and any downstream that wants the donor's
-        #     actual NT with no canonical splice. ``None`` when no
-        #     contig is available for the clone.
-        # (2) ``_optimized`` — codon-optimized canonical CDS (+stops).
-        #     Same byte string for every donor carrying the same
-        #     picked allele; what synthesis pipelines order.
-        # (3) ``_constant_nt`` — the legacy column, kept for the
-        #     assembly-aware blend (donor bytes where they agree
-        #     with canonical AA, ``_optimized`` for the rest).
-        #     Unchanged behavior pre/post #116 for callers that
-        #     didn't ask for the new views.
         result[f"{chain}_constant_nt_contig"] = (
-            contig_nt_past_vdj if contig_nt_past_vdj else None
+            contig_nt_past_vdj if (contig_nt_past_vdj and not is_chimeric) else None
         )
         result[f"{chain}_constant_nt_optimized"] = canonical_nt_codon_opt
         result[f"{chain}_constant_nt"] = blended_nt
 
-        # Verify the observed contig C-region start against canonical.
         observed = (
             _extract_c_region_start_from_contig(
                 row, sample_contigs, result.get(f"vdj_{chain}_aa", ""), chain
             )
-            if (row is not None and sample_contigs)
+            if (row is not None and sample_contigs and not is_chimeric)
             else None
         )
-        if observed is None:
+        if is_chimeric:
+            result[f"{chain}_constant_source"] = (
+                f"chimeric:{constant_species}:{canonical_name} [{blend_debug['source']}]"
+            )
+        elif observed is None:
             result[f"{chain}_constant_source"] = (
                 f"canonical:{canonical_name} [{blend_debug['source']}]"
             )
@@ -2975,13 +2789,13 @@ def _add_constant_regions(
                 f"(expected start {canonical_aa[:len(observed)]!r}). "
                 "Using canonical anyway; c_gene assignment may be wrong."
             )
-        if blend_debug["aa_mismatch_at"] is not None:
+        if not is_chimeric and blend_debug["aa_mismatch_at"] is not None:
             result.setdefault("qc_warnings", []).append(
                 f"{chain} constant: contig diverged from canonical at AA "
                 f"position {blend_debug['aa_mismatch_at']}; switched to "
                 f"codon-optimized canonical from that point."
             )
-        if blend_debug.get("partial_codon_dropped"):
+        if not is_chimeric and blend_debug.get("partial_codon_dropped"):
             result.setdefault("qc_warnings", []).append(
                 f"{chain} constant: contig provided a partial codon at the "
                 "C-region boundary, but its bytes were incompatible with "
@@ -3068,6 +2882,8 @@ def _blend_constant_nt_with_contig(
     contig_nt_past_vdj: str,
     canonical_aa: str,
     canonical_nt_codon_opt: str,
+    *,
+    codon_species: str = "human",
 ) -> tuple[str, dict]:
     """Splice contig-derived NT for the J→C junction into a codon-optimized
     canonical C region NT.
@@ -3189,9 +3005,10 @@ def _blend_constant_nt_with_contig(
             if aa == expected_aa and cdn.startswith(partial_nt)
         ]
         if compatible:
-            # If the codon-optimized choice is among the compatible ones,
-            # prefer it (keeps downstream consistency). Otherwise pick any.
-            preferred = HUMAN_PREFERRED_CODONS.get(expected_aa)
+            preferred_map = PREFERRED_CODONS_BY_SPECIES.get(
+                codon_species, HUMAN_PREFERRED_CODONS
+            )
+            preferred = preferred_map.get(expected_aa)
             if preferred in compatible:
                 completed_codon = preferred
             else:
@@ -3280,16 +3097,10 @@ def _extract_c_region_start_from_contig(
     return None
 
 
-def _add_constant_from_row(row: pd.Series, result: dict):
-    """Add constant region sequences directly from row columns if present.
-
-    Also writes ``{chain}_c_gene_canonical`` so the from-data path
-    surfaces the same audit column as the canonical path — without it,
-    downstream code (``validate_sequences``, ``fix_jc_parity``,
-    ``_count_trbc_overrides``) only sees the raw CellRanger
-    ``{chain}_c_gene`` and the J-family override / parity checks
-    silently degrade.
-    """
+def _add_constant_from_row(
+    row: pd.Series, result: dict, *, species: str = "human"
+):
+    """Add constant region sequences directly from row columns if present."""
     for chain in ["alpha", "beta"]:
         aa_col = f"{chain}_constant_aa"
         nt_col = f"{chain}_constant_nt"
@@ -3301,17 +3112,15 @@ def _add_constant_from_row(row: pd.Series, result: dict):
             result[f"{chain}_constant_aa"] = aa_val
         if pd.notna(nt_val):
             result[f"{chain}_constant_nt"] = nt_val
-            # If AA not provided, translate from NT
             if pd.isna(aa_val):
                 const_aa, _ = translate_dna(str(nt_val))
                 result[f"{chain}_constant_aa"] = const_aa
 
-        # Record the canonical gene name so the from-data path produces
-        # the same downstream audit column as the canonical path.
         canonical_name, _ = pick_canonical_constant(
             chain,
             c_gene=row.get(f"{chain}_c_gene"),
             j_gene=row.get(f"{chain}_j_gene"),
+            species=species,
         )
         result[f"{chain}_c_gene_canonical"] = canonical_name
 
@@ -3411,17 +3220,17 @@ def _build_full_sequences(
                 full_aa = result[f"full_{chain}_aa"]
                 donor_aa = full_aa[: len(full_aa) - len(const_aa)] if const_aa else full_aa
                 if recode.mode == "full":
-                    # full recode of the donor leader+VDJ (preferred codons +
-                    # motif/GC avoidance); constant unchanged.
-                    result[f"full_{chain}_nt_optimized"] = optimize_codons(donor_aa) + const_opt
+                    result[f"full_{chain}_nt_optimized"] = (
+                        optimize_codons(donor_aa, species=recode.codon_species)
+                        + const_opt
+                    )
                 else:
-                    # focal (default): keep native leader+VDJ, swap only the
-                    # codons that violate a constraint.
                     native_prefix = opt_leader_nt + opt_vdj_nt
                     recoded_prefix, changed = recode_codons(
                         native_prefix,
                         max_codon_repeats=recode.max_codon_repeats,
                         restriction_sites=sites,
+                        species=recode.codon_species,
                     )
                     result[f"full_{chain}_nt_optimized"] = recoded_prefix + const_opt
                     # Record recodes by region — leader vs VDJ — so NONE are
@@ -3535,22 +3344,25 @@ _FROM_CONTIG_SOURCES = frozenset(
 )
 
 
-def _resolve_named_leader(name: str, row, chain: str) -> tuple[str, str | None, str] | None:
-    """Resolve a leader directive → ``(aa, nt, source_tag)`` for ``chain``.
-
-    ``"germline"`` → the gene's germline V-leader (None if the gene isn't in the
-    reference); a curated key (CD8A/CD28/IgK/TRAC/TRBC) → that bundled leader.
-    """
+def _resolve_named_leader(
+    name: str, row, chain: str, *, species: str = "human"
+) -> tuple[str, str | None, str] | None:
+    """Resolve a leader directive → ``(aa, nt, source_tag)`` for ``chain``."""
     if name == "germline":
         g_aa = row.get(f"{chain}_germline_leader_aa")
         g_allele = row.get(f"{chain}_germline_allele")
         if not isinstance(g_aa, str) or not isinstance(g_allele, str):
             return None
         gene, _, allele = g_allele.partition("*")
-        return g_aa, germline_leader_nt(gene, allele), "germline_reference_leader"
-    key = name.upper()
-    if key in DEFAULT_LEADERS:
-        return DEFAULT_LEADERS[key]["aa"], DEFAULT_LEADERS[key]["dna"], f"curated:{key}"
+        return (
+            g_aa,
+            germline_leader_nt(gene, allele, species=species),
+            "germline_reference_leader",
+        )
+    hit = _lookup_default_leader(name)
+    if hit is not None:
+        canon_key, info = hit
+        return info["aa"], info["dna"], f"curated:{canon_key}"
     return None
 
 
@@ -3583,13 +3395,17 @@ def _stash_preswitch(work: dict, chain: str) -> None:
 
 
 def _substitute_chain_leader(
-    target: dict, orig, chain: str, new_aa: str, new_nt: str | None, source: str
+    target: dict,
+    orig,
+    chain: str,
+    new_aa: str,
+    new_nt: str | None,
+    source: str,
+    *,
+    species: str = "human",
 ) -> None:
     """In ``target`` (a row dict), replace ``chain``'s leader with ``new_aa`` and
-    re-stitch the affected full-sequence columns (the leader is a pure prefix of
-    ``full_{chain}_*``, so donor VDJ/constant bytes are kept). ``single_chain`` is
-    rebuilt by the caller via ``_add_single_chain``.
-    """
+    re-stitch the affected full-sequence columns."""
     donor_aa = orig.get(f"{chain}_leader_aa") or ""
     donor_nt = orig.get(f"{chain}_leader_nt") or ""
     target[f"{chain}_leader_aa"] = new_aa
@@ -3601,10 +3417,9 @@ def _substitute_chain_leader(
     target[f"{chain}_sp_features_ok"] = feats["features_ok"]
     target[f"{chain}_sp_score"] = feats["score"]
     target[f"{chain}_sp_features"] = sp_features_summary(feats)
-    # Refresh the germline comparison to describe the SHIPPED (substituted)
-    # leader, not the discarded contig one — else a row switched TO germline
-    # would still read germline_identity≈0.5 / internal_deletion (review #1).
-    cmp = germline_compare_leader(new_aa, orig.get(f"{chain}_v_gene"))
+    cmp = germline_compare_leader(
+        new_aa, orig.get(f"{chain}_v_gene"), species=species
+    )
     if cmp is not None:
         allele, g_aa, identity, diff = cmp
         target[f"{chain}_germline_allele"] = f"{normalize_vgene(orig.get(f'{chain}_v_gene'))}*{allele}"
@@ -3715,37 +3530,15 @@ def apply_leader_policy(
     secondary_alpha: str | None = None,
     secondary_beta: str | None = None,
     verbose: bool = False,
+    species: str = "human",
 ) -> pd.DataFrame:
-    """Decide the shipped signal peptide for every clone (von Heijne policy, #270).
-
-    Per chain, for from_contig leaders:
-
-    1. ``force_{chain}`` set → use that leader (germline / curated), skip the contig.
-    2. else KEEP the contig leader when it matches germline, OR it's SP-sound
-       (:func:`signal_peptide_features` ``features_ok``) AND its divergence is
-       supported — either unanimous for the gene OR carried by ≥2 clones
-       (:func:`_protected_divergent_leaders`; het-aware, #274), a likely real
-       donor allele (germline indel/SNP) rather than a one-off artifact.
-    3. else (bad SP, or divergent + unsupported) → WARN and switch to
-       ``leader_fallback`` (default the germline V-leader; a curated key
-       otherwise). When the target is germline but the gene isn't in the
-       reference, keep the contig leader + flag (nothing to switch to). The
-       discarded donor variant is preserved via :func:`_stash_preswitch` so it
-       still surfaces in :func:`collect_germline_variants` (tagged ``switched``).
-
-    ``secondary_{chain}`` additionally emits a SECOND construct row with that
-    leader (germline/curated) even for kept good calls; twins are tagged
-    ``leader_variant`` (``primary`` / ``secondary:<leader>``).
-    """
+    """Decide the shipped signal peptide for every clone (von Heijne policy, #270)."""
     protected = _protected_divergent_leaders(df)
     force = {"alpha": force_alpha, "beta": force_beta}
     secondary = {"alpha": secondary_alpha, "beta": secondary_beta}
     df = df.copy()
     n_forced = n_switched = 0
 
-    # --- Pass 1: in-place force / keep-or-switch on each clone ----------------
-    # Accumulate both chains' changes into one working dict per row and write it
-    # back once — writing per-chain would clobber the other chain's edit.
     for idx, row in df.iterrows():
         work = row.to_dict()
         changed = False
@@ -3753,17 +3546,20 @@ def apply_leader_policy(
             aa = work.get(f"{chain}_leader_aa")
             if not isinstance(aa, str) or not aa:
                 continue
-            # 1. Force overrides everything (applies to any source).
             if force[chain]:
-                res = _resolve_named_leader(force[chain], work, chain)
+                res = _resolve_named_leader(
+                    force[chain], work, chain, species=species
+                )
                 if res is not None:
                     new_aa, new_nt, src = res
                     _stash_preswitch(work, chain)
-                    _substitute_chain_leader(work, work, chain, new_aa, new_nt, f"forced_{src}")
+                    _substitute_chain_leader(
+                        work, work, chain, new_aa, new_nt, f"forced_{src}",
+                        species=species,
+                    )
                     changed = True
                     n_forced += 1
                 continue
-            # Keep/switch policy only governs from_contig leaders.
             if work.get(f"{chain}_leader_source") not in _FROM_CONTIG_SOURCES:
                 continue
             germ_aa = work.get(f"{chain}_germline_leader_aa")
@@ -3776,20 +3572,20 @@ def apply_leader_policy(
             divergent = isinstance(germ_aa, str) and not matches_germline
             gene = work.get(f"{chain}_v_gene")
             leader_now = str(work.get(f"{chain}_leader_aa"))
-            # Het-aware (#274): protect this clone's specific divergent leader when
-            # it's unanimous for the gene OR has multi-clone support, not requiring
-            # whole-gene unanimity.
             is_consistent = (chain, str(gene), leader_now) in protected
             keep = matches_germline or (sp_ok and (not divergent or is_consistent))
             if keep:
                 continue
-            # Reject → switch to the fallback leader.
-            res = _resolve_named_leader(leader_fallback, work, chain)
+            res = _resolve_named_leader(
+                leader_fallback, work, chain, species=species
+            )
             if res is None:
-                continue  # nothing to switch to (e.g. germline absent) → keep + flag
+                continue
             new_aa, new_nt, src = res
-            _stash_preswitch(work, chain)  # capture the discarded donor variant (#276)
-            _substitute_chain_leader(work, work, chain, new_aa, new_nt, src)
+            _stash_preswitch(work, chain)
+            _substitute_chain_leader(
+                work, work, chain, new_aa, new_nt, src, species=species
+            )
             changed = True
             n_switched += 1
             if verbose:
@@ -3799,11 +3595,10 @@ def apply_leader_policy(
                 )
         if changed:
             for k, v in work.items():
-                if k not in df.columns:  # .at will stop creating columns
+                if k not in df.columns:
                     df[k] = pd.Series([None] * len(df), index=df.index, dtype=object)
                 df.at[idx, k] = v
 
-    # --- Pass 2: optional secondary constructs --------------------------------
     twins, orig_idx = [], []
     if any(secondary.values()):
         for idx, row in df.iterrows():
@@ -3813,14 +3608,19 @@ def apply_leader_policy(
                     continue
                 if not isinstance(row.get(f"{chain}_leader_aa"), str):
                     continue
-                res = _resolve_named_leader(secondary[chain], row, chain)
+                res = _resolve_named_leader(
+                    secondary[chain], row, chain, species=species
+                )
                 if res is not None:
                     sec.append((chain, secondary[chain], res))
             if not sec:
                 continue
             twin = row.to_dict()
             for chain, name, (new_aa, new_nt, src) in sec:
-                _substitute_chain_leader(twin, row, chain, new_aa, new_nt, f"secondary_{src}")
+                _substitute_chain_leader(
+                    twin, row, chain, new_aa, new_nt, f"secondary_{src}",
+                    species=species,
+                )
             twin["leader_variant"] = "secondary:" + "+".join(s[1] for s in sec)
             twins.append(twin)
             orig_idx.append(idx)
@@ -4115,8 +3915,30 @@ def enforce_contig_fidelity(
     return summary
 
 
+def _infer_constant_species(
+    const_aa: object, full_aa: object, c_base: str, default: str = "human"
+) -> str:
+    """Infer whether an assembled chain carries a human or mouse constant region."""
+    mouse_bare = MOUSE_CONSTANT_REGIONS_AA.get(c_base)
+    if mouse_bare:
+        mb8 = mouse_bare[:8]
+        if isinstance(const_aa, str) and (
+            const_aa.startswith(mb8) or const_aa[1:].startswith(mb8)
+        ):
+            return "mouse"
+    if c_base in ("TRBC1", "TRBC2") and isinstance(full_aa, str) and full_aa:
+        s = full_aa.rstrip("*")
+        if s.endswith(MOUSE_CONSTANT_REGION_ENDINGS[c_base]):
+            return "mouse"
+    return default
+
+
 def validate_sequences(
-    df: pd.DataFrame, strict: bool = False, fix: bool = False
+    df: pd.DataFrame,
+    strict: bool = False,
+    fix: bool = False,
+    *,
+    species: str | None = None,
 ) -> list[ValidationMessage]:
     """Validate assembled sequences end-to-end per row (#67, #68).
 
@@ -4169,6 +3991,11 @@ def validate_sequences(
         informational.append(
             ValidationMessage(f"Clone {idx}: {text}", idx=idx, severity="informational")
         )
+
+    from .species import detect_vdj_species, normalize_species
+
+    explicit_vdj_sp = normalize_species(species) if species else None
+    detected_vdj_sp = explicit_vdj_sp or detect_vdj_species(df)
 
     if fix:
         autocorrect_notes = fix_jc_parity(df)
@@ -4249,8 +4076,11 @@ def validate_sequences(
             # short at the seam. This is the check the prior self-consistent
             # canonical-start comparison (observed vs the row's own constant_aa)
             # could not make, which is how #235 shipped silently.
-            c_base = _resolve_c_gene(row, chain).split("*")[0]
-            bare = HUMAN_CONSTANT_REGIONS_AA.get(c_base)
+            c_base = _resolve_c_gene(row, chain).strip().upper().split("*")[0]
+            row_const_sp = _infer_constant_species(
+                const, seq, c_base, default=explicit_vdj_sp or detected_vdj_sp or "human"
+            )
+            bare = CONSTANT_REGIONS_AA_BY_SPECIES[row_const_sp].get(c_base)
             if isinstance(const, str) and const and bare:
                 bare8 = bare[:8]
                 if const.startswith(bare8):
@@ -4267,22 +4097,33 @@ def validate_sequences(
                         f"{const[:9]!r} (expected a valid junction residue "
                         f"{sorted(_VALID_JUNCTION_RESIDUES.get(chain, ()))} "
                         f"+ canonical {bare8!r})")
-                # α J-gene cross-check (#242/#236): the seam residue must match
-                # the J gene's germline residue. Catches a wrongly-defaulted N
-                # (or a contig misread) that the syntactic {N,Y,D,H} check above
-                # can't — a defaulted N for a Y/D/H J gene is ~30% of α.
                 elif chain == "alpha":
-                    expected = _traj_junction_residue(row.get("alpha_j_gene"))
-                    if expected and const[0] != expected:
+                    j_gene_val = row.get("alpha_j_gene")
+                    if explicit_vdj_sp or detected_vdj_sp:
+                        expected_set = {
+                            _traj_junction_residue(
+                                j_gene_val,
+                                species=(explicit_vdj_sp or detected_vdj_sp or "human"),
+                            )
+                        } - {None}
+                    elif row_const_sp == "mouse":
+                        # Either pure mouse or chimeric human-VDJ + mouse-constant.
+                        expected_set = {
+                            _traj_junction_residue(j_gene_val, species="human"),
+                            _traj_junction_residue(j_gene_val, species="mouse"),
+                        } - {None}
+                    else:
+                        expected_set = {
+                            _traj_junction_residue(j_gene_val, species="human")
+                        } - {None}
+                    if expected_set and const[0] not in expected_set:
+                        expected_disp = sorted(expected_set)[0] if len(expected_set) == 1 else sorted(expected_set)
                         _lb(idx,
                             f"alpha J→C junction {const[0]!r} disagrees with the "
-                            f"germline residue {expected!r} for "
-                            f"{str(row.get('alpha_j_gene'))!r} — likely a "
+                            f"germline residue {expected_disp!r} for "
+                            f"{str(j_gene_val)!r} — likely a "
                             f"defaulted/misread junction (#242)")
 
-            # Byte-for-byte: full == leader + vdj + constant when all
-            # parts are available. Catches dropped/added residues
-            # during assembly (the failure mode no other check finds).
             vdj = row.get(f"vdj_{chain}_aa")
             if (
                 isinstance(leader, str) and leader
@@ -4295,34 +4136,19 @@ def validate_sequences(
                         f"full_{chain}_aa != leader+vdj+constant "
                         f"(len {len(seq)} vs {len(expected)})")
 
-            # Canonical-ending / canonical-start checks. Prefer
-            # ``{chain}_c_gene_canonical`` (written by
-            # ``_add_constant_regions``); fall back to the raw
-            # CellRanger ``{chain}_c_gene`` call. If neither resolves
-            # to a known canonical gene name, emit an informational
-            # "did-not-check" note so the user knows validation was
-            # incomplete.
             c_gene = _resolve_c_gene(row, chain)
-            # Strip any allele suffix (e.g. "TRBC1*01" → "TRBC1").
-            c_gene_base = c_gene.split("*")[0]
-            if c_gene_base in CONSTANT_REGION_ENDINGS:
-                expected_end = CONSTANT_REGION_ENDINGS[c_gene_base]
+            c_gene_base = c_gene.strip().upper().split("*")[0]
+            endings_map = CONSTANT_REGION_ENDINGS_BY_SPECIES[row_const_sp]
+            if c_gene_base in endings_map:
+                expected_end = endings_map[c_gene_base]
                 if not seq.endswith(expected_end):
                     _lb(idx,
                         f"{chain} doesn't end with canonical "
                         f"{c_gene_base} C-terminus ({expected_end!r}); "
                         f"got {seq[-len(expected_end):]!r}")
-                # Prefer the row's actual ``{chain}_constant_aa`` as the
-                # expected start. After 2.0 (#105) this carries the
-                # per-clone junction residue prepend (e.g.
-                # ``NIQNPDPAVY...`` for α with N junction;
-                # ``EDLNKVFP...`` for β with universal-E junction).
-                # Falling back to ``HUMAN_CONSTANT_REGIONS_AA[base]``
-                # — the bare-mature canonical — was the #107 regression:
-                # observed includes the junction; expected didn't.
                 expected_const = row.get(f"{chain}_constant_aa")
                 if not isinstance(expected_const, str) or not expected_const:
-                    expected_const = HUMAN_CONSTANT_REGIONS_AA.get(c_gene_base)
+                    expected_const = CONSTANT_REGIONS_AA_BY_SPECIES[row_const_sp].get(c_gene_base)
                 if expected_const and not verify_canonical_constant_start(
                     _expected_constant_start_from_full(seq, row, chain),
                     expected_const,
@@ -4566,18 +4392,23 @@ def build_assembly_qc_report(df: pd.DataFrame) -> AssemblyQCReport:
         sub_full = full[present_mask]
         chain_label = "α" if chain == "alpha" else "β"
 
-        # Terminal residue (against canonical for the row's c_gene).
+        # Terminal residue (against canonical for the row's c_gene and constant species).
         def _ends_canonical(row, _chain=chain):
             s = row.get(f"full_{_chain}_aa", "")
             if not isinstance(s, str) or not s:
                 return False
             c = _resolve_c_gene(row, _chain)
-            base = c.split("*")[0]
-            if base in CONSTANT_REGION_ENDINGS:
-                return s.endswith(CONSTANT_REGION_ENDINGS[base])
-            return any(
-                s.endswith(end) for end in CONSTANT_REGION_ENDINGS.values()
+            base = c.strip().upper().split("*")[0]
+            csp = _infer_constant_species(
+                row.get(f"{_chain}_constant_aa"), s, base, default="human"
             )
+            endings = CONSTANT_REGION_ENDINGS_BY_SPECIES[csp]
+            if base in endings:
+                return s.endswith(endings[base])
+            all_ends = set(CONSTANT_REGION_ENDINGS.values()) | set(
+                MOUSE_CONSTANT_REGION_ENDINGS.values()
+            )
+            return any(s.endswith(end) for end in all_ends)
 
         end_pass = sub.apply(_ends_canonical, axis=1)
         _add(
@@ -4952,38 +4783,37 @@ def _expand_samples_unique(samples_series: pd.Series) -> int:
     return len(sample_set)
 
 
-def _candidate_constant_alleles_for_chain(chain: str) -> list[tuple[str, str, str]]:
+def _candidate_constant_alleles_for_chain(
+    chain: str, *, species: str = "human"
+) -> list[tuple[str, str, str]]:
     """Return ``(gene, allele_label, aa)`` references compatible with chain."""
+    pools = CONSTANT_ALLELES_BY_SPECIES.get(species, HUMAN_CONSTANT_ALLELES)
     if chain == "alpha":
         genes = ("TRAC",)
     elif chain == "beta":
         genes = ("TRBC1", "TRBC2")
     else:
-        genes = tuple(HUMAN_CONSTANT_ALLELES)
+        genes = tuple(pools)
 
     refs: list[tuple[str, str, str]] = []
     for gene in genes:
-        for allele, aa in HUMAN_CONSTANT_ALLELES.get(gene, {}).items():
+        for allele, aa in pools.get(gene, {}).items():
             refs.append((gene, f"{gene}*{allele}", aa))
     return refs
 
 
 def _default_reference_for_gene(
-    canonical_name: object,
+    canonical_name: object, *, species: str = "human"
 ) -> tuple[str | None, str | None]:
-    """Return the default packaged allele label + AA for a known gene.
-
-    The "default" is the first allele in FASTA order, which is ``*01``
-    for every packaged gene and whose AA prefix matches the legacy
-    ``HUMAN_CONSTANT_REGIONS_AA`` baseline — so the recompute path's
-    ``expected_aa`` is unchanged from before this helper existed.
-    """
+    """Return the default packaged allele label + AA for a known gene."""
     gene = str(canonical_name)
-    pool = HUMAN_CONSTANT_ALLELES.get(gene, {})
+    pools = CONSTANT_ALLELES_BY_SPECIES.get(species, HUMAN_CONSTANT_ALLELES)
+    regions = CONSTANT_REGIONS_AA_BY_SPECIES.get(species, HUMAN_CONSTANT_REGIONS_AA)
+    pool = pools.get(gene, {})
     if pool:
         allele, aa = next(iter(pool.items()))
         return f"{gene}*{allele}", aa
-    aa = HUMAN_CONSTANT_REGIONS_AA.get(gene)
+    aa = regions.get(gene)
     if aa:
         return gene, aa
     return None, None
@@ -4992,18 +4822,10 @@ def _default_reference_for_gene(
 def _closest_reference_for_observations(
     chain: str,
     observations: pd.Series,
+    *,
+    species: str = "human",
 ) -> tuple[str | None, str | None]:
-    """Pick the nearest packaged constant allele for a novel gene label.
-
-    The novel-allele audit still needs a reference sequence to define
-    ``expected_aa``. For labels outside the packaged constants, choose
-    the compatible chain reference with the highest aggregate prefix
-    agreement across observed contig AA strings.
-
-    O(n_obs × n_alleles × prefix_len), but only reached on the
-    novel-gene path — known genes resolve via
-    :func:`_default_reference_for_gene` before this is called.
-    """
+    """Pick the nearest packaged constant allele for a novel gene label."""
     obs_values = [
         str(obs)
         for obs in observations.dropna()
@@ -5015,7 +4837,9 @@ def _closest_reference_for_observations(
     best_label: str | None = None
     best_aa: str | None = None
     best_key: tuple[float, int, int] = (-1.0, -1, -1)
-    for _, label, allele_aa in _candidate_constant_alleles_for_chain(chain):
+    for _, label, allele_aa in _candidate_constant_alleles_for_chain(
+        chain, species=species
+    ):
         n_agree_total = 0
         n_compared_total = 0
         for obs in obs_values:
@@ -5037,12 +4861,18 @@ def _reference_for_gene_or_observations(
     chain: str,
     canonical_name: object,
     observations: pd.Series,
+    *,
+    species: str = "human",
 ) -> tuple[str | None, str | None]:
     """Resolve the reference allele used to describe divergences."""
-    reference_label, reference_aa = _default_reference_for_gene(canonical_name)
+    reference_label, reference_aa = _default_reference_for_gene(
+        canonical_name, species=species
+    )
     if reference_aa:
         return reference_label, reference_aa
-    return _closest_reference_for_observations(chain, observations)
+    return _closest_reference_for_observations(
+        chain, observations, species=species
+    )
 
 
 def _variant_description(position: int, expected_aa: str, observed_aa: str) -> str:
@@ -5207,8 +5037,15 @@ def _collect_divergences_for_chain(
         for canonical_name, gene_slice in df.loc[
             recompute_mask
         ].groupby(gene_col, dropna=True, observed=True):
+            const_col = f"{chain}_constant_aa"
+            full_col = f"full_{chain}_aa"
+            first_const = gene_slice[const_col].iloc[0] if const_col in gene_slice.columns else None
+            first_full = gene_slice[full_col].iloc[0] if full_col in gene_slice.columns else None
+            slice_sp = _infer_constant_species(
+                first_const, first_full, str(canonical_name).upper(), default="human"
+            )
             reference_label, reference_aa = _reference_for_gene_or_observations(
-                chain, canonical_name, gene_slice[obs_col],
+                chain, canonical_name, gene_slice[obs_col], species=slice_sp
             )
             if not reference_aa or not reference_label:
                 continue

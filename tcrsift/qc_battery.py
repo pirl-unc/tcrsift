@@ -61,8 +61,13 @@ _CT = dict(zip(_COD, _AA))
 EXPECTED_T2A = "EGRGSLLTCGDVEENPGP"
 
 # J genes whose conserved anchor is not F/W (IMGT non-canonical); their CDR3
-# ends on that residue rather than the canonical Phe/Trp. TRAJ35: C-G-S-G.
-NONCANON_J_END: dict[str, list[str]] = {"C": ["TRAJ35"]}
+# ends on that residue rather than the canonical Phe/Trp (e.g. human TRAJ35:
+# C-G-S-G; mouse TRAJ7/TRAJ44: L; mouse TRBJ2-6: Y).
+NONCANON_J_END: dict[str, list[str]] = {
+    "C": ["TRAJ35"],
+    "L": ["TRAJ7", "TRAJ44"],
+    "Y": ["TRBJ2-6"],
+}
 
 
 def _tr(nt: str) -> str:
@@ -202,8 +207,9 @@ def check_cdr3_ref(d: pd.DataFrame) -> QCResult:
                 bad += 1
             end = cdr[-1]
             if end not in "FW":
+                jg_u = jg.upper()
                 if end in NONCANON_J_END and any(
-                    jg.startswith(g) for g in NONCANON_J_END[end]
+                    jg_u.startswith(g) for g in NONCANON_J_END[end]
                 ):
                     noncanon += 1
                 else:
@@ -212,7 +218,7 @@ def check_cdr3_ref(d: pd.DataFrame) -> QCResult:
             ("alpha_v_gene", "TRAV"), ("alpha_j_gene", "TRAJ"), ("alpha_c_gene", "TRAC"),
             ("beta_v_gene", "TRBV"), ("beta_j_gene", "TRBJ"), ("beta_c_gene", "TRBC"),
         ]:
-            if not str(r[g]).startswith(pat):
+            if not str(r[g]).upper().startswith(pat):
                 bad += 1
         for ch in ("alpha", "beta"):
             jr = str(r.get(f"{ch}_junction_residue", ""))

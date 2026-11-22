@@ -372,9 +372,10 @@ class TestCLIEndToEnd:
     def test_cli_help(self):
         """Test that CLI help works."""
         import subprocess
+        import sys
 
         result = subprocess.run(
-            ["python", "-m", "tcrsift.cli", "--help"],
+            [sys.executable, "-m", "tcrsift.cli", "--help"],
             capture_output=True,
             text=True,
         )
@@ -384,15 +385,16 @@ class TestCLIEndToEnd:
     def test_cli_version(self):
         """Test that CLI version works."""
         import subprocess
+        import sys
 
         result = subprocess.run(
-            ["python", "-m", "tcrsift.cli", "--version"],
+            [sys.executable, "-m", "tcrsift.cli", "--version"],
             capture_output=True,
             text=True,
         )
         assert result.returncode == 0
         result = subprocess.run(
-            ["python", "-m", "tcrsift.cli", "-v"],
+            [sys.executable, "-m", "tcrsift.cli", "-v"],
             capture_output=True,
             text=True,
         )
