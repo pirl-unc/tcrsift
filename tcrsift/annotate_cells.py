@@ -473,10 +473,12 @@ def score_reference(
                 ctrl = min(50, max(1, n_pool))
                 n_bins = min(25, max(2, work.n_vars - 1))
                 try:
-                    sc.tl.score_genes(work, g, score_name=col, ctrl_size=ctrl, n_bins=n_bins)
+                    sc.tl.score_genes(
+                        work, g, score_name=col, ctrl_size=ctrl, n_bins=n_bins, use_raw=False
+                    )
                     if work is not adata:
                         adata.obs[col] = work.obs[col].to_numpy()
-                except (RuntimeError, ZeroDivisionError):
+                except (RuntimeError, ZeroDivisionError, ValueError, KeyError):
                     g_set = set(g)
                     pool = [v for v in work.var_names if v not in g_set]
                     adata.obs[col] = _var_mean(work, g) - _var_mean(work, pool)

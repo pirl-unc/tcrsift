@@ -107,7 +107,9 @@ def _parse_vregion_fasta(text: str) -> dict[str, list[tuple[str, str, str]]]:
     for gene_key in list(ref):
         ref[gene_key].sort(
             key=lambda item: (
-                0 if item[1].startswith("F") else (1 if item[1].startswith("ORF") else 2),
+                0
+                if str(item[1]).strip("[]() ").startswith("F")
+                else (1 if str(item[1]).strip("[]() ").startswith("ORF") else 2),
                 item[0],
             )
         )
@@ -226,7 +228,8 @@ def germline_compare_vregion(
             continue
         matches = sum(a == b for a, b in zip(fr[:n], g[:n]))
         identity = matches / len(fr)
-        func_rank = 2 if str(func).startswith("F") else (1 if str(func).startswith("ORF") else 0)
+        fc = str(func).strip("[]() ")
+        func_rank = 2 if fc.startswith("F") else (1 if fc.startswith("ORF") else 0)
         # Prefer higher identity first, then functional alleles, keeping the
         # earliest (*01) allele on exact ties instead of lexicographically largest.
         score = (identity, func_rank)

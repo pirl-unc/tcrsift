@@ -303,6 +303,27 @@ def _recompute_subset_clone_stats(
                 .max()
             )
             out["max_frequency_per_method"] = keys.map(fpm).fillna(0.0).astype(float)
+    for axis_col, count_col, max_pd_col in (
+        ("timepoint", "n_timepoints", "max_timepoints_per_donor"),
+        ("apc", "n_apcs", "max_apcs_per_donor"),
+    ):
+        if axis_col in g.columns:
+            ga = g.dropna(subset=[axis_col])
+            if count_col in out.columns:
+                n_a = ga.groupby("_cdr3ab", observed=True)[axis_col].nunique()
+                out[count_col] = keys.map(n_a).fillna(0).astype(int)
+            if max_pd_col in out.columns:
+                if "donor" in ga.columns:
+                    apd = (
+                        ga.dropna(subset=["donor"])
+                        .groupby(["_cdr3ab", "donor"], observed=True)[axis_col]
+                        .nunique()
+                        .groupby(level=0)
+                        .max()
+                    )
+                else:
+                    apd = ga.groupby("_cdr3ab", observed=True)[axis_col].nunique()
+                out[max_pd_col] = keys.map(apd).fillna(0).astype(int)
     return out
 
 

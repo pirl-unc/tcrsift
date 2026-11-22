@@ -1285,8 +1285,13 @@ def recode_codons(
     def _sites_ok(trail_buf: str, cand: str, lookahead: str = "") -> bool:
         if not forbidden:
             return True
-        combined = trail_buf + cand + lookahead
-        return not any(f in combined and f not in trail_buf for f in forbidden)
+        for f in forbidden:
+            k = len(f) - 1
+            left = trail_buf[-k:] if k > 0 else ""
+            right = lookahead[:k] if k > 0 else ""
+            if f in (left + cand + right):
+                return False
+        return True
 
     out: list[str] = []
     n_codons = len(nt) // 3
@@ -3206,6 +3211,7 @@ def _add_constant_from_row(
             result[f"{chain}_constant_nt_optimized"] = nt_with_stop
             if not has_aa:
                 const_aa, _ = translate_dna(nt_str)
+                const_aa = const_aa.rstrip("*")
                 result[f"{chain}_constant_aa"] = const_aa
                 has_aa = bool(const_aa)
         elif has_aa:
@@ -3409,9 +3415,7 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     def strip_stop(seq):
         if not isinstance(seq, str):
             return None
-        if seq.endswith("*"):
-            return seq[:-1]
-        return seq
+        return seq.rstrip("*")
 
     beta_aa = df["full_beta_aa"].apply(strip_stop)
     alpha_aa = df["full_alpha_aa"].where(df["full_alpha_aa"].apply(lambda x: isinstance(x, str)))
@@ -3608,10 +3612,10 @@ def _substitute_chain_leader(
                     species=eff_recode.codon_species,
                     right_context=const_opt,
                 )
-            target[f"full_{chain}_nt_optimized"] = (donor_opt + const_opt) if new_nt is not None or eff_new_nt else None
+            target[f"full_{chain}_nt_optimized"] = (donor_opt + const_opt) if eff_new_nt else None
             target[f"{chain}_leader_recoded_positions"] = ""
             target[f"{chain}_vdj_recoded_positions"] = ""
-        elif new_nt:
+        elif eff_new_nt:
             native_prefix = (eff_new_nt + vdj_nt_raw).upper()
             recoded_prefix, changed = recode_codons(
                 native_prefix,

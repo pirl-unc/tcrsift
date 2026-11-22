@@ -1464,8 +1464,7 @@ def cmd_run(args):
             tier_rank_map = {"tier1": 1, "tier2": 2, "tier3": 3, "tier4": 4, "tier5": 5}
             if "CDR3ab" in combined_sub.columns and combined_sub["CDR3ab"].duplicated().any():
                 # Collapse public clones that survived in >=2 donors/samples back to
-                # one row per CDR3ab, restoring cohort-level clonotype stats while
-                # keeping the strictest achieved tier and joining surviving scopes.
+                # one row per CDR3ab, keeping the strictest achieved tier and joining scopes.
                 combined_sub = combined_sub.assign(
                     _trank=combined_sub.get("tier", pd.Series(dtype=object)).map(
                         lambda t: tier_rank_map.get(t, 99)
@@ -1478,22 +1477,25 @@ def cmd_run(args):
                 )
                 deduped = combined_sub.drop_duplicates("CDR3ab", keep="first").drop(columns=["_trank"]).copy()
                 deduped[scope_col] = deduped["CDR3ab"].map(scopes_by_clone)
-                # Restore cohort-wide abundance columns from `clonotypes` for downstream steps
+            else:
+                deduped = combined_sub.copy()
+            # Restore cohort-wide abundance/axis columns from `clonotypes` for downstream steps
+            if "CDR3ab" in deduped.columns and "CDR3ab" in clonotypes.columns:
                 cohort_cols = [
                     c for c in (
                         "cell_count", "max_frequency", "mean_frequency", "n_samples",
                         "n_conditions", "n_methods", "max_methods_per_donor",
                         "max_cells_per_method", "max_frequency_per_method",
+                        "n_timepoints", "max_timepoints_per_donor",
+                        "n_apcs", "max_apcs_per_donor",
                     )
                     if c in clonotypes.columns and c in deduped.columns
                 ]
                 if cohort_cols:
-                    base_lookup = clonotypes.set_index("CDR3ab")[cohort_cols]
+                    base_lookup = clonotypes.drop_duplicates("CDR3ab").set_index("CDR3ab")[cohort_cols]
                     for c in cohort_cols:
                         deduped[c] = deduped["CDR3ab"].map(base_lookup[c]).values
-                filtered = deduped.reset_index(drop=True)
-            else:
-                filtered = combined_sub
+            filtered = deduped.reset_index(drop=True)
         else:
             filtered = pd.DataFrame()
 
@@ -1880,13 +1882,30 @@ def cmd_run(args):
                 })
                 expr = expression_frame_from_adata(adata, genes, on_missing="ignore")
                 already_log1p = "log1p" in getattr(adata, "uns", {})
-                if not already_log1p and getattr(adata, "X", None) is not None and adata.n_vars > 0:
+                apply_sig_log1p = not already_log1p
+                if (
+                    not already_log1p
+                    and getattr(adata, "X", None) is not None
+                    and adata.n_obs > 0
+                    and adata.n_vars > 0
+                ):
                     import numpy as np
 
-                    raw_sums = np.asarray(adata.X.sum(axis=1)).ravel().astype(float)
-                    if np.nanmin(raw_sums) >= 0 and np.nanmax(raw_sums) > 50:
-                        lib_safe = np.where(raw_sums > 0, raw_sums, np.nan)
-                        expr = expr.div(lib_safe, axis=0).fillna(0.0) * 1e4
+                    x_mat = adata.X
+                    x_min = float(x_mat.min())
+                    x_max = float(x_mat.max())
+                    x_vals = x_mat.data if hasattr(x_mat, "data") else np.asarray(x_mat).ravel()
+                    sample_vals = x_vals[: min(len(x_vals), 10000)]
+                    is_int_like = len(sample_vals) == 0 or bool(
+                        np.allclose(sample_vals, np.round(sample_vals), atol=1e-4)
+                    )
+                    if x_min >= 0 and (x_max > 25 or is_int_like):
+                        raw_sums = np.asarray(x_mat.sum(axis=1)).ravel().astype(float)
+                        if np.nanmax(raw_sums) > 50:
+                            lib_safe = np.where(raw_sums > 0, raw_sums, np.nan)
+                            expr = expr.div(lib_safe, axis=0).fillna(0.0) * 1e4
+                    elif x_min >= 0 and x_max <= 25 and not is_int_like:
+                        apply_sig_log1p = False
                 obs_sig = adata.obs
                 if "CDR3ab" not in obs_sig.columns and {
                     "CDR3_alpha", "CDR3_beta"
@@ -1903,7 +1922,7 @@ def cmd_run(args):
                     )
                 sig_long = build_signature_methods(
                     expr, obs_sig, signatures=sig_names,
-                    log1p=not already_log1p,
+                    log1p=apply_sig_log1p,
                     positive_method=config.selection.get(
                         "signature_positive_method", "gap"
                     ),

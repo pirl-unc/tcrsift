@@ -59,6 +59,7 @@ def _is_productive(functionality: str) -> bool:
 
 def _alias_slash_genes(
     by_gene: dict[str, list[tuple[str, str, str]]],
+    nt_index: dict[tuple[str, str], str] | None = None,
 ) -> dict[str, list[tuple[str, str, str]]]:
     """Sort productive alleles first and alias unambiguous slash-named genes."""
     for recs in by_gene.values():
@@ -71,11 +72,20 @@ def _alias_slash_genes(
             slashless = gene.replace("/", "")
             if slashless not in by_gene:
                 slashless_targets[slashless] = gene
+    alias_pairs: list[tuple[str, str]] = []
     for slashless, full in slashless_targets.items():
         by_gene[slashless] = by_gene[full]
+        alias_pairs.append((slashless, full))
     for prefix, fulls in prefix_targets.items():
         if len(fulls) == 1 and prefix not in by_gene:
-            by_gene[prefix] = by_gene[next(iter(fulls))]
+            full = next(iter(fulls))
+            by_gene[prefix] = by_gene[full]
+            alias_pairs.append((prefix, full))
+    if nt_index is not None:
+        for alias, full in alias_pairs:
+            for allele, _func, _aa in by_gene[full]:
+                if (full, allele) in nt_index and (alias, allele) not in nt_index:
+                    nt_index[(alias, allele)] = nt_index[(full, allele)]
     return by_gene
 
 
@@ -93,7 +103,7 @@ def _parse_leader_csv_bytes(
         gene_u = gene.strip().upper()
         by_gene.setdefault(gene_u, []).append((allele, func, leader_aa))
         nt_index[(gene_u, allele)] = leader_nt
-    return _alias_slash_genes(by_gene), nt_index
+    return _alias_slash_genes(by_gene, nt_index), nt_index
 
 
 def _parse_imgt_leader_html(
@@ -140,7 +150,7 @@ def _parse_imgt_leader_html(
         elif line.strip():
             chunks.append(line.strip())
     _flush()
-    return _alias_slash_genes(by_gene), nt_index
+    return _alias_slash_genes(by_gene, nt_index), nt_index
 
 
 def _load_mouse_leaders(
@@ -172,7 +182,7 @@ def _load_mouse_leaders(
         except Exception as exc:
             logger.warning("Mouse leader reference %s unreadable: %s", cached, exc)
     if by_gene:
-        _alias_slash_genes(by_gene)
+        _alias_slash_genes(by_gene, nt_index)
     return by_gene, nt_index
 
 

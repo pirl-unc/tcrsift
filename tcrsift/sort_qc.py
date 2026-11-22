@@ -243,13 +243,28 @@ def sort_signature_consistency_from_adata(
         out["donor"] = obs[donor].to_numpy()
     # Normalize raw UMI counts to CP10K before log1p signature scoring when
     # adata is not already log-normalized, so sequencing depth across cells/sorts
-    # doesn't drive within-donor z-scores.
+    # doesn't drive within-donor z-scores. Distinguish raw counts from unlabeled
+    # log1p(CP10K) matrices (where row sums across ~2,000 genes exceed 50 even
+    # though elementwise values are non-integer floats <= ~9.2).
     already_log1p = "log1p" in getattr(adata, "uns", {})
     raw_lib_sizes = None
-    if not already_log1p and getattr(adata, "X", None) is not None and adata.n_vars > 0:
-        raw_sums = np.asarray(adata.X.sum(axis=1)).ravel().astype(float)
-        if np.nanmin(raw_sums) >= 0 and np.nanmax(raw_sums) > 50:
-            raw_lib_sizes = np.where(raw_sums > 0, raw_sums, np.nan)
+    apply_log1p = not already_log1p
+    if not already_log1p and getattr(adata, "X", None) is not None and adata.n_obs > 0 and adata.n_vars > 0:
+        x_mat = adata.X
+        x_min = float(x_mat.min())
+        x_max = float(x_mat.max())
+        x_vals = x_mat.data if hasattr(x_mat, "data") else np.asarray(x_mat).ravel()
+        sample_vals = x_vals[: min(len(x_vals), 10000)]
+        is_int_like = len(sample_vals) == 0 or bool(
+            np.allclose(sample_vals, np.round(sample_vals), atol=1e-4)
+        )
+        if x_min >= 0 and (x_max > 25 or is_int_like):
+            raw_sums = np.asarray(x_mat.sum(axis=1)).ravel().astype(float)
+            if np.nanmax(raw_sums) > 50:
+                raw_lib_sizes = np.where(raw_sums > 0, raw_sums, np.nan)
+        elif x_min >= 0 and x_max <= 25 and not is_int_like:
+            # Already continuous log-normalized expression without adata.uns["log1p"]
+            apply_log1p = False
 
     scored = 0
     for name in needed:
@@ -262,7 +277,7 @@ def sort_signature_consistency_from_adata(
         if raw_lib_sizes is not None:
             expr = expr.div(raw_lib_sizes, axis=0).fillna(0.0) * 1e4
         out[f"signature_{name}"] = score_signature(
-            expr, sig, log1p=not already_log1p, on_missing="ignore"
+            expr, sig, log1p=apply_log1p, on_missing="ignore"
         ).to_numpy()
         scored += 1
     if scored == 0:

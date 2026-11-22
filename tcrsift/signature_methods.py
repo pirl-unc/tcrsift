@@ -447,6 +447,23 @@ def _combine_block(
     return sub.mean(axis=1)
 
 
+def _align_groups_positional(
+    groups: pd.Series, target_index: pd.Index, caller: str
+) -> np.ndarray:
+    """Align ``groups`` to ``target_index`` (index-aware when unique, positional when duplicated)."""
+    if isinstance(groups, pd.Series):
+        if len(groups) == len(target_index) and groups.index.equals(target_index):
+            return np.asarray(groups, dtype=object)
+        if target_index.is_unique and groups.index.is_unique:
+            return np.asarray(groups.reindex(target_index), dtype=object)
+    if len(groups) == len(target_index):
+        return np.asarray(groups, dtype=object)
+    raise ValueError(
+        f"{caller}: groups length ({len(groups)}) != target rows ({len(target_index)}) "
+        "with non-unique indices"
+    )
+
+
 def score_signature(
     expr: pd.DataFrame,
     signature: Signature,
@@ -502,17 +519,7 @@ def score_signature(
     if groups is not None:
         if background is not None:
             raise ValueError("score_signature: pass groups OR background, not both")
-        if len(groups) == len(expr) and groups.index.equals(expr.index):
-            g_arr = np.asarray(groups, dtype=object)
-        elif expr.index.is_unique and groups.index.is_unique:
-            g_arr = np.asarray(groups.reindex(expr.index), dtype=object)
-        elif len(groups) == len(expr):
-            g_arr = np.asarray(groups, dtype=object)
-        else:
-            raise ValueError(
-                f"score_signature: groups length ({len(groups)}) != expr rows ({len(expr)}) "
-                "with non-unique indices"
-            )
+        g_arr = _align_groups_positional(groups, expr.index, "score_signature")
         out_vals = np.full(len(expr), np.nan, dtype=float)
         pos_s = pd.Series(g_arr)
         for _, grp_idx in pos_s.groupby(pos_s, observed=True).groups.items():
@@ -867,12 +874,7 @@ def score_weighted_z(
     if groups is not None:
         if background is not None:
             raise ValueError("score_weighted_z: pass groups OR background, not both")
-        if len(groups) == len(expr):
-            g_arr = np.asarray(groups, dtype=object)
-        elif expr.index.is_unique and groups.index.is_unique:
-            g_arr = np.asarray(groups.reindex(expr.index), dtype=object)
-        else:
-            raise ValueError("score_weighted_z: incompatible groups/expr indices")
+        g_arr = _align_groups_positional(groups, expr.index, "score_weighted_z")
         out_vals = np.full(len(expr), np.nan, dtype=float)
         pos_s = pd.Series(g_arr)
         for _, grp_idx in pos_s.groupby(pos_s, observed=True).groups.items():
@@ -927,7 +929,7 @@ def _score_genes_adata(
 
     index = adata.obs_names.astype(str)
     if groups is not None:
-        g_arr = np.asarray(groups, dtype=object)
+        g_arr = _align_groups_positional(groups, adata.obs_names, "_score_genes_adata")
         out_vals = np.full(adata.n_obs, np.nan, dtype=float)
         pos_s = pd.Series(g_arr)
         for _, grp_idx in pos_s.groupby(pos_s, observed=True).groups.items():

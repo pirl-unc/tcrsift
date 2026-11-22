@@ -183,6 +183,17 @@ class TestCrossSampleDuplicateBarcodes:
         assert len(mana) == 4
         assert mana.iloc[0] > mana.iloc[1]
 
+        # Unique indices passed in scrambled order to score_weighted_z must align by index
+        from tcrsift.signature_methods import score_weighted_z
+
+        uniq_expr = expr.set_axis(["U1", "U2", "U3", "U4"])
+        groups_ordered = pd.Series(["S1", "S1", "S2", "S2"], index=["U1", "U2", "U3", "U4"])
+        groups_scrambled = groups_ordered.loc[["U3", "U1", "U4", "U2"]]
+        pd.testing.assert_series_equal(
+            score_weighted_z(uniq_expr, sig, groups=groups_ordered),
+            score_weighted_z(uniq_expr, sig, groups=groups_scrambled),
+        )
+
 
 class TestAttributionAndClonotypeInvariants:
     """Multi-donor isolation, slot promotion, and per-method frequency denominators."""
@@ -374,8 +385,11 @@ class TestDtypesLoaderTilAndUnify:
         obs = pd.DataFrame(
             {
                 "CDR3_alpha": pd.array(["CAVSD", pd.NA], dtype="string"),
+                "CDR3_beta": pd.array([pd.NA, pd.NA], dtype="string"),  # 100% missing _STRING_COLS!
+                "all_na_str": pd.array([pd.NA, pd.NA], dtype="string"),  # 100% missing StringDtype!
                 "custom_str_col": pd.array(["val1", pd.NA], dtype="string"),
                 "custom_cat_col": pd.Categorical(["catA", np.nan]),
+                "has_TRA": pd.array(["True", "False"], dtype=object),  # stringified bool!
                 "TRA_count": pd.array([1, pd.NA], dtype="Int64"),
             },
             index=pd.array(["c1", "c2"], dtype="string"),
@@ -383,11 +397,14 @@ class TestDtypesLoaderTilAndUnify:
         adata = ad.AnnData(X=csr_matrix((2, 1)), obs=obs)
         rehydrate_obs(adata)
         assert adata.obs["custom_str_col"].iloc[1] is None
+        assert adata.obs["has_TRA"].tolist() == [True, False]
         out_h5 = tmp_path / "rehydrated.h5ad"
         adata.write_h5ad(out_h5)
         reloaded = ad.read_h5ad(out_h5)
         rehydrate_obs(reloaded)
         assert reloaded.obs["CDR3_alpha"].iloc[1] is None
+        assert reloaded.obs["CDR3_beta"].fillna("").tolist() == ["", ""]
+        assert pd.isna(reloaded.obs["all_na_str"]).all()
         assert pd.isna(reloaded.obs["custom_str_col"].iloc[1])
         assert reloaded.obs["CDR3_alpha"].fillna("").tolist() == ["CAVSD", ""]
 
@@ -491,6 +508,12 @@ class TestDtypesLoaderTilAndUnify:
         assert top.loc["CAVA/CASSB", "top_condition"] == "pool1"
         assert pd.isna(top.loc["/CASSB_ONLY", "top_condition"])
 
+        # Key-only DataFrames with duplicate keys must deduplicate without crashing agg({})
+        key_only_1 = pd.DataFrame({"CDR3_pair": ["CAVA/CASSB", "CAVA/CASSB"]})
+        key_only_2 = pd.DataFrame({"CDR3_pair": ["CAVA/CASSB"]})
+        merged_ko = merge_experiments([(key_only_1, "K1"), (key_only_2, "K2")], verbose=False)
+        assert len(merged_ko) == 1
+
 
 class TestAssemblyCodonAndLeaderFixes:
     """Lowercase VDJ recoding, 1-codon backtracking, leader policy NT sync, and from-data constants."""
@@ -520,7 +543,19 @@ class TestAssemblyCodonAndLeaderFixes:
         co = CodonOptimization(mode="full", avoid_enzymes=("bsai", "ecori"))
         assert set(co.restriction_sites()) == {"GGTCTC", "GAATTC"}
 
-    def test_leader_policy_keeps_full_nt_optimized_in_sync_and_validates_directives(self):
+        # Mixed 8-bp (NotI GCGGCCGC) + 6-bp (EcoRI GAATTC) where EcoRI already
+        # sits inside right_context[:7]: last VDJ codon repeat must still recode!
+        rc_out, rc_changed = recode_codons(
+            "GGAGGA",
+            max_codon_repeats=1,
+            restriction_sites=("GCGGCCGC", "GAATTC"),
+            right_context="AATTCCC",
+        )
+        assert translate_dna(rc_out)[0] == "GG"
+        assert rc_out[:3] != rc_out[3:]
+        assert rc_changed == [3]
+
+    def test_leader_policy_keeps_full_nt_optimized_in_sync_and_validates_directives(self, tmp_path):
         from tcrsift.assemble import (
              apply_leader_policy,
             assemble_full_sequences,
@@ -600,16 +635,28 @@ class TestAssemblyCodonAndLeaderFixes:
         assert len(msgs) == 2
         assert dup_df["beta_c_gene_canonical"].tolist() == ["TRBC1", "TRBC2"]
 
-        fa_path = Path(asm.attrs.get("tmp", "/tmp")) / "test_audit_nan_guard.fasta"
-        try:
-            export_fasta(dup_df, fa_path)
-            txt = fa_path.read_text()
-            assert "MAAA" in txt and "nan" not in txt.lower()
-        finally:
-            fa_path.unlink(missing_ok=True)
+        fa_path = tmp_path / "nan_guard.fasta"
+        export_fasta(dup_df, fa_path)
+        txt = fa_path.read_text()
+        assert "MAAA" in txt and "nan" not in txt.lower()
+
+        # Slashless TRAV14DV4 germline leader substitution keeps full_alpha_nt_optimized valid
+        clones_dv4 = clones.copy()
+        clones_dv4["alpha_v_gene"] = ["TRAV14DV4"]
+        asm_dv4 = assemble_full_sequences(
+            clones_dv4,
+            alpha_leader="CD28",
+            beta_leader="CD8A",
+            include_constant=True,
+            linker="P2A",
+            force_alpha_leader="germline",
+            show_progress=False,
+            verbose=False,
+        )
+        assert translate_dna(asm_dv4.iloc[0]["single_chain_nt_optimized"])[0] == asm_dv4.iloc[0]["single_chain_aa"]
 
     def test_constant_from_data_aa_only_synthesizes_nt_and_marks_unverified(self):
-        from tcrsift.assemble import assemble_full_sequences, translate_dna
+        from tcrsift.assemble import assemble_full_sequences, optimize_codons, translate_dna
 
         clones = pd.DataFrame(
             {
@@ -634,6 +681,21 @@ class TestAssemblyCodonAndLeaderFixes:
         assert isinstance(row["full_alpha_nt_optimized"], str) and len(row["full_alpha_nt_optimized"]) > 0
         assert translate_dna(row["single_chain_nt_optimized"])[0] == row["single_chain_aa"]
         assert bool(row["construct_contig_verified"]) is False
+
+        # NT-only from-data constant with dual stop TAATGA must strip all '*' from constant_aa / single_chain_aa
+        clones_nt_stop = clones.drop(columns=["alpha_constant_aa", "beta_constant_aa"]).assign(
+            alpha_constant_nt=[optimize_codons(clones.loc[0, "alpha_constant_aa"]) + "TAATGA"],
+            beta_constant_nt=[optimize_codons(clones.loc[0, "beta_constant_aa"]) + "TAATGA"],
+        )
+        asm_nt_stop = assemble_full_sequences(
+            clones_nt_stop,
+            constant_source="from-data",
+            include_constant=True,
+            linker="T2A",
+            show_progress=False,
+            verbose=False,
+        )
+        assert "*" not in asm_nt_stop.iloc[0]["single_chain_aa"]
 
 
 class TestAnnotateTilSelectAtlasAndPlots:
@@ -779,10 +841,33 @@ class TestAnnotateTilSelectAtlasAndPlots:
         assert " · " in adata.obs["phenotype"].iloc[0]
         assert " · " in adata.obs["phenotype"].iloc[5]
 
-    def test_plots_exact_sample_jaccard_and_cli_helpers(self, tmp_path):
+    def test_plots_exact_sample_jaccard_and_cli_helpers(self, tmp_path, monkeypatch):
+        import seaborn as sns
+
         from tcrsift.cli import main
         from tcrsift.plots import plot_clonotypes, plot_funnel_variants, plot_phenotype
+        from tcrsift.species import detect_vdj_species
         from tcrsift.validation import parse_til_sample_spec
+
+        # Human V-genes shared with mouse subfamilies (TRAV16, TRBV14, TRBV15, TRAV14DV4)
+        # must NEVER be misclassified as mouse!
+        assert (
+            detect_vdj_species(
+                pd.DataFrame(
+                    {
+                        "alpha_v_gene": ["TRAV16", "TRAV14DV4"],
+                        "beta_v_gene": ["TRBV15", "TRBV14"],
+                    }
+                )
+            )
+            == "human"
+        )
+        assert (
+            detect_vdj_species(
+                pd.DataFrame({"alpha_v_gene": ["TRAV14D-1"], "beta_v_gene": ["TRBV13-2"]})
+            )
+            == "mouse"
+        )
 
         # Path containing '=' after ':' must parse cleanly
         name, stype, spath = parse_til_sample_spec("T1=csv:/tmp/run=1/til.csv")
@@ -796,8 +881,19 @@ class TestAnnotateTilSelectAtlasAndPlots:
                 "samples": ["S10", "S1"],
             }
         )
+        captured_matrices = []
+        orig_heatmap = sns.heatmap
+
+        def spy_heatmap(data, *args, **kwargs):
+            captured_matrices.append(np.asarray(data, dtype=float).copy())
+            return orig_heatmap(data, *args, **kwargs)
+
+        monkeypatch.setattr(sns, "heatmap", spy_heatmap)
         plot_clonotypes(clonotypes, tmp_path)
         assert (tmp_path / "clonotype_sharing_heatmap.png").exists()
+        assert len(captured_matrices) == 1
+        assert captured_matrices[0][0, 1] == 0.0
+        assert captured_matrices[0][1, 0] == 0.0
 
         # Non-categorical Tcell_type and empty stage_counts must not crash
         adata = ad.AnnData(

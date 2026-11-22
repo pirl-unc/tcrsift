@@ -184,6 +184,8 @@ def merge_experiments(
                 agg_spec[col] = "max"
             else:
                 agg_spec[col] = "first"
+        if not agg_spec:
+            return df_copy.drop_duplicates(subset=present_keys, ignore_index=True)
         return df_copy.groupby(present_keys, as_index=False, sort=False, dropna=False).agg(agg_spec)
 
     # Normalize experiments to ensure CDR3_pair exists and keys are unique

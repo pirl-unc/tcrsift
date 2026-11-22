@@ -1054,10 +1054,15 @@ def _compute_marker_scores_from_adata(
     keep = keep.drop_duplicates(subset=["barcode", "clonotype_id"]).reset_index(drop=True)
     adata_subset = adata[keep["barcode"].tolist(), :].copy()
 
-    if issparse(adata_subset.X):
-        total_umis = np.asarray(adata_subset.X.sum(axis=1)).ravel().astype(float)
-    else:
-        total_umis = np.asarray(adata_subset.X.sum(axis=1)).ravel().astype(float)
+    gex_mat = adata_subset.X
+    for ft_col in ("feature_types", "feature_type"):
+        if ft_col in adata_subset.var.columns:
+            ft_vals = adata_subset.var[ft_col].astype(str).to_numpy()
+            gex_mask = (ft_vals == "Gene Expression") | (ft_vals == "nan")
+            if gex_mask.any() and not gex_mask.all():
+                gex_mat = adata_subset[:, gex_mask].X
+            break
+    total_umis = np.asarray(gex_mat.sum(axis=1)).ravel().astype(float)
     total_umis = np.maximum(total_umis, 1.0)
 
     from .genes import resolve_adata_var_map
@@ -1068,7 +1073,9 @@ def _compute_marker_scores_from_adata(
         var_name = gene if gene in adata_subset.var_names else sym_to_var.get(str(gene).upper())
         if var_name is not None and var_name in adata_subset.var_names:
             vec = adata_subset[:, var_name].X
-            if issparse(vec):
+            if getattr(vec, "ndim", 1) == 2 and vec.shape[1] > 1:
+                counts = np.asarray(vec.sum(axis=1)).ravel().astype(float)
+            elif issparse(vec):
                 counts = np.asarray(vec.toarray()).ravel().astype(float)
             else:
                 counts = np.asarray(vec).ravel().astype(float)

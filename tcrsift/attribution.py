@@ -440,7 +440,19 @@ def attribute_cells(
                 if len(sub_lt):
                     tables.append(sub_lt)
                 merged_all.update(sub_mm)
-                stats_all.update(sub_ms)
+                for mkey, mval in sub_ms.items():
+                    if mkey not in stats_all:
+                        stats_all[mkey] = dict(mval)
+                    else:
+                        prev = stats_all[mkey]
+                        prev_partners = str(prev.get("merged_alpha_partners", "") or "").split(";")
+                        new_partners = str(mval.get("merged_alpha_partners", "") or "").split(";")
+                        prev["merged_alpha_partners"] = ";".join(
+                            dict.fromkeys(p for p in (*prev_partners, *new_partners) if p)
+                        )
+                        prev["dual_alpha_n_dual_cells"] = int(
+                            prev.get("dual_alpha_n_dual_cells", 0)
+                        ) + int(mval.get("dual_alpha_n_dual_cells", 0))
             long_table = (
                 pd.concat(tables, ignore_index=True)
                 if tables
