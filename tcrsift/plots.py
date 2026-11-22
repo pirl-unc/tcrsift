@@ -4452,6 +4452,7 @@ def create_tcr_sequence_pdf(
     strict: bool | str = True,
     annotations: dict | None = None,
     annotation_key_column: str = "CDR3ab",
+    species: str | None = None,
 ):
     """
     Create a PDF with color-coded TCR sequences.
@@ -4505,7 +4506,7 @@ def create_tcr_sequence_pdf(
     from .assemble import validate_sequences
 
     apply_fix = strict is True or strict == "skip"
-    qc_messages = validate_sequences(df, strict=False, fix=apply_fix)
+    qc_messages = validate_sequences(df, strict=False, fix=apply_fix, species=species)
     autocorrect_msgs = [m for m in qc_messages if m.severity == "autocorrect"]
     for m in autocorrect_msgs:
         logger.warning("create_tcr_sequence_pdf: %s", m)

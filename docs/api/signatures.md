@@ -16,7 +16,10 @@ reflect chronic antigen exposure in fresh TIL.
 
 ## Compact functional programs (`T_CELL_SIGNATURES`)
 
-All gene symbols follow human HGNC nomenclature.
+Human signatures follow HGNC nomenclature (`T_CELL_SIGNATURES`); mouse
+counterparts (`MOUSE_T_CELL_SIGNATURES`, retrieved via
+`t_cell_signatures_for_species("mouse")`) use MGI orthologs (dropping `GNLY` and
+`CXCL13`, which lack 1:1 murine T-cell orthologs).
 
 | Name | Genes | Intended readout |
 | --- | --- | --- |

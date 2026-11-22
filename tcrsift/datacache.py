@@ -168,16 +168,65 @@ DATABASES: dict[str, DatabaseSpec] = {
         ),
         archive_format="raw",
     ),
+    # Mouse (Mus musculus) IMGT/GENE-DB V-REGION and L-PART1+L-PART2 references
+    # for murine framework and leader germline comparison.
+    "imgt_trav_vregion_mouse": DatabaseSpec(
+        name="imgt_trav_vregion_mouse",
+        filename="TRAV_V-REGION_mouse.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAV, species=Mus musculus, IMGTlabel=V-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAV"
+            "&species=Mus+musculus&IMGTlabel=V-REGION"
+        ),
+        archive_format="raw",
+    ),
+    "imgt_trbv_vregion_mouse": DatabaseSpec(
+        name="imgt_trbv_vregion_mouse",
+        filename="TRBV_V-REGION_mouse.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBV, species=Mus musculus, IMGTlabel=V-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBV"
+            "&species=Mus+musculus&IMGTlabel=V-REGION"
+        ),
+        archive_format="raw",
+    ),
+    "imgt_trav_leader_mouse": DatabaseSpec(
+        name="imgt_trav_leader_mouse",
+        filename="TRAV_LEADER_mouse.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAV, species=Mus musculus, IMGTlabel=L-PART1+L-PART2)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAV"
+            "&species=Mus+musculus&IMGTlabel=L-PART1%2BL-PART2"
+        ),
+        archive_format="raw",
+    ),
+    "imgt_trbv_leader_mouse": DatabaseSpec(
+        name="imgt_trbv_leader_mouse",
+        filename="TRBV_LEADER_mouse.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBV, species=Mus musculus, IMGTlabel=L-PART1+L-PART2)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBV"
+            "&species=Mus+musculus&IMGTlabel=L-PART1%2BL-PART2"
+        ),
+        archive_format="raw",
+    ),
 }
 
 
 # Logical groupings for bulk `data download` / `data clear` by workflow, so a
 # user can grab everything one pipeline needs without naming each DB.
-#   germline    → the IMGT V-REGION framework reference (assembly germline QC)
-#   annotation  → the epitope-annotation databases (the `annotate` command)
-#   all         → every registered database
+#   germline       → human IMGT V-REGION framework reference (assembly germline QC)
+#   germline_mouse → mouse IMGT V-REGION + leader references
+#   annotation     → the epitope-annotation databases (the `annotate` command)
+#   all            → every registered database
 GROUPS: dict[str, list[str]] = {
     "germline": ["imgt_trav_vregion", "imgt_trbv_vregion"],
+    "germline_mouse": [
+        "imgt_trav_vregion_mouse",
+        "imgt_trbv_vregion_mouse",
+        "imgt_trav_leader_mouse",
+        "imgt_trbv_leader_mouse",
+    ],
     "annotation": ["vdjdb", "iedb", "iedb_epitope", "cedar"],
     "all": list(DATABASES),
 }
@@ -278,6 +327,27 @@ def cached_path(db: str, data_dir: str | Path | None = None) -> Path | None:
     return None
 
 
+def ensure_cached(
+    db: str,
+    data_dir: str | Path | None = None,
+    *,
+    auto_download: bool = False,
+    opener: Callable[[str], object] | None = None,
+) -> Path | None:
+    """Return the cached path for ``db``, optionally downloading if absent.
+
+    When ``auto_download=False`` (default), equivalent to :func:`cached_path`.
+    When ``auto_download=True`` and ``db`` is missing from the cache, fetches
+    it via :func:`download_database` and returns the populated path.
+    """
+    existing = cached_path(db, data_dir)
+    if existing is not None:
+        return existing
+    if not auto_download:
+        return None
+    return download_database(db, data_dir=data_dir, opener=opener)
+
+
 @dataclass(frozen=True)
 class CacheEntry:
     """State of a single managed database in the cache."""
@@ -327,6 +397,17 @@ def _path_size(path: Path) -> int:
     return 0
 
 
+def _invalidate_germline_memo_caches() -> None:
+    """Reset in-memory leader/V-REGION caches after germline cache updates."""
+    try:
+        from . import leaders, vregion
+
+        leaders.clear_reference_cache()
+        vregion.clear_reference_cache()
+    except Exception:
+        pass
+
+
 def clear_cache(
     db: str | None = None, data_dir: str | Path | None = None,
 ) -> list[Path]:
@@ -348,6 +429,8 @@ def clear_cache(
         if db_dir.exists():
             shutil.rmtree(db_dir)
             removed.append(db_dir)
+    if removed:
+        _invalidate_germline_memo_caches()
     return removed
 
 
@@ -502,6 +585,7 @@ def download_database(
         size=size,
         sha256=sha256,
     )
+    _invalidate_germline_memo_caches()
     return resolved
 
 

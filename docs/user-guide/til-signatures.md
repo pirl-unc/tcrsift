@@ -252,7 +252,11 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor \
 
 Signature names are case-insensitive. Missing signature genes raise an error
 rather than silently dropping genes, after checking a built-in alias table for
-renamed HGNC symbols (such as `PLA2G16`/`PLAAT3` and `CARS`/`CARS1`). Gene lists
+renamed HGNC symbols (such as `PLA2G16`/`PLAAT3` and `CARS`/`CARS1`) and 1:1
+mouse MGI orthologs (such as `Cd8b1` for `CD8B`). When `--species mouse` is set
+(or inferred under `--species auto` from MGI gene symbols, `ENSMUSG*` IDs, or
+murine VDJ genes), presets score MGI-symbol signatures (`CONTEXT_SIGNATURES_MOUSE`)
+and omit human-cohort-derived `NeoTCR4`/`NeoTCR8`/`NeoTCR_PBL` sets. Gene lists
 and formulas are documented in [Gene-expression signatures](../api/signatures.md).
 
 ## Input sheet and output files
@@ -336,11 +340,14 @@ tcrsift prioritize samples.yaml -o candidates/ --context blood \
 
 ## MART-1, viral database matches, and publicness
 
-- **Known MART-1 receptors are excluded by default.** Supply explicit reference
-  paths via `--vdjdb`, `--iedb`, or `--cedar` (`prioritize` does not
-  auto-discover from the `tcrsift data` cache); clones matching
-  MART-1/Melan-A/MLANA or `EAAGIGILTV`/`AAGIGILTV`/`ELAGIGILTV` are excluded
-  unless `--no-exclude-known-mart1` is passed. Without a reference database,
+- **Known MART-1 receptors are excluded by default.** Reference databases are
+  resolved from explicit `--vdjdb`, `--iedb`, or `--cedar` paths or from the
+  managed `tcrsift data` cache (`--cache-dir`; pass `--auto-download` to fetch
+  uncached databases automatically). Matching restricts database entries to the
+  query host species (`host_species_filter="same"`), and clones matching the
+  MART-1/Melan-A protein (encoded by `MLANA` in human or `Mlana` in mouse) or
+  epitopes `EAAGIGILTV`/`AAGIGILTV`/`ELAGIGILTV` are excluded unless
+  `--no-exclude-known-mart1` is passed. Without a reference database,
   `prioritize` logs a warning because known MART-1 receptors cannot be flagged.
 - **Known viral matches are retained by default** so vaccine studies and
   virus-driven tumor analyses do not lose target clones. Pass

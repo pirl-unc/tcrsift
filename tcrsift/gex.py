@@ -29,32 +29,39 @@ import pandas as pd
 if TYPE_CHECKING:
     pass
 
+from .signatures import MARKER_PANEL_HGNC, NAIVE_STEM_GENES_HGNC
 from .validation import TCRsiftValidationError, validate_file_exists
 
 logger = logging.getLogger(__name__)
 
-# Default gene lists for T cell analysis
-DEFAULT_GENE_LIST = [
-    "CD3D",
-    "CD3E",
-    "CD3G",
-    "CD4",
-    "CD8A",
-    "CD8B",
-    "GZMA",
-    "GZMB",
-    "PRF1",
-    "IFNG",
-    "PDCD1",
-    "CD274",
-    "PDCD1LG2",  # PD-1/PD-L1
-    "CTLA4",
-    "LAG3",
-    "HAVCR2",
-    "TIGIT",  # Checkpoint
-    "FOXP3",
-    "IL2RA",  # Treg
-]
+# Default gene lists for T cell analysis (includes full T_CELL_SIGNATURES support)
+DEFAULT_GENE_LIST = list(
+    dict.fromkeys(
+        [
+            "CD3D",
+            "CD3E",
+            "CD3G",
+            "CD4",
+            "CD8A",
+            "CD8B",
+            "GZMA",
+            "GZMB",
+            "PRF1",
+            "IFNG",
+            "PDCD1",
+            "CD274",
+            "PDCD1LG2",  # PD-1/PD-L1
+            "CTLA4",
+            "LAG3",
+            "HAVCR2",
+            "TIGIT",  # Checkpoint
+            "FOXP3",
+            "IL2RA",  # Treg
+            *MARKER_PANEL_HGNC,
+            *NAIVE_STEM_GENES_HGNC,
+        ]
+    )
+)
 
 DEFAULT_GENE_GROUPS = {
     "CD3": ["CD3D", "CD3E", "CD3G"],
@@ -126,19 +133,15 @@ def augment_with_gex(
         logger.info(f"Loading gene expression from {gex_path}")
 
     # Load expression matrix
+    from .genes import adata_mito_mask, resolve_adata_var_map
+
     adata = sc.read_10x_h5(str(gex_path))
     gene_names = adata.var_names
 
-    # Handle duplicated gene symbols
+    # Handle duplicated gene symbols for informational logging
     duplicated = gene_names[gene_names.duplicated()].unique().tolist()
-    gene_to_best_idx: dict[str, int] = {}
-    if duplicated:
-        if verbose:
-            logger.info(f"  Found {len(duplicated)} duplicated gene symbols")
-        for symbol in duplicated:
-            locs = np.where(gene_names == symbol)[0]
-            means = np.asarray(adata.X[:, locs].mean(axis=0)).ravel()
-            gene_to_best_idx[symbol] = locs[np.argmax(means)]
+    if duplicated and verbose:
+        logger.info(f"  Found {len(duplicated)} duplicated gene symbols")
 
     # Compute per-cell QC metrics
     if issparse(adata.X):
@@ -148,11 +151,11 @@ def augment_with_gex(
         total_counts = adata.X.sum(axis=1).astype(int)
         n_genes_detected = (adata.X > 0).sum(axis=1).astype(int)
 
-    # Mitochondrial percentage
-    mito_mask = gene_names.str.upper().str.startswith("MT-")
+    # Mitochondrial percentage (supports human MT-*, mouse mt-*, and Ensembl IDs)
+    mito_mask = adata_mito_mask(adata)
     if mito_mask.any():
         mito_counts = (
-            adata.X[:, mito_mask].sum(axis=1).A.ravel()
+            np.asarray(adata.X[:, mito_mask].sum(axis=1)).ravel()
             if issparse(adata.X)
             else adata.X[:, mito_mask].sum(axis=1)
         )
@@ -160,19 +163,22 @@ def augment_with_gex(
     else:
         pct_mito = np.full(len(total_counts), np.nan)
 
-    # Map genes to indices
+    # Map requested genes (with HGNC/MGI/Ensembl + duplicate resolution) to column indices
+    sym_upper, _ = resolve_adata_var_map(adata, gene_list)
     available_genes = []
     missing_genes = []
     gene_to_idx: dict[str, int] = {}
     for gene in gene_list:
-        if gene in duplicated:
-            gene_to_idx[gene] = gene_to_best_idx[gene]
-            available_genes.append(gene)
-        elif gene in gene_names:
-            gene_to_idx[gene] = gene_names.get_loc(gene)
+        locs = np.where(sym_upper == str(gene).upper())[0]
+        if locs.size == 0:
+            missing_genes.append(gene)
+        elif locs.size == 1:
+            gene_to_idx[gene] = int(locs[0])
             available_genes.append(gene)
         else:
-            missing_genes.append(gene)
+            means = np.asarray(adata.X[:, locs].mean(axis=0)).ravel()
+            gene_to_idx[gene] = int(locs[int(np.argmax(means))])
+            available_genes.append(gene)
 
     if missing_genes and verbose:
         logger.info(f"  {len(missing_genes)} genes not found: {missing_genes[:5]}...")
@@ -305,6 +311,24 @@ def aggregate_gex_by_clonotype(
     return result
 
 
+def _build_prefixed_col_lookup(columns, gex_prefix: str) -> dict[str, str]:
+    """Case-insensitive + GENE_SYNONYMS-aware lookup for ``{gex_prefix}.<gene>`` columns."""
+    from .genes import GENE_SYNONYMS
+
+    prefix = f"{gex_prefix}."
+    lookup: dict[str, str] = {}
+    for col in columns:
+        if col.startswith(prefix):
+            lookup.setdefault(col[len(prefix) :].upper(), col)
+    for group in GENE_SYNONYMS:
+        upper_group = [m.upper() for m in group]
+        found = next((lookup[m] for m in upper_group if m in lookup), None)
+        if found is not None:
+            for m in upper_group:
+                lookup.setdefault(m, found)
+    return lookup
+
+
 def _score_gene_block(
     frame: pd.DataFrame, cols: list[str], *, zscore: bool
 ) -> np.ndarray:
@@ -334,6 +358,7 @@ def compute_signature_scores_per_clonotype(
     cd8_only: bool | None = None,
     cd8_col: str | None = None,
     zscore: bool = False,
+    species: str = "human",
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Compute per-clonotype signature scores (#74).
@@ -384,9 +409,14 @@ def compute_signature_scores_per_clonotype(
         NaN for every clone (with a single warning log line).
     """
     if signatures is None:
-        from .signatures import T_CELL_SIGNATURES
+        from .signatures import MOUSE_T_CELL_SIGNATURES, T_CELL_SIGNATURES
+        from .species import normalize_species
 
-        signatures = T_CELL_SIGNATURES
+        signatures = (
+            MOUSE_T_CELL_SIGNATURES
+            if normalize_species(species) == "mouse"
+            else T_CELL_SIGNATURES
+        )
 
     if group_col not in df.columns:
         raise ValueError(
@@ -402,11 +432,20 @@ def compute_signature_scores_per_clonotype(
                 "(cd8_only=False for CD4-inclusive scoring)."
             )
 
+    col_lookup = _build_prefixed_col_lookup(df.columns, gex_prefix)
     sub = df
     if cd8_only:
         if cd8_col is None:
-            for c in (f"{gex_prefix}.CD8A", f"{gex_prefix}.CD8", "CD8A", "CD8"):
-                if c in df.columns:
+            for c in (
+                f"{gex_prefix}.CD8A",
+                f"{gex_prefix}.CD8",
+                col_lookup.get("CD8A"),
+                col_lookup.get("CD8"),
+                "CD8A",
+                "CD8",
+                "Cd8a",
+            ):
+                if c and c in df.columns:
                     cd8_col = c
                     break
         if cd8_col is not None and cd8_col in df.columns:
@@ -419,7 +458,15 @@ def compute_signature_scores_per_clonotype(
 
     score_cols: dict[str, str] = {}
     for sig_name, genes in signatures.items():
-        gex_cols = [f"{gex_prefix}.{g}" for g in genes if f"{gex_prefix}.{g}" in sub.columns]
+        gex_cols = list(
+            dict.fromkeys(
+                f"{gex_prefix}.{g}"
+                if f"{gex_prefix}.{g}" in sub.columns
+                else col_lookup[str(g).upper()]
+                for g in genes
+                if f"{gex_prefix}.{g}" in sub.columns or str(g).upper() in col_lookup
+            )
+        )
         if not gex_cols:
             if verbose:
                 logger.warning(
@@ -468,6 +515,7 @@ def compute_signature_scores_per_cell(
     layer: str | None = None,
     key_prefix: str = "signature_",
     on_missing: str = "warn",
+    species: str | None = None,
     verbose: bool = True,
 ):
     """Per-CELL signature scores written to ``adata.obs`` (#313).
@@ -495,9 +543,19 @@ def compute_signature_scores_per_cell(
     from .signature_methods import expression_frame_from_adata
 
     if signatures is None:
-        from .signatures import T_CELL_SIGNATURES
+        from .signatures import MOUSE_T_CELL_SIGNATURES, T_CELL_SIGNATURES
+        from .species import resolve_species
 
-        signatures = T_CELL_SIGNATURES
+        resolved_species = resolve_species(
+            species or getattr(adata, "uns", {}).get("species", "auto"),
+            adata=adata,
+            warn_mismatch=False,
+        )
+        signatures = (
+            MOUSE_T_CELL_SIGNATURES
+            if resolved_species == "mouse"
+            else T_CELL_SIGNATURES
+        )
 
     all_genes = sorted({g for genes in signatures.values() for g in genes})
     expr = expression_frame_from_adata(
@@ -558,11 +616,19 @@ def compute_cd4_cd8_counts(
     pd.DataFrame
         Clonotype counts with CD4_only.count and CD8_only.count columns
     """
-    # Auto-detect columns
+    # Auto-detect columns (case-insensitive + mouse MGI/synonym aware)
+    col_lookup = _build_prefixed_col_lookup(df.columns, gex_prefix)
     if cd4_col is None:
-        candidates = [f"{gex_prefix}.CD4", "CD4", "gex.CD4"]
+        candidates = [
+            f"{gex_prefix}.CD4",
+            col_lookup.get("CD4"),
+            "CD4",
+            "Cd4",
+            "gex.CD4",
+            "gex.Cd4",
+        ]
         for c in candidates:
-            if c in df.columns:
+            if c and c in df.columns:
                 cd4_col = c
                 break
         if cd4_col is None:
@@ -572,9 +638,19 @@ def compute_cd4_cd8_counts(
             )
 
     if cd8_col is None:
-        candidates = [f"{gex_prefix}.CD8", "CD8", "gex.CD8"]
+        candidates = [
+            f"{gex_prefix}.CD8",
+            col_lookup.get("CD8"),
+            col_lookup.get("CD8A"),
+            col_lookup.get("CD8B"),
+            "CD8",
+            "CD8A",
+            "Cd8a",
+            "Cd8b1",
+            "gex.CD8",
+        ]
         for c in candidates:
-            if c in df.columns:
+            if c and c in df.columns:
                 cd8_col = c
                 break
         if cd8_col is None:

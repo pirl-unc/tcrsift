@@ -93,8 +93,14 @@ class Sample:
     # TIL-specific input fields (alternative to vdj_dir for TIL samples)
     til_csv: str | None = None  # path to CSV with CDR3_alpha, CDR3_beta columns
     til_h5ad: str | None = None  # path to pre-processed h5ad file
+    # Organism species ("human" or "mouse"; None inherits sheet/CLI auto-detection)
+    species: str | None = None
 
     def __post_init__(self):
+        if self.species is not None:
+            from .species import normalize_species
+
+            self.species = normalize_species(self.species, allow_auto=True)
         # Coerce culture_days consistently for both CSV and YAML inputs (which
         # may deliver str/float). Round rather than silently truncate, and fail
         # clearly on non-numeric instead of raising a bare ValueError later.
@@ -228,6 +234,33 @@ class SampleSheet:
     # Drives the auto-resolution of `--fdr-scope` to `global` instead of
     # `per-donor` for multi-donor cohorts.
     donors_share_antigen: bool = False
+    species: str | None = None
+
+    def __post_init__(self):
+        from .species import normalize_species
+        from .validation import TCRsiftValidationError
+
+        if self.species is not None:
+            self.species = normalize_species(self.species, allow_auto=True)
+        explicit_sample_species = {
+            s.species
+            for s in self.samples
+            if getattr(s, "species", None) not in (None, "auto")
+        }
+        if len(explicit_sample_species) > 1:
+            raise TCRsiftValidationError(
+                f"SampleSheet mixes multiple explicit species: {sorted(explicit_sample_species)}",
+                hint="Run human and mouse cohorts in separate sample sheets.",
+            )
+        if len(explicit_sample_species) == 1:
+            only_sp = next(iter(explicit_sample_species))
+            if self.species in (None, "auto"):
+                self.species = only_sp
+            elif self.species != only_sp:
+                raise TCRsiftValidationError(
+                    f"SampleSheet species={self.species!r} conflicts with sample species={only_sp!r}",
+                    hint="Ensure top-level and per-sample species agree.",
+                )
 
     def __len__(self):
         return len(self.samples)
@@ -339,6 +372,7 @@ class SampleSheet:
                 "timepoint": s.timepoint,
                 "apc_type": s.apc_type,
                 "tissue": s.tissue,
+                "species": s.species,
                 "expected_tcell_type": s.get_expected_tcell_type(),
             }
             records.append(record)
@@ -450,6 +484,14 @@ def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
         )
     else:
         sheet.donors_share_antigen = bool(raw_dsa)
+    raw_species = data.get("species")
+    if raw_species is not None and str(raw_species).strip():
+        from .species import normalize_species
+
+        sheet.species = normalize_species(str(raw_species), allow_auto=True)
+        for s in sheet.samples:
+            if s.species is None:
+                s.species = sheet.species
     return sheet
 
 

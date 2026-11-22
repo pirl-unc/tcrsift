@@ -57,6 +57,7 @@ def embed_cells(adata, config=None):
     """
     import scanpy as sc
 
+    from .genes import adata_symbol_array, resolve_adata_var_map
     from .signature_methods import is_receptor_gene
 
     if config is None:
@@ -69,20 +70,32 @@ def embed_cells(adata, config=None):
         adata.layers["counts"] = adata.X.copy()
 
     # Candidate pool for the clustering panel: drop TCR/Ig receptor transcripts
-    # (so structure isn't driven by clonotype) and mitochondrial genes, then
-    # drop genes seen in too few cells.
-    var = adata.var_names
+    # (so structure isn't driven by clonotype) and mitochondrial genes, resolved
+    # across HGNC, MGI, and Ensembl IDs via adata_symbol_array.
+    syms = adata_symbol_array(adata)
     keep = np.ones(adata.n_vars, dtype=bool)
     if config.exclude_receptor_genes:
-        keep &= ~np.array([is_receptor_gene(g) for g in var])
-    keep &= ~np.asarray(var.str.upper().str.startswith("MT-"))
+        keep &= ~np.array([is_receptor_gene(g) for g in syms])
+    keep &= ~np.array([str(g).startswith("MT-") for g in syms])
     pool = adata[:, keep].copy()
     pool.X = pool.layers["counts"].copy()
     sc.pp.filter_genes(pool, min_cells=config.min_cells)
 
     if config.informative_genes:
         want = {str(g).upper() for g in config.informative_genes}
-        panel = [g for g in pool.var_names if str(g).upper() in want]
+        upper_to_var = {str(v).upper(): str(v) for v in pool.var_names}
+        missing = want - set(upper_to_var)
+        if missing:
+            _, sym_to_var = resolve_adata_var_map(pool, config.informative_genes)
+            for k, v in sym_to_var.items():
+                upper_to_var.setdefault(k, v)
+        panel = list(
+            dict.fromkeys(
+                upper_to_var[str(g).upper()]
+                for g in config.informative_genes
+                if str(g).upper() in upper_to_var
+            )
+        )
         if not panel:
             raise ValueError(
                 "embed_cells: none of informative_genes are present in the "
@@ -180,20 +193,36 @@ def _reembed_leiden(
 
     if informative_genes:
         want = {str(g).upper() for g in informative_genes}
-        panel = [g for g in adata.var_names if str(g).upper() in want]
+        upper_to_var = {str(v).upper(): str(v) for v in adata.var_names}
+        missing = want - set(upper_to_var)
+        if missing:
+            from .genes import resolve_adata_var_map
+
+            _, sym_to_var = resolve_adata_var_map(adata, informative_genes)
+            for k, v in sym_to_var.items():
+                upper_to_var.setdefault(k, v)
+        panel = list(
+            dict.fromkeys(
+                upper_to_var[str(g).upper()]
+                for g in informative_genes
+                if str(g).upper() in upper_to_var
+            )
+        )
         if not panel:
             raise ValueError(
                 "refine_cluster: none of informative_genes are present in the "
                 "compartment"
             )
     else:
+        from .genes import adata_symbol_array
         from .signature_methods import is_receptor_gene
 
         pool = adata.copy()
         counts = _counts(pool)
         pool.X = counts.copy() if hasattr(counts, "copy") else np.asarray(counts)
-        keep = ~np.array([is_receptor_gene(g) for g in pool.var_names])
-        keep &= ~np.asarray(pool.var_names.str.upper().str.startswith("MT-"))
+        syms = adata_symbol_array(pool)
+        keep = ~np.array([is_receptor_gene(g) for g in syms])
+        keep &= ~np.array([str(g).startswith("MT-") for g in syms])
         pool = pool[:, keep].copy()
         sc.pp.normalize_total(pool, target_sum=1e4)
         sc.pp.log1p(pool)
@@ -431,9 +460,19 @@ def gd_cd8_relabel(
                 f"gd_cd8_relabel: obs[{ab_col!r}] not found — populate the "
                 "αβ-contig-capture boolean column before refine_cluster"
             )
-        col = sub[:, gene].X
-        col = col.toarray() if hasattr(col, "toarray") else np.asarray(col)
-        trdc_mean = float(col.mean()) if col.size else 0.0
+        if gene in sub.var_names:
+            vname = gene
+        else:
+            from .genes import resolve_adata_var_map
+
+            _, sym_to_var = resolve_adata_var_map(sub, [gene])
+            vname = sym_to_var.get(str(gene).upper())
+        if vname is None:
+            trdc_mean = 0.0
+        else:
+            col = sub[:, vname].X
+            col = col.toarray() if hasattr(col, "toarray") else np.asarray(col)
+            trdc_mean = float(col.mean()) if col.size else 0.0
         ab_mean = float(np.asarray(sub.obs[ab_col], dtype=float).mean())
         is_gd = (trdc_mean >= trdc_min) and (ab_mean < ab_max)
         if lo < ab_mean < hi:

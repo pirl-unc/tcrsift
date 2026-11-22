@@ -11,13 +11,16 @@ sufficient to reconstruct framework mutations or junctional nucleotides.
 
 Assembly configures four components:
 
-- **Signal peptides (leaders):** standard leader peptides per chain, native
-  V-gene leaders extracted from Cell Ranger FASTA contigs, or no leader.
-- **Constant regions:** packaged canonical human `TRAC`, `TRBC1`, and `TRBC2`
-  references, or explicit `{chain}_constant_aa`/`_nt` columns from input data.
+- **Signal peptides (leaders):** standard human or murine leader peptides per
+  chain, native V-gene leaders extracted from Cell Ranger FASTA contigs, or no
+  leader.
+- **Constant regions:** packaged canonical human (`TRAC`, `TRBC1`, `TRBC2`) and
+  mouse (`Trac`, `Trbc1`, `Trbc2`) references (including chimeric human-VDJ +
+  mouse-constant pairing via `constant_species="mouse"`), or explicit
+  `{chain}_constant_aa`/`_nt` columns from input data.
 - **Self-cleaving 2A linkers:** `T2A`, `P2A`, `E2A`, or `F2A`.
 - **Single-chain orientation:** `β-linker-α` constructs with validation for
-  start/stop codons, reading frame, and repeated k-mers.
+  start/stop codons, reading frame, J→C junction seam, and repeated k-mers.
 
 ## Signal-peptide options
 
@@ -26,17 +29,20 @@ so chains remain distinguishable):
 
 | Value | Behavior |
 | --- | --- |
-| `"CD8A"`, `"CD28"`, `"IgK"`, `"TRAC"`, `"TRBC"` | Predefined signal peptide (table below) |
+| `"CD8A"`, `"CD28"`, `"mCD8B"`, `"mCD28"`, `"H2Kb"`, `"IgK"`, `"TRAC"`, `"TRBC"` | Predefined signal peptide (table below) |
 | `"from_contig"` | Native V-gene leader extracted from Cell Ranger contig FASTAs (germline-anchored against IMGT L-PART1+L-PART2) |
 | `None` | Omit signal peptide |
 
 | Name | Origin | Species | Amino-acid sequence |
 | --- | --- | --- | --- |
-| `CD8A` | CD8A signal peptide (UniProt P01732) | Human | `MALPVTALLLPLALLLHAARP` |
-| `CD28` | CD28 signal peptide (UniProt P10747) | Human | `MLRLLLALNLFPSIQVTG` |
+| `CD8A` | `CD8A` signal peptide (UniProt P01732) | Human | `MALPVTALLLPLALLLHAARP` |
+| `CD28` | `CD28` signal peptide (UniProt P10747) | Human | `MLRLLLALNLFPSIQVTG` |
+| `mCD8B` | `Cd8b1` signal peptide (UniProt P10300) | Mouse | `MQPWLWLVFSMKLAALWSSSA` |
+| `mCD28` | `Cd28` signal peptide (UniProt P31041) | Mouse | `MTLRLLFLALNFFSVQVT` |
+| `H2Kb` | `H2-K1` (H-2Kb) signal peptide (UniProt P01901) | Mouse | `MVPCTLLLLLAAALAPTQTRA` |
 | `IgK` | IgGκ light-chain signal peptide | Mouse | `METDTLLLWVLLLWVPGSTG` |
-| `TRAC` | TCRα constant signal peptide | Human | `MAGTWLLLLLALGCPALPTG` |
-| `TRBC` | TCRβ constant signal peptide | Human | `MGTSLLCWMALCLLGADHADG` |
+| `TRAC` | Synthetic TCR α-chain signal peptide | Human | `MAGTWLLLLLALGCPALPTG` |
+| `TRBC` | Synthetic TCR β-chain signal peptide | Human | `MGTSLLCWMALCLLGADHADG` |
 
 ## 2A linkers
 
@@ -73,12 +79,16 @@ assembled = assemble_full_sequences(
 
 ## Constant-region construction
 
-Canonical human `TRAC`, `TRBC1`, and `TRBC2` sequences are bundled in
-`tcrsift/refseqs/canonical_constants.fasta`. The default
-`constant_source="ensembl"` is retained as a backward-compatible alias for
-`"canonical"` and performs no network or Ensembl lookup. Pass
-`constant_source="from-data"` to read explicit `{chain}_constant_aa` and
-`{chain}_constant_nt` columns instead.
+Canonical human (`tcrsift/refseqs/canonical_constants.fasta`) and mouse
+(`tcrsift/refseqs/canonical_constants_mouse.fasta`) `TRAC`, `TRBC1`, and `TRBC2`
+sequences are bundled in the package. Pass `species="mouse"` for murine TCRs, or
+`species="human", constant_species="mouse"` for murinized chimeric TCR-T
+constructs (`codon_species` defaults to `constant_species` and can be set
+independently, e.g. `codon_species="human"` when expressing a murinized TCR in
+human T cells). The default `constant_source="ensembl"` is retained as a
+backward-compatible alias for `"canonical"` and performs no network or Ensembl
+lookup. Pass `constant_source="from-data"` to read explicit
+`{chain}_constant_aa` and `{chain}_constant_nt` columns instead.
 
 When `contigs_dir` is provided, nucleotide assembly blends donor contig 3′
 reads into the canonical constant region:

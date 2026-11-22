@@ -197,6 +197,7 @@ def sort_signature_consistency_from_adata(
     method_col: str = "enrichment_method",
     donor_col: str = "donor",
     sort_signature_map: dict[str, list[tuple[str, str]]] | None = None,
+    species: str | None = None,
     **kwargs,
 ) -> pd.DataFrame:
     """Per-cell signature scores from an AnnData → :func:`sort_signature_consistency`.
@@ -207,7 +208,19 @@ def sort_signature_consistency_from_adata(
     and runs the consistency QC. Returns an empty frame when the method
     column is absent or no mapped signature's genes are measurable.
     """
-    from .signature_methods import SIGNATURES, score_signature
+    from .signature_methods import (
+        expression_frame_from_adata,
+        score_signature,
+        signatures_for_species,
+    )
+    from .species import resolve_species
+
+    resolved_sp = resolve_species(
+        species or getattr(adata, "uns", {}).get("species", "auto"),
+        adata=adata,
+        warn_mismatch=False,
+    )
+    sig_registry = signatures_for_species(resolved_sp)
 
     sort_map = sort_signature_map or DEFAULT_SORT_SIGNATURE_MAP
     obs = adata.obs
@@ -222,10 +235,9 @@ def sort_signature_consistency_from_adata(
         out["donor"] = obs[donor].to_numpy()
     scored = 0
     for name in needed:
-        sig = SIGNATURES.get(name)
+        sig = sig_registry.get(name)
         if sig is None:
             continue
-        from .signature_methods import expression_frame_from_adata
         expr = expression_frame_from_adata(adata, sig.all_genes, on_missing="ignore")
         if expr.shape[1] == 0:
             continue

@@ -151,18 +151,48 @@ def _data_dir() -> Path:
     return cache_dir() / "data"
 
 
-def cached_model_file(backend: str, role: str, chain: str) -> Path:
-    ext = "npz" if backend == "kmer" else "pt"
-    return _models_dir() / f"{backend}_{role}_{chain}.{ext}"
+def cached_model_file(
+    backend: str, role: str, chain: str, *, species: str = "human"
+) -> Path:
+    from .species import normalize_species
+
+    sp = normalize_species(species)
+    ext = "npz" if backend in ("kmer", "kmer_gene") else "pt"
+    tag = f"_{sp}" if sp != "human" else ""
+    return _models_dir() / f"{backend}_{role}{tag}_{chain}.{ext}"
 
 
-def cached_repertoire_file(chain: str) -> Path:
-    return _data_dir() / f"observed_{chain}.csv"
+def cached_repertoire_file(chain: str, *, species: str = "human") -> Path:
+    from .species import normalize_species
+
+    sp = normalize_species(species)
+    tag = f"_{sp}" if sp != "human" else ""
+    return _data_dir() / f"observed{tag}_{chain}.csv"
 
 
 # ---------------------------------------------------------------------------
 # Training data
 # ---------------------------------------------------------------------------
+
+def _bundled_observed_pbmc(chain: str) -> pd.DataFrame | None:
+    """Read bundled healthy-PBMC ``observed_pbmc_10x.csv.gz`` (TRA + TRB with V/J)."""
+    from importlib.resources import files
+
+    locus = "TRA" if chain.lower() == "alpha" else "TRB"
+    try:
+        ref = files("tcrsift.refseqs").joinpath("observed_pbmc_10x.csv.gz")
+        if not ref.is_file():
+            return None
+        with gzip.open(str(ref), "rt") as fh:
+            df = pd.read_csv(fh)
+    except Exception:
+        return None
+    if not {"chain", "seq"} <= set(df.columns):
+        return None
+    sub = df[df["chain"] == locus].dropna(subset=["seq"]).copy()
+    cols = [c for c in ("seq", "v", "j") if c in sub.columns]
+    return sub[cols].reset_index(drop=True) if not sub.empty else None
+
 
 def _bundled_observed_beta() -> list[str]:
     """Healthy β CDR3s bundled with TCRpeg (external, non-circular)."""
@@ -182,42 +212,57 @@ def fetch_repertoire(
     source: str | None = None,
     seq_col: str = "seq",
     v_col: str | None = None,
+    j_col: str | None = None,
     chain_prefix: str | None = None,
+    species: str = "human",
 ) -> Path:
     """Fetch + cache an observed repertoire (CDR3s) for Ppost training.
 
-    With ``url`` (a CSV/TSV, optionally gzipped, with a CDR3 column), the
-    file is downloaded, the ``seq_col`` extracted (optionally filtered to the
-    chain via a ``v_col`` whose values start with ``chain_prefix``, e.g.
-    ``"TRA"``/``"TRB"``), and written to the per-chain cache. With no ``url``
-    and ``chain == "beta"``, the bundled healthy β repertoire is cached as-is.
-    Returns the cached CSV path. ``source`` is an informational preset key
-    (see :data:`REPERTOIRE_SOURCES`).
+    With ``url`` (a CSV/TSV or local file path, optionally gzipped, with a CDR3
+    column), the file is loaded, ``seq_col`` (plus optional ``v_col``/``j_col``)
+    extracted, and written to the per-chain/per-species cache. With no ``url``
+    and ``species == "human"``, the bundled healthy 10x PBMC α/β repertoire
+    (``tcrsift/refseqs/observed_pbmc_10x.csv.gz``) is used completely offline
+    (falling back to TCRpeg's bundled β CDR3s if absent).
     """
-    dest = cached_repertoire_file(chain)
+    from .species import normalize_species
+
+    sp = normalize_species(species)
+    chain = chain.lower()
+    dest = cached_repertoire_file(chain, species=sp)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     if url is None:
-        if chain == "beta":
-            seqs = _bundled_observed_beta()
-            logger.info("fetch_repertoire: using bundled healthy β (%d seqs)",
-                        len(seqs))
-            pd.DataFrame({"seq": seqs}).to_csv(dest, index=False)
-            return dest
-        raise ValueError(
-            f"fetch_repertoire: no bundled observed {chain} repertoire — pass "
-            f"url= a neutral repertoire (e.g. OTS: {REPERTOIRE_SOURCES['ots']})"
+        if sp == "human":
+            bundled = _bundled_observed_pbmc(chain)
+            if bundled is not None:
+                logger.info(
+                    "fetch_repertoire: using bundled healthy 10x PBMC %s (%d seqs)",
+                    chain, len(bundled),
+                )
+                bundled.to_csv(dest, index=False)
+                return dest
+            if chain == "beta":
+                seqs = _bundled_observed_beta()
+                logger.info("fetch_repertoire: using bundled healthy β (%d seqs)",
+                            len(seqs))
+                pd.DataFrame({"seq": seqs}).to_csv(dest, index=False)
+                return dest
+        raise FileNotFoundError(
+            f"fetch_repertoire: no bundled observed {sp} {chain} repertoire — pass "
+            f"url= a neutral {sp} repertoire CSV/TSV (e.g. OTS: {REPERTOIRE_SOURCES['ots']})"
         )
 
-    logger.info("fetch_repertoire: downloading %s (%s)", url, source or "url")
-    raw = _data_dir() / f"_download_{chain}{_suffix(url)}"
-    raw.parent.mkdir(parents=True, exist_ok=True)
-    _download(url, raw)
+    url_path = Path(url)
+    if url_path.is_file():
+        raw = url_path
+    else:
+        logger.info("fetch_repertoire: downloading %s (%s)", url, source or "url")
+        raw = _data_dir() / f"_download_{sp}_{chain}{_suffix(url)}"
+        raw.parent.mkdir(parents=True, exist_ok=True)
+        _download(url, raw)
     opener = gzip.open if str(raw).endswith(".gz") else open
-    # Key the separator off the resolved file extension, not a substring of the
-    # whole URL (a query string or path segment containing ".tsv" on a real CSV
-    # would otherwise pick the wrong separator).
-    sep = "\t" if _suffix(url) in (".tsv", ".tsv.gz") else ","
+    sep = "\t" if _suffix(str(raw)) in (".tsv", ".tsv.gz") else ","
     with opener(raw, "rt") as fh:
         frame = pd.read_csv(fh, sep=sep)
     if seq_col not in frame.columns:
@@ -226,11 +271,19 @@ def fetch_repertoire(
             f"{list(frame.columns)}"
         )
     if v_col and chain_prefix and v_col in frame.columns:
-        frame = frame[frame[v_col].astype(str).str.startswith(chain_prefix)]
-    seqs = frame[seq_col].dropna().astype(str)
-    seqs = seqs[seqs.str.len() > 0]
-    pd.DataFrame({"seq": seqs}).to_csv(dest, index=False)
-    logger.info("fetch_repertoire: cached %d %s seqs → %s", len(seqs), chain, dest)
+        frame = frame[frame[v_col].astype(str).str.upper().str.startswith(chain_prefix.upper())]
+    frame = frame[frame[seq_col].notna()].copy()
+    frame["seq"] = frame[seq_col].astype(str)
+    frame = frame[frame["seq"].str.len() > 0]
+    out_cols = {"seq": frame["seq"]}
+    resolved_v = v_col if (v_col and v_col in frame.columns) else ("v" if "v" in frame.columns else ("v_gene" if "v_gene" in frame.columns else None))
+    resolved_j = j_col if (j_col and j_col in frame.columns) else ("j" if "j" in frame.columns else ("j_gene" if "j_gene" in frame.columns else None))
+    if resolved_v:
+        out_cols["v"] = frame[resolved_v]
+    if resolved_j:
+        out_cols["j"] = frame[resolved_j]
+    pd.DataFrame(out_cols).to_csv(dest, index=False)
+    logger.info("fetch_repertoire: cached %d %s (%s) seqs → %s", len(frame), chain, sp, dest)
     return dest
 
 
@@ -241,13 +294,23 @@ def _suffix(url: str) -> str:
     return ".csv"
 
 
-def _observed_seqs(chain: str, *, url: str | None = None) -> list[str]:
-    """CDR3s for Ppost training: cached file → fetch (url/bundled)."""
-    cached = cached_repertoire_file(chain)
+def _observed_repertoire_df(
+    chain: str, *, url: str | None = None, species: str = "human"
+) -> pd.DataFrame:
+    """Observed repertoire frame (``seq`` and optional ``v``, ``j``) for Ppost training."""
+    cached = cached_repertoire_file(chain, species=species)
     if cached.is_file() and url is None:
-        return pd.read_csv(cached)["seq"].dropna().astype(str).tolist()
-    path = fetch_repertoire(chain, url=url)
-    return pd.read_csv(path)["seq"].dropna().astype(str).tolist()
+        return pd.read_csv(cached)
+    path = fetch_repertoire(chain, url=url, species=species)
+    return pd.read_csv(path)
+
+
+def _observed_seqs(
+    chain: str, *, url: str | None = None, species: str = "human"
+) -> list[str]:
+    """CDR3s for Ppost training: cached file → fetch (url/bundled)."""
+    df = _observed_repertoire_df(chain, url=url, species=species)
+    return df["seq"].dropna().astype(str).tolist()
 
 
 # ---------------------------------------------------------------------------
@@ -264,16 +327,15 @@ def train_model(
     epochs: int = 30,
     batch_size: int = 2000,
     device: str | None = None,
+    species: str = "human",
 ) -> Path:
-    """Train a (backend, role, chain) model and cache it; return its path.
+    """Train a (backend, role, chain) model and cache it; return its path."""
+    from .species import normalize_species
 
-    Only Ppost (observed-repertoire) models are trainable here. Pgen models are
-    shipped pre-built (``refseqs/kmer_pgen_*.npz``); they were generated offline
-    with OLGA, which is no longer a tcrsift dependency, so Pgen can't be
-    (re)trained at runtime — use the shipped model.
-    """
+    sp = normalize_species(species)
     if role == "ppost":
-        seqs = _observed_seqs(chain, url=url)
+        rep_df = _observed_repertoire_df(chain, url=url, species=sp)
+        seqs = rep_df["seq"].dropna().astype(str).tolist()
     elif role == "pgen":
         raise ValueError(
             "Pgen models are shipped pre-built and cannot be trained at "
@@ -284,12 +346,19 @@ def train_model(
     else:
         raise ValueError(f"role must be 'pgen'/'ppost', got {role!r}")
 
-    out = cached_model_file(backend, role, chain)
+    out = cached_model_file(backend, role, chain, species=sp)
     out.parent.mkdir(parents=True, exist_ok=True)
-    logger.info("train_model: fitting %s %s %s on %d seqs → %s",
-                backend, role, chain, len(seqs), out)
+    logger.info("train_model: fitting %s %s %s (%s) on %d seqs → %s",
+                backend, role, chain, sp, len(seqs), out)
     if backend == "kmer":
         model = seqprob.KmerProbabilityModel(order=order, chain=chain).fit(seqs)
+    elif backend == "kmer_gene":
+        kmer_order = min(order, 2)
+        v_genes = rep_df["v"].tolist() if "v" in rep_df.columns else None
+        j_genes = rep_df["j"].tolist() if "j" in rep_df.columns else None
+        model = seqprob.GeneAwareKmerModel(order=kmer_order, chain=chain).fit(
+            seqs, v_genes=v_genes, j_genes=j_genes
+        )
     elif backend == "tcrpeg":
         dev = device or _default_device()
         model = seqprob.TCRpegProbabilityModel(
@@ -329,52 +398,49 @@ def ensure_model(
     role: str = "ppost",
     auto_train: bool = True,
     url: str | None = None,
+    species: str = "human",
 ) -> seqprob.SequenceProbabilityModel:
-    """Return the (backend, role, chain) model, training it on first use.
+    """Return the (backend, role, chain, species) model, training it on first use."""
+    from .species import normalize_species
 
-    Strictly role-pure: precedence is in-memory cache → on-disk cached model
-    → shipped default (k-mer only) → auto-train (when ``auto_train``). It
-    **never substitutes one role for another** — a Ppost request never falls
-    back to a Pgen model (that would privilege Pgen and fake selection
-    correction). Raises :class:`FileNotFoundError` (no model / no training
-    data) or :class:`ValueError` (Pgen can't be trained at runtime — use the
-    shipped k-mer model) so the caller can decide how to degrade honestly.
-    Cross-*estimator* fallback within a role (e.g. TCRpeg-Pgen → k-mer-Pgen) is
-    the caller's call, not this one's.
-    """
-    key = (chain.lower(), backend, role)
+    sp = normalize_species(species)
+    key = (chain.lower(), backend, role, sp)
     if key in _CACHE:
         return _CACHE[key]
 
-    path = cached_model_file(backend, role, chain)
+    path = cached_model_file(backend, role, chain, species=sp)
     if path.is_file():
         model = seqprob.BACKENDS[backend].load(str(path))
         _CACHE[key] = model
         return model
 
-    # Shipped k-mer defaults (instant, no training). Raises FileNotFoundError
-    # if a requested role/chain model is absent.
-    if backend == "kmer":
-        model = seqprob.load_background_model(chain, "kmer", role)
-        _CACHE[key] = model
-        return model
+    # Shipped k-mer / kmer_gene defaults (instant, no training when present).
+    # For mouse with auto_train=True and an available mouse repertoire (or url),
+    # prefer training a genuine murine ppost model over falling back to human AA kmer.
+    can_train_mouse_ppost = (
+        sp == "mouse"
+        and role == "ppost"
+        and auto_train
+        and (url is not None or cached_repertoire_file(chain, species=sp).is_file())
+    )
+    if backend in ("kmer", "kmer_gene") and not can_train_mouse_ppost:
+        try:
+            model = seqprob.load_background_model(chain, backend, role, species=sp)
+            _CACHE[key] = model
+            return model
+        except FileNotFoundError:
+            if not auto_train:
+                raise
 
     if not auto_train:
         raise FileNotFoundError(
-            f"no cached {backend} {role} model for {chain}; run "
+            f"no cached {backend} {role} model for {sp} {chain}; run "
             f"`tcrsift pgen train` or set auto_train=True"
         )
 
-    # Auto-train (tcrpeg, ppost only). Propagates FileNotFoundError (no observed
-    # data) and ValueError (Pgen isn't trainable at runtime) to the caller.
-    if role == "ppost" and chain == "alpha" and url is None \
-            and not cached_repertoire_file("alpha").is_file():
-        raise FileNotFoundError(
-            "no observed alpha repertoire for ppost; fetch a neutral paired "
-            "repertoire (e.g. OTS) via `tcrsift pgen fetch --url ...`"
-        )
-    train_model(chain, backend=backend, role=role, url=url)
+    train_model(chain, backend=backend, role=role, url=url, species=sp)
     model = seqprob.BACKENDS[backend].load(
-        str(cached_model_file(backend, role, chain)))
+        str(cached_model_file(backend, role, chain, species=sp))
+    )
     _CACHE[key] = model
     return model

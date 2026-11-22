@@ -20,6 +20,7 @@ Configuration can be loaded from YAML files, with CLI arguments taking precedenc
 from __future__ import annotations
 
 import argparse
+import copy
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -188,9 +189,19 @@ class AnnotateConfig:
     vdjdb_path: str | None = None
     iedb_path: str | None = None
     cedar_path: str | None = None
+    iedb_epitope_path: str | None = None
     match_by: str = "CDR3ab"
     exclude_viral: bool = False
     flag_only: bool = False
+    host_species_filter: str = "all"
+    auto_download: bool = False
+
+    def __post_init__(self):
+        if self.host_species_filter not in ("all", "same"):
+            raise ValueError(
+                f"Invalid host_species_filter: {self.host_species_filter!r}; "
+                "expected 'all' or 'same'"
+            )
 
 
 @dataclass
@@ -310,6 +321,24 @@ class AssembleConfig:
     # Shorthand: a raw CellRanger per_sample_outs dir; implies
     # sample_name_from="grandparent".
     cellranger_dir: str | None = None
+    # Optional species overrides for chimeric constructs (e.g. human VDJ +
+    # mouse constant region via constant_species="mouse").
+    constant_species: str | None = None
+    codon_species: str | None = None
+    trac_allele: str = "auto"
+    trbc1_allele: str = "auto"
+    trbc2_allele: str = "auto"
+    stop_codons: list[str] = field(default_factory=lambda: ["TAA", "TGA"])
+
+    def __post_init__(self):
+        from .species import normalize_species
+
+        if self.constant_species is not None:
+            self.constant_species = normalize_species(self.constant_species)
+        if self.codon_species is not None:
+            self.codon_species = normalize_species(self.codon_species)
+        if isinstance(self.stop_codons, tuple):
+            self.stop_codons = list(self.stop_codons)
 
 
 @dataclass
@@ -391,6 +420,7 @@ class TCRsiftConfig:
     insilico_filter: dict[str, Any] = field(default_factory=dict)
 
     # Global options
+    species: str = "auto"
     verbose: bool = False
 
     @classmethod
@@ -418,8 +448,13 @@ class TCRsiftConfig:
         return cls._from_dict(data)
 
     @classmethod
-    def _from_dict(cls, data: dict[str, Any]) -> TCRsiftConfig:
-        """Create config from a dictionary."""
+    def _from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        _overrides: dict[str, Any] | None = None,
+    ) -> TCRsiftConfig:
+        """Create config from a dictionary (with optional flat CLI overrides)."""
         # Map flat keys to nested structure for convenience
         flat_to_nested = {
             # Load
@@ -441,10 +476,11 @@ class TCRsiftConfig:
             "handle_doublets": ("clonotype", "handle_doublets"),
             "min_umi": ("clonotype", "min_umi"),
             "doublet_warn_rate": ("clonotype", "doublet_warn_rate"),
-            # Attribution (#176). Field names are globally unique so they
-            # survive merge_with_args' flatten/rebuild round-trip.
+            "add_pgen_ppost": ("clonotype", "add_pgen_ppost"),
+            "no_pgen_ppost": ("clonotype", "add_pgen_ppost"),  # inverted alias
+            # Attribution (#176).
             "attribution": ("attribution", "enabled"),  # --attribution / flat bool
-            "enabled": ("attribution", "enabled"),  # from flattened section
+            "enabled": ("attribution", "enabled"),  # legacy flat alias
             "beta_sharing": ("attribution", "beta_sharing"),
             "doublet_split": ("attribution", "doublet_split"),
             "dual_alpha_merge": ("attribution", "dual_alpha_merge"),
@@ -478,12 +514,16 @@ class TCRsiftConfig:
             "vdjdb_path": ("annotate", "vdjdb_path"),
             "iedb_path": ("annotate", "iedb_path"),
             "cedar_path": ("annotate", "cedar_path"),
+            "iedb_epitope_path": ("annotate", "iedb_epitope_path"),
             "vdjdb": ("annotate", "vdjdb_path"),  # alias
             "iedb": ("annotate", "iedb_path"),  # alias
             "cedar": ("annotate", "cedar_path"),  # alias
+            "iedb_epitope": ("annotate", "iedb_epitope_path"),  # alias
             "match_by": ("annotate", "match_by"),
             "exclude_viral": ("annotate", "exclude_viral"),
             "flag_only": ("annotate", "flag_only"),
+            "host_species_filter": ("annotate", "host_species_filter"),
+            "auto_download": ("annotate", "auto_download"),
             # TIL
             "til_match_by": ("til", "match_by"),
             "min_til_cells": ("til", "min_til_cells"),
@@ -500,16 +540,21 @@ class TCRsiftConfig:
             "aggregation_ops": ("gex", "aggregation_ops"),
             # Embed (#311)
             "embed": ("embed", "enabled"),  # --embed / flat bool
+            "n_top_genes": ("embed", "n_top_genes"),
             "n_pcs": ("embed", "n_pcs"),
             "batch_key": ("embed", "batch_key"),
             "leiden_resolution": ("embed", "leiden_resolution"),
+            "n_neighbors": ("embed", "n_neighbors"),
             "informative_genes": ("embed", "informative_genes"),
+            "exclude_receptor_genes": ("embed", "exclude_receptor_genes"),
+            "seed": ("embed", "seed"),
             # Unify
             "add_occurrence_flags": ("unify", "add_occurrence_flags"),
             "add_combined_stats": ("unify", "add_combined_stats"),
             "add_phenotype_confidence": ("unify", "add_phenotype_confidence"),
             "phenotype_ratio_threshold": ("unify", "phenotype_ratio_threshold"),
             # Assemble
+            "no_assemble": ("assemble", "enabled"),  # inverted alias
             "alpha_leader": ("assemble", "alpha_leader"),
             "beta_leader": ("assemble", "beta_leader"),
             "leader_fallback": ("assemble", "leader_fallback"),
@@ -526,6 +571,12 @@ class TCRsiftConfig:
             "contigs_dir": ("assemble", "contigs_dir"),
             "sample_name_from": ("assemble", "sample_name_from"),
             "cellranger_dir": ("assemble", "cellranger_dir"),
+            "constant_species": ("assemble", "constant_species"),
+            "codon_species": ("assemble", "codon_species"),
+            "trac_allele": ("assemble", "trac_allele"),
+            "trbc1_allele": ("assemble", "trbc1_allele"),
+            "trbc2_allele": ("assemble", "trbc2_allele"),
+            "stop_codons": ("assemble", "stop_codons"),
             "single_chain": ("assemble", "single_chain"),
             # Output
             "generate_plots": ("output", "generate_plots"),
@@ -559,33 +610,37 @@ class TCRsiftConfig:
         }
         global_opts: dict[str, Any] = {}
 
-        for key, value in data.items():
-            # A key that names a section AND is given as a dict is a nested
-            # block, even when a same-named flat scalar alias exists (e.g.
-            # 'attribution', which is both a section and a --attribution bool).
-            if key in nested and isinstance(value, dict):
-                nested[key].update(value)
-            elif key in flat_to_nested:
-                section, param = flat_to_nested[key]
-                # Handle inverted aliases
-                if key == "skip_plots":
-                    value = not value
-                nested[section][param] = value
-            elif key in nested:
-                # Nested section provided directly
-                if isinstance(value, dict):
+        def _apply_mapping(source: dict[str, Any]) -> None:
+            for key, value in source.items():
+                # A key that names a section AND is given as a dict is a nested
+                # block, even when a same-named flat scalar alias exists (e.g.
+                # 'attribution', which is both a section and a --attribution bool).
+                if key in nested and isinstance(value, dict):
                     nested[key].update(value)
-            elif key == "verbose":
-                global_opts["verbose"] = value
-            elif key == "selection":
-                # Free-form nested selection-rule config (#122).
-                global_opts["selection"] = value if isinstance(value, dict) else {}
-            elif key == "insilico_filter":
-                # Free-form in-silico filter layer (#149).
-                global_opts["insilico_filter"] = (
-                    value if isinstance(value, dict) else {}
-                )
-            # Ignore unknown keys
+                elif key in flat_to_nested:
+                    section, param = flat_to_nested[key]
+                    if key in ("skip_plots", "no_pgen_ppost", "no_assemble"):
+                        value = not value
+                    nested[section][param] = value
+                elif key in nested:
+                    if isinstance(value, dict):
+                        nested[key].update(value)
+                elif key == "verbose":
+                    global_opts["verbose"] = value
+                elif key == "species":
+                    from .species import normalize_species
+
+                    global_opts["species"] = normalize_species(value, allow_auto=True)
+                elif key == "selection":
+                    global_opts["selection"] = value if isinstance(value, dict) else {}
+                elif key == "insilico_filter":
+                    global_opts["insilico_filter"] = (
+                        value if isinstance(value, dict) else {}
+                    )
+
+        _apply_mapping(data)
+        if _overrides:
+            _apply_mapping(_overrides)
 
         return cls(
             load=LoadConfig(**nested["load"]),
@@ -635,6 +690,7 @@ class TCRsiftConfig:
             "output": dataclasses.asdict(self.output),
             "selection": self.selection,
             "insilico_filter": self.insilico_filter,
+            "species": self.species,
             "verbose": self.verbose,
         }
 
@@ -658,46 +714,33 @@ class TCRsiftConfig:
         # Convert args to dict, filtering out None values
         args_dict = {k: v for k, v in vars(args).items() if v is not None}
 
-        # Start with current config as dict
-        config_dict = self.to_dict()
+        # Start with a deep copy of the nested config dictionary so shared
+        # field names across sections (e.g. `enabled`, `min_cells`, `match_by`)
+        # never collide and unmapped nested fields are never lost.
+        merged_data = copy.deepcopy(self.to_dict())
 
-        # Flatten config for easier merging. The `selection` block is a
-        # free-form nested dict (rules/global_rank), not a flat namespace
-        # of scalar params, so keep it intact rather than spreading it —
-        # otherwise its nested keys get hoisted and dropped on rebuild.
-        flat_config = {}
-        for section, params in config_dict.items():
-            # Free-form nested dicts (rules / predicate lists), not flat
-            # scalar-param namespaces — keep intact rather than spreading them,
-            # else their nested keys get hoisted and dropped on rebuild.
-            if section in ("selection", "insilico_filter"):
-                flat_config[section] = params
-            elif isinstance(params, dict):
-                # `match_by` is the one field name shared across sections
-                # (annotate + til). Flattening by bare name would let til's
-                # value clobber annotate's (and til's would reset to default
-                # on rebuild). Emit til.match_by under its unambiguous flat
-                # alias so both round-trip independently.
-                if section == "til" and "match_by" in params:
-                    params = {
-                        ("til_match_by" if k == "match_by" else k): v
-                        for k, v in params.items()
-                    }
-                flat_config.update(params)
-            else:
-                flat_config[section] = params
+        # CLI flags using `action="store_true"` without `default=None` evaluate
+        # to `False` when omitted on the command line; ignore `False` for them
+        # so they never clobber `True` values configured in YAML.
+        store_true_default_false = {
+            "verbose",
+            "no_leaders",
+            "leaders_from_contigs",
+            "no_pgen_ppost",
+            "no_assemble",
+            "no_sheet_contigs",
+            "allow_canonical_fallback",
+        }
 
-        # Handle leader shortcut flags first
+        cli_overrides: dict[str, Any] = {}
         if args_dict.get("no_leaders"):
-            flat_config["alpha_leader"] = None
-            flat_config["beta_leader"] = None
+            cli_overrides["alpha_leader"] = None
+            cli_overrides["beta_leader"] = None
         elif args_dict.get("leaders_from_contigs"):
-            flat_config["alpha_leader"] = "from_contig"
-            flat_config["beta_leader"] = "from_contig"
+            cli_overrides["alpha_leader"] = "from_contig"
+            cli_overrides["beta_leader"] = "from_contig"
 
-        # Apply CLI overrides
         for key, value in args_dict.items():
-            # Skip non-config args and shortcut flags
             if key in (
                 "func",
                 "command",
@@ -709,19 +752,22 @@ class TCRsiftConfig:
                 "no_leaders",
                 "leaders_from_contigs",
                 "til_sample",
+                "no_sheet_contigs",
+                "allow_canonical_fallback",
+                "cache_dir",
             ):
                 continue
-            # Handle special cases
+            if key in store_true_default_false and value is False:
+                continue
             if key == "fdr_tiers" and isinstance(value, str):
                 value = [float(x) for x in value.split(",")]
             if key == "til_samples" and isinstance(value, str):
                 value = [x.strip() for x in value.split(",")]
-            # Convert "none" string to None for leader options
             if key in ("alpha_leader", "beta_leader") and value == "none":
                 value = None
-            flat_config[key] = value
+            cli_overrides[key] = value
 
-        return TCRsiftConfig._from_dict(flat_config)
+        return TCRsiftConfig._from_dict(merged_data, _overrides=cli_overrides)
 
 
 def add_config_args(parser: argparse.ArgumentParser) -> None:

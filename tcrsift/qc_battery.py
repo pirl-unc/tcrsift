@@ -61,8 +61,34 @@ _CT = dict(zip(_COD, _AA))
 EXPECTED_T2A = "EGRGSLLTCGDVEENPGP"
 
 # J genes whose conserved anchor is not F/W (IMGT non-canonical); their CDR3
-# ends on that residue rather than the canonical Phe/Trp. TRAJ35: C-G-S-G.
-NONCANON_J_END: dict[str, list[str]] = {"C": ["TRAJ35"]}
+# ends on that residue rather than the canonical Phe/Trp (human TRAJ35 ends in C;
+# mouse TRAJ7/TRAJ44 end in L and mouse TRBJ2-6 ends in Y).
+NONCANON_J_END_HUMAN: dict[str, list[str]] = {
+    "C": ["TRAJ35"],
+}
+NONCANON_J_END_MOUSE: dict[str, list[str]] = {
+    "C": ["TRAJ35"],
+    "L": ["TRAJ7", "TRAJ44"],
+    "Y": ["TRBJ2-6"],
+}
+NONCANON_J_END = NONCANON_J_END_MOUSE  # backward-compatible union constant
+
+
+def _is_mouse_row(r: pd.Series) -> bool:
+    """Detect whether an assembled row has murine VDJ / constant provenance."""
+    for c_col in ("alpha_c_gene", "beta_c_gene"):
+        val = str(r.get(c_col, "")).strip()
+        if val in ("Trac", "Trbc1", "Trbc2"):
+            return True
+    for v_col in ("alpha_v_gene", "beta_v_gene", "alpha_j_gene", "beta_j_gene"):
+        val = str(r.get(v_col, "")).strip()
+        if val.startswith(("Trav", "Trbv", "Traj", "Trbj")) or "D-" in val.upper():
+            return True
+    fa = _nz(r.get("full_alpha_aa", ""))
+    fb = _nz(r.get("full_beta_aa", ""))
+    if fa.endswith("LLMTLRLWSS") or fb.endswith(("VKRKNS", "VKKKNS")):
+        return True
+    return False
 
 
 def _tr(nt: str) -> str:
@@ -189,6 +215,7 @@ def check_cdr3_ref(d: pd.DataFrame) -> QCResult:
         )
     bad, noncanon, lens = 0, 0, []
     for _, r in d.iterrows():
+        allow_map = NONCANON_J_END_MOUSE if _is_mouse_row(r) else NONCANON_J_END_HUMAN
         for ch in ("alpha", "beta"):
             cdr, vdj, jg = (
                 str(r[f"CDR3_{ch}"]),
@@ -202,8 +229,9 @@ def check_cdr3_ref(d: pd.DataFrame) -> QCResult:
                 bad += 1
             end = cdr[-1]
             if end not in "FW":
-                if end in NONCANON_J_END and any(
-                    jg.startswith(g) for g in NONCANON_J_END[end]
+                jg_u = jg.upper()
+                if end in allow_map and any(
+                    jg_u.startswith(g) for g in allow_map[end]
                 ):
                     noncanon += 1
                 else:
@@ -212,7 +240,7 @@ def check_cdr3_ref(d: pd.DataFrame) -> QCResult:
             ("alpha_v_gene", "TRAV"), ("alpha_j_gene", "TRAJ"), ("alpha_c_gene", "TRAC"),
             ("beta_v_gene", "TRBV"), ("beta_j_gene", "TRBJ"), ("beta_c_gene", "TRBC"),
         ]:
-            if not str(r[g]).startswith(pat):
+            if not str(r[g]).upper().startswith(pat):
                 bad += 1
         for ch in ("alpha", "beta"):
             jr = str(r.get(f"{ch}_junction_residue", ""))

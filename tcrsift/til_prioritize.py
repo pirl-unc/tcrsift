@@ -56,8 +56,12 @@ MART1_PATTERN = re.compile(
 
 def _score_within_samples(adata, name: str) -> np.ndarray:
     """Score one signature separately within each sample and compatible lineage."""
-    from .signature_methods import score_by_name
+    from .signature_methods import NEOANTIGEN_SIGNATURES, score_by_name
 
+    sp = getattr(adata, "uns", {}).get("species", "human")
+    missing_policy = (
+        "warn" if (sp == "mouse" and name in NEOANTIGEN_SIGNATURES) else "error"
+    )
     scores = np.full(adata.n_obs, np.nan, dtype=float)
     for (_, lineage), positions in adata.obs.groupby(["sample", "lineage"], observed=True).indices.items():
         if SIGNATURE_LINEAGE.get(name, lineage) != lineage:
@@ -67,7 +71,8 @@ def _score_within_samples(adata, name: str) -> np.ndarray:
             sample_adata,
             name,
             log1p=False,  # the caller has already made log1p(CP10K)
-            on_missing="error",
+            on_missing=missing_policy,
+            species=sp,
         )
         scores[positions] = values.to_numpy(dtype=float)
     return scores
@@ -166,7 +171,17 @@ def _join_flags(df: pd.DataFrame, columns: list[tuple[str, str]]) -> pd.Series:
 
 def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Score and prioritize clones from a standard CellRanger sample sheet."""
-    names = resolve_signatures(args.context, args.tcell_type, args.signatures, args.exclude_signatures)
+    from .species import normalize_species, resolve_species
+
+    arg_species = normalize_species(getattr(args, "species", "auto"), allow_auto=True)
+    initial_species = "human" if arg_species == "auto" else arg_species
+    names = resolve_signatures(
+        args.context,
+        args.tcell_type,
+        args.signatures,
+        args.exclude_signatures,
+        species=initial_species,
+    )
     evidence = args.signature_evidence or ("either" if args.signature_cutoff == "background" else "mean")
     if args.signature_cutoff == "legacy" and evidence != "mean":
         raise ValueError("--signature-evidence subset/either requires --signature-cutoff background")
@@ -192,8 +207,24 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         raise ValueError("--min-frequency must be in [0, 1]")
     if args.min_cells < 1:
         raise ValueError("--min-cells must be >= 1")
-    if not 1 <= args.min_signature_support <= len(names):
-        raise ValueError(f"--min-signature-support must be between 1 and {len(names)}")
+    max_possible_names = (
+        max(
+            len(names),
+            len(
+                resolve_signatures(
+                    args.context,
+                    args.tcell_type,
+                    args.signatures,
+                    args.exclude_signatures,
+                    species="mouse",
+                )
+            ),
+        )
+        if arg_species == "auto"
+        else len(names)
+    )
+    if not 1 <= args.min_signature_support <= max_possible_names:
+        raise ValueError(f"--min-signature-support must be between 1 and {max_possible_names}")
     for key in ("max_clones", "min_vdj_umis", "min_vdj_reads", "min_cd3",
                 "min_alpha_cdr3_length", "min_beta_cdr3_length", *QC_DEFAULTS):
         if not np.isfinite(getattr(args, key)) or getattr(args, key) < 0:
@@ -215,6 +246,7 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
     from .annotate import annotate_clonotypes
     from .annotate_tcrs import add_paired_ppost, add_pairing_promiscuity, add_pgen_ppost
     from .clonotype import aggregate_clonotypes, build_clone_sample_long
+    from .datacache import ensure_cached
     from .loader import load_samples
     from .phenotype import phenotype_cells
     from .sample_sheet import load_sample_sheet
@@ -231,8 +263,31 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         s.patient_id is None or not str(s.patient_id).strip() for s in sheet
     ):
         raise ValueError("patient_id must be populated for every sample when the column is used")
-    logger.info("Context: %s; T cells: %s; signatures: %s", args.context, args.tcell_type, ", ".join(names))
     adata = load_samples(sheet, **{key: getattr(args, key) for key in QC_DEFAULTS})
+    sheet_species = getattr(sheet, "species", None)
+    requested_species = arg_species if arg_species != "auto" else (sheet_species or "auto")
+    resolved_species = resolve_species(
+        requested_species,
+        adata=adata if adata.n_vars > 0 else None,
+        df=adata.obs,
+        warn_mismatch=bool(requested_species != "auto"),
+        context="til-prioritize",
+    )
+    adata.uns["species"] = resolved_species
+    if resolved_species != initial_species:
+        names = resolve_signatures(
+            args.context,
+            args.tcell_type,
+            args.signatures,
+            args.exclude_signatures,
+            species=resolved_species,
+        )
+    if not 1 <= args.min_signature_support <= len(names):
+        raise ValueError(f"--min-signature-support must be between 1 and {len(names)}")
+    logger.info(
+        "Species: %s; Context: %s; T cells: %s; signatures: %s",
+        resolved_species, args.context, args.tcell_type, ", ".join(names),
+    )
     if "sample" not in adata.obs or adata.obs["sample"].isna().any() or adata.obs["sample"].nunique() < 1:
         raise ValueError("prioritize requires at least one named sample")
     _analysis_units(adata)  # Validate before a cell filter can hide missing donors.
@@ -327,21 +382,36 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         validate="one_to_one",
     )
 
-    clonotypes = add_pgen_ppost(clonotypes, backend="kmer")
+    clonotypes = add_pgen_ppost(clonotypes, backend="kmer", species=resolved_species)
     clonotypes = add_paired_ppost(clonotypes)
     clonotypes = add_pairing_promiscuity(clonotypes)
+    cache_dir = getattr(args, "cache_dir", None)
+    auto_dl = bool(getattr(args, "auto_download", False))
+    vdjdb_path = args.vdjdb or ensure_cached("vdjdb", cache_dir, auto_download=auto_dl)
+    iedb_path = args.iedb or ensure_cached("iedb", cache_dir, auto_download=auto_dl)
+    cedar_path = args.cedar or ensure_cached("cedar", cache_dir, auto_download=auto_dl)
+    iedb_epitope_path = getattr(args, "iedb_epitope", None) or ensure_cached(
+        "iedb_epitope", cache_dir, auto_download=auto_dl
+    )
     clonotypes = annotate_clonotypes(
         clonotypes,
-        vdjdb_path=args.vdjdb,
-        iedb_path=args.iedb,
-        cedar_path=args.cedar,
+        vdjdb_path=vdjdb_path,
+        iedb_path=iedb_path,
+        cedar_path=cedar_path,
+        iedb_epitope_path=iedb_epitope_path,
         match_strictness=args.database_match,
         flag_only=True,
+        species=resolved_species,
+        host_species_filter="same",
     )
 
     clonotypes["known_viral_match"] = clonotypes["is_viral"].fillna(False).astype(bool)
     clonotypes["known_mart1_match"] = _known_mart1_mask(clonotypes)
-    clonotypes["uses_trav12_2"] = _trav12_2_mask(clonotypes)
+    clonotypes["uses_trav12_2"] = (
+        _trav12_2_mask(clonotypes)
+        if resolved_species == "human"
+        else pd.Series(False, index=clonotypes.index)
+    )
 
     # ppost_either is ln(P) for the more common of the two chains. Higher
     # (less negative) values are more public; the percentile is cohort-relative.
@@ -417,6 +487,7 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
 
     config = {
         "version": __version__, "arguments": vars(args) | {"func": args.func.__name__},
+        "species": resolved_species,
         "resolved_signatures": names, "signature_lineages": SIGNATURE_LINEAGE,
         "cell_filters": cell_filters, "sample_cell_counts": sample_counts,
         "selection": "one total budget; round-robin over signature/evidence/patient/sample/lineage lists",
@@ -432,7 +503,7 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
             "background": "uniform cell subsets without replacement within patient/sample/lineage, matched to clone cell count",
             "interpretation": "competitive expression enrichment; not technical-noise estimation, antigen specificity, or FDR control",
         },
-        "database_annotation_available": bool(args.vdjdb or args.iedb or args.cedar),
+        "database_annotation_available": bool(vdjdb_path or iedb_path or cedar_path),
         "candidate_count": len(candidates),
     }
     (args.output_dir / "prioritization.json").write_text(json.dumps(config, indent=2, default=str) + "\n")
@@ -447,9 +518,28 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
     parser.add_argument("sample_sheet", type=Path, help="Paired CellRanger VDJ + GEX YAML/CSV (one or more samples)")
     parser.add_argument("-o", "--output-dir", type=Path, required=True,
                         help="Directory for the candidate, audit, and per-sample score CSVs")
-    parser.add_argument("--vdjdb", type=Path, help="Optional VDJdb annotation file")
-    parser.add_argument("--iedb", type=Path, help="Optional IEDB annotation file")
-    parser.add_argument("--cedar", type=Path, help="Optional CEDAR annotation file")
+    parser.add_argument("--vdjdb", type=Path, help="Optional VDJdb annotation file (overrides cache)")
+    parser.add_argument("--iedb", type=Path, help="Optional IEDB annotation file (overrides cache)")
+    parser.add_argument("--iedb-epitope", type=Path, help="Optional IEDB epitope_full_v3.csv (overrides cache)")
+    parser.add_argument("--cedar", type=Path, help="Optional CEDAR annotation file (overrides cache)")
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Reference-database cache directory (default: $TCRSIFT_DATA_DIR or ~/.cache/tcrsift)",
+    )
+    parser.add_argument(
+        "--auto-download",
+        action="store_true",
+        default=False,
+        help="Automatically download missing annotation databases into --cache-dir",
+    )
+    parser.add_argument(
+        "--species",
+        choices=("human", "mouse", "auto"),
+        default="auto",
+        help="Organism for gene resolution, signatures, and DB host matching (default: auto)",
+    )
     parser.add_argument(
         "--database-match",
         choices=("strict_ab", "ab_with_partial", "b_only"),

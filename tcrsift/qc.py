@@ -864,30 +864,56 @@ DEFAULT_LINEAGE_PROGRAMS: dict[str, list[str]] = {
     "fibroblast": ["COL1A1", "COL1A2", "DCN", "LUM", "PDGFRA"],
 }
 
-# Solid-tumor TME preset (#327, #334). Lineage programs are CONTEXT-DEPENDENT:
-# osteoclasts (a bone-tumor TME resident) are folded into ``myeloid`` rather than
-# tracked as a distinct lineage. ``fibroblast`` is KEPT (#334 — an earlier version
-# dropped it): it is the only handle cross-lineage detection has on tumor+immune
-# doublets, because tumor is not (and should not be) its own lineage program but
-# its collagen registers as the fibroblast program, so a tumor+T doublet trips
-# fibroblast+T = 2 programs and is caught. It also catches CAF+immune doublets.
-# A PURE tumor cell expresses collagen but no second program → 1 program → NOT
-# flagged (the gate needs ≥2), so it never self-flags — and the gate REMOVES
-# rather than annotates (tumor labeling is annotate_cells + MarkerCountOverride,
-# #325, a separate path). Guard the rare tumor + ambient-second-lineage false
-# flag with ``require_high_umi`` / ``umi_outlier_mult``, not by dropping a
-# lineage. Pass your own via ``lineage_sets=`` when neither preset fits.
 SOLID_TUMOR_LINEAGE_PROGRAMS: dict[str, list[str]] = {
     **DEFAULT_LINEAGE_PROGRAMS,
     "myeloid": DEFAULT_LINEAGE_PROGRAMS["myeloid"] + ["ACP5", "CTSK", "MMP9"],
 }
 
+MOUSE_LINEAGE_PROGRAMS: dict[str, list[str]] = {
+    "T": ["CD3D", "CD3E", "CD3G", "TRAC", "TRBC1", "TRBC2", "CD2", "CD7"],
+    "B/plasma": ["CD79A", "CD79B", "MS4A1", "JCHAIN", "MZB1", "IGHM", "IGKC"],
+    "myeloid": ["LYZ2", "CD68", "C1QA", "C1QB", "C1QC", "CD14", "FCGR3",
+                "FCGR4", "AIF1", "CSF1R"],
+    "NK": ["NCR1", "KLRB1C", "ITGA2", "KLRA4", "KLRA7", "NKG7", "KLRD1"],
+    "endothelial": ["PECAM1", "VWF", "CLDN5", "CDH5", "EGFL7"],
+    "fibroblast": ["COL1A1", "COL1A2", "DCN", "LUM", "PDGFRA"],
+}
+
+MOUSE_SOLID_TUMOR_LINEAGE_PROGRAMS: dict[str, list[str]] = {
+    **MOUSE_LINEAGE_PROGRAMS,
+    "myeloid": MOUSE_LINEAGE_PROGRAMS["myeloid"] + ["ACP5", "CTSK", "MMP9"],
+}
+
+
+def lineage_programs_for_species(
+    species: str = "human",
+    *,
+    solid_tumor: bool = False,
+) -> dict[str, list[str]]:
+    """Return disjoint lineage doublet programs for ``species``."""
+    from .species import normalize_species
+
+    if normalize_species(species) == "mouse":
+        return MOUSE_SOLID_TUMOR_LINEAGE_PROGRAMS if solid_tumor else MOUSE_LINEAGE_PROGRAMS
+    return SOLID_TUMOR_LINEAGE_PROGRAMS if solid_tumor else DEFAULT_LINEAGE_PROGRAMS
+
 
 def _gene_vector(adata, gene: str) -> np.ndarray:
-    """Dense per-cell expression for one gene (zeros if the gene is absent)."""
-    if gene not in adata.var_names:
-        return np.zeros(adata.n_obs)
-    x = adata[:, gene].X
+    """Dense per-cell expression for one gene (zeros if absent).
+
+    Resolves symbols across HGNC, MGI title-case, and Ensembl ``ENSG*``/``ENSMUSG*``
+    via :func:`tcrsift.genes.resolve_adata_var_map`.
+    """
+    if gene in adata.var_names:
+        vname = gene
+    else:
+        from .genes import resolve_adata_var_map
+
+        _, sym_to_var = resolve_adata_var_map(adata, [gene])
+        vname = sym_to_var.get(str(gene).upper())
+        if vname is None:
+            return np.zeros(adata.n_obs)
+    x = adata[:, vname].X
     return x.toarray().ravel() if hasattr(x, "toarray") else np.asarray(x).ravel()
 
 
@@ -895,6 +921,7 @@ def cross_lineage_doublets(
     adata,
     lineage_sets: dict[str, list[str]] | None = None,
     *,
+    species: str | None = None,
     score_min: float = 0.5,
     min_programs: int = 2,
     require_high_umi: bool = True,
@@ -903,26 +930,18 @@ def cross_lineage_doublets(
 ) -> np.ndarray:
     """Mask of cells co-expressing ≥ ``min_programs`` disjoint lineage programs (#314).
 
-    Generalizes the cross-lineage doublet heuristic: score each program in
-    ``lineage_sets`` (default :data:`DEFAULT_LINEAGE_PROGRAMS`) with scanpy
-    ``score_genes`` on a fresh log1p-CP10K copy (background-corrected, so a
-    program is "on" only when enriched above matched control genes), and flag a
-    cell when ≥ ``min_programs`` disjoint programs are on. A single real cell
-    expresses ONE lineage; two mutually-exclusive programs in one barcode (e.g.
-    a T program + a myeloid program) is a doublet the single-TRB gate misses.
-
-    ``require_high_umi`` (default True) additionally requires the cell to be a
-    total-UMI outlier (``> umi_outlier_mult × median``) — the refined
-    mutual-exclusivity heuristic: co-expression is only called a doublet when
-    corroborated by the elevated coverage two cells' worth of RNA produces, so a
-    genuine ambiguous singlet isn't discarded.
-
-    Operates on raw counts in ``adata.X`` (or ``counts_layer``). Returns a
-    boolean mask aligned to ``adata.n_obs``.
+    Resolves gene symbols across human HGNC, mouse MGI, and Ensembl IDs via
+    :func:`tcrsift.genes.resolve_adata_var_map`, auto-selecting mouse lineage
+    programs when ``lineage_sets`` is omitted and ``adata`` carries mouse symbols.
     """
     import scanpy as sc
 
-    lineage_sets = lineage_sets or DEFAULT_LINEAGE_PROGRAMS
+    from .genes import resolve_adata_var_map
+    from .species import resolve_species
+
+    if lineage_sets is None:
+        sp = resolve_species(species or "auto", adata=adata, warn_mismatch=False)
+        lineage_sets = lineage_programs_for_species(sp)
     tmp = adata.copy()
     if counts_layer is not None:
         tmp.X = tmp.layers[counts_layer].copy()
@@ -930,10 +949,17 @@ def cross_lineage_doublets(
     sc.pp.normalize_total(tmp, target_sum=1e4)
     sc.pp.log1p(tmp)
 
+    all_wanted = [g for genes in lineage_sets.values() for g in genes]
+    _, sym_to_var = resolve_adata_var_map(tmp, all_wanted)
+
     on = np.zeros(tmp.n_obs, dtype=int)
     n_programs = 0
     for genes in lineage_sets.values():
-        present = [g for g in genes if g in tmp.var_names]
+        present = list(dict.fromkeys(
+            g if g in tmp.var_names else sym_to_var[str(g).upper()]
+            for g in genes
+            if g in tmp.var_names or str(g).upper() in sym_to_var
+        ))
         if not present:
             continue
         n_programs += 1
@@ -1000,6 +1026,7 @@ def cell_qc_funnel(
     mark_low_coverage: bool = True,
     warn_frac: float = 0.10,
     prefix: str = "qc",
+    species: str | None = None,
 ) -> tuple:
     """Per-cell QC + doublet funnel on the LoadConfig thresholds (#314).
 
@@ -1093,8 +1120,10 @@ def cell_qc_funnel(
     min_mito_pct = _resolve(min_mito_pct, "min_mito_pct", None)
     max_mito_pct = _resolve(max_mito_pct, "max_mito_pct", 8.0)
 
+    from .genes import adata_mito_mask
+
     adata = adata.copy()
-    adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
+    adata.var["mt"] = adata_mito_mask(adata)
     counts = np.asarray(adata.X.sum(axis=1)).ravel()
     n_genes = np.asarray((adata.X > 0).sum(axis=1)).ravel()
     mt_counts = np.asarray(adata[:, adata.var["mt"].to_numpy()].X.sum(axis=1)).ravel()
@@ -1159,7 +1188,7 @@ def cell_qc_funnel(
     if adata.n_obs:
         drop(
             cross_lineage_doublets(
-                adata, lineage_sets, score_min=xlineage_score_min,
+                adata, lineage_sets, species=species, score_min=xlineage_score_min,
                 min_programs=xlineage_min_programs, require_high_umi=require_high_umi,
                 umi_outlier_mult=umi_outlier_mult,
             ),

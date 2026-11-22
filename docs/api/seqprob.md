@@ -58,6 +58,13 @@ Use `Ppost` as a relative rank within a cohort (for example via PRISM or
 different models. Because log sequence probability correlates strongly with CDR3
 length, inspect CDR3 length and V/J usage alongside `Ppost`.
 
+For mouse (`species="mouse"`), custom models trained via
+`tcrsift pgen train --species mouse --repertoire <path>` are cached under
+`{backend}_{role}_mouse_{chain}.npz`. When no murine model is cached,
+`backend="kmer"` logs a warning and falls back to the amino-acid k-mer
+background, whereas `backend="kmer_gene"` raises `FileNotFoundError` rather than
+applying human V/J gene marginals to murine gene calls.
+
 ::: tcrsift.seqprob
     options:
       members:

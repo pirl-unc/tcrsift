@@ -6,7 +6,8 @@
 [![PyPI version](https://badge.fury.io/py/tcrsift.svg)](https://pypi.org/project/tcrsift/)
 
 Prioritize T-cell receptor clonotypes from paired 10x Genomics single-cell VDJ
-and gene-expression data. Standard Cell Ranger directories serve as input:
+and gene-expression data for **human** (*Homo sapiens*) and **mouse** (*Mus
+musculus*) studies. Standard Cell Ranger directories serve as input:
 `cellranger vdj` supplies TCR contigs and clonotypes, and `cellranger count`
 supplies gene expression for CD4/CD8 phenotyping, signature scoring, and
 cell-type annotation (VDJ-only workflows are also supported).
@@ -126,8 +127,9 @@ gex_outs/
 └── filtered_feature_bc_matrix.h5     # Used when matrix directory is absent
 ```
 
-Phenotyping reads `CD3D`, `CD3E`, `CD3G`, `CD4`, `CD8A`, and `CD8B` (matched by
-HGNC symbol or Ensembl ID).
+Phenotyping reads `CD3D`, `CD3E`, `CD3G`, `CD4`, `CD8A`, and `CD8B` in human
+samples or `Cd3d`, `Cd3e`, `Cd3g`, `Cd4`, `Cd8a`, and `Cd8b1` in mouse samples
+(matched by HGNC/MGI gene symbol or `ENSG*`/`ENSMUSG*` Ensembl ID).
 
 **Barcode matching:** Barcodes are matched exactly between VDJ and GEX. Only
 when a sample has zero exact matches (for example, `ACGT-1` vs `ACGT-2` library
@@ -352,18 +354,23 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
 ```
 
 Matches clonotypes against **VDJdb**, **IEDB**, and **CEDAR**, setting
-`db_match` and flagging CMV/EBV/HIV/influenza/SARS-CoV-2 hits with
-`is_viral=True`.
+`db_match`, separating official encoding gene symbols (`db_antigen_gene`, e.g.
+`CTAG1A`/`CTAG1B` vs `CTAG2`, `MLANA`/`Mlana`, `DCT`/`Dct`, `CEACAM5`; `None`
+for viral or foreign proteins such as chicken OVA) from canonical protein labels
+(`db_protein_canonical`, e.g. `NY-ESO-1`, `LAGE-1`, `MART-1`, `TRP-2`, `CEA`),
+and flagging viral epitopes with `is_viral=True`.
 
-When explicit paths are omitted, `annotate` and `run` check the managed cache
+When explicit paths are omitted, `run`, `annotate`, `prioritize`,
+`til-prioritize`, and `til-select` automatically check the managed cache
 (`--cache-dir` → `$TCRSIFT_DATA_DIR` → `$XDG_CACHE_HOME/tcrsift` →
-`~/.cache/tcrsift`):
+`~/.cache/tcrsift`), and `--auto-download` fetches missing databases on demand:
 
 ```bash
-tcrsift data list                  # Show cached databases, sizes, and paths
-tcrsift data download              # Fetch VDJdb, IEDB, CEDAR, and IMGT V-region germlines
-tcrsift data download --db iedb    # Fetch a single database (--force refreshes)
-tcrsift data clear                 # Clear cached files (--db NAME for one)
+tcrsift data list                             # Show cached databases, sizes, and paths
+tcrsift data download                         # Fetch VDJdb, IEDB, CEDAR, and human/mouse IMGT germlines
+tcrsift data download --group germline_mouse  # Fetch mouse IMGT V-REGION and leader references
+tcrsift data download --db iedb               # Fetch a single database (--force refreshes)
+tcrsift data clear                            # Clear cached files (--db NAME for one)
 ```
 
 ### 6. Assemble Full-Length Sequences
@@ -376,10 +383,12 @@ tcrsift assemble -i annotated.csv -o full_sequences.csv \
 ```
 
 Builds `[Leader] + [V(D)J] + [Constant]` chains and `[Beta] + [2A linker] +
-[Alpha]` single-chain constructs using `CD8A`, `CD28`, `IgK`, `TRAC`, `TRBC`,
-or native `from_contig` leaders and packaged canonical `TRAC`/`TRBC1`/`TRBC2`
-constant regions (pass `--allow-canonical-fallback` when contig FASTAs are not
-available).
+[Alpha]` single-chain constructs using `CD8A`, `CD28`, `mCD8B`, `mCD28`,
+`H2Kb`, `IgK`, `TRAC`, `TRBC`, or native `from_contig` leaders and packaged
+canonical human (`TRAC`/`TRBC1`/`TRBC2`) or mouse (`Trac`/`Trbc1`/`Trbc2`)
+constant regions (`--species {auto,human,mouse}`). For chimeric human-VDJ /
+murine-constant TCR-T constructs, pass `--species human --constant-species
+mouse`. Pass `--allow-canonical-fallback` when contig FASTAs are not available.
 
 ## Supplementary Tools
 
@@ -394,9 +403,11 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 ```
 
 Contexts: `generic`, `blood`, `blood-tumor`, `solid-tumor` (default for
-`til-prioritize`), `mpe`, and `heme`. Known MART-1 matches are excluded by
-default and viral matches are retained unless `--exclude-known-viral` is set;
-supply `--vdjdb`, `--iedb`, or `--cedar` explicitly to identify known matches.
+`til-prioritize`), `mpe`, and `heme` (supports `--species {auto,human,mouse}`).
+Known MART-1 (`MLANA` / `Mlana` protein product) matches are excluded by default
+and viral matches are retained unless `--exclude-known-viral` is set; reference
+databases are resolved from `--vdjdb`/`--iedb`/`--cedar` or the `tcrsift data`
+cache (`--auto-download` fetches missing tables automatically).
 Writes `candidate_clones.csv`, `all_scored_clones.csv`,
 `clone_sample_scores.csv`, `signature_background.csv`, and
 `prioritization.json`. See the

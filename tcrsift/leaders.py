@@ -30,12 +30,22 @@ from __future__ import annotations
 
 import functools
 import gzip
+import html
+import logging
+import re
 from importlib.resources import files as _pkg_files
+
+logger = logging.getLogger(__name__)
 
 # Minimum donor-vs-germline identity (over the germline leader length) for a
 # confident anchor. Allelic variation is a few substitutions (TRBV13 is 27/29 =
 # 0.93); a weird allele / wrong gene / truncation falls below this → heuristic.
 GERMLINE_MIN_IDENTITY = 0.80
+
+LEADER_DBS_MOUSE = {
+    "TRAV": "imgt_trav_leader_mouse",
+    "TRBV": "imgt_trbv_leader_mouse",
+}
 
 
 def _is_productive(functionality: str) -> bool:
@@ -47,88 +57,244 @@ def _is_productive(functionality: str) -> bool:
     return functionality.strip("[]()") in ("F", "ORF")
 
 
-@functools.lru_cache(maxsize=1)
-def _load_reference() -> dict[str, list[tuple[str, str, str]]]:
-    """Load the bundled reference → ``{gene: [(allele, functionality, aa), …]}``.
-
-    Functional/ORF alleles are listed before pseudogenes so the anchor prefers a
-    productive germline. Dual α/δ and orphon genes carry an IMGT slash name
-    (``TRAV14/DV4``, ``TRBV20/OR9-2``); each is ALSO aliased under its bare
-    prefix (``TRAV14``) when that prefix is unambiguous and not already a
-    distinct gene, so a V call that drops the ``/DV`` suffix still resolves.
-    Returns an empty dict if the reference isn't bundled.
-    """
-    try:
-        path = _pkg_files("tcrsift.refseqs").joinpath("vgene_leaders.csv.gz")
-        raw = path.read_bytes()
-    except (FileNotFoundError, ModuleNotFoundError, OSError):
-        return {}
-    by_gene: dict[str, list[tuple[str, str, str]]] = {}
-    text = gzip.decompress(raw).decode()
-    for line in text.splitlines()[1:]:  # skip header
-        gene, allele, func, leader_aa, _leader_nt = line.split(",")
-        by_gene.setdefault(gene, []).append((allele, func, leader_aa))
-    # Productive (F/ORF) alleles first within each gene.
+def _alias_slash_genes(
+    by_gene: dict[str, list[tuple[str, str, str]]],
+) -> dict[str, list[tuple[str, str, str]]]:
+    """Sort productive alleles first and alias unambiguous slash-named genes."""
     for recs in by_gene.values():
         recs.sort(key=lambda r: (0 if _is_productive(r[1]) else 1, r[0]))
-    # Alias slash-named genes under their bare prefix, but only when the prefix
-    # maps to a single full gene and isn't itself a real gene (avoid collisions).
     prefix_targets: dict[str, set[str]] = {}
-    for gene in by_gene:
+    slashless_targets: dict[str, str] = {}
+    for gene in list(by_gene):
         if "/" in gene:
             prefix_targets.setdefault(gene.split("/")[0], set()).add(gene)
+            slashless = gene.replace("/", "")
+            if slashless not in by_gene:
+                slashless_targets[slashless] = gene
+    for slashless, full in slashless_targets.items():
+        by_gene[slashless] = by_gene[full]
     for prefix, fulls in prefix_targets.items():
         if len(fulls) == 1 and prefix not in by_gene:
             by_gene[prefix] = by_gene[next(iter(fulls))]
     return by_gene
 
 
-@functools.lru_cache(maxsize=1)
-def _leader_nt_index() -> dict[tuple[str, str], str]:
-    """``{(gene, allele): leader_nt}`` from the bundled reference (for emitting
-    the germline-SP twin construct's nucleotides). Empty if not bundled."""
+def _parse_leader_csv_bytes(
+    raw: bytes,
+) -> tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]]:
+    """Parse bundled ``vgene_leaders*.csv.gz`` bytes into AA + NT indices."""
+    by_gene: dict[str, list[tuple[str, str, str]]] = {}
+    nt_index: dict[tuple[str, str], str] = {}
+    text = gzip.decompress(raw).decode()
+    for line in text.splitlines()[1:]:
+        if not line.strip():
+            continue
+        gene, allele, func, leader_aa, leader_nt = line.split(",")
+        gene_u = gene.strip().upper()
+        by_gene.setdefault(gene_u, []).append((allele, func, leader_aa))
+        nt_index[(gene_u, allele)] = leader_nt
+    return _alias_slash_genes(by_gene), nt_index
+
+
+def _parse_imgt_leader_html(
+    text: str,
+) -> tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]]:
+    """Parse an IMGT GENElect ``L-PART1+L-PART2`` HTML/FASTA dump."""
+    from .assemble import translate_dna
+
+    pres = re.findall(r"<pre>(.*?)</pre>", text, re.DOTALL | re.IGNORECASE)
+    fasta = (
+        html.unescape(re.sub(r"<[^>]+>", "", max(pres, key=lambda p: p.count(">"))))
+        if pres
+        else text
+    )
+    by_gene: dict[str, list[tuple[str, str, str]]] = {}
+    nt_index: dict[tuple[str, str], str] = {}
+    header: str | None = None
+    chunks: list[str] = []
+
+    def _flush():
+        if header is None:
+            return
+        fields = header.split("|")
+        if len(fields) < 4:
+            return
+        gene_raw, _, allele = fields[1].partition("*")
+        gene = gene_raw.strip().upper()
+        allele = allele.strip() or "01"
+        func = fields[3].strip()
+        nt = re.sub(r"[^ACGTUacgtu]", "", "".join(chunks)).upper().replace("U", "T")
+        if len(nt) < 36:
+            return
+        nt_trimmed = nt[: (len(nt) // 3) * 3]
+        aa, _ = translate_dna(nt_trimmed)
+        if not aa or not aa.startswith("M") or "*" in aa or "X" in aa:
+            return
+        by_gene.setdefault(gene, []).append((allele, func, aa))
+        nt_index[(gene, allele)] = nt_trimmed
+
+    for line in fasta.splitlines():
+        if line.startswith(">"):
+            _flush()
+            header, chunks = line[1:], []
+        elif line.strip():
+            chunks.append(line.strip())
+    _flush()
+    return _alias_slash_genes(by_gene), nt_index
+
+
+def _load_mouse_leaders(
+    data_dir=None,
+) -> tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]]:
+    """Load mouse leader references from optional bundled CSV or datacache."""
+    try:
+        path = _pkg_files("tcrsift.refseqs").joinpath("vgene_leaders_mouse.csv.gz")
+        raw = path.read_bytes()
+        return _parse_leader_csv_bytes(raw)
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        pass
+
+    from .datacache import cached_path
+
+    by_gene: dict[str, list[tuple[str, str, str]]] = {}
+    nt_index: dict[tuple[str, str], str] = {}
+    for _locus, db in LEADER_DBS_MOUSE.items():
+        cached = cached_path(db, data_dir)
+        if cached is None:
+            continue
+        try:
+            g_part, nt_part = _parse_imgt_leader_html(
+                cached.read_text(errors="replace")
+            )
+            for gene, recs in g_part.items():
+                by_gene.setdefault(gene, []).extend(recs)
+            nt_index.update(nt_part)
+        except Exception as exc:
+            logger.warning("Mouse leader reference %s unreadable: %s", cached, exc)
+    if by_gene:
+        _alias_slash_genes(by_gene)
+    return by_gene, nt_index
+
+
+@functools.lru_cache(maxsize=4)
+def _load_human_reference() -> tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]]:
     try:
         path = _pkg_files("tcrsift.refseqs").joinpath("vgene_leaders.csv.gz")
         raw = path.read_bytes()
     except (FileNotFoundError, ModuleNotFoundError, OSError):
-        return {}
-    out: dict[tuple[str, str], str] = {}
-    for line in gzip.decompress(raw).decode().splitlines()[1:]:
-        gene, allele, _func, _leader_aa, leader_nt = line.split(",")
-        out[(gene, allele)] = leader_nt
-    return out
+        return {}, {}
+    return _parse_leader_csv_bytes(raw)
 
 
-def germline_leader_nt(v_gene: str | None, allele: str) -> str | None:
+_MOUSE_LEADER_CACHE: tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]] | None = None
+
+
+def clear_reference_cache() -> None:
+    """Clear memoized human and mouse leader reference tables."""
+    global _MOUSE_LEADER_CACHE
+    _MOUSE_LEADER_CACHE = None
+    _load_human_reference.cache_clear()
+
+
+def _load_reference(species: str = "human") -> dict[str, list[tuple[str, str, str]]]:
+    """Load the leader reference for ``species`` → ``{gene: [(allele, functionality, aa), …]}``.
+
+    Functional/ORF alleles are listed before pseudogenes so the anchor prefers a
+    productive germline. Dual α/δ and orphon genes carry an IMGT slash name
+    (``TRAV14/DV4``, ``TRAV14D-3/DV8``); each is ALSO aliased under its bare
+    prefix (``TRAV14``, ``TRAV14D-3``) when that prefix is unambiguous and not
+    already a distinct gene. Returns ``{}`` when no reference is available for
+    ``species`` so mouse TCRs never cross-anchor against human leaders.
+    """
+    global _MOUSE_LEADER_CACHE
+    from .species import normalize_species
+
+    sp = normalize_species(species)
+    if sp == "mouse":
+        if _MOUSE_LEADER_CACHE is not None:
+            return _MOUSE_LEADER_CACHE[0]
+        by_gene, nt_idx = _load_mouse_leaders()
+        if by_gene:
+            _MOUSE_LEADER_CACHE = (by_gene, nt_idx)
+        return by_gene
+    by_gene, _ = _load_human_reference()
+    return by_gene
+
+
+def _leader_nt_index(species: str = "human") -> dict[tuple[str, str], str]:
+    """``{(gene, allele): leader_nt}`` from the reference for ``species``."""
+    global _MOUSE_LEADER_CACHE
+    from .species import normalize_species
+
+    sp = normalize_species(species)
+    if sp == "mouse":
+        if _MOUSE_LEADER_CACHE is not None:
+            return _MOUSE_LEADER_CACHE[1]
+        by_gene, nt_idx = _load_mouse_leaders()
+        if by_gene:
+            _MOUSE_LEADER_CACHE = (by_gene, nt_idx)
+        return nt_idx
+    _, nt_idx = _load_human_reference()
+    return nt_idx
+
+
+_load_reference.cache_clear = clear_reference_cache  # type: ignore[attr-defined]
+_leader_nt_index.cache_clear = clear_reference_cache  # type: ignore[attr-defined]
+
+
+def germline_leader_nt(
+    v_gene: str | None,
+    allele: str,
+    *,
+    species: str = "human",
+    data_dir=None,
+) -> str | None:
     """Germline leader nucleotides for a (gene, allele), or None if absent."""
+    from .species import normalize_species
+
     gene = normalize_vgene(v_gene)
     if gene is None:
         return None
-    return _leader_nt_index().get((gene, allele))
+    sp = normalize_species(species)
+    if data_dir is not None and sp == "mouse":
+        _, nt_idx = _load_mouse_leaders(data_dir)
+        return nt_idx.get((gene, allele))
+    return _leader_nt_index(sp).get((gene, allele))
 
 
 def normalize_vgene(v_gene: str | None) -> str | None:
-    """Strip allele/suffix noise from a V-gene call → bare IMGT gene name.
+    """Strip allele/suffix noise from a V-gene call → uppercase bare IMGT gene name.
 
-    ``TRBV13*01`` / ``TRBV13 (gene)`` / ``TRBV13`` → ``TRBV13``;
+    ``TRBV13*01`` / ``Trbv13-2*01`` / ``TRBV13 (gene)`` → ``TRBV13`` / ``TRBV13-2``;
     ``TRAV14/DV4*01`` → ``TRAV14/DV4``. Returns None for empty/non-string input.
     """
     if not isinstance(v_gene, str) or not v_gene.strip():
         return None
-    return v_gene.strip().split("*")[0].split()[0]
+    return v_gene.strip().upper().split("*")[0].split()[0]
 
 
-def germline_vgene_leaders(v_gene: str | None) -> list[tuple[str, str, str]]:
+def germline_vgene_leaders(
+    v_gene: str | None,
+    *,
+    species: str = "human",
+    data_dir=None,
+) -> list[tuple[str, str, str]]:
     """Reference leaders for a V gene → ``[(allele, functionality, aa), …]``.
 
     Resolves both the IMGT slash name (``TRAV14/DV4``) and a bare-prefix call
-    (``TRAV14``). Empty when the gene isn't in the bundled reference (caller
+    (``TRAV14``). Empty when the gene isn't in the species reference (caller
     falls back to the heuristic).
     """
+    from .species import normalize_species
+
     gene = normalize_vgene(v_gene)
     if gene is None:
         return []
-    return _load_reference().get(gene, [])
+    sp = normalize_species(species)
+    if data_dir is not None and sp == "mouse":
+        by_gene, _ = _load_mouse_leaders(data_dir)
+        return by_gene.get(gene, [])
+    return _load_reference(sp).get(gene, [])
 
 
 def characterize_divergence(donor: str, germline: str) -> str:
@@ -175,6 +341,8 @@ def germline_anchor_leader(
     v_gene: str | None,
     *,
     min_identity: float = GERMLINE_MIN_IDENTITY,
+    species: str = "human",
+    data_dir=None,
 ):
     """Anchor the leader start/length to the germline reference (#267).
 
@@ -194,7 +362,7 @@ def germline_anchor_leader(
     drops identity below ``min_identity``, and falls back to the heuristic — so
     an indel leader is never silently mis-anchored, just not germline-resolved.
     """
-    candidates = germline_vgene_leaders(v_gene)
+    candidates = germline_vgene_leaders(v_gene, species=species, data_dir=data_dir)
     if not candidates or not orig_leader:
         return None
 
@@ -216,7 +384,13 @@ def germline_anchor_leader(
     return cand, allele, g_aa, identity, _diff_vs_germline(cand, g_aa)
 
 
-def germline_compare_leader(leader_aa: str | None, v_gene: str | None):
+def germline_compare_leader(
+    leader_aa: str | None,
+    v_gene: str | None,
+    *,
+    species: str = "human",
+    data_dir=None,
+):
     """Compare a FINAL (shipped) leader to the closest germline allele (#267).
 
     Independent of anchoring: works for *any* leader — germline-anchored,
@@ -232,7 +406,7 @@ def germline_compare_leader(leader_aa: str | None, v_gene: str | None):
     substitution string when lengths match, else a ``length_mismatch`` marker —
     or ``None`` when the gene isn't in the reference.
     """
-    candidates = germline_vgene_leaders(v_gene)
+    candidates = germline_vgene_leaders(v_gene, species=species, data_dir=data_dir)
     if not candidates or not isinstance(leader_aa, str) or not leader_aa:
         return None
     best = None  # (identity, allele, germline_aa)

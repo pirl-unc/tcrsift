@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from .signature_methods import NEOANTIGEN_SIGNATURES, SIGNATURES
+from .species import normalize_species
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,16 @@ CONTEXT_SIGNATURES = {
     # No leukemia-specific predictor is shipped. Use broad state coverage.
     "heme": (*CORE_SIGNATURES, "CirculatingMemory"),
 }
+# Human neoantigen-reactivity signatures (NeoTCR4/8/PBL, MANAscore) contain
+# primate-restricted genes and human lncRNAs, so default mouse presets omit them.
+CONTEXT_SIGNATURES_MOUSE = {
+    "generic": CORE_SIGNATURES,
+    "blood": (*CORE_SIGNATURES, "CirculatingMemory"),
+    "blood-tumor": (*CORE_SIGNATURES, "CirculatingMemory"),
+    "solid-tumor": (*CORE_SIGNATURES, "TumorReactive"),
+    "mpe": (*CORE_SIGNATURES, "CirculatingMemory"),
+    "heme": (*CORE_SIGNATURES, "CirculatingMemory"),
+}
 SIGNATURE_LINEAGE = {
     "NeoTCR4": "cd4", "NeoTCR8": "cd8", "NeoTCR_PBL": "cd8", "MANAscore": "cd8",
 }
@@ -53,7 +64,14 @@ QC_DEFAULTS = {
 }
 
 
-def resolve_signatures(context, tcell_type, signatures=None, exclude_signatures=None):
+def resolve_signatures(
+    context,
+    tcell_type,
+    signatures=None,
+    exclude_signatures=None,
+    *,
+    species: str = "human",
+):
     """Resolve names once; reject incompatible explicit lineage selections."""
     lookup = {name.lower(): name for name in REGISTRY}
 
@@ -65,7 +83,12 @@ def resolve_signatures(context, tcell_type, signatures=None, exclude_signatures=
             result.append(lookup[name.lower()])
         return list(dict.fromkeys(result))
 
-    names = canonical(signatures if signatures is not None else CONTEXT_SIGNATURES[context])
+    ctx_map = (
+        CONTEXT_SIGNATURES_MOUSE
+        if normalize_species(species) == "mouse"
+        else CONTEXT_SIGNATURES
+    )
+    names = canonical(signatures if signatures is not None else ctx_map[context])
     excluded = set(canonical(exclude_signatures or []))
     names = [name for name in names if name not in excluded]
     incompatible = [n for n in names if tcell_type != "both"

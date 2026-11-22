@@ -132,3 +132,57 @@ def test_cmd_run_applies_baseline_markers(tmp_path):
         assert fmt.BASELINE_MARKERS == ("DMSO", "CTY")
     finally:
         fmt.set_baseline_markers(*original)
+
+
+def test_merge_with_args_preserves_nested_sections_without_collisions(tmp_path):
+    """Nested `enabled`, `min_cells`, `add_pgen_ppost`, `species`, `constant_species`,
+    and `verbose` must never collide or drop during YAML round-trip + merge_with_args."""
+    from tcrsift.cli import create_parser
+
+    cfg = TCRsiftConfig._from_dict(
+        {
+            "species": "mouse",
+            "verbose": True,
+            "clonotype": {"add_pgen_ppost": False},
+            "attribution": {"enabled": False, "doublet_split": False},
+            "embed": {"enabled": True, "min_cells": 7, "n_top_genes": 1500},
+            "filter": {"min_cells": 4},
+            "annotate": {"host_species_filter": "same", "auto_download": True},
+            "assemble": {
+                "enabled": False,
+                "constant_species": "human",
+                "codon_species": "mouse",
+            },
+        }
+    )
+    yaml_path = tmp_path / "roundtrip.yaml"
+    cfg.to_yaml(yaml_path)
+    loaded = TCRsiftConfig.from_yaml(yaml_path)
+
+    # Parse `run` without optional CLI flags -> YAML settings must remain intact
+    args = create_parser().parse_args(["run", "-s", "s.yaml", "-o", "out"])
+    merged = loaded.merge_with_args(args)
+    assert merged.species == "mouse"
+    assert merged.verbose is True
+    assert merged.clonotype.add_pgen_ppost is False
+    assert merged.attribution.enabled is False
+    assert merged.attribution.doublet_split is False
+    assert merged.embed.enabled is True
+    assert merged.embed.min_cells == 7
+    assert merged.embed.n_top_genes == 1500
+    assert merged.filter.min_cells == 4
+    assert merged.annotate.host_species_filter == "same"
+    assert merged.annotate.auto_download is True
+    assert merged.assemble.enabled is False
+    assert merged.assemble.constant_species == "human"
+    assert merged.assemble.codon_species == "mouse"
+
+    # Passing `--attribution` enables attribution without wiping `doublet_split=False`
+    args_attr = create_parser().parse_args(
+        ["run", "-s", "s.yaml", "-o", "out", "--attribution", "--min-cells", "9"]
+    )
+    merged_attr = loaded.merge_with_args(args_attr)
+    assert merged_attr.attribution.enabled is True
+    assert merged_attr.attribution.doublet_split is False
+    assert merged_attr.filter.min_cells == 9
+    assert merged_attr.embed.min_cells == 7

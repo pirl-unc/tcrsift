@@ -106,6 +106,7 @@ P1_TIL,P1,/data/p1_til/vdj,/data/p1_til/gex,,,til
 | `apc_type` | Antigen-presenting cell label for multi-APC designs (such as `mDC`, `B-LCL`). |
 | `culture_days` | Integer duration of in-vitro culture in days. |
 | `experiment` | Source label used when merging runs via `tcrsift unify`. |
+| `species` | Organism for marker lookup, mitochondrial QC, signature orthologs, database host filtering, and constant-region assembly: `auto` (default; inferred from gene symbols, Ensembl IDs, or VDJ genes), `human`, or `mouse`. May also be set once at the root of a YAML sample sheet. |
 
 ### Antigen and epitope fields
 

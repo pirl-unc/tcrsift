@@ -502,47 +502,94 @@ def select_backend_for_reference_size(
     return "kmer" if int(n_unique_cdr3) < int(kmer_max) else "tcrpeg"
 
 
-def _default_model_path(chain: str, backend: str, role: str = "ppost"):
+_WARNED_MOUSE_FALLBACK: set[tuple[str, str]] = set()
+
+
+def _default_model_path(
+    chain: str,
+    backend: str = "kmer",
+    role: str = "ppost",
+    *,
+    species: str = "human",
+    strict_species: bool = False,
+):
     """Path to a shipped default model under :mod:`tcrsift.refseqs`."""
     from importlib.resources import files
 
+    from .species import normalize_species
+
+    sp = normalize_species(species)
     chain = chain.lower()
     if chain not in ("alpha", "beta"):
         raise ValueError(f"chain must be 'alpha' or 'beta', got {chain!r}")
     if role not in ("pgen", "ppost"):
         raise ValueError(f"role must be 'pgen' or 'ppost', got {role!r}")
-    if backend != "kmer":
+    if backend not in ("kmer", "kmer_gene"):
         raise ValueError(f"no shipped default model for backend {backend!r}")
-    return files("tcrsift.refseqs").joinpath(f"kmer_{role}_{chain}.npz")
+    ref_root = files("tcrsift.refseqs")
+    if sp == "mouse":
+        mouse_path = ref_root.joinpath(f"kmer_{role}_mouse_{chain}.npz")
+        if mouse_path.is_file():
+            return mouse_path
+        if strict_species or backend == "kmer_gene":
+            raise FileNotFoundError(
+                f"no shipped mouse {backend} {role} model for chain {chain!r}; "
+                "train a mouse model with `tcrsift pgen train --species mouse` "
+                "or use backend='kmer'."
+            )
+        if (chain, role) not in _WARNED_MOUSE_FALLBACK:
+            _WARNED_MOUSE_FALLBACK.add((chain, role))
+            logger.warning(
+                "No mouse-specific k-mer %s model packaged for %s; falling back "
+                "to the gene-agnostic AA Markov model (train a murine model with "
+                "`tcrsift pgen train --species mouse`).",
+                role,
+                chain,
+            )
+        # Gene-agnostic order-2 AA k-mer transitions generalize across human and
+        # mouse V(D)J junctions when no dedicated mouse model is present.
+        return ref_root.joinpath(f"kmer_{role}_{chain}.npz")
+    return ref_root.joinpath(f"kmer_{role}_{chain}.npz")
 
 
-_MODEL_CACHE: dict[tuple[str, str, str], SequenceProbabilityModel] = {}
+_MODEL_CACHE: dict[tuple[str, str, str, str], SequenceProbabilityModel] = {}
 
 
 def load_background_model(
-    chain: str = "beta", backend: str = "kmer", role: str = "ppost",
+    chain: str = "beta",
+    backend: str = "kmer",
+    role: str = "ppost",
+    *,
+    species: str = "human",
+    strict_species: bool = False,
 ) -> SequenceProbabilityModel:
     """Load (and cache) a shipped default background model.
 
     ``role`` is ``"ppost"`` (default — fit on an *observed* repertoire, the
     post-selection publicness measure) or ``"pgen"`` (fit on an
-    OLGA-generated reference, pre-selection generation probability). Only the
-    ``"kmer"`` backend ships defaults. **Role-pure**: raises
-    :class:`FileNotFoundError` when the requested backend/role/chain model is
-    not shipped — it never silently returns a Pgen model in place of Ppost.
-    Callers decide how to degrade.
+    OLGA-generated reference, pre-selection generation probability). Both
+    ``"kmer"`` and ``"kmer_gene"`` read the shipped ``.npz`` tables for human;
+    for mouse, ``"kmer"`` uses a mouse-specific table when present and otherwise
+    falls back to the gene-agnostic AA Markov table (unless ``strict_species=True``),
+    whereas ``"kmer_gene"`` requires a mouse-trained gene-marginal model.
     """
+    from .species import normalize_species
+
+    sp = normalize_species(species)
     chain = chain.lower()
-    key = (chain, backend, role)
-    if key in _MODEL_CACHE:
+    key = (chain, backend, role, sp)
+    if not strict_species and key in _MODEL_CACHE:
         return _MODEL_CACHE[key]
-    path = _default_model_path(chain, backend, role)
+    path = _default_model_path(
+        chain, backend, role, species=sp, strict_species=strict_species
+    )
     if not path.is_file():
         raise FileNotFoundError(
             f"no shipped {backend} {role} model for chain {chain!r} at {path}"
         )
     model = BACKENDS[backend].load(str(path))
-    _MODEL_CACHE[key] = model
+    if not strict_species or sp == "human" or "mouse" in path.name:
+        _MODEL_CACHE[key] = model
     return model
 
 
@@ -557,24 +604,14 @@ def score_log_prob(
     role: str = "ppost",
     model: SequenceProbabilityModel | None = None,
     out_col: str | None = None,
+    species: str = "human",
 ) -> pd.Series:
-    """Per-clone natural-log probability under a background model.
-
-    ``role="ppost"`` (default) scores against the observed-repertoire model
-    (post-selection publicness); ``role="pgen"`` against the generated model.
-    Uses ``model`` if given, else the shipped default for ``(chain, backend,
-    role)``. ``cdr3_col`` defaults to ``CDR3_<chain>``.
-
-    When the model is **gene-aware** (a :class:`GeneAwareKmerModel` with V/J
-    marginals) and the V/J columns are present (default ``<chain>_v_gene`` /
-    ``<chain>_j_gene``), the score includes ``logP(V) + logP(J)`` — gene names
-    are canonicalized inside the model. Returns a Series aligned to ``df``.
-    """
+    """Per-clone natural-log probability under a background model."""
     cdr3_col = cdr3_col or f"CDR3_{chain}"
     if cdr3_col not in df.columns:
         raise ValueError(f"score_log_prob: missing {cdr3_col!r} column")
     if model is None:
-        model = load_background_model(chain, backend, role)
+        model = load_background_model(chain, backend, role, species=species)
     cdr3 = df[cdr3_col].tolist()
     if getattr(model, "gene_aware", False):
         v_col = v_gene_col or f"{chain}_v_gene"
@@ -596,12 +633,13 @@ def score_log_pgen(
     backend: str = "kmer",
     model: SequenceProbabilityModel | None = None,
     out_col: str = "log_pgen",
+    species: str = "human",
 ) -> pd.Series:
     """Per-clone log Pgen (generated-repertoire background). See
     :func:`score_log_prob`."""
     return score_log_prob(
         df, chain=chain, cdr3_col=cdr3_col, backend=backend, role="pgen",
-        model=model, out_col=out_col,
+        model=model, out_col=out_col, species=species,
     )
 
 
@@ -612,18 +650,13 @@ def score_log_q(
     cdr3_col: str | None = None,
     backend: str = "kmer",
     out_col: str | None = None,
+    species: str = "human",
 ) -> pd.Series:
-    """Per-clone log selection factor ``log Q = log Ppost − log Pgen``.
-
-    The data-driven selection factor (route 1): the log-ratio of the
-    observed-repertoire model to the generated model. Positive ⇒ enriched by
-    selection relative to pure generation. Unnormalized (a per-clone
-    constant offset), which is irrelevant for ranking.
-    """
+    """Per-clone log selection factor ``log Q = log Ppost − log Pgen``."""
     lp_post = score_log_prob(df, chain=chain, cdr3_col=cdr3_col,
-                             backend=backend, role="ppost")
+                             backend=backend, role="ppost", species=species)
     lp_gen = score_log_prob(df, chain=chain, cdr3_col=cdr3_col,
-                            backend=backend, role="pgen")
+                            backend=backend, role="pgen", species=species)
     q = lp_post - lp_gen
     q.name = out_col or f"log_q_{chain}"
     return q

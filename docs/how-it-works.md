@@ -38,9 +38,9 @@ study design:
 | Signal | Source | What it measures and its limits |
 | --- | --- | --- |
 | Clonal abundance | Cell count and within-sample frequency | Strong evidence of response after in-vitro peptide stimulation; in fresh tissue, expansion reflects cumulative history rather than reactivity to a specific target. |
-| Lineage | Per-cell `CD4`, `CD8A`, and `CD8B` counts | Restricts signature scoring and abundance ranking to the intended T-cell compartment. |
-| Expression state | Gene signatures scored per cell and summarized per clone | Captures transcriptional state (activated, cytolytic, exhausted, proliferating). See the [reproducibility map](reproducibility_map.md) for cross-donor behavior in stimulated cultures. |
-| Database matches | VDJdb, IEDB, CEDAR | Flags receptors matching cataloged viral or MART-1 specificities. Absence of a match means uncataloged, not tumor-specific. |
+| Lineage | Per-cell `CD4`, `CD8A`, and `CD8B` (human) or `Cd4`, `Cd8a`, and `Cd8b1` (mouse) counts | Restricts signature scoring and abundance ranking to the intended T-cell compartment. |
+| Expression state | Gene signatures scored per cell and summarized per clone | Captures transcriptional state (activated, cytolytic, exhausted, proliferating) using species-matched HGNC or MGI symbols. See the [reproducibility map](reproducibility_map.md) for cross-donor behavior in stimulated cultures. |
+| Database matches | VDJdb, IEDB, CEDAR | Flags receptors matching cataloged viral or MART-1 (`MLANA`/`Mlana`-encoded) specificities, recording both canonical protein labels (`db_protein_canonical`) and endogenous encoding gene symbols (`db_antigen_gene`). Absence of a match means uncataloged, not tumor-specific. |
 | Sequence publicness | Bundled k-mer and TCRpeg probability models | Estimates how readily a CDR3 sequence is generated and shared across donors; useful for deprioritizing common bystander sequences, not for calling antigen specificity. |
 
 ## How `prioritize` selects clones

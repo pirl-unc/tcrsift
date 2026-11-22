@@ -132,12 +132,68 @@ _TRAJ_USAGE: dict[str, float] = {
     # ~50 more TRAJ genes; the listed ones cover ~30% of usage.
 }
 
+# Mouse (Mus musculus, C57BL/6 / BALB/c) approximate V/J usage marginals and
+# recombination parameters (Sethna et al. 2019 mouse OLGA model; Ndifon et al.
+# 2012; Madi et al. 2014). Adult mouse thymic TdT adds fewer non-templated
+# nucleotides per junction than human (~2.5-3 nt vs ~4.5 nt), yielding ~0.5 aa
+# shorter mean CDR3 lengths.
+_MOUSE_N_INSERT_GEOM_P = {
+    "beta": 0.25,   # mean ~3.0 nt per junction
+    "alpha": 0.28,  # mean ~2.6 nt for the single VαJα junction
+}
+
+_MOUSE_CDR3_LENGTH_PARAMS = {
+    "beta":  (13.5, 2.2),
+    "alpha": (13.2, 2.2),
+}
+
+_MOUSE_TRBV_USAGE: dict[str, float] = {
+    "TRBV13-2": 0.095, "TRBV13-3": 0.075, "TRBV19": 0.070,
+    "TRBV16": 0.065, "TRBV1": 0.060, "TRBV31": 0.055,
+    "TRBV13-1": 0.050, "TRBV29": 0.050, "TRBV12-2": 0.045,
+    "TRBV5": 0.045, "TRBV15": 0.042, "TRBV20": 0.040,
+    "TRBV4": 0.038, "TRBV2": 0.035, "TRBV14": 0.032,
+    "TRBV3": 0.030, "TRBV26": 0.028, "TRBV17": 0.020,
+}
+
+_MOUSE_TRBJ_USAGE: dict[str, float] = {
+    "TRBJ2-7": 0.195, "TRBJ2-5": 0.145, "TRBJ2-1": 0.130,
+    "TRBJ1-1": 0.110, "TRBJ2-4": 0.095, "TRBJ2-3": 0.085,
+    "TRBJ1-2": 0.070, "TRBJ1-4": 0.055, "TRBJ2-2": 0.050,
+    "TRBJ1-3": 0.035, "TRBJ1-5": 0.020, "TRBJ2-6": 0.010,
+}
+
+_MOUSE_TRAV_USAGE: dict[str, float] = {
+    "TRAV12-2": 0.055, "TRAV14-1": 0.050, "TRAV14-2": 0.048,
+    "TRAV7-3": 0.042, "TRAV9-1": 0.040, "TRAV6-5": 0.038,
+    "TRAV16": 0.035, "TRAV13-1": 0.032, "TRAV12D-2": 0.030,
+    "TRAV14D-3DV8": 0.030, "TRAV1": 0.028,
+    "TRAV3-3": 0.026, "TRAV4-4DV10": 0.024, "TRAV5-4": 0.022,
+}
+
+_MOUSE_TRAV_ALIASES: dict[str, str] = {
+    "TRAV14D-3": "TRAV14D-3DV8",
+    "TRAV4-4": "TRAV4-4DV10",
+}
+
+_MOUSE_TRAJ_USAGE: dict[str, float] = {
+    "TRAJ18": 0.045, "TRAJ23": 0.040, "TRAJ31": 0.038,
+    "TRAJ27": 0.035, "TRAJ37": 0.033, "TRAJ49": 0.032,
+    "TRAJ22": 0.030, "TRAJ33": 0.028, "TRAJ42": 0.026,
+    "TRAJ52": 0.024, "TRAJ15": 0.022, "TRAJ9": 0.022,
+}
+
 
 def _strip_allele(gene: str | None) -> str:
-    """Drop the IMGT allele suffix (``TRBV20-1*01`` → ``TRBV20-1``)."""
+    """Drop the IMGT allele suffix and canonicalize case/format (``Trbv13-2*01`` → ``TRBV13-2``)."""
     if not isinstance(gene, str):
         return ""
-    return gene.split("*", 1)[0].strip()
+    from .genes import canonicalize_gene
+
+    canon = canonicalize_gene(gene)
+    if canon:
+        return canon
+    return gene.split("*", 1)[0].strip().upper()
 
 
 # IMGT functional gene-pool sizes (Lefranc 2009). Used to spread the
@@ -149,49 +205,69 @@ _GENE_POOL_SIZE = {
     ("alpha", "j"): 50,
 }
 
+_MOUSE_GENE_POOL_SIZE = {
+    ("beta", "v"):  22,
+    ("beta", "j"):  5,
+    ("alpha", "v"): 75,
+    ("alpha", "j"): 48,
+}
 
-def _v_usage_log(gene: str, chain: str) -> float:
+
+def _v_usage_log(gene: str, chain: str, species: str = "human") -> float:
     """log P(V) for the given gene; falls back to a uniform tail mass."""
-    table = _TRBV_USAGE if chain == "beta" else _TRAV_USAGE
+    if species == "mouse":
+        table = _MOUSE_TRBV_USAGE if chain == "beta" else _MOUSE_TRAV_USAGE
+        pool_sizes = _MOUSE_GENE_POOL_SIZE
+    else:
+        table = _TRBV_USAGE if chain == "beta" else _TRAV_USAGE
+        pool_sizes = _GENE_POOL_SIZE
     base = _strip_allele(gene)
+    if species == "mouse" and chain == "alpha":
+        base = _MOUSE_TRAV_ALIASES.get(base, base)
     if base in table:
         p = table[base]
     else:
-        listed_mass = sum(table.values())
-        n_tail = _GENE_POOL_SIZE[(chain, "v")]
+        listed_mass = min(0.95, sum(table.values()))
+        n_tail = pool_sizes[(chain, "v")]
         p = max(0.0005, (1.0 - listed_mass) / n_tail)
     return math.log(p)
 
 
-def _j_usage_log(gene: str, chain: str) -> float:
+def _j_usage_log(gene: str, chain: str, species: str = "human") -> float:
     """log P(J) for the given gene; falls back to a uniform tail mass."""
-    table = _TRBJ_USAGE if chain == "beta" else _TRAJ_USAGE
+    if species == "mouse":
+        table = _MOUSE_TRBJ_USAGE if chain == "beta" else _MOUSE_TRAJ_USAGE
+        pool_sizes = _MOUSE_GENE_POOL_SIZE
+    else:
+        table = _TRBJ_USAGE if chain == "beta" else _TRAJ_USAGE
+        pool_sizes = _GENE_POOL_SIZE
     base = _strip_allele(gene)
+    if species == "mouse" and chain == "alpha":
+        base = _MOUSE_TRAV_ALIASES.get(base, base)
     if base in table:
         p = table[base]
     else:
-        listed_mass = sum(table.values())
-        n_tail = _GENE_POOL_SIZE[(chain, "j")]
+        listed_mass = min(0.95, sum(table.values()))
+        n_tail = pool_sizes[(chain, "j")]
         p = max(0.0005, (1.0 - listed_mass) / n_tail)
     return math.log(p)
 
 
-def _length_log(cdr3_aa_len: int, chain: str) -> float:
+def _length_log(cdr3_aa_len: int, chain: str, species: str = "human") -> float:
     """log P(CDR3 AA length) — Gaussian approximation per chain."""
-    mu, sigma = _CDR3_LENGTH_PARAMS[chain]
+    params = _MOUSE_CDR3_LENGTH_PARAMS if species == "mouse" else _CDR3_LENGTH_PARAMS
+    mu, sigma = params[chain]
     z = (cdr3_aa_len - mu) / sigma
-    # Density of Normal(mu, sigma) at this length, normalized to ~AA
-    # length scale rather than continuous probability — that's fine
-    # for ranking. Use unit-width bin: p ≈ pdf(z) / sigma.
     pdf = math.exp(-0.5 * z * z) / (sigma * math.sqrt(2 * math.pi))
     return math.log(max(pdf, 1e-30))
 
 
-def _n_inserted_log(n_inserted: int, chain: str) -> float:
+def _n_inserted_log(n_inserted: int, chain: str, species: str = "human") -> float:
     """log P(n_inserted total nucleotides). β: sum of two geometrics;
     α: single geometric."""
     n_inserted = max(0, int(n_inserted))
-    p = _N_INSERT_GEOM_P[chain]
+    geom_p = _MOUSE_N_INSERT_GEOM_P if species == "mouse" else _N_INSERT_GEOM_P
+    p = geom_p[chain]
     if chain == "beta":
         # Sum of two iid geometric(p) → negative binomial(r=2, p).
         # P(N=n) = C(n+1, 1) * (1-p)^n * p^2
@@ -229,12 +305,16 @@ def pgen_components(
     *,
     chain: str = "beta",
     n_inserted: int | None = None,
+    species: str = "human",
 ) -> dict[str, float]:
     """Decompose log10 Pgen into its five terms.
 
     Useful for debugging: shows which term is driving a sequence
     toward "public" or "private".
     """
+    from .species import normalize_species
+
+    sp = normalize_species(species)
     chain = chain.lower()
     if chain not in ("alpha", "beta"):
         raise ValueError(f"chain must be 'alpha' or 'beta', got {chain!r}")
@@ -243,10 +323,10 @@ def pgen_components(
     L = len(cdr3_aa) if isinstance(cdr3_aa, str) else 0
     LN10 = math.log(10.0)
     return {
-        "log10_p_v":          _v_usage_log(v_gene or "", chain) / LN10,
-        "log10_p_j":          _j_usage_log(j_gene or "", chain) / LN10,
-        "log10_p_length":     _length_log(L, chain) / LN10,
-        "log10_p_n_inserted": _n_inserted_log(n_inserted, chain) / LN10,
+        "log10_p_v":          _v_usage_log(v_gene or "", chain, sp) / LN10,
+        "log10_p_j":          _j_usage_log(j_gene or "", chain, sp) / LN10,
+        "log10_p_length":     _length_log(L, chain, sp) / LN10,
+        "log10_p_n_inserted": _n_inserted_log(n_inserted, chain, sp) / LN10,
         "log10_p_composition": _composition_log(cdr3_aa) / LN10,
     }
 
@@ -258,10 +338,11 @@ def pgen_single(
     *,
     chain: str = "beta",
     n_inserted: int | None = None,
+    species: str = "human",
 ) -> float:
     """Return log10 Pgen estimate for one sequence."""
     parts = pgen_components(
-        cdr3_aa, v_gene, j_gene, chain=chain, n_inserted=n_inserted
+        cdr3_aa, v_gene, j_gene, chain=chain, n_inserted=n_inserted, species=species
     )
     return float(sum(parts.values()))
 
@@ -275,33 +356,12 @@ def compute_pgen(
     chain: str = "beta",
     n_inserted_col: str | None = None,
     output_col: str = "log10_pgen",
+    species: str = "human",
 ) -> pd.Series:
-    """Compute log10 Pgen estimate for each row in ``df``.
+    """Compute log10 Pgen estimate for each row in ``df``."""
+    from .species import resolve_species
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Per-clone frame with at least the ``cdr3_col``.
-    cdr3_col : str
-        Column with CDR3 amino-acid sequence.
-    v_gene_col, j_gene_col : str
-        Columns with V / J gene calls (allele suffix tolerated).
-    chain : str
-        ``"alpha"`` or ``"beta"``.
-    n_inserted_col : str | None
-        Optional column with pre-computed total N-insertion length
-        (nt). When None, estimated from CDR3 AA length and a typical
-        templated contribution from :data:`_TEMPLATED_NT_TYPICAL`.
-    output_col : str
-        Name applied to the returned Series.
-
-    Returns
-    -------
-    pd.Series
-        log10 Pgen estimate per row, indexed like ``df`` and named
-        ``output_col``. Rows whose ``cdr3_col`` is empty or non-string
-        get NaN.
-    """
+    sp = resolve_species(species, df=df, warn_mismatch=False)
     chain = chain.lower()
     if chain not in ("alpha", "beta"):
         raise ValueError(f"chain must be 'alpha' or 'beta', got {chain!r}")
@@ -311,16 +371,14 @@ def compute_pgen(
     cdr3 = df[cdr3_col]
     valid_mask = cdr3.apply(lambda s: isinstance(s, str) and bool(s))
 
-    # Vectorize the four CDR3-length-derived terms (which don't depend
-    # on V/J at all) and the V/J-only terms (which are dict lookups,
-    # naturally per-row).
     LN10 = math.log(10.0)
     aa_lens = cdr3.where(valid_mask, "").apply(
         lambda s: len(s) if isinstance(s, str) else 0
     )
 
     # Length component — gaussian density at the AA length.
-    mu, sigma = _CDR3_LENGTH_PARAMS[chain]
+    len_params = _MOUSE_CDR3_LENGTH_PARAMS if sp == "mouse" else _CDR3_LENGTH_PARAMS
+    mu, sigma = len_params[chain]
     z = (aa_lens.astype(float) - mu) / sigma
     pdf = np.exp(-0.5 * z * z) / (sigma * math.sqrt(2 * math.pi))
     log10_p_length = np.log(np.maximum(pdf, 1e-30)) / LN10
@@ -335,7 +393,8 @@ def compute_pgen(
     else:
         n_ins_arr = 3 * aa_lens - _TEMPLATED_NT_TYPICAL[chain]
     n_ins_arr = n_ins_arr.clip(lower=0).astype(int)
-    p_ins = _N_INSERT_GEOM_P[chain]
+    geom_params = _MOUSE_N_INSERT_GEOM_P if sp == "mouse" else _N_INSERT_GEOM_P
+    p_ins = geom_params[chain]
     if chain == "beta":
         # Negative binomial(r=2, p): P(N=n) = (n+1) (1-p)^n p^2
         log10_p_n = (
@@ -354,8 +413,8 @@ def compute_pgen(
     # V / J gene-usage logs — dict-lookup per row.
     v_series = df[v_gene_col] if v_gene_col in df.columns else pd.Series([None] * len(df), index=df.index)
     j_series = df[j_gene_col] if j_gene_col in df.columns else pd.Series([None] * len(df), index=df.index)
-    log10_p_v = v_series.apply(lambda g: _v_usage_log(g or "", chain) / LN10)
-    log10_p_j = j_series.apply(lambda g: _j_usage_log(g or "", chain) / LN10)
+    log10_p_v = v_series.apply(lambda g: _v_usage_log(g or "", chain, sp) / LN10)
+    log10_p_j = j_series.apply(lambda g: _j_usage_log(g or "", chain, sp) / LN10)
 
     total = (
         log10_p_v + log10_p_j + log10_p_length
@@ -449,6 +508,7 @@ def annotate_publicness(
     chain: str = "beta",
     pgen_col: str = "log10_pgen",
     publicness_col: str = "publicness",
+    species: str = "human",
 ) -> pd.DataFrame:
     """Augment ``df`` with ``log10_pgen`` + ``publicness`` columns.
 
@@ -462,6 +522,7 @@ def annotate_publicness(
         v_gene_col=v_gene_col,
         j_gene_col=j_gene_col,
         chain=chain,
+        species=species,
     )
     out[publicness_col] = publicness_score(out[pgen_col])
     return out

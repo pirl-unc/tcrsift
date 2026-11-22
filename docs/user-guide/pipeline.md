@@ -132,11 +132,14 @@ tcrsift assemble -i annotated.csv -o sequences.csv \
 Pass `--allow-canonical-fallback` when assembling without `--contigs-dir`.
 Assembled constructs combine:
 
-- **Leader peptides:** `CD28` on α and `CD8A` on β by default, or native V-gene
-  leaders extracted from Cell Ranger FASTA contigs (`--leaders-from-contigs`).
+- **Leader peptides:** `CD28` on α and `CD8A` on β by default (murine `mCD28`,
+  `mCD8B`, `H2Kb`, and `IgK` are also bundled), or native V-gene leaders
+  extracted from Cell Ranger FASTA contigs (`--leaders-from-contigs`).
 - **Variable regions:** assembled V(D)J sequences from clonotyping.
-- **Constant regions:** packaged canonical human `TRAC`, `TRBC1`, and `TRBC2`
-  references. When contig FASTAs are supplied, compatible donor nucleotides at
+- **Constant regions:** packaged canonical human (`TRAC`, `TRBC1`, `TRBC2`) and
+  mouse (`Trac`, `Trbc1`, `Trbc2`) references (`--species {auto,human,mouse}`,
+  with `--constant-species mouse` for chimeric human-VDJ / murine-constant
+  constructs). When contig FASTAs are supplied, compatible donor nucleotides at
   the J→C junction are preserved before switching to codon-optimized canonical
   sequence; see [Assembly API](../api/assemble.md#constant-region-construction).
 - **2A linker:** `T2A` by default (`P2A`, `E2A`, and `F2A` are also supported).

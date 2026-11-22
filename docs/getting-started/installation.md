@@ -6,9 +6,10 @@
 - Sufficient RAM and temporary disk space for your combined single-cell matrices
 
 The standard `pip install tcrsift` package includes Scanpy/AnnData, PDF
-sequence reports, packaged human TCR constant-region and leader references,
-Excel import/export, cancer-testis-antigen panels (`oncoref`), and both the
-k-mer and TCRpeg/PyTorch sequence-probability backends.
+sequence reports, packaged human and mouse TCR constant-region FASTAs, human
+IMGT leader references, Excel import/export, cancer-testis-antigen gene panels
+(`oncoref`), and both the k-mer and TCRpeg/PyTorch sequence-probability
+backends.
 
 ## Install from PyPI
 

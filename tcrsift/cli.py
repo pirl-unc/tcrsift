@@ -88,6 +88,7 @@ def cmd_load(args):
         max_counts=args.max_counts,
         max_mito_pct=args.max_mito,
         min_mito_pct=args.min_mito,
+        species=getattr(args, "species", "auto"),
     )
 
     # Save
@@ -361,7 +362,7 @@ def cmd_annotate(args):
     import pandas as pd
 
     from .annotate import annotate_clonotypes, get_annotation_summary
-    from .datacache import cached_path
+    from .datacache import ensure_cached
     from .plots import plot_annotations
 
     setup_logging(args.verbose)
@@ -370,18 +371,21 @@ def cmd_annotate(args):
     print(f"Loaded {len(clonotypes)} clonotypes from {args.input}")
 
     cache_dir = getattr(args, "cache_dir", None)
+    auto_dl = bool(getattr(args, "auto_download", False))
     annotated = annotate_clonotypes(
         clonotypes,
-        vdjdb_path=args.vdjdb or cached_path("vdjdb", cache_dir),
-        iedb_path=args.iedb or cached_path("iedb", cache_dir),
-        cedar_path=args.cedar or cached_path("cedar", cache_dir),
+        vdjdb_path=args.vdjdb or ensure_cached("vdjdb", cache_dir, auto_download=auto_dl),
+        iedb_path=args.iedb or ensure_cached("iedb", cache_dir, auto_download=auto_dl),
+        cedar_path=args.cedar or ensure_cached("cedar", cache_dir, auto_download=auto_dl),
         iedb_epitope_path=(
             getattr(args, "iedb_epitope", None)
-            or cached_path("iedb_epitope", cache_dir)
+            or ensure_cached("iedb_epitope", cache_dir, auto_download=auto_dl)
         ),
         match_by=args.match_by if hasattr(args, "match_by") else "CDR3ab",
         exclude_viral=args.exclude_viral,
         flag_only=args.flag_only,
+        species=getattr(args, "species", "auto") or "auto",
+        host_species_filter=getattr(args, "host_species_filter", "all") or "all",
     )
 
     # Print summary
@@ -667,6 +671,9 @@ def cmd_assemble(args):
             else args.max_codon_repeats
         ),
         avoid_enzymes=tuple(getattr(args, "avoid_enzymes", None) or ()),
+        species=getattr(args, "species", "auto") or "auto",
+        constant_species=getattr(args, "constant_species", None),
+        codon_species=getattr(args, "codon_species", None),
     )
 
     # Fail closed on unverified (canonical-fallback) constructs unless the
@@ -683,7 +690,9 @@ def cmd_assemble(args):
         print(f"WARNING: {fidelity}")
 
     # Validate (per-row warnings + aggregate QC report).
-    warnings = validate_sequences(assembled)
+    warnings = validate_sequences(
+        assembled, species=getattr(args, "species", "auto") or "auto"
+    )
     for w in warnings:
         print(f"WARNING: {w}")
     print(assemble_qc_report(assembled))
@@ -793,7 +802,11 @@ def cmd_log_pgen(args):
             continue
         try:
             df[f"log_pgen_{chain}"] = score_log_pgen(
-                df, chain=chain, cdr3_col=cdr3_col, backend=args.backend,
+                df,
+                chain=chain,
+                cdr3_col=cdr3_col,
+                backend=args.backend,
+                species=getattr(args, "species", "human") or "human",
             )
         except (FileNotFoundError, ImportError) as exc:
             print(f"  [{chain}] {exc}")
@@ -813,8 +826,9 @@ def cmd_pgen_fetch(args):
         fetch_repertoire,
     )
 
-    # The pooled 5×10x healthy-PBMC reference downloads both chains at once.
-    if args.source == "healthy-pbmc" and not args.url:
+    sp = getattr(args, "species", "human") or "human"
+    # The pooled 5×10x healthy-PBMC reference downloads both chains at once (human).
+    if args.source == "healthy-pbmc" and not args.url and sp == "human":
         print("Fetching the 5 pooled 10x healthy-PBMC VDJ-T sets...")
         for chain, path in fetch_healthy_pbmc().items():
             print(f"  [{chain}] pooled healthy-PBMC reference → {path}")
@@ -832,9 +846,10 @@ def cmd_pgen_fetch(args):
                 seq_col=args.seq_col, v_col=args.v_col,
                 chain_prefix=("TRA" if chain == "alpha" else "TRB")
                 if args.v_col else None,
+                species=sp,
             )
             print(f"  [{chain}] cached → {path}")
-        except ValueError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             print(f"  [{chain}] {exc}")
 
 
@@ -842,6 +857,7 @@ def cmd_pgen_train(args):
     """Train + cache a custom Ppost model; packaged Pgen is not trainable."""
     from .pgen_models import train_model
 
+    sp = getattr(args, "species", "human") or "human"
     chains = ["alpha", "beta"] if args.chain == "both" else [args.chain]
     roles = ["pgen", "ppost"] if args.role == "both" else [args.role]
     for chain in chains:
@@ -849,10 +865,10 @@ def cmd_pgen_train(args):
             try:
                 path = train_model(
                     chain, backend=args.backend, role=role, url=args.url,
-                    epochs=args.epochs, device=args.device,
+                    epochs=args.epochs, device=args.device, species=sp,
                 )
-                print(f"  trained {args.backend} {role} {chain} → {path}")
-            except (ImportError, ValueError) as exc:
+                print(f"  trained {args.backend} {role} {chain} ({sp}) → {path}")
+            except (FileNotFoundError, ImportError, ValueError) as exc:
                 print(f"  [{role} {chain}] skipped: {exc}")
 
 
@@ -862,11 +878,12 @@ def cmd_pgen_annotate(args):
 
     from .annotate_tcrs import add_pgen_ppost
 
+    sp = getattr(args, "species", "auto") or "auto"
     df = pd.read_csv(args.input)
     print(f"Loaded {len(df)} clones from {args.input}")
     chains = ("alpha", "beta") if args.chain == "both" else (args.chain,)
     df = add_pgen_ppost(df, chains=chains, backend=args.backend,
-                        auto_train=not args.no_auto_train)
+                        auto_train=not args.no_auto_train, species=sp)
     df.to_csv(args.output, index=False)
     print(f"Wrote {args.output} (backend={args.backend})")
 
@@ -875,18 +892,26 @@ def cmd_pgen_status(args):
     """Show cached Pgen/Ppost training data + trained models."""
     from .pgen_models import cache_dir, cached_model_file, cached_repertoire_file
 
+    species_list = (
+        [args.species]
+        if getattr(args, "species", None) in ("human", "mouse")
+        else ["human", "mouse"]
+    )
     print(f"seqprob cache: {cache_dir()}")
     print("Training repertoires:")
-    for chain in ("alpha", "beta"):
-        p = cached_repertoire_file(chain)
-        print(f"  {chain}: {'present' if p.is_file() else 'absent'}  ({p})")
+    for sp in species_list:
+        for chain in ("alpha", "beta"):
+            p = cached_repertoire_file(chain, species=sp)
+            if sp == "human" or p.is_file():
+                print(f"  {sp} {chain}: {'present' if p.is_file() else 'absent'}  ({p})")
     print("Models:")
-    for backend in ("kmer", "tcrpeg"):
-        for role in ("pgen", "ppost"):
-            for chain in ("alpha", "beta"):
-                p = cached_model_file(backend, role, chain)
-                if p.is_file():
-                    print(f"  {backend} {role} {chain}: {p}")
+    for sp in species_list:
+        for backend in ("kmer", "kmer_gene", "tcrpeg"):
+            for role in ("pgen", "ppost"):
+                for chain in ("alpha", "beta"):
+                    p = cached_model_file(backend, role, chain, species=sp)
+                    if p.is_file():
+                        print(f"  {sp} {backend} {role} {chain}: {p}")
 
 
 def cmd_data_list(args):
@@ -1080,6 +1105,11 @@ def cmd_run(args):
 
     # Step 1: Load
     print("\n[1/7] Loading samples...")
+    requested_species = (
+        config.species
+        if config.species != "auto"
+        else (getattr(sample_sheet, "species", None) or "auto")
+    )
     adata = load_samples(
         args.sample_sheet,
         min_genes=config.load.min_genes,
@@ -1088,7 +1118,11 @@ def cmd_run(args):
         max_counts=config.load.max_counts,
         min_mito_pct=config.load.min_mito_pct,
         max_mito_pct=config.load.max_mito_pct,
+        species=requested_species,
     )
+    from .species import resolve_species
+
+    run_species = resolve_species(requested_species, adata=adata, warn_mismatch=False)
     adata.write_h5ad(data_dir / "loaded.h5ad")
     funnel_counts["Raw Cells"] = len(adata)
     print(f"  Loaded {len(adata)} cells")
@@ -1161,8 +1195,9 @@ def cmd_run(args):
             annotate_cells(
                 atlas,
                 allowed_types=config.phenotype.allowed_types,
-                gates=gates_from_phenotype_config(config.phenotype),
+                gates=gates_from_phenotype_config(config.phenotype, species=run_species),
                 min_subtype_frac=config.phenotype.min_subtype_frac,
+                species=run_species,
             )
             atlas.write_h5ad(data_dir / "atlas.h5ad")
             print(
@@ -1200,7 +1235,7 @@ def cmd_run(args):
     # column is absent is skipped. Disable with --no-pgen-ppost.
     if config.clonotype.add_pgen_ppost:
         from .annotate_tcrs import add_pgen_ppost
-        clonotypes = add_pgen_ppost(clonotypes, backend="kmer")
+        clonotypes = add_pgen_ppost(clonotypes, backend="kmer", species=run_species)
         scored = [c for c in ("ppost_alpha", "ppost_beta") if c in clonotypes.columns]
         if scored:
             print(f"  Added k-mer Pgen/Ppost → {', '.join(scored)} (for PRISM)")
@@ -1262,7 +1297,7 @@ def cmd_run(args):
     if "enrichment_method" in adata.obs.columns:
         try:
             from .sort_qc import sort_signature_consistency_from_adata
-            sort_qc = sort_signature_consistency_from_adata(adata)
+            sort_qc = sort_signature_consistency_from_adata(adata, species=run_species)
         except Exception as exc:  # GEX / signature genes may be absent
             logging.debug("sort-consistency QC skipped: %s", exc)
             sort_qc = pd.DataFrame()
@@ -1562,16 +1597,14 @@ def cmd_run(args):
     # Step 5: Annotate (if databases provided or cached).
     # Explicit config paths win; otherwise fall back to the data cache
     # (`tcrsift data list` shows what's available).
-    from .datacache import cached_path
+    from .datacache import ensure_cached
 
     cache_dir = getattr(args, "cache_dir", None)
-    vdjdb_path = config.annotate.vdjdb_path or cached_path("vdjdb", cache_dir)
-    iedb_path = config.annotate.iedb_path or cached_path("iedb", cache_dir)
-    cedar_path = config.annotate.cedar_path or cached_path("cedar", cache_dir)
-    # No config entry yet — fall back to the cache. Users who downloaded
-    # via ``tcrsift data download --db iedb_epitope`` get the override
-    # automatically.
-    iedb_epitope_path = cached_path("iedb_epitope", cache_dir)
+    auto_dl = bool(getattr(config.annotate, "auto_download", False))
+    vdjdb_path = config.annotate.vdjdb_path or ensure_cached("vdjdb", cache_dir, auto_download=auto_dl)
+    iedb_path = config.annotate.iedb_path or ensure_cached("iedb", cache_dir, auto_download=auto_dl)
+    cedar_path = config.annotate.cedar_path or ensure_cached("cedar", cache_dir, auto_download=auto_dl)
+    iedb_epitope_path = ensure_cached("iedb_epitope", cache_dir, auto_download=auto_dl)
     annotated = filtered
     has_annotation = vdjdb_path or iedb_path or cedar_path
     if has_annotation:
@@ -1585,6 +1618,8 @@ def cmd_run(args):
             match_by=config.annotate.match_by,
             exclude_viral=config.annotate.exclude_viral,
             flag_only=config.annotate.flag_only,
+            species=run_species,
+            host_species_filter=getattr(config.annotate, "host_species_filter", "all"),
         )
         annotated.to_csv(data_dir / "annotated.csv", index=False)
         n_viral = annotated["is_viral"].sum() if "is_viral" in annotated.columns else 0
@@ -1743,6 +1778,9 @@ def cmd_run(args):
             codon_optimization=getattr(config.assemble, "codon_optimization", "focal"),
             max_codon_repeats=getattr(config.assemble, "max_codon_repeats", 1),
             avoid_enzymes=tuple(getattr(config.assemble, "avoid_enzymes", []) or []),
+            species=run_species,
+            constant_species=getattr(config.assemble, "constant_species", None),
+            codon_species=getattr(config.assemble, "codon_species", None),
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -1784,17 +1822,14 @@ def cmd_run(args):
             sig_names = config.selection.get("signatures")
             if sig_names:
                 from .signature_methods import (
-                    SIGNATURES,
                     build_signature_methods,
                     expression_frame_from_adata,
+                    signatures_for_species,
                 )
+                sig_registry = signatures_for_species(run_species)
                 genes = sorted({
-                    g for n in sig_names for g in SIGNATURES[n].all_genes
+                    g for n in sig_names for g in sig_registry[n].all_genes
                 })
-                # Extract leniently so build_signature_methods can raise a
-                # per-signature error naming the missing genes — a signature
-                # is never scored on a partial panel (it'd be a different
-                # signature). A missing gene is a hard error, not a skip.
                 expr = expression_frame_from_adata(adata, genes, on_missing="ignore")
                 obs_sig = adata.obs
                 if "CDR3ab" not in obs_sig.columns and {
@@ -1810,13 +1845,12 @@ def cmd_run(args):
                         "adata.obs lacks CDR3ab/sample — cannot build "
                         "signature methods."
                     )
-                # Raises (on_missing='error') if any signature gene has no
-                # expression — never silently degrades the panel.
                 sig_long = build_signature_methods(
                     expr, obs_sig, signatures=sig_names,
                     positive_method=config.selection.get(
                         "signature_positive_method", "gap"
                     ),
+                    species=run_species,
                 )
                 # If the cohort has no enrichment-method axis, long_df has no
                 # 'method' column; the concat introduces it (real rows get
@@ -1903,6 +1937,7 @@ def cmd_run(args):
                 output_dir / "tcr_sequences.pdf",
                 annotations=pdf_annotations,
                 strict="skip",
+                species=run_species,
             )
 
         if config.output.output_airr:
@@ -2053,6 +2088,7 @@ def cmd_annotate_gex(args):
         print(f"Using default T cell gene list ({len(DEFAULT_GENE_LIST)} genes)")
 
     # Step 1: Augment with GEX if barcode column exists
+    gex_species = getattr(args, "species", "auto") or "auto"
     augmented_df = None
     if args.barcode_col in df.columns:
         print(f"\nAugmenting with gene expression from {args.gex_file}...")
@@ -2083,16 +2119,32 @@ def cmd_annotate_gex(args):
             verbose=args.verbose,
         )
 
-    # Step 2b: Per-clonotype signature scores (#74). Always runs when
-    # the per-cell augmented frame is available — scores are NaN for
-    # signatures whose genes weren't in the augmented set.
+    # Step 2b: Per-clonotype signature scores (#74).
     if augmented_df is not None:
+        from .species import resolve_species
+
+        resolved_gex_sp = gex_species
+        if resolved_gex_sp == "auto":
+            try:
+                import scanpy as sc
+
+                from .species import detect_adata_species
+
+                resolved_gex_sp = (
+                    detect_adata_species(sc.read_10x_h5(str(args.gex_file)))
+                    or resolve_species("auto", df=augmented_df, warn_mismatch=False)
+                )
+            except Exception:
+                resolved_gex_sp = resolve_species("auto", df=augmented_df, warn_mismatch=False)
+        else:
+            resolved_gex_sp = resolve_species(gex_species, df=augmented_df, warn_mismatch=False)
         print("\nComputing per-clonotype signature scores...")
         sig_df = compute_signature_scores_per_clonotype(
             augmented_df,
             group_col=args.group_col,
             gex_prefix=args.prefix,
             cd8_only=True,
+            species=resolved_gex_sp,
             verbose=args.verbose,
         )
         sig_cols = [c for c in sig_df.columns if c.startswith("signature_")]
@@ -2467,26 +2519,46 @@ def cmd_report_selected(args):
 
     assemble_kwargs = {}
     if args.config:
-        asm = TCRsiftConfig.from_yaml(args.config).assemble
+        cfg = TCRsiftConfig.from_yaml(args.config)
+        asm = cfg.assemble
         assemble_kwargs = dict(
-            alpha_leader=asm.alpha_leader, beta_leader=asm.beta_leader,
-            include_constant=asm.include_constant, constant_source=asm.constant_source,
-            linker=asm.linker, contigs_dir=asm.contigs_dir,
-            sample_name_from=asm.sample_name_from, cellranger_dir=asm.cellranger_dir,
+            alpha_leader=asm.alpha_leader,
+            beta_leader=asm.beta_leader,
+            include_constant=asm.include_constant,
+            constant_source=asm.constant_source,
+            linker=asm.linker if asm.single_chain else None,
+            contigs_dir=asm.contigs_dir,
+            sample_name_from=asm.sample_name_from,
+            cellranger_dir=asm.cellranger_dir,
+            trac_allele=getattr(asm, "trac_allele", "auto"),
+            trbc1_allele=getattr(asm, "trbc1_allele", "auto"),
+            trbc2_allele=getattr(asm, "trbc2_allele", "auto"),
+            stop_codons=tuple(getattr(asm, "stop_codons", ("TAA", "TGA"))),
+            leader_fallback=getattr(asm, "leader_fallback", None) or "germline",
+            force_alpha_leader=getattr(asm, "force_alpha_leader", None),
+            force_beta_leader=getattr(asm, "force_beta_leader", None),
+            secondary_alpha_leader=getattr(asm, "secondary_alpha_leader", None),
+            secondary_beta_leader=getattr(asm, "secondary_beta_leader", None),
             codon_optimization=getattr(asm, "codon_optimization", "focal"),
             max_codon_repeats=getattr(asm, "max_codon_repeats", 1),
             avoid_enzymes=tuple(getattr(asm, "avoid_enzymes", []) or []),
+            species=getattr(cfg, "species", "auto") or "auto",
+            constant_species=getattr(asm, "constant_species", None),
+            codon_species=getattr(asm, "codon_species", None),
         )
-    # Per-donor contig overrides (#196). The config's contigs path is per-donor
-    # but the config is typically shared, so without these the selected report
-    # re-assembles canonical constants with NO contigs — losing donor-allele
-    # fidelity + the #187 divergence flags that the contig-wired `run` produced.
+    # Per-donor contig + species overrides (#196).
     if args.cellranger_dir:
         assemble_kwargs["cellranger_dir"] = args.cellranger_dir
     if args.contigs_dir:
         assemble_kwargs["contigs_dir"] = args.contigs_dir
     if args.sample_name_from:
         assemble_kwargs["sample_name_from"] = args.sample_name_from
+    if getattr(args, "species", None) is not None:
+        assemble_kwargs["species"] = args.species
+    if getattr(args, "constant_species", None) is not None:
+        assemble_kwargs["constant_species"] = args.constant_species
+    if getattr(args, "codon_species", None) is not None:
+        assemble_kwargs["codon_species"] = args.codon_species
 
     prov_cols = [c for c in selected.columns if c != "CDR3ab"]
     build_selected_report(
@@ -2631,28 +2703,36 @@ def cmd_cells_qc(args):
     """Per-cell QC + doublet funnel on an AnnData (cell_qc_funnel, #314/#342)."""
     import anndata as ad
 
-    from .qc import SOLID_TUMOR_LINEAGE_PROGRAMS, cell_qc_funnel
+    from .qc import cell_qc_funnel, lineage_programs_for_species
+    from .species import resolve_species
 
     setup_logging(args.verbose)
     adata = ad.read_h5ad(args.input)
     print(f"Loaded {adata.n_obs} cells from {args.input}")
 
-    # Only thresholds the user actually passed are forwarded; the rest fall to
-    # the funnel's own (gentle) defaults. Explicit kwargs win over --pbmc-preset.
+    resolved_sp = resolve_species(
+        getattr(args, "species", None) or getattr(adata, "uns", {}).get("species", "auto"),
+        adata=adata,
+        warn_mismatch=False,
+    )
     kwargs = {
         param: getattr(args, cli_name)
         for cli_name, param, _ in _CELLS_QC_THRESHOLDS
         if getattr(args, cli_name) is not _UNSET_CLI
     }
+    kwargs["species"] = resolved_sp
     config = None
     if args.pbmc_preset:
         from .config import LoadConfig
 
         config = LoadConfig()
     if args.solid_tumor:
-        kwargs["lineage_sets"] = SOLID_TUMOR_LINEAGE_PROGRAMS
+        kwargs["lineage_sets"] = lineage_programs_for_species(
+            resolved_sp, solid_tumor=True
+        )
 
     out, waterfall = cell_qc_funnel(adata, config=config, **kwargs)
+    out.uns["species"] = resolved_sp
     print("\nQC waterfall:")
     print(waterfall.to_string(index=False))
     out.write_h5ad(args.output)
@@ -2668,10 +2748,16 @@ def cmd_cells_embed(args):
 
     from .config import EmbedConfig
     from .embed import embed_cells
+    from .species import resolve_species
 
     setup_logging(args.verbose)
     adata = ad.read_h5ad(args.input)
     print(f"Loaded {adata.n_obs} cells from {args.input}")
+    resolved_sp = resolve_species(
+        getattr(args, "species", None) or getattr(adata, "uns", {}).get("species", "auto"),
+        adata=adata,
+        warn_mismatch=False,
+    )
 
     config = EmbedConfig(
         enabled=True,
@@ -2683,6 +2769,7 @@ def cmd_cells_embed(args):
         seed=args.seed,
     )
     atlas = embed_cells(adata, config)
+    atlas.uns["species"] = resolved_sp
     atlas.write_h5ad(args.output)
     print(
         f"Embedded {atlas.n_obs} cells: "
@@ -2695,13 +2782,23 @@ def cmd_cells_annotate(args):
     import anndata as ad
 
     from .annotate_cells import annotate_cells
-    from .signatures import PBMC_CULTURE_TYPES, SOLID_TUMOR_CELL_TYPE_SIGNATURES
+    from .signatures import PBMC_CULTURE_TYPES, cell_type_signatures_for_species
+    from .species import resolve_species
 
     setup_logging(args.verbose)
     atlas = ad.read_h5ad(args.input)
     print(f"Loaded {atlas.n_obs} cells from {args.input}")
 
-    reference = SOLID_TUMOR_CELL_TYPE_SIGNATURES if args.solid_tumor else None
+    resolved_sp = resolve_species(
+        getattr(args, "species", None) or getattr(atlas, "uns", {}).get("species", "auto"),
+        adata=atlas,
+        warn_mismatch=False,
+    )
+    reference = (
+        cell_type_signatures_for_species(resolved_sp, solid_tumor=True)
+        if args.solid_tumor
+        else None
+    )
     allowed_types = PBMC_CULTURE_TYPES if args.pbmc_culture else None
     annotate_cells(
         atlas,
@@ -2710,7 +2807,9 @@ def cmd_cells_annotate(args):
         allowed_types=allowed_types,
         min_subtype_frac=args.min_subtype_frac,
         add_suffix=not args.no_suffix,
+        species=resolved_sp,
     )
+    atlas.uns["species"] = resolved_sp
     atlas.write_h5ad(args.output)
     print("\nPhenotype counts:")
     print(atlas.obs["phenotype"].value_counts().to_string())
@@ -2761,6 +2860,12 @@ def create_parser():
         help="Min mito %% FLOOR — drops cells below it (default: 2; set 0 to disable, #168)",
     )
     p_load.add_argument("--max-mito", type=float, default=8.0, help="Max mito %% (default: 8)")
+    p_load.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default="auto",
+        help="Organism species: 'human', 'mouse', or 'auto' (default: auto-detect)",
+    )
     p_load.add_argument("--plot-qc", action="store_true", help="Generate QC plots")
     p_load.add_argument("--output-dir", help="Output directory for plots")
     p_load.add_argument("--verbose", action="store_true", help="Verbose output")
@@ -2797,6 +2902,12 @@ def create_parser():
         help="Use SOLID_TUMOR_LINEAGE_PROGRAMS for the cross-lineage doublet gate",
     )
     p_cells_qc.add_argument("--waterfall-csv", help="Also write the QC waterfall to this CSV")
+    p_cells_qc.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default=None,
+        help="Organism species: 'human', 'mouse', or 'auto' (default: auto-detect)",
+    )
     p_cells_qc.add_argument("--verbose", action="store_true", help="Verbose output")
     p_cells_qc.set_defaults(func=cmd_cells_qc)
 
@@ -2823,6 +2934,12 @@ def create_parser():
         help="Highly-variable genes for the clustering panel (default: 2000)",
     )
     p_cells_embed.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
+    p_cells_embed.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default=None,
+        help="Organism species: 'human', 'mouse', or 'auto' (default: auto-detect)",
+    )
     p_cells_embed.add_argument("--verbose", action="store_true", help="Verbose output")
     p_cells_embed.set_defaults(func=cmd_cells_embed)
 
@@ -2839,7 +2956,7 @@ def create_parser():
     )
     p_cells_annotate.add_argument(
         "--solid-tumor", action="store_true",
-        help="Use SOLID_TUMOR_CELL_TYPE_SIGNATURES instead of the PBMC default",
+        help="Use solid-tumor cell-type signatures instead of the PBMC default",
     )
     p_cells_annotate.add_argument(
         "--pbmc-culture", action="store_true",
@@ -2852,6 +2969,12 @@ def create_parser():
     p_cells_annotate.add_argument(
         "--no-suffix", action="store_true",
         help="Skip the distinguishing-gene suffix (phenotype == phenotype_base)",
+    )
+    p_cells_annotate.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default=None,
+        help="Organism species: 'human', 'mouse', or 'auto' (default: auto-detect)",
     )
     p_cells_annotate.add_argument("--verbose", action="store_true", help="Verbose output")
     p_cells_annotate.set_defaults(func=cmd_cells_annotate)
@@ -3162,6 +3285,24 @@ def create_parser():
         "--sample-name-from", choices=["parent", "grandparent", "sheet"],
         help="Contig sample-name policy (overrides config, #196)",
     )
+    ps.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default=None,
+        help="Organism species override ('auto', 'human', or 'mouse'; overrides config)",
+    )
+    ps.add_argument(
+        "--constant-species",
+        choices=["human", "mouse"],
+        default=None,
+        help="Constant-region species override ('human' or 'mouse'; overrides config)",
+    )
+    ps.add_argument(
+        "--codon-species",
+        choices=["human", "mouse"],
+        default=None,
+        help="Codon-optimization table override ('human' or 'mouse'; overrides config)",
+    )
     ps.add_argument("--output-dir", "-o", required=True, help="Output directory")
     ps.add_argument(
         "--no-cover", action="store_true",
@@ -3264,6 +3405,24 @@ def create_parser():
     p_annot.add_argument("--exclude-viral", action="store_true", help="Remove viral clones")
     p_annot.add_argument("--flag-only", action="store_true", help="Just flag, don't remove")
     p_annot.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default="auto",
+        help="Query TCR organism ('human', 'mouse', or 'auto' default)",
+    )
+    p_annot.add_argument(
+        "--host-species-filter",
+        choices=["all", "same"],
+        default="all",
+        help="Filter DB entries by TCR donor host species: 'all' (default, tags "
+        "heterologous hosts with *_cross) or 'same' (restrict to same-species hosts).",
+    )
+    p_annot.add_argument(
+        "--auto-download",
+        action="store_true",
+        help="Automatically download missing public TCR databases into the cache",
+    )
+    p_annot.add_argument(
         "--plot-annotations", action="store_true", help="Generate annotation plots"
     )
     p_annot.add_argument("--output-dir", help="Output directory for plots")
@@ -3308,7 +3467,7 @@ def create_parser():
         choices=sorted(GROUPS),
         action="extend",
         nargs="+",
-        help="Clear a whole workflow group (germline / annotation / all).",
+        help="Clear a whole workflow group (germline / germline_mouse / annotation / all).",
     )
     p_data_clear.add_argument(
         "--cache-dir", help="Override the default cache directory"
@@ -3317,7 +3476,7 @@ def create_parser():
 
     p_data_download = p_data_sub.add_parser(
         "download",
-        help="Download supported databases (VDJdb, IEDB). CEDAR is manual-only.",
+        help="Download reference databases (VDJdb, IEDB, CEDAR, IMGT human/mouse germline).",
     )
     p_data_download.add_argument(
         "--db",
@@ -3325,7 +3484,7 @@ def create_parser():
         action="extend",
         nargs="+",
         help=(
-            "Database(s) to download (default: all DBs with a download URL). "
+            "Database(s) to download (default: all registered DBs). "
             "Repeatable and/or space-separated: "
             "`--db vdjdb iedb` and `--db vdjdb --db iedb` both work."
         ),
@@ -3336,9 +3495,9 @@ def create_parser():
         action="extend",
         nargs="+",
         help=(
-            "Download a whole workflow group: `germline` (IMGT V-REGION), "
-            "`annotation` (VDJdb/IEDB), or `all`. Manual-only DBs (CEDAR) are "
-            "skipped. Combines with --db."
+            "Download a whole workflow group: `germline` (human IMGT V-REGION), "
+            "`germline_mouse` (mouse IMGT V-REGION + leaders), "
+            "`annotation` (VDJdb/IEDB/CEDAR), or `all`. Combines with --db."
         ),
     )
     p_data_download.add_argument(
@@ -3730,9 +3889,20 @@ or auto-discovered from --data-dir.
         default=None,
         help="Output CSV for top-k table (default: FIG_DIR/abTCR_topk.csv).",
     )
-    p_til_select.add_argument("--vdjdb", type=Path, default=None, help="Path to VDJdb TSV")
-    p_til_select.add_argument("--iedb", type=Path, default=None, help="Path to IEDB TSV")
-    p_til_select.add_argument("--cedar", type=Path, default=None, help="Path to CEDAR TSV")
+    p_til_select.add_argument("--vdjdb", type=Path, default=None, help="Path to VDJdb TSV (overrides cache)")
+    p_til_select.add_argument("--iedb", type=Path, default=None, help="Path to IEDB CSV/TSV (overrides cache)")
+    p_til_select.add_argument("--cedar", type=Path, default=None, help="Path to CEDAR CSV/TSV (overrides cache)")
+    p_til_select.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Reference-database cache directory (default: ~/.cache/tcrsift).",
+    )
+    p_til_select.add_argument(
+        "--auto-download",
+        action="store_true",
+        help="Automatically download missing public TCR databases into the cache.",
+    )
     p_til_select.add_argument(
         "--match-by",
         type=str,
@@ -3845,15 +4015,16 @@ CONDITIONALLY REQUIRED:
         "Leader peptides are added to the N-terminus. Use default leaders (CD8A/CD28) "
         "or extract native leaders from CellRanger contigs.",
     )
+    _LEADER_CHOICES = ["CD8A", "CD28", "mCD8B", "mCD28", "H2Kb", "IgK", "TRAC", "TRBC"]
     asm_leaders.add_argument(
         "--alpha-leader",
-        choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+        choices=[*_LEADER_CHOICES, "from_contig", "none"],
         default="CD28",
         help="Alpha chain leader (default: CD28)",
     )
     asm_leaders.add_argument(
         "--beta-leader",
-        choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+        choices=[*_LEADER_CHOICES, "from_contig", "none"],
         default="CD8A",
         help="Beta chain leader (default: CD8A)",
     )
@@ -3862,38 +4033,38 @@ CONDITIONALLY REQUIRED:
     )
     asm_leaders.add_argument(
         "--leader-fallback",
-        choices=["germline", "keep", "CD8A", "CD28", "IgK", "TRAC", "TRBC"],
+        choices=["germline", "keep", *_LEADER_CHOICES],
         default=None,
         metavar="TARGET",
         help="With --*-leader=from_contig: what a REJECTED leader (bad SP, or "
         "diverges from germline AND inconsistent across the gene's clones) "
         "switches to — 'germline' (default: the gene's germline V-leader), a "
-        "curated key (CD8A/…), or 'keep' to never switch (just flag) (#263/#270). "
+        "curated key (CD8A/mCD8B/H2Kb/…), or 'keep' to never switch (just flag) (#263/#270). "
         "An SP-sound, consistent contig leader is always kept.",
     )
     asm_leaders.add_argument(
         "--force-leader", metavar="TARGET",
-        choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"],
+        choices=["germline", *_LEADER_CHOICES],
         default=None,
         help="Force this leader (germline/curated) on BOTH chains, ignoring the "
         "contig. Per-chain: --force-alpha-leader / --force-beta-leader (#270).",
     )
     asm_leaders.add_argument("--force-alpha-leader", metavar="TARGET",
-                             choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
+                             choices=["germline", *_LEADER_CHOICES])
     asm_leaders.add_argument("--force-beta-leader", metavar="TARGET",
-                             choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
+                             choices=["germline", *_LEADER_CHOICES])
     asm_leaders.add_argument(
         "--leader-secondary", metavar="TARGET",
-        choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"],
+        choices=["germline", *_LEADER_CHOICES],
         default=None,
         help="Also emit a SECONDARY construct (twin row, leader_variant="
         "secondary:<leader>) using this leader on BOTH chains, even for good "
         "calls. Per-chain: --secondary-alpha-leader / --secondary-beta-leader (#270).",
     )
     asm_leaders.add_argument("--secondary-alpha-leader", metavar="TARGET",
-                             choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
+                             choices=["germline", *_LEADER_CHOICES])
     asm_leaders.add_argument("--secondary-beta-leader", metavar="TARGET",
-                             choices=["germline", "CD8A", "CD28", "IgK", "TRAC", "TRBC"])
+                             choices=["germline", *_LEADER_CHOICES])
     asm_leaders.add_argument(
         "--codon-optimization", choices=["focal", "full"], default=None, metavar="MODE",
         help="How full_*_nt_optimized is generated: 'focal' (default) keeps the "
@@ -3991,6 +4162,26 @@ CONDITIONALLY REQUIRED:
     asm_seq.add_argument(
         "--linker", default="T2A", help="Linker peptide for single-chain (default: T2A)"
     )
+    asm_seq.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default="auto",
+        help="VDJ organism species ('human', 'mouse', or 'auto' default).",
+    )
+    asm_seq.add_argument(
+        "--constant-species",
+        choices=["human", "mouse"],
+        default=None,
+        help="Constant-region species override (e.g. '--constant-species mouse' "
+        "on human VDJ for murinized constant domains avoiding endogenous mispairing).",
+    )
+    asm_seq.add_argument(
+        "--codon-species",
+        choices=["human", "mouse"],
+        default=None,
+        help="Host codon-optimization table override ('human' or 'mouse'; "
+        "defaults to constant-species).",
+    )
 
     # Output options group
     asm_out = p_asm.add_argument_group("additional output options")
@@ -4061,12 +4252,16 @@ CONDITIONALLY REQUIRED:
         help="Which chain(s) to score (default: beta)",
     )
     p_lpg.add_argument(
-        "--backend", choices=["kmer", "tcrpeg"], default="kmer",
+        "--backend", choices=["kmer", "kmer_gene", "tcrpeg"], default="kmer",
         help="Probability backend (default: kmer, numpy-only)",
     )
     p_lpg.add_argument(
         "--cdr3-col", default=None,
         help="CDR3 AA column (default: CDR3_<chain>)",
+    )
+    p_lpg.add_argument(
+        "--species", choices=["human", "mouse"], default="human",
+        help="Organism species (default: human)",
     )
     p_lpg.set_defaults(func=cmd_log_pgen)
 
@@ -4083,7 +4278,7 @@ CONDITIONALLY REQUIRED:
     pf = p_pgen_sub.add_parser("fetch", help="Fetch a neutral observed "
                                "repertoire for Ppost training")
     pf.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
-    pf.add_argument("--url", default=None,
+    pf.add_argument("--url", "--repertoire", dest="url", default=None,
                     help="CSV/TSV (optionally .gz) with a CDR3 column")
     pf.add_argument("--source", default=None,
                     choices=["healthy-pbmc", "ots", "ireceptor"],
@@ -4092,6 +4287,8 @@ CONDITIONALLY REQUIRED:
     pf.add_argument("--seq-col", default="seq", help="CDR3 column (default seq)")
     pf.add_argument("--v-col", default=None,
                     help="V-gene column to filter chain (TRA*/TRB*)")
+    pf.add_argument("--species", choices=["human", "mouse"], default="human",
+                    help="Organism species (default: human)")
     pf.set_defaults(func=cmd_pgen_fetch)
 
     pt = p_pgen_sub.add_parser(
@@ -4106,9 +4303,12 @@ CONDITIONALLY REQUIRED:
         help="Role to request (default: ppost); packaged Pgen cannot be retrained",
     )
     pt.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
-    pt.add_argument("--url", default=None, help="observed repertoire for ppost")
+    pt.add_argument("--url", "--repertoire", dest="url", default=None,
+                    help="observed repertoire for ppost")
     pt.add_argument("--epochs", type=int, default=30, help="TCRpeg epochs")
-    pt.add_argument("--device", default=None, help="torch device (auto: mps/cuda/cpu)")
+    pt.add_argument("--device", default=None, help="torch device (auto: cuda/cpu)")
+    pt.add_argument("--species", choices=["human", "mouse"], default="human",
+                    help="Organism species (default: human)")
     pt.set_defaults(func=cmd_pgen_train)
 
     pa = p_pgen_sub.add_parser("annotate", help="Annotate a TCR CSV with "
@@ -4119,9 +4319,13 @@ CONDITIONALLY REQUIRED:
     pa.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
     pa.add_argument("--no-auto-train", action="store_true",
                     help="error instead of training a missing TCRpeg model")
+    pa.add_argument("--species", choices=["auto", "human", "mouse"], default="auto",
+                    help="Organism species (default: auto)")
     pa.set_defaults(func=cmd_pgen_annotate)
 
     ps = p_pgen_sub.add_parser("status", help="Show cached training data + models")
+    ps.add_argument("--species", choices=["human", "mouse"], default=None,
+                    help="Filter status to a single species")
     ps.set_defaults(func=cmd_pgen_status)
 
     p_pgen.set_defaults(func=lambda _a: p_pgen.print_help())
@@ -4132,6 +4336,12 @@ CONDITIONALLY REQUIRED:
     p_run = subparsers.add_parser("run", help="Run complete pipeline")
     p_run.add_argument("--sample-sheet", "-s", required=True, help="Sample sheet (CSV or YAML)")
     p_run.add_argument("--output-dir", "-o", required=True, help="Output directory")
+    p_run.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default=None,
+        help="Organism species ('human', 'mouse', or 'auto' default)",
+    )
     add_config_args(p_run)  # Add --config option
 
     # Load step parameters
@@ -4311,6 +4521,18 @@ CONDITIONALLY REQUIRED:
     annot_group.add_argument(
         "--flag-only", action="store_true", default=None, help="Flag but don't remove viral"
     )
+    annot_group.add_argument(
+        "--host-species-filter",
+        choices=["all", "same"],
+        default=None,
+        help="Filter DB entries by TCR donor host species: 'all' (default) or 'same'.",
+    )
+    annot_group.add_argument(
+        "--auto-download",
+        action="store_true",
+        default=None,
+        help="Automatically download missing public TCR databases into the cache.",
+    )
 
     # TIL step parameters
     til_group = p_run.add_argument_group("TIL matching options")
@@ -4334,12 +4556,12 @@ CONDITIONALLY REQUIRED:
     )
     asm_group.add_argument(
         "--alpha-leader",
-        choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+        choices=[*_LEADER_CHOICES, "from_contig", "none"],
         help="Alpha chain leader (default: CD28). Use 'none' for no leader.",
     )
     asm_group.add_argument(
         "--beta-leader",
-        choices=["CD8A", "CD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+        choices=[*_LEADER_CHOICES, "from_contig", "none"],
         help="Beta chain leader (default: CD8A). Use 'none' for no leader.",
     )
     asm_group.add_argument(
@@ -4399,6 +4621,18 @@ CONDITIONALLY REQUIRED:
         help="Generate single-chain constructs (default: True)",
     )
     asm_group.add_argument("--no-single-chain", dest="single_chain", action="store_false")
+    asm_group.add_argument(
+        "--constant-species",
+        choices=["human", "mouse"],
+        default=None,
+        help="Constant-region species override ('human' or 'mouse', e.g. murinized constants).",
+    )
+    asm_group.add_argument(
+        "--codon-species",
+        choices=["human", "mouse"],
+        default=None,
+        help="Codon-optimization table override ('human' or 'mouse').",
+    )
 
     # Output options
     out_group = p_run.add_argument_group("Output options")
@@ -4537,6 +4771,12 @@ REQUIRED INPUTS:
     gex_opts.add_argument("--prefix", default="gex", help="Prefix for GEX columns (default: gex)")
     gex_opts.add_argument(
         "--no-qc", action="store_true", help="Skip QC metrics (n_reads, n_genes, pct_mito)"
+    )
+    gex_opts.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default="auto",
+        help="Organism species for signature scoring ('human', 'mouse', or 'auto')",
     )
 
     # Aggregation options group

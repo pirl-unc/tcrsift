@@ -625,7 +625,8 @@ def build_selected_report(
     )
     if fidelity:
         logger.warning(fidelity)
-    validate_sequences(assembled, strict=False)
+    _report_species = (assemble_kwargs or {}).get("species")
+    validate_sequences(assembled, strict=False, species=_report_species)
     qc_text = assemble_qc_report(assembled)
     synth_text = synthesis_qc_report(assembled)
     if synth_text:
@@ -708,7 +709,7 @@ def build_selected_report(
 
     seq_pdf = out_dir / "selected_clones_sequences.pdf"
     create_tcr_sequence_pdf(
-        assembled, seq_pdf, strict=False, annotations=pdf_annotations,
+        assembled, seq_pdf, strict=False, annotations=pdf_annotations, species=_report_species,
     )
     # Prepend a self-documenting construct cover/legend page (#202).
     if cover:
@@ -774,7 +775,8 @@ def build_selected_report(
 # public epitope (#selected-anno).
 _PUBLIC_DB_COLS = [
     "is_viral", "db_match", "db_match_strength", "db_category",
-    "db_epitope", "db_protein_canonical", "db_species", "db_database",
+    "db_epitope", "db_protein_canonical", "db_antigen_gene",
+    "db_species", "db_host_species", "db_database",
 ]
 
 

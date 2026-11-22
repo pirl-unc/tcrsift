@@ -30,8 +30,9 @@ from anndata.experimental import concat_on_disk
 from scipy.sparse import csr_matrix, issparse
 from tqdm.auto import tqdm
 
-from .genes import TCELL_MARKERS, find_column_for_gene
+from .genes import TCELL_MARKERS, adata_mito_mask, find_column_for_gene, resolve_adata_var_map
 from .sample_sheet import Sample, SampleSheet, load_sample_sheet
+from .species import resolve_species
 from .validation import (
     TCRsiftValidationError,
     validate_cellranger_gex_dir,
@@ -369,14 +370,9 @@ def load_cellranger_gex(
     adata.obs["sample"] = sample_name
     adata.obs["gex_dir"] = str(gex_dir)
 
-    # Calculate QC metrics - detect mitochondrial genes
-    # Handle both loading paths:
-    # - h5 path: var_names are gene symbols (MT-ND1, etc.)
-    # - mtx path with var_names="gene_ids": var_names are ENSEMBL IDs, symbols in var['gene_symbols']
-    if "gene_symbols" in adata.var.columns:
-        adata.var["mt"] = adata.var["gene_symbols"].str.startswith("MT-")
-    else:
-        adata.var["mt"] = adata.var_names.str.startswith("MT-")
+    # Calculate QC metrics - detect mitochondrial genes across human (MT-*, ENSG*)
+    # and mouse (mt-*, ENSMUSG*) inputs via the shared symbol resolver.
+    adata.var["mt"] = adata_mito_mask(adata)
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True)
 
     # Rename QC columns for consistency
@@ -458,7 +454,7 @@ def _extract_tcell_markers(adata: ad.AnnData) -> pd.DataFrame:
     Extract T cell marker gene expression from AnnData.
 
     Returns DataFrame with CD3, CD4, CD8 expression per cell.
-    Uses version-robust ENSEMBL ID matching from genes.py.
+    Uses version-robust ENSEMBL ID / symbol / mouse ortholog matching from genes.py.
 
     Resolves all present markers via a single column slice on `adata`
     rather than N per-marker slices — one anndata-view creation and one
@@ -468,14 +464,25 @@ def _extract_tcell_markers(adata: ad.AnnData) -> pd.DataFrame:
 
     present_cols: list[str] = []
     present_symbols: list[str] = []
-    missing_symbols: list[str] = []
+    unresolved_genes = []
     for gene in TCELL_MARKERS:
         col = find_column_for_gene(gene, var_names)
         if col is not None:
             present_cols.append(col)
             present_symbols.append(gene.symbol)
         else:
-            missing_symbols.append(gene.symbol)
+            unresolved_genes.append(gene)
+
+    missing_symbols: list[str] = []
+    if unresolved_genes:
+        _, sym_to_var = resolve_adata_var_map(adata, [g.symbol for g in unresolved_genes])
+        for gene in unresolved_genes:
+            col = sym_to_var.get(gene.symbol)
+            if col is not None:
+                present_cols.append(col)
+                present_symbols.append(gene.symbol)
+            else:
+                missing_symbols.append(gene.symbol)
 
     for sym in missing_symbols:
         logger.warning(f"T cell marker {sym} not found in gene expression data")
@@ -669,6 +676,7 @@ def load_sample(
     max_counts: int = 100000,
     max_mito_pct: float = 8.0,
     min_mito_pct: float = 2.0,
+    species: str | None = None,
 ) -> ad.AnnData | None:
     """
     Load all data for a single sample.
@@ -736,10 +744,24 @@ def load_sample(
             ("apc_type", sample.apc_type),
             ("tissue", sample.tissue),
             ("expected_tcell_type", sample.get_expected_tcell_type()),
+            ("species", getattr(sample, "species", None)),
         ]
         _add_obs_columns(
             adata, {col: val for col, val in metadata if val is not None}
         )
+        effective_sp = (
+            (species if species and species != "auto" else None)
+            or getattr(sample, "species", None)
+            or species
+        )
+        if effective_sp is not None:
+            resolved_sp = resolve_species(
+                effective_sp,
+                adata=adata if adata.n_vars > 0 else None,
+                df=vdj_df,
+                context=f"sample '{sample.sample}'",
+            )
+            adata.uns["species"] = resolved_sp
 
     return adata
 
@@ -778,6 +800,7 @@ def load_samples(
     verbose: bool = True,
     show_progress: bool = True,
     tmpdir: str | Path | None = None,
+    species: str | None = None,
 ) -> ad.AnnData:
     """
     Load all samples from a sample sheet into a single AnnData object.
@@ -885,6 +908,7 @@ def load_samples(
                     max_counts=max_counts,
                     max_mito_pct=max_mito_pct,
                     min_mito_pct=min_mito_pct,
+                    species=species or getattr(sample_sheet, "species", None),
                 )
             except TCRsiftValidationError:
                 raise
@@ -967,6 +991,14 @@ def load_samples(
     # `pd.read_json(io.StringIO(adata.uns["sample_sheet"]), orient="records")`.
     combined.uns["sample_sheet"] = sample_sheet.to_dataframe().to_json(
         orient="records"
+    )
+    sheet_species = species or getattr(sample_sheet, "species", None)
+    combined.uns["species"] = resolve_species(
+        sheet_species or "auto",
+        adata=combined if combined.n_vars > 0 else None,
+        df=combined.obs,
+        warn_mismatch=bool(sheet_species and sheet_species != "auto"),
+        context="load_samples",
     )
 
     logger.info(f"Successfully loaded {combined.n_obs:,} cells from {len(sample_keys)} samples")
