@@ -307,7 +307,8 @@ class TestMouseSignaturesAndAtlas:
         # QC funnel + cross-lineage doublet check auto-detects mouse
         qc_adata, wf = cell_qc_funnel(adata.copy(), min_genes=10, min_counts=50, max_mito_pct=20)
         assert qc_adata.n_obs == 100
-        dbl_mask, *_ = cross_lineage_doublets(adata, species="mouse")
+        dbl_mask = cross_lineage_doublets(adata, species="mouse")
+        assert dbl_mask.shape == (100,)
         assert int(dbl_mask.sum()) == 0
 
         # Per-cell signature scoring
@@ -339,6 +340,23 @@ class TestMouseSignaturesAndAtlas:
         for non_receptor in ("TRADD", "Tradd", "TRAF1", "Traf1", "IGHMBP2", "Ighmbp2"):
             assert not _TOP_GENE_EXCLUDE.search(non_receptor), non_receptor
 
+    def test_gd_cd8_relabel_resolves_mouse_trdc_and_cd8a(self):
+        from tcrsift.embed import gd_cd8_relabel
+
+        relabel_fn = gd_cd8_relabel()
+        gd_sub = ad.AnnData(
+            X=np.array([[2.5, 1.5], [2.0, 1.2]], dtype=np.float32),
+            obs=pd.DataFrame({"has_ab_contig": [False, False]}, index=["c0", "c1"]),
+            var=pd.DataFrame(index=["Trdc", "Cd8a"]),
+        )
+        cd8_sub = ad.AnnData(
+            X=np.array([[0.0, 2.5], [0.1, 2.2]], dtype=np.float32),
+            obs=pd.DataFrame({"has_ab_contig": [True, True]}, index=["c2", "c3"]),
+            var=pd.DataFrame(index=["Trdc", "Cd8a"]),
+        )
+        assert relabel_fn(gd_sub) == ("gd T", "gdt")
+        assert relabel_fn(cd8_sub) == ("CD8 effector/cytotoxic", "gdt_cd8")
+
 
 class TestMousePrioritizeCLI:
     """End-to-end mouse `tcrsift prioritize --species mouse` execution."""
@@ -357,10 +375,10 @@ class TestMousePrioritizeCLI:
             ("ENSMUSG00000023132", "Gzma"),
             ("ENSMUSG00000037202", "Prf1"),
             ("ENSMUSG00000055170", "Ifng"),
-            ("ENSMUSG00000004668", "Nkg7"),
-            ("ENSMUSG00000021728", "Tnfrsf9"),
+            ("ENSMUSG00000004612", "Nkg7"),
+            ("ENSMUSG00000028965", "Tnfrsf9"),
             ("ENSMUSG00000031004", "Mki67"),
-            ("ENSMUSG00000020122", "Tnfrsf4"),
+            ("ENSMUSG00000029075", "Tnfrsf4"),
             ("ENSMUSG00000000782", "Tcf7"),
             ("ENSMUSG00000027985", "Lef1"),
             ("ENSMUSG00000037944", "Ccr7"),
@@ -558,6 +576,73 @@ class TestMouseAndChimericAssembly:
 
         msgs = validate_sequences(assembled, strict=True, species="human")
         assert not [m for m in msgs if m.severity == "load_bearing"]
+
+    def test_reverse_chimeric_mouse_vdj_with_human_constants_and_selected_report(self, tmp_path):
+        from tcrsift.assemble import HUMAN_TRAC_AA, HUMAN_TRBC2_AA
+
+        vdj_a_aa, vdj_a_nt = self._synthetic_vdj("CALSDRGGRALIF", suffix="FGTGTQVIVLP")
+        vdj_b_aa, vdj_b_nt = self._synthetic_vdj("CASSRANYEQYF", suffix="FGPGTRLTVL")
+        clones = pd.DataFrame([
+            {
+                "CDR3ab": "CALSDRGGRALIF_CASSRANYEQYF",
+                "CDR3_alpha": "CALSDRGGRALIF",
+                "CDR3_beta": "CASSRANYEQYF",
+                "VDJ_alpha_aa": vdj_a_aa,
+                "VDJ_alpha_nt": vdj_a_nt,
+                "VDJ_beta_aa": vdj_b_aa,
+                "VDJ_beta_nt": vdj_b_nt,
+                "alpha_v_gene": "TRAV12-1",
+                "alpha_j_gene": "TRAJ4",    # mouse TRAJ4 junction residue is 'Y'
+                "alpha_c_gene": "Trac",
+                "beta_v_gene": "TRBV12-1",
+                "beta_j_gene": "TRBJ2-7",
+                "beta_c_gene": "Trbc2",
+            }
+        ])
+        assembled = assemble_full_sequences(
+            clones,
+            alpha_leader="CD28",
+            beta_leader="CD8A",
+            include_constant=True,
+            linker="T2A",
+            species="mouse",
+            constant_species="human",
+            codon_species="human",
+        )
+        row = assembled.iloc[0]
+        assert row["alpha_constant_aa"] == "Y" + HUMAN_TRAC_AA
+        assert row["beta_constant_aa"] == "E" + HUMAN_TRBC2_AA
+        msgs = validate_sequences(assembled, strict=True, species="mouse")
+        assert not [m for m in msgs if m.severity == "load_bearing"]
+        auto_msgs = validate_sequences(assembled, strict=True, species="auto")
+        assert not [m for m in auto_msgs if m.severity == "load_bearing"]
+
+        # End-to-end `tcrsift report selected` forwarding species + constant_species from config
+        sel_csv = tmp_path / "selected_in.csv"
+        clones_csv = tmp_path / "clonotypes.csv"
+        cfg_yaml = tmp_path / "cfg.yaml"
+        out_dir = tmp_path / "selected_report"
+        pd.DataFrame([{"CDR3ab": "CALSDRGGRALIF_CASSRANYEQYF", "selection_rule": "top"}]).to_csv(
+            sel_csv, index=False
+        )
+        clones.to_csv(clones_csv, index=False)
+        cfg_yaml.write_text(
+            "species: mouse\nassemble:\n  alpha_leader: mCD28\n  beta_leader: mCD8B\n  constant_species: mouse\n"
+        )
+        cli_main([
+            "report", "selected",
+            "--selection", str(sel_csv),
+            "--clonotypes", str(clones_csv),
+            "--config", str(cfg_yaml),
+            "--allow-canonical-fallback",
+            "-o", str(out_dir),
+        ])
+        out_sel = pd.read_csv(out_dir / "selected_clones.csv")
+        assert len(out_sel) == 1
+        assert out_sel.iloc[0]["full_alpha_aa"].startswith("MTLRLLFLALNFFSVQVT")
+        assert out_sel.iloc[0]["full_beta_aa"].startswith("MQPWLWLVFSMKLAALWSSSA")
+        assert "db_antigen_gene" in out_sel.columns
+        assert "db_host_species" in out_sel.columns
 
 
 class TestMousePgenAndSeqprob:

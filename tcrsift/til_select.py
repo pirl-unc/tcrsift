@@ -70,6 +70,7 @@ logger = logging.getLogger(__name__)
 VIRAL_SPECIES_PATTERNS = [
     "cmv",
     "cytomegalovirus",
+    "mcmv",
     "epstein-barr",
     "epstein barr",
     "ebv",
@@ -89,6 +90,17 @@ VIRAL_SPECIES_PATTERNS = [
     "dengue",
     "zika",
     "yellow fever",
+    "lcmv",
+    "lymphocytic choriomeningitis",
+    "mammarenavirus choriomeningitidis",
+    "sendai",
+    "murine respirovirus",
+    "vesicular stomatitis",
+    "vsv",
+    "murine leukemia",
+    "mulv",
+    "vaccinia",
+    "ectromelia",
 ]
 
 TCR_SEGMENTS_AA = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4")
@@ -196,7 +208,7 @@ def load_vdjdb(path: str | Path) -> pd.DataFrame:
 
 def _load_iedb_cedar_multiheader(path: Path, label: str) -> pd.DataFrame:
     """Load IEDB/CEDAR format with multi-index header (CSV v3 or TSV)."""
-    from .annotate import _looks_like_iedb_v3
+    from .annotate import _looks_like_iedb_v3, _upgrade_iedb_cdr3_with_junction
 
     sep = "," if _looks_like_iedb_v3(path) else "\t"
     df = pd.read_csv(path, sep=sep, header=[0, 1], low_memory=False)
@@ -211,19 +223,33 @@ def _load_iedb_cedar_multiheader(path: Path, label: str) -> pd.DataFrame:
     def _col(group: str, field: str) -> tuple[str, str]:
         return (group, field)
 
-    cdr3_alpha_col = _col("Chain 1", "CDR3 Curated")
-    cdr3_beta_col = _col("Chain 2", "CDR3 Curated")
-    if cdr3_alpha_col not in df.columns:
-        cdr3_alpha_col = _col("Chain 1", "CDR3 Calculated")
-    if cdr3_beta_col not in df.columns:
-        cdr3_beta_col = _col("Chain 2", "CDR3 Calculated")
-    if cdr3_beta_col not in df.columns:
-        raise TCRsiftValidationError(f"{label} missing beta CDR3 column in {path}")
+    def _coalesce_cdr3(group: str, require: bool = False) -> pd.Series:
+        cur_col = _col(group, "CDR3 Curated")
+        calc_col = _col(group, "CDR3 Calculated")
+        junc_col = _col(group, "Junction Calculated")
+        has_cur = cur_col in df.columns
+        has_calc = calc_col in df.columns
+        if not has_cur and not has_calc:
+            if require:
+                raise TCRsiftValidationError(f"{label} missing {group} CDR3 column in {path}")
+            base = pd.Series([""] * len(df), index=df.index, dtype=object)
+        elif has_cur and has_calc:
+            cur = df[cur_col].replace("", pd.NA)
+            calc = df[calc_col].replace("", pd.NA)
+            base = cur.combine_first(calc)
+        else:
+            base = df[cur_col] if has_cur else df[calc_col]
+        if junc_col in df.columns:
+            base = _upgrade_iedb_cdr3_with_junction(base, df[junc_col])
+        return base
+
+    cdr3_alpha = _coalesce_cdr3("Chain 1", require=False)
+    cdr3_beta = _coalesce_cdr3("Chain 2", require=True)
 
     out = pd.DataFrame(
         {
-            "cdr3_alpha": df[cdr3_alpha_col] if cdr3_alpha_col in df.columns else "",
-            "cdr3_beta": df[cdr3_beta_col],
+            "cdr3_alpha": cdr3_alpha,
+            "cdr3_beta": cdr3_beta,
             "epitope": df.get(_col("Epitope", "Name")),
             "antigen_gene": df.get(_col("Epitope", "Source Molecule")),
             "species": df.get(_col("Epitope", "Source Organism")),
@@ -878,26 +904,46 @@ def _load_10x_h5_marker_counts(gex_h5_path: Path, marker_genes: list[str]) -> pd
                 hint="Expected CellRanger v3/v4 feature metadata.",
             )
         feature_names = _decode_bytes(features["name"][()])
+        feature_ids = _decode_bytes(features["id"][()]) if "id" in features else None
         feature_types = None
         if "feature_type" in features:
             feature_types = _decode_bytes(features["feature_type"][()])
 
-    from .genes import GENE_SYNONYMS
+    from .genes import GENE_SYNONYMS, ensembl_ids_to_symbols, strip_ensembl_version
 
     gene_to_index: dict[str, int] = {}
+    ensembl_candidates: list[tuple[int, str]] = []
     for idx, name in enumerate(feature_names):
         if feature_types is not None and feature_types[idx] != "Gene Expression":
             continue
         key = str(name).strip().upper()
         if key and key not in gene_to_index:
             gene_to_index[key] = idx
-    for alias_key, canonical_val in GENE_SYNONYMS.items():
-        ak = alias_key.upper()
-        cv = canonical_val.upper()
-        if ak in gene_to_index and cv not in gene_to_index:
-            gene_to_index[cv] = gene_to_index[ak]
-        elif cv in gene_to_index and ak not in gene_to_index:
-            gene_to_index[ak] = gene_to_index[cv]
+        base_name = strip_ensembl_version(str(name).strip())
+        if base_name.startswith(("ENSG", "ENSMUSG")):
+            if base_name not in gene_to_index:
+                gene_to_index[base_name] = idx
+            ensembl_candidates.append((idx, base_name))
+        if feature_ids is not None and idx < len(feature_ids):
+            fid = strip_ensembl_version(str(feature_ids[idx]).strip())
+            if fid:
+                gene_to_index.setdefault(fid.upper(), idx)
+                if fid.startswith(("ENSG", "ENSMUSG")) and key.startswith(("ENSG", "ENSMUSG")):
+                    ensembl_candidates.append((idx, fid))
+
+    if ensembl_candidates:
+        ens_map = ensembl_ids_to_symbols([eid for _, eid in ensembl_candidates])
+        for idx, eid in ensembl_candidates:
+            sym = ens_map.get(eid)
+            if sym:
+                gene_to_index.setdefault(sym.upper(), idx)
+
+    for group in GENE_SYNONYMS:
+        upper_group = [m.upper() for m in group]
+        found_idx = next((gene_to_index[m] for m in upper_group if m in gene_to_index), None)
+        if found_idx is not None:
+            for m in upper_group:
+                gene_to_index.setdefault(m, found_idx)
 
     out = pd.DataFrame({"barcode": barcodes})
     total_umis = np.asarray(matrix.sum(axis=0)).ravel().astype(float)
@@ -998,11 +1044,15 @@ def _compute_marker_scores_from_adata(
         total_umis = np.asarray(adata_subset.X.sum(axis=1)).ravel().astype(float)
     total_umis = np.maximum(total_umis, 1.0)
 
+    from .genes import resolve_adata_var_map
+
+    _, sym_to_var = resolve_adata_var_map(adata_subset, marker_genes)
     cell_df = keep.copy()
     cell_df["total_umis"] = total_umis
     for gene in marker_genes:
-        if gene in adata_subset.var_names:
-            vec = adata_subset[:, gene].X
+        var_name = gene if gene in adata_subset.var_names else sym_to_var.get(str(gene).upper())
+        if var_name is not None and var_name in adata_subset.var_names:
+            vec = adata_subset[:, var_name].X
             if issparse(vec):
                 counts = np.asarray(vec.toarray()).ravel().astype(float)
             else:
@@ -1108,7 +1158,10 @@ def compute_marker_scores_for_timepoint(
             ).agg(**agg)
         )
         return merged, clonotype_scores
-    except Exception:
+    except TCRsiftValidationError:
+        raise
+    except Exception as exc:
+        logger.debug("Fast 10x H5 marker loader fell back to scanpy (%s)", exc)
         # Test-compatible fallback path when H5 is mocked or non-standard.
         adata = sc.read_10x_h5(str(gex_h5_path))
         return _compute_marker_scores_from_adata(

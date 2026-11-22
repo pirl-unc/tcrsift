@@ -83,14 +83,19 @@ def embed_cells(adata, config=None):
 
     if config.informative_genes:
         want = {str(g).upper() for g in config.informative_genes}
-        panel = [g for g in pool.var_names if str(g).upper() in want]
-        if not panel:
+        upper_to_var = {str(v).upper(): str(v) for v in pool.var_names}
+        missing = want - set(upper_to_var)
+        if missing:
             _, sym_to_var = resolve_adata_var_map(pool, config.informative_genes)
-            panel = [
-                sym_to_var[str(g).upper()]
+            for k, v in sym_to_var.items():
+                upper_to_var.setdefault(k, v)
+        panel = list(
+            dict.fromkeys(
+                upper_to_var[str(g).upper()]
                 for g in config.informative_genes
-                if str(g).upper() in sym_to_var
-            ]
+                if str(g).upper() in upper_to_var
+            )
+        )
         if not panel:
             raise ValueError(
                 "embed_cells: none of informative_genes are present in the "
@@ -188,16 +193,21 @@ def _reembed_leiden(
 
     if informative_genes:
         want = {str(g).upper() for g in informative_genes}
-        panel = [g for g in adata.var_names if str(g).upper() in want]
-        if not panel:
+        upper_to_var = {str(v).upper(): str(v) for v in adata.var_names}
+        missing = want - set(upper_to_var)
+        if missing:
             from .genes import resolve_adata_var_map
 
             _, sym_to_var = resolve_adata_var_map(adata, informative_genes)
-            panel = [
-                sym_to_var[str(g).upper()]
+            for k, v in sym_to_var.items():
+                upper_to_var.setdefault(k, v)
+        panel = list(
+            dict.fromkeys(
+                upper_to_var[str(g).upper()]
                 for g in informative_genes
-                if str(g).upper() in sym_to_var
-            ]
+                if str(g).upper() in upper_to_var
+            )
+        )
         if not panel:
             raise ValueError(
                 "refine_cluster: none of informative_genes are present in the "

@@ -415,7 +415,15 @@ def ensure_model(
         return model
 
     # Shipped k-mer / kmer_gene defaults (instant, no training when present).
-    if backend in ("kmer", "kmer_gene"):
+    # For mouse with auto_train=True and an available mouse repertoire (or url),
+    # prefer training a genuine murine ppost model over falling back to human AA kmer.
+    can_train_mouse_ppost = (
+        sp == "mouse"
+        and role == "ppost"
+        and auto_train
+        and (url is not None or cached_repertoire_file(chain, species=sp).is_file())
+    )
+    if backend in ("kmer", "kmer_gene") and not can_train_mouse_ppost:
         try:
             model = seqprob.load_background_model(chain, backend, role, species=sp)
             _CACHE[key] = model

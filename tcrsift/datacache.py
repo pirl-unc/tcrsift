@@ -397,6 +397,17 @@ def _path_size(path: Path) -> int:
     return 0
 
 
+def _invalidate_germline_memo_caches() -> None:
+    """Reset in-memory leader/V-REGION caches after germline cache updates."""
+    try:
+        from . import leaders, vregion
+
+        leaders.clear_reference_cache()
+        vregion.clear_reference_cache()
+    except Exception:
+        pass
+
+
 def clear_cache(
     db: str | None = None, data_dir: str | Path | None = None,
 ) -> list[Path]:
@@ -418,6 +429,8 @@ def clear_cache(
         if db_dir.exists():
             shutil.rmtree(db_dir)
             removed.append(db_dir)
+    if removed:
+        _invalidate_germline_memo_caches()
     return removed
 
 
@@ -572,6 +585,7 @@ def download_database(
         size=size,
         sha256=sha256,
     )
+    _invalidate_germline_memo_caches()
     return resolved
 
 

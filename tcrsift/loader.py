@@ -749,7 +749,11 @@ def load_sample(
         _add_obs_columns(
             adata, {col: val for col, val in metadata if val is not None}
         )
-        effective_sp = species or getattr(sample, "species", None)
+        effective_sp = (
+            (species if species and species != "auto" else None)
+            or getattr(sample, "species", None)
+            or species
+        )
         if effective_sp is not None:
             resolved_sp = resolve_species(
                 effective_sp,

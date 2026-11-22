@@ -78,6 +78,11 @@ class TestAntigenCanonicalizationPrecision:
         assert canonicalize_antigen("MAGEA12") == "MAGE-A12"
         assert canonicalize_antigen("MAGEC2") == "MAGE-C2"
 
+        # Tyrosinase-related protein 1 / 2 never collapse into Tyrosinase
+        assert canonicalize_antigen("Tyrosinase-related protein 1") == "TRP-1"
+        assert canonicalize_antigen("Tyrosinase-related protein 2") == "TRP-2"
+        assert canonicalize_antigen("Tyrosinase") == "Tyrosinase"
+
 
 class TestGeneVsProteinSeparation:
     """Explicit separation between db_protein_canonical and db_antigen_gene."""
@@ -94,18 +99,29 @@ class TestGeneVsProteinSeparation:
         assert resolve_antigen_gene("NY-ESO-1", species="Homo sapiens") == "CTAG1A;CTAG1B"
         assert resolve_antigen_gene("CTAG2", species="Homo sapiens") == "CTAG2"
         assert resolve_antigen_gene("LAGE-1", species="Homo sapiens") == "CTAG2"
+        assert resolve_antigen_gene("LAGE-1", species="Mus musculus") == "Ctag2"
+        # Human-specific CTAs/paralogs return None in mouse rather than fake symbols
+        assert resolve_antigen_gene("NY-ESO-1", species="Mus musculus") is None
+        assert resolve_antigen_gene("CEA", species="Mus musculus") is None
+        assert resolve_antigen_gene("PRAME", species="Mus musculus") is None
+        assert resolve_antigen_gene("PSA", species="Mus musculus") is None
 
     def test_endogenous_genes_vs_exogenous_foreign_antigens(self):
         assert resolve_antigen_gene("MART-1", species="Homo sapiens") == "MLANA"
         assert resolve_antigen_gene("MART-1", species="Mus musculus") == "Mlana"
+        assert resolve_antigen_gene("Tyrosinase-related protein 1", species="Homo sapiens") == "TYRP1"
+        assert resolve_antigen_gene("Tyrosinase-related protein 1", species="Mus musculus") == "Tyrp1"
         assert resolve_antigen_gene("TRP-2", species="Homo sapiens") == "DCT"
         assert resolve_antigen_gene("TRP-2", species="Mus musculus") == "Dct"
         assert resolve_antigen_gene("CEA", species="Homo sapiens") == "CEACAM5"
         assert resolve_antigen_gene("MAGE-A10", species="Homo sapiens") == "MAGEA10"
 
-        # Foreign model antigens (chicken OVA) and viral proteins have NO host gene symbol
+        # Foreign model antigens (OVA, HEL, KLH), hyphenated protein aliases, and viral proteins -> None
         assert resolve_antigen_gene("Ovalbumin", species="Gallus gallus") is None
         assert resolve_antigen_gene("OVA", species="Gallus gallus") is None
+        assert resolve_antigen_gene("HEL", species="Mus musculus") is None
+        assert resolve_antigen_gene("KLH", species="Homo sapiens") is None
+        assert resolve_antigen_gene("IL-2", species="Homo sapiens") is None
         assert resolve_antigen_gene("pp65", species="CMV") is None
 
     def test_match_clonotypes_emits_db_antigen_gene_alongside_db_protein_canonical(self):
@@ -244,3 +260,32 @@ class TestHostSpeciesSymmetryAndIEDBV3:
         assert row["v_alpha"] == "TRAV14-1*01"
         assert row["v_beta"] == "TRBV12-1*01"
         assert row["reference"] == "http://www.iedb.org/reference/1029999"
+
+    def test_iedb_junction_fgxg_guard_and_strain_host_and_nodb_schema(self, tmp_path):
+        from tcrsift.annotate import (
+            _upgrade_iedb_cdr3_with_junction,
+            annotate_clonotypes,
+            canonicalize_species,
+        )
+
+        # Strain-qualified mouse host labels canonicalize to Mus musculus
+        assert canonicalize_species("Mus musculus C57BL/6") == "Mus musculus"
+        assert canonicalize_species("BALB/c") == "Mus musculus"
+
+        # Junction Calculated with trailing FGXG framework tail is NOT grafted
+        upgraded = _upgrade_iedb_cdr3_with_junction(
+            pd.Series(["ASSIRSSYEQY", "ASSIRSSYEQY"]),
+            pd.Series(["CASSIRSSYEQYF", "CASSIRSSYEQYFGPGTRLTVT"]),
+        )
+        assert upgraded.iloc[0] == "CASSIRSSYEQYF"
+        assert upgraded.iloc[1] == "ASSIRSSYEQY"
+
+        # No-DB short-circuit produces identical annotation columns as DB matching
+        clones = pd.DataFrame({"CDR3_alpha": ["CAASDNYQLIW"], "CDR3_beta": ["CASSRANYEQYF"]})
+        no_db = annotate_clonotypes(clones)
+        with_db = match_clonotypes(
+            clones,
+            pd.DataFrame([{"cdr3_alpha": "X", "cdr3_beta": "Y", "database": "VDJdb", "is_viral": False}]),
+            show_progress=False,
+        )
+        assert set(no_db.columns) == set(with_db.columns)

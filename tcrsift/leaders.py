@@ -64,9 +64,15 @@ def _alias_slash_genes(
     for recs in by_gene.values():
         recs.sort(key=lambda r: (0 if _is_productive(r[1]) else 1, r[0]))
     prefix_targets: dict[str, set[str]] = {}
-    for gene in by_gene:
+    slashless_targets: dict[str, str] = {}
+    for gene in list(by_gene):
         if "/" in gene:
             prefix_targets.setdefault(gene.split("/")[0], set()).add(gene)
+            slashless = gene.replace("/", "")
+            if slashless not in by_gene:
+                slashless_targets[slashless] = gene
+    for slashless, full in slashless_targets.items():
+        by_gene[slashless] = by_gene[full]
     for prefix, fulls in prefix_targets.items():
         if len(fulls) == 1 and prefix not in by_gene:
             by_gene[prefix] = by_gene[next(iter(fulls))]
@@ -171,6 +177,25 @@ def _load_mouse_leaders(
 
 
 @functools.lru_cache(maxsize=4)
+def _load_human_reference() -> tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]]:
+    try:
+        path = _pkg_files("tcrsift.refseqs").joinpath("vgene_leaders.csv.gz")
+        raw = path.read_bytes()
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        return {}, {}
+    return _parse_leader_csv_bytes(raw)
+
+
+_MOUSE_LEADER_CACHE: tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]] | None = None
+
+
+def clear_reference_cache() -> None:
+    """Clear memoized human and mouse leader reference tables."""
+    global _MOUSE_LEADER_CACHE
+    _MOUSE_LEADER_CACHE = None
+    _load_human_reference.cache_clear()
+
+
 def _load_reference(species: str = "human") -> dict[str, list[tuple[str, str, str]]]:
     """Load the leader reference for ``species`` → ``{gene: [(allele, functionality, aa), …]}``.
 
@@ -181,37 +206,40 @@ def _load_reference(species: str = "human") -> dict[str, list[tuple[str, str, st
     already a distinct gene. Returns ``{}`` when no reference is available for
     ``species`` so mouse TCRs never cross-anchor against human leaders.
     """
+    global _MOUSE_LEADER_CACHE
     from .species import normalize_species
 
     sp = normalize_species(species)
     if sp == "mouse":
-        by_gene, _ = _load_mouse_leaders()
+        if _MOUSE_LEADER_CACHE is not None:
+            return _MOUSE_LEADER_CACHE[0]
+        by_gene, nt_idx = _load_mouse_leaders()
+        if by_gene:
+            _MOUSE_LEADER_CACHE = (by_gene, nt_idx)
         return by_gene
-    try:
-        path = _pkg_files("tcrsift.refseqs").joinpath("vgene_leaders.csv.gz")
-        raw = path.read_bytes()
-    except (FileNotFoundError, ModuleNotFoundError, OSError):
-        return {}
-    by_gene, _ = _parse_leader_csv_bytes(raw)
+    by_gene, _ = _load_human_reference()
     return by_gene
 
 
-@functools.lru_cache(maxsize=4)
 def _leader_nt_index(species: str = "human") -> dict[tuple[str, str], str]:
     """``{(gene, allele): leader_nt}`` from the reference for ``species``."""
+    global _MOUSE_LEADER_CACHE
     from .species import normalize_species
 
     sp = normalize_species(species)
     if sp == "mouse":
-        _, nt_idx = _load_mouse_leaders()
+        if _MOUSE_LEADER_CACHE is not None:
+            return _MOUSE_LEADER_CACHE[1]
+        by_gene, nt_idx = _load_mouse_leaders()
+        if by_gene:
+            _MOUSE_LEADER_CACHE = (by_gene, nt_idx)
         return nt_idx
-    try:
-        path = _pkg_files("tcrsift.refseqs").joinpath("vgene_leaders.csv.gz")
-        raw = path.read_bytes()
-    except (FileNotFoundError, ModuleNotFoundError, OSError):
-        return {}
-    _, nt_idx = _parse_leader_csv_bytes(raw)
+    _, nt_idx = _load_human_reference()
     return nt_idx
+
+
+_load_reference.cache_clear = clear_reference_cache  # type: ignore[attr-defined]
+_leader_nt_index.cache_clear = clear_reference_cache  # type: ignore[attr-defined]
 
 
 def germline_leader_nt(

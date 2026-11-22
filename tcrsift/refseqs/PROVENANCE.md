@@ -46,20 +46,20 @@ package under Apache-2.0. Only the fitted NumPy transition tables are bundled.
 `canonical_constants.fasta` and `canonical_constants_alleles.fasta` store bare
 mature human `TRAC`, `TRBC1`, and `TRBC2` constant-region amino-acid sequences
 (excluding the 1-aa J→C junction splice residue supplied by the rearranged J
-segment or donor contig) from Ensembl release 112 (`GRCh38`:
-`ENST00000611116` / `TRAC`, `ENST00000633705` / `TRBC1`,
-`ENST00000633867` / `TRBC2`) and IMGT allele tables (`TRAC*01`–`*04`,
-`TRBC1*01`–`*03`, `TRBC2*01`–`*05`).
+segment or donor contig) from Ensembl release 110 (`GRCh38`:
+`ENST00000611116` / `TRAC` / UniProt `P01848`, `ENST00000633705` / `TRBC1` /
+UniProt `P01850`), `NCBI:AAA60662` (`TRBC2*01` population-major default), and
+IMGT allele tables (`TRAC*01`–`*04`, `TRBC1*01`–`*03`, `TRBC2*01`–`*05`).
 
 `canonical_constants_mouse.fasta` and `canonical_constants_alleles_mouse.fasta`
 store the corresponding bare mature mouse (*Mus musculus*, C57BL/6J `GRCm39` /
 Ensembl release 112) constant-region amino-acid sequences:
 
-- `TRAC` (`Trac`, `ENSMUST00000198664` / UniProt `P01849`, 136 aa, C-terminus
+- `TRAC` (`Trac`, `ENSMUST00000198398` / UniProt `P01849`, 136 aa, C-terminus
   `LLMTLRLWSS`)
-- `TRBC1` (`Trbc1`, `ENSMUST00000192578` / UniProt `P01852`, 172 aa, C-terminus
+- `TRBC1` (`Trbc1`, `ENSMUST00000192856` / UniProt `P01852`, 172 aa, C-terminus
   `VKRKNS`)
-- `TRBC2` (`Trbc2`, `ENSMUST00000194874` / UniProt `A0A075B5J4`, 172 aa,
+- `TRBC2` (`Trbc2`, `ENSMUST00000103299` / UniProt `A0A075B5J4`, 172 aa,
   C-terminus `VKKKNS`)
 
 Regenerate from local Ensembl caches via
@@ -70,9 +70,10 @@ Regenerate from local Ensembl caches via
 `vgene_leaders.csv.gz` stores per-allele human `TRAV` and `TRBV` signal-peptide
 references used to anchor `from_contig` leader extraction.
 `scripts/build_vgene_leaders.py` builds this table from the vendored
-IMGT/GENE-DB `L-PART1+L-PART2` FASTAs under `imgt_vgene_leaders/`
-(`TRAV_L-PART.fasta`, `TRBV_L-PART.fasta`), retaining clean `ATG`-initiated,
-in-frame, stop-free leaders across 270 alleles and 123 genes.
+IMGT/GENE-DB `L-PART1+L-PART2` FASTAs in the source repository under
+`tcrsift/refseqs/imgt_vgene_leaders/` (`TRAV_L-PART.fasta`, `TRBV_L-PART.fasta`),
+retaining clean `ATG`-initiated, in-frame, stop-free leaders across 270 alleles
+and 123 genes.
 
 Mouse (*Mus musculus*) IMGT `L-PART1+L-PART2` and `V-REGION` FASTAs can be
 fetched on demand into the local cache via

@@ -68,11 +68,8 @@ def naive_signature(species: str = "human"):
     from .signature_methods import Signature
     from .species import normalize_species
 
-    genes = (
-        ("Tcf7", "Lef1", "Ccr7", "Sell", "Il7r", "Cd27", "Cd28")
-        if normalize_species(species) == "mouse"
-        else ("TCF7", "LEF1", "CCR7", "SELL", "IL7R", "CD27", "CD28")
-    )
+    normalize_species(species)
+    genes = ("TCF7", "LEF1", "CCR7", "SELL", "IL7R", "CD27", "CD28")
     return Signature(
         "Naive",
         genes,
@@ -174,8 +171,8 @@ def score_gex_signature_per_clone(
     sig = registry[signature] if isinstance(signature, str) else signature
     cols = {g: f"{gex_prefix}.{g}" for g in sig.all_genes}
     present = {g: c for g, c in cols.items() if c in per_cell.columns}
-    if not present:
-        # Case-insensitive / synonym fallback on gex.<gene> columns
+    if len(present) < len(cols):
+        # Case-insensitive / synonym fallback for any missing gex.<gene> columns
         from .genes import GENE_SYNONYMS
 
         col_lookup = {
@@ -189,11 +186,9 @@ def score_gex_signature_per_clone(
             if found_col is not None:
                 for m in upper_group:
                     col_lookup.setdefault(m, found_col)
-        present = {
-            g: col_lookup[g.upper()]
-            for g in sig.all_genes
-            if g.upper() in col_lookup
-        }
+        for g in sig.all_genes:
+            if g not in present and g.upper() in col_lookup:
+                present[g] = col_lookup[g.upper()]
     if not present:
         raise ValueError(
             f"score_gex_signature_per_clone: none of {sig.name}'s genes "

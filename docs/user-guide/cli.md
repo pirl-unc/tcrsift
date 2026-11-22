@@ -395,7 +395,8 @@ tcrsift til-select --data-dir data --rank-by marker_score_z_mean
 | `--data-dir` | Directory containing per-timepoint files (default `./data`) |
 | `--samples`, `--inputs` | Explicit `LABEL=CONSENSUS,CLONOTYPES` mappings |
 | `--config` | YAML file with a `timepoints:` mapping |
-| `--vdjdb`, `--iedb`, `--cedar` | Optional TCR reference databases |
+| `--vdjdb`, `--iedb`, `--cedar` | Optional TCR reference databases (overrides cache) |
+| `--cache-dir`, `--auto-download` | Reference cache directory and automatic fetching of missing public TCR databases |
 | `--match-by` | Database matching key: `CDR3b_only` (default) or `CDR3ab` |
 | `--marker-genes`, `--cytolytic-genes`, `--antigen-response-genes`, `--activation-genes`, `--exhaustion-genes` | Gene panels for branch scoring |
 | `--min-cells-per-clone`, `--min-cd8-cp10k`, `--max-cd4-to-cd8-ratio` | Base CD8 selection thresholds |

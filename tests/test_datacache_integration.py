@@ -59,9 +59,8 @@ class TestMouseGermlineCacheAndIsolation:
         self, tmp_path, monkeypatch
     ):
         monkeypatch.setenv("TCRSIFT_DATA_DIR", str(tmp_path))
-        leaders._load_reference.cache_clear()
-        leaders._leader_nt_index.cache_clear()
-        monkeypatch.setattr(vregion, "_MOUSE_REFERENCE", None)
+        leaders.clear_reference_cache()
+        vregion.clear_reference_cache()
 
         # Mouse returns empty/None when uncached rather than human TRAV12-2
         assert leaders.germline_vgene_leaders("TRAV12-2", species="mouse") == []
@@ -73,9 +72,12 @@ class TestMouseGermlineCacheAndIsolation:
 
     def test_mouse_leaders_and_vregions_load_from_cache(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TCRSIFT_DATA_DIR", str(tmp_path))
-        leaders._load_reference.cache_clear()
-        leaders._leader_nt_index.cache_clear()
-        monkeypatch.setattr(vregion, "_MOUSE_REFERENCE", None)
+        leaders.clear_reference_cache()
+        vregion.clear_reference_cache()
+
+        # Query BEFORE populating cache to verify empty {} is not permanently memoized
+        assert leaders.germline_vgene_leaders("TRAV1", species="mouse") == []
+        assert vregion.reference_is_available(species="mouse") is False
 
         # Populate mock IMGT HTML/FASTA files in cache using canonical spec filenames
         ldr_dir = tmp_path / "imgt_trav_leader_mouse"
@@ -104,8 +106,8 @@ class TestMouseGermlineCacheAndIsolation:
         assert len(mouse_ldrs) == 1
         assert mouse_ldrs[0][2].startswith("M")
         assert vregion.reference_is_available(species="mouse") is True
-        leaders._load_reference.cache_clear()
-        leaders._leader_nt_index.cache_clear()
+        leaders.clear_reference_cache()
+        vregion.clear_reference_cache()
 
 
 class TestEnsureCachedAndTilSelectFormats:
@@ -226,3 +228,40 @@ class TestOfflinePgenModelsAndPyensembl:
         assert ensembl_to_gene_name("ENSG00000198888") == "MT-ND1"
         assert ensembl_to_gene_name("ENSMUSG00000053044") == "Cd8b1"
         assert ensembl_to_gene_name("ENSMUSG00000064351") == "mt-Co1"
+
+    def test_load_10x_h5_marker_counts_resolves_mouse_cd8b1_and_ensembl(self, tmp_path):
+        import h5py
+        import numpy as np
+        import scipy.sparse as sp
+
+        from tcrsift.til_select import _load_10x_h5_marker_counts
+
+        h5_path = tmp_path / "filtered_feature_bc_matrix.h5"
+        # 2 cells x 3 features (Cd8b1, ENSMUSG00000015437=Gzmb, Cd4) -> CSC shape (3, 2)
+        csc = sp.csc_matrix(np.array([[15, 0], [25, 5], [0, 20]], dtype=np.int32))
+        with h5py.File(h5_path, "w") as f:
+            grp = f.create_group("matrix")
+            grp.create_dataset("barcodes", data=np.array([b"BC1-1", b"BC2-1"]))
+            grp.create_dataset("data", data=csc.data)
+            grp.create_dataset("indices", data=csc.indices)
+            grp.create_dataset("indptr", data=csc.indptr)
+            grp.create_dataset("shape", data=np.array(csc.shape, dtype=np.int64))
+            feat = grp.create_group("features")
+            feat.create_dataset(
+                "name", data=np.array([b"Cd8b1", b"ENSMUSG00000015437", b"Cd4"])
+            )
+            feat.create_dataset(
+                "id",
+                data=np.array(
+                    [b"ENSMUSG00000053044", b"ENSMUSG00000015437", b"ENSMUSG00000023274"]
+                ),
+            )
+            feat.create_dataset(
+                "feature_type",
+                data=np.array([b"Gene Expression", b"Gene Expression", b"Gene Expression"]),
+            )
+
+        out = _load_10x_h5_marker_counts(h5_path, ["CD8B", "GZMB", "CD4"])
+        assert list(out["count_CD8B"]) == [15.0, 0.0]
+        assert list(out["count_GZMB"]) == [25.0, 5.0]
+        assert list(out["count_CD4"]) == [0.0, 20.0]

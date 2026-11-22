@@ -114,6 +114,13 @@ def _parse_vregion_fasta(text: str) -> dict[str, list[tuple[str, str, str]]]:
     return ref
 
 
+def clear_reference_cache() -> None:
+    """Clear memoized human and mouse V-REGION reference tables."""
+    global _REFERENCE, _MOUSE_REFERENCE
+    _REFERENCE = None
+    _MOUSE_REFERENCE = None
+
+
 def _load_reference(
     data_dir=None, *, force: bool = False, species: str = "human"
 ) -> dict[str, list[tuple[str, str, str]]]:
@@ -141,7 +148,7 @@ def _load_reference(
             ref.update(_parse_vregion_fasta(path.read_text(errors="replace")))
         except Exception as e:  # a corrupt cache file must not break assembly
             logger.warning("V-REGION reference %s unreadable: %s", path, e)
-    if data_dir is None:
+    if data_dir is None and ref:
         if sp == "mouse":
             _MOUSE_REFERENCE = ref
         else:

@@ -37,8 +37,8 @@ so chains remain distinguishable):
 | --- | --- | --- | --- |
 | `CD8A` | `CD8A` signal peptide (UniProt P01732) | Human | `MALPVTALLLPLALLLHAARP` |
 | `CD28` | `CD28` signal peptide (UniProt P10747) | Human | `MLRLLLALNLFPSIQVTG` |
-| `mCD8B` | `Cd8b1` signal peptide (UniProt P10300) | Mouse | `MQPWLWLVFSMKLAALWSSAA` |
-| `mCD28` | `Cd28` signal peptide (UniProt P31041) | Mouse | `MTLRLLFLALNFFSVQVTE` |
+| `mCD8B` | `Cd8b1` signal peptide (UniProt P10300) | Mouse | `MQPWLWLVFSMKLAALWSSSA` |
+| `mCD28` | `Cd28` signal peptide (UniProt P31041) | Mouse | `MTLRLLFLALNFFSVQVT` |
 | `H2Kb` | `H2-K1` (H-2Kb) signal peptide (UniProt P01901) | Mouse | `MVPCTLLLLLAAALAPTQTRA` |
 | `IgK` | IgGκ light-chain signal peptide | Mouse | `METDTLLLWVLLLWVPGSTG` |
 | `TRAC` | Synthetic TCR α-chain signal peptide | Human | `MAGTWLLLLLALGCPALPTG` |

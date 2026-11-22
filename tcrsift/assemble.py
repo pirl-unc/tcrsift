@@ -158,14 +158,14 @@ DEFAULT_LEADERS = {
         "species": "human",
     },
     "mCD8B": {
-        "aa": "MQPWLWLVFSMKLAALWSSAA",
-        "dna": "ATGCAGCCTTGGCTGTGGCTCGTGTTCAGCATGAAGCTGGCCGCTCTGTGGAGCTCCGCCGCT",
+        "aa": "MQPWLWLVFSMKLAALWSSSA",
+        "dna": "ATGCAGCCTTGGCTGTGGCTCGTGTTCAGCATGAAGCTGGCCGCTCTGTGGAGCTCCAGCGCC",
         "source": "Murine Cd8b1 signal peptide (UniProt P10300)",
         "species": "mouse",
     },
     "mCD28": {
-        "aa": "MTLRLLFLALNFFSVQVTE",
-        "dna": "ATGACCCTGAGACTGCTCTTCCTGGCCCTCAACTTCTTTAGCGTGCAGGTGACCGAG",
+        "aa": "MTLRLLFLALNFFSVQVT",
+        "dna": "ATGACCCTGAGACTGCTCTTCCTGGCCCTCAACTTCTTTAGCGTGCAGGTGACC",
         "source": "Murine Cd28 signal peptide (UniProt P31041)",
         "species": "mouse",
     },
@@ -606,6 +606,24 @@ def _apply_cohort_alpha_junctions(
         if isinstance(full_nt, str) and isinstance(old_const_nt, str) and full_nt.endswith(old_const_nt):
             df.at[idx, "full_alpha_nt"] = (
                 full_nt[: -len(old_const_nt)] + new_codon + old_const_nt[3:]
+            )
+        full_opt = (
+            df.at[idx, "full_alpha_nt_optimized"]
+            if "full_alpha_nt_optimized" in df.columns
+            else None
+        )
+        old_const_opt = (
+            df.at[idx, "alpha_constant_nt_optimized"]
+            if "alpha_constant_nt_optimized" in df.columns
+            else None
+        )
+        if (
+            isinstance(full_opt, str)
+            and isinstance(old_const_opt, str)
+            and full_opt.endswith(old_const_opt)
+        ):
+            df.at[idx, "full_alpha_nt_optimized"] = (
+                full_opt[: -len(old_const_opt)] + new_codon + old_const_opt[3:]
             )
         for nt_col in ("alpha_constant_nt", "alpha_constant_nt_optimized"):
             nt = df.at[idx, nt_col] if nt_col in df.columns else None
@@ -2053,6 +2071,12 @@ def assemble_full_sequences(
     for col in result_df.columns:
         df[col] = result_df[col].values
 
+    # Correct blanket-N α junctions using a per-J consensus from this cohort's
+    # contig-verified clones BEFORE building single-chain constructs and leader
+    # policy views so full_alpha_*, full_alpha_nt_optimized, and single_chain_*
+    # remain byte-for-byte synchronized (#242).
+    df = _apply_cohort_alpha_junctions(df, codon_species=cod_sp)
+
     # Add single-chain construct if requested
     if linker and "full_beta_aa" in df.columns and "full_alpha_aa" in df.columns:
         if verbose:
@@ -2140,10 +2164,6 @@ def assemble_full_sequences(
     # restriction sites) plus cross-construct hazards (duplicate CDS, α/β swap).
     # No-op when no construct-NT column exists. Warn (regardless of verbose) on
     # any flagged construct so a vendor-rejection risk isn't silent.
-    # Correct blanket-N α junctions using a per-J consensus from this cohort's
-    # contig-verified clones, before QC/provenance (#242).
-    df = _apply_cohort_alpha_junctions(df, codon_species=cod_sp)
-
     df = add_synthesis_qc(df)
 
     # Surface dual-α (allelic-inclusion) clones explicitly (#237) — easy to miss
@@ -2669,16 +2689,32 @@ def _add_constant_regions(
         fallback_source = "canonical_fallback"
         fallback_reason: str | None = None
         if contig_nt_past_vdj and len(contig_nt_past_vdj) >= 3:
-            junction_codon = contig_nt_past_vdj[:3]
-            translated = CODON_TABLE.get(junction_codon, "X")
-            if translated and translated not in {"*", "X"}:
-                junction_residue = translated
-                junction_from_contig = True
-            else:
+            donor_c_aa = CONSTANT_REGIONS_AA_BY_SPECIES.get(
+                vdj_species, HUMAN_CONSTANT_REGIONS_AA
+            ).get(canonical_name, "")
+            if (
+                is_chimeric
+                and len(contig_post_junction_nt) >= 3
+                and donor_c_aa
+                and not _verify_first_codon_frame(contig_post_junction_nt, donor_c_aa)
+            ):
                 fallback_reason = (
-                    f"contig junction codon {junction_codon!r} translates to "
-                    f"{translated!r}"
+                    "contig first post-junction codon does not match donor "
+                    f"{vdj_species} {canonical_name} reading frame"
                 )
+                contig_nt_past_vdj = None
+            else:
+                junction_codon = contig_nt_past_vdj[:3]
+                translated = CODON_TABLE.get(junction_codon, "X")
+                if translated and translated not in {"*", "X"}:
+                    junction_residue = translated
+                    junction_from_contig = True
+                else:
+                    fallback_reason = (
+                        f"contig junction codon {junction_codon!r} translates to "
+                        f"{translated!r}"
+                    )
+                    contig_nt_past_vdj = None
         elif sample_contigs:
             fallback_reason = "no contig C-region coverage past VDJ"
         if junction_residue is None:
@@ -3898,11 +3934,19 @@ def enforce_contig_fidelity(
     s = assemble_fidelity_summary(df)
     if s["n_unverified"] == 0:
         return ""
+    has_blanket_alpha = (
+        "alpha_junction_residue_source" in df.columns
+        and (df["alpha_junction_residue_source"] == "canonical_fallback").any()
+    )
+    junction_note = (
+        "J→C junction residues defaulted (α blanket N is wrong for ~30% of J genes)"
+        if has_blanket_alpha or "alpha_junction_residue_source" not in df.columns
+        else "J→C junction residues germline-inferred (not contig-read)"
+    )
     summary = (
         f"{s['n_unverified']}/{s['n_total']} constructs assembled with NO contig "
         f"verification (α fallback: {s['alpha_fallback']}, β fallback: "
-        f"{s['beta_fallback']}) — reference constants, J→C junction residues "
-        f"defaulted (α blanket N is wrong for ~30% of J genes), donor alleles "
+        f"{s['beta_fallback']}) — reference constants, {junction_note}, donor alleles "
         f"unverified."
     )
     if not allow_canonical_fallback:
@@ -3926,10 +3970,19 @@ def _infer_constant_species(
             const_aa.startswith(mb8) or const_aa[1:].startswith(mb8)
         ):
             return "mouse"
+    human_bare = HUMAN_CONSTANT_REGIONS_AA.get(c_base)
+    if human_bare:
+        hb8 = human_bare[:8]
+        if isinstance(const_aa, str) and (
+            const_aa.startswith(hb8) or const_aa[1:].startswith(hb8)
+        ):
+            return "human"
     if c_base in ("TRBC1", "TRBC2") and isinstance(full_aa, str) and full_aa:
         s = full_aa.rstrip("*")
         if s.endswith(MOUSE_CONSTANT_REGION_ENDINGS[c_base]):
             return "mouse"
+        if s.endswith(CONSTANT_REGION_ENDINGS[c_base]):
+            return "human"
     return default
 
 
@@ -3994,7 +4047,8 @@ def validate_sequences(
 
     from .species import detect_vdj_species, normalize_species
 
-    explicit_vdj_sp = normalize_species(species) if species else None
+    _sp = normalize_species(species, allow_auto=True) if species else None
+    explicit_vdj_sp = None if _sp == "auto" else _sp
     detected_vdj_sp = explicit_vdj_sp or detect_vdj_species(df)
 
     if fix:

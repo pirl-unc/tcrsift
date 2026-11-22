@@ -167,8 +167,13 @@ _MOUSE_TRAV_USAGE: dict[str, float] = {
     "TRAV12-2": 0.055, "TRAV14-1": 0.050, "TRAV14-2": 0.048,
     "TRAV7-3": 0.042, "TRAV9-1": 0.040, "TRAV6-5": 0.038,
     "TRAV16": 0.035, "TRAV13-1": 0.032, "TRAV12D-2": 0.030,
-    "TRAV14D-3/DV8": 0.030, "TRAV14D-3": 0.030, "TRAV1": 0.028,
-    "TRAV3-3": 0.026, "TRAV4-4/DV10": 0.024, "TRAV5-4": 0.022,
+    "TRAV14D-3DV8": 0.030, "TRAV1": 0.028,
+    "TRAV3-3": 0.026, "TRAV4-4DV10": 0.024, "TRAV5-4": 0.022,
+}
+
+_MOUSE_TRAV_ALIASES: dict[str, str] = {
+    "TRAV14D-3": "TRAV14D-3DV8",
+    "TRAV4-4": "TRAV4-4DV10",
 }
 
 _MOUSE_TRAJ_USAGE: dict[str, float] = {
@@ -217,6 +222,8 @@ def _v_usage_log(gene: str, chain: str, species: str = "human") -> float:
         table = _TRBV_USAGE if chain == "beta" else _TRAV_USAGE
         pool_sizes = _GENE_POOL_SIZE
     base = _strip_allele(gene)
+    if species == "mouse" and chain == "alpha":
+        base = _MOUSE_TRAV_ALIASES.get(base, base)
     if base in table:
         p = table[base]
     else:
@@ -235,6 +242,8 @@ def _j_usage_log(gene: str, chain: str, species: str = "human") -> float:
         table = _TRBJ_USAGE if chain == "beta" else _TRAJ_USAGE
         pool_sizes = _GENE_POOL_SIZE
     base = _strip_allele(gene)
+    if species == "mouse" and chain == "alpha":
+        base = _MOUSE_TRAV_ALIASES.get(base, base)
     if base in table:
         p = table[base]
     else:

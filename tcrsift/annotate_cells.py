@@ -164,6 +164,7 @@ def tumor_override(
     rescue_min_distinct: int = 1,
     min_expr: float = 0.0,
     count_col: str | None = None,
+    species: str = "human",
 ) -> MarkerCountOverride:
     """Build a :class:`MarkerCountOverride` encoding the h37-style tumor call, so a
     new cancer type gets the rule in one line (#340 follow-up).
@@ -201,7 +202,16 @@ def tumor_override(
     Pass the result to ``annotate_cells(overrides=[...])``. Omitting
     ``lineage_tfs`` disables the rescue (primary bar only).
     """
+    from .species import normalize_species
+
+    sp = normalize_species(species)
     if gene_set is None:
+        if sp == "mouse":
+            logger.warning(
+                "tumor_override: default oncoref CTA panel uses human HGNC genes "
+                "(several of which, e.g. CTAG1A/CTAG1B, lack murine orthologs); "
+                "pass an explicit murine tumor marker `gene_set` for mouse cohorts."
+            )
         import oncoref
 
         # oncoref's testis-restricted default (CTA_gene_names) drops several

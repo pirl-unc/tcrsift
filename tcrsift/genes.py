@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -301,31 +302,46 @@ _STATIC_ENSEMBL_TO_SYMBOL: dict[str, str] = {
     "ENSMUSG00000064370": "mt-Cytb",
 }
 
-_ENSEMBL_DATA_CACHE: dict[tuple[str, int | None], object | None] = {}
+_ENSEMBL_DATA_CACHE: dict[tuple[str, int | None], str | None] = {}
+
+
+def _local_pyensembl_db_path(release: int, py_species: str) -> str | None:
+    """Return path to locally cached pyensembl ``*.gtf.db`` without network IO."""
+    try:
+        import pyensembl  # pylint: disable=import-error
+
+        ens = pyensembl.EnsemblRelease(release, species=py_species)
+        cache_dir = getattr(
+            getattr(ens, "download_cache", None), "cache_directory_path", None
+        )
+        if not cache_dir or not os.path.isdir(cache_dir):
+            return None
+        for fname in sorted(os.listdir(cache_dir)):
+            if fname.endswith(".gtf.db"):
+                full = os.path.join(cache_dir, fname)
+                if os.path.isfile(full):
+                    return full
+    except Exception:
+        return None
+    return None
 
 
 def local_pyensembl_releases(species: str = "human") -> list[int]:
     """Return locally indexed pyensembl release numbers for ``species`` without network IO."""
     try:
-        import pyensembl  # pylint: disable=import-error
+        import pyensembl  # noqa: F401  # pylint: disable=import-error,unused-import
     except ImportError:
         return []
     py_sp = species_to_pyensembl(species)
     found: list[int] = []
     for rel in _CANDIDATE_ENSEMBL_RELEASES:
-        try:
-            ens = pyensembl.EnsemblRelease(rel, species=py_sp)
-            # Check `gtf.local_path_or_url` / SQLite file path via datacache without triggering download!
-            db_dir = ens.gtf.cache_directory_path
-            if os.path.isdir(db_dir) and any(f.endswith(".db") for f in os.listdir(db_dir)):
-                found.append(rel)
-        except Exception:
-            continue
+        if _local_pyensembl_db_path(rel, py_sp) is not None:
+            found.append(rel)
     return found
 
 
-def _ensembl_data(release: int | None = 110, *, species: str = "human"):
-    """Offline-safe cached :class:`pyensembl.EnsemblRelease`.
+def _ensembl_db_path(release: int | None = 110, *, species: str = "human") -> str | None:
+    """Offline-safe cached path to a locally installed pyensembl ``.gtf.db``.
 
     Probes ``release`` first; if that exact release's SQLite DB is not installed
     locally, falls back to any locally installed release for ``species`` rather
@@ -336,7 +352,11 @@ def _ensembl_data(release: int | None = 110, *, species: str = "human"):
     if key in _ENSEMBL_DATA_CACHE:
         return _ENSEMBL_DATA_CACHE[key]
 
-    import pyensembl  # pylint: disable=import-error
+    try:
+        import pyensembl  # noqa: F401  # pylint: disable=import-error,unused-import
+    except ImportError:
+        _ENSEMBL_DATA_CACHE[key] = None
+        return None
 
     py_sp = species_to_pyensembl(sp)
     candidates: list[int] = []
@@ -346,16 +366,12 @@ def _ensembl_data(release: int | None = 110, *, species: str = "human"):
         if r not in candidates:
             candidates.append(r)
 
-    chosen = None
+    chosen: str | None = None
     for rel in candidates:
-        try:
-            ens = pyensembl.EnsemblRelease(rel, species=py_sp)
-            db_dir = ens.gtf.cache_directory_path
-            if os.path.isdir(db_dir) and any(f.endswith(".db") for f in os.listdir(db_dir)):
-                chosen = ens
-                break
-        except Exception:
-            continue
+        db_path = _local_pyensembl_db_path(rel, py_sp)
+        if db_path is not None:
+            chosen = db_path
+            break
 
     _ENSEMBL_DATA_CACHE[key] = chosen
     return chosen
@@ -369,9 +385,9 @@ def ensembl_ids_to_symbols(
 ) -> dict[str, str]:
     """Map Ensembl gene IDs (``ENSG*`` or ``ENSMUSG*``) → gene symbols (version-robust).
 
-    Uses locally installed ``pyensembl`` when available (auto-detecting mouse from
-    ``ENSMUSG*`` IDs when ``species`` is omitted), supplemented by the bundled
-    static fallback map for core immune/signature/mitochondrial genes. Never
+    Uses locally installed ``pyensembl`` SQLite indices when available (auto-detecting
+    mouse from ``ENSMUSG*`` IDs when ``species`` is omitted), supplemented by the
+    bundled static fallback map for core immune/signature/mitochondrial genes. Never
     initiates network downloads during analysis.
     """
     logger = logging.getLogger(__name__)
@@ -387,38 +403,50 @@ def ensembl_ids_to_symbols(
         sp = normalize_species(species)
 
     out: dict[str, str] = {}
-    data = None
+    db_path = None
     try:
-        data = _ensembl_data(release, species=sp)
+        db_path = _ensembl_db_path(release, species=sp)
     except Exception as exc:
         logger.debug("pyensembl lookup skipped (%s)", exc)
 
-    if data is not None:
-        for eid in ids_list:
-            base = strip_ensembl_version(eid)
+    sql_map: dict[str, str] = {}
+    if db_path is not None:
+        unique_bases = sorted({strip_ensembl_version(eid) for eid in ids_list if eid})
+        try:
+            con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
             try:
-                gene = data.gene_by_id(base)
-            except Exception:
-                gene = None
-            if gene is not None and gene.gene_name:
-                out[eid] = gene.gene_name
-                continue
-            if base in _STATIC_ENSEMBL_TO_SYMBOL:
-                out[eid] = _STATIC_ENSEMBL_TO_SYMBOL[base]
-    else:
-        for eid in ids_list:
-            base = strip_ensembl_version(eid)
-            if base in _STATIC_ENSEMBL_TO_SYMBOL:
-                out[eid] = _STATIC_ENSEMBL_TO_SYMBOL[base]
-        if not out:
-            rel_hint = release or (112 if sp == "mouse" else 110)
-            logger.warning(
-                "No local pyensembl %s database installed; unmapped Ensembl IDs kept raw. "
-                "Install offline index with: pyensembl install --species %s --release %d",
-                sp,
-                species_to_pyensembl(sp),
-                rel_hint,
-            )
+                for start in range(0, len(unique_bases), 500):
+                    chunk = unique_bases[start : start + 500]
+                    placeholders = ",".join("?" for _ in chunk)
+                    rows = con.execute(
+                        f"SELECT gene_id, gene_name FROM gene WHERE gene_id IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    for gid, gname in rows:
+                        if gname:
+                            sql_map[str(gid)] = str(gname)
+            finally:
+                con.close()
+        except Exception as exc:
+            logger.debug("pyensembl sqlite query failed (%s)", exc)
+            db_path = None
+
+    for eid in ids_list:
+        base = strip_ensembl_version(eid)
+        if base in sql_map:
+            out[eid] = sql_map[base]
+        elif base in _STATIC_ENSEMBL_TO_SYMBOL:
+            out[eid] = _STATIC_ENSEMBL_TO_SYMBOL[base]
+
+    if db_path is None and not out:
+        rel_hint = release or (112 if sp == "mouse" else 110)
+        logger.warning(
+            "No local pyensembl %s database installed; unmapped Ensembl IDs kept raw. "
+            "Install offline index with: pyensembl install --species %s --release %d",
+            sp,
+            species_to_pyensembl(sp),
+            rel_hint,
+        )
     return out
 
 
@@ -464,8 +492,8 @@ GENE_SYNONYMS: tuple[tuple[str, ...], ...] = (
     ("ENSG00000133742", "ENSMUSG00000027556", "CA1", "CAR1"),
     ("ENSG00000105220", "ENSMUSG00000036427", "GPI", "GPI1"),
     ("ENSG00000101294", "ENSMUSG00000019188", "HM13", "H13"),
-    ("ENSG00000178982", "C17ORF49", "BAP18", "2610507B11RIK"),
-    ("ENSG00000235162", "C12ORF75", "OCC1", "1700025G04RIK"),
+    ("ENSG00000258315", "ENSMUSG00000020831", "C17ORF49", "BACC1", "BAP18", "0610010K14RIK"),
+    ("ENSG00000235162", "ENSMUSG00000032666", "C12ORF75", "OCC1", "1700025G04RIK"),
 )
 _SYNONYMS_OF = {name.upper(): tuple(x.upper() for x in group) for group in GENE_SYNONYMS for name in group}
 
@@ -478,12 +506,15 @@ def harmonize_gene_symbols(symbols, wanted):
     """
     symbols = np.asarray(symbols, dtype=object).copy()
     present = set(symbols)
+    wanted_upper = {str(g).upper() for g in wanted}
     renamed = {}
-    for gene in {str(g).upper() for g in wanted} - present:
+    for gene in wanted_upper - present:
         for other in _SYNONYMS_OF.get(gene, ()):
-            if other != gene and other in present:
+            if other != gene and other in present and other not in wanted_upper:
                 symbols[symbols == other] = gene
                 renamed[other] = gene
+                present.discard(other)
+                present.add(gene)
                 break
     if renamed:
         logging.getLogger(__name__).info(
@@ -491,6 +522,46 @@ def harmonize_gene_symbols(symbols, wanted):
             ", ".join(f"{new} (as {old})" for old, new in sorted(renamed.items())),
         )
     return symbols
+
+
+def _resolve_symbol_series(
+    names: Sequence[str],
+    *,
+    release: int | None = 110,
+    use_pyensembl: bool = True,
+    species: str | None = None,
+) -> np.ndarray:
+    import pandas as pd
+
+    s = pd.Series([str(x).strip() for x in names], dtype=object)
+    base_names = s.map(strip_ensembl_version)
+    looks_human = base_names.str.startswith("ENSG")
+    looks_mouse = base_names.str.startswith("ENSMUSG")
+    looks_ensembl = looks_human | looks_mouse
+    if looks_ensembl.any():
+        detected_sp = species or (
+            "mouse" if int(looks_mouse.sum()) > int(looks_human.sum()) else "human"
+        )
+        ens_list = s[looks_ensembl].tolist()
+        if use_pyensembl:
+            mapping = ensembl_ids_to_symbols(
+                ens_list,
+                release=release,
+                species=detected_sp,
+            )
+        else:
+            mapping = {
+                eid: _STATIC_ENSEMBL_TO_SYMBOL[strip_ensembl_version(eid)]
+                for eid in ens_list
+                if strip_ensembl_version(eid) in _STATIC_ENSEMBL_TO_SYMBOL
+            }
+        s = s.map(
+            lambda n: mapping.get(
+                n,
+                strip_ensembl_version(n) if str(n).startswith(("ENSG", "ENSMUSG")) else n,
+            )
+        )
+    return s.astype(str).str.upper().to_numpy()
 
 
 def adata_symbol_array(
@@ -505,38 +576,29 @@ def adata_symbol_array(
     Resolution order (single source of truth across human and mouse):
     1. a symbol column in ``adata.var`` (``gene_symbols``/``feature_name``/…);
     2. ``var_names`` themselves when they look like symbols (MGI ``Gzmb`` → ``GZMB``);
-    3. Ensembl ``var_names`` (``ENSG*`` or ``ENSMUSG*``) → symbols via
-       :func:`ensembl_ids_to_symbols`, falling back to raw IDs when unmapped.
+    3. Ensembl IDs (``ENSG*`` or ``ENSMUSG*``) → symbols via
+       :func:`ensembl_ids_to_symbols`, falling back to version-stripped IDs when unmapped.
     """
     import pandas as pd
 
     var = adata.var
+    fallback_names = [str(v) for v in adata.var_names]
     for col in _SYMBOL_COLS:
         if col in getattr(var, "columns", []):
-            return var[col].astype(str).str.upper().to_numpy()
-
-    names = pd.Series(adata.var_names.astype(str))
-    base_names = names.map(strip_ensembl_version)
-    looks_human = base_names.str.startswith("ENSG")
-    looks_mouse = base_names.str.startswith("ENSMUSG")
-    looks_ensembl = looks_human | looks_mouse
-    if looks_ensembl.mean() > 0.5:
-        detected_sp = species or ("mouse" if looks_mouse.sum() > looks_human.sum() else "human")
-        if use_pyensembl:
-            mapping = ensembl_ids_to_symbols(
-                names[looks_ensembl].tolist(),
-                release=release,
-                species=detected_sp,
+            raw_col = var[col]
+            merged = [
+                str(val).strip()
+                if pd.notna(val) and str(val).strip() and str(val).strip().lower() != "nan"
+                else fb
+                for val, fb in zip(raw_col, fallback_names)
+            ]
+            return _resolve_symbol_series(
+                merged, release=release, use_pyensembl=use_pyensembl, species=species
             )
-        else:
-            mapping = {
-                eid: _STATIC_ENSEMBL_TO_SYMBOL[strip_ensembl_version(eid)]
-                for eid in names[looks_ensembl].tolist()
-                if strip_ensembl_version(eid) in _STATIC_ENSEMBL_TO_SYMBOL
-            }
-        resolved = names.map(lambda n: mapping.get(n, n))
-        return resolved.astype(str).str.upper().to_numpy()
-    return names.str.upper().to_numpy()
+
+    return _resolve_symbol_series(
+        fallback_names, release=release, use_pyensembl=use_pyensembl, species=species
+    )
 
 
 def adata_mito_mask(adata) -> np.ndarray:
@@ -577,4 +639,12 @@ def resolve_adata_var_map(
             means = np.asarray(X[:, indices].mean(axis=0)).ravel()
             chosen = indices[int(np.argmax(means))]
         sym_to_var[sym] = str(var_names[chosen])
+    if wanted_genes is not None:
+        for wg in wanted_genes:
+            wg_u = str(wg).upper()
+            if wg_u not in sym_to_var:
+                for other in _SYNONYMS_OF.get(wg_u, ()):
+                    if other in sym_to_var:
+                        sym_to_var[wg_u] = sym_to_var[other]
+                        break
     return sym_upper, sym_to_var

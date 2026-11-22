@@ -207,8 +207,24 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         raise ValueError("--min-frequency must be in [0, 1]")
     if args.min_cells < 1:
         raise ValueError("--min-cells must be >= 1")
-    if not 1 <= args.min_signature_support <= len(names):
-        raise ValueError(f"--min-signature-support must be between 1 and {len(names)}")
+    max_possible_names = (
+        max(
+            len(names),
+            len(
+                resolve_signatures(
+                    args.context,
+                    args.tcell_type,
+                    args.signatures,
+                    args.exclude_signatures,
+                    species="mouse",
+                )
+            ),
+        )
+        if arg_species == "auto"
+        else len(names)
+    )
+    if not 1 <= args.min_signature_support <= max_possible_names:
+        raise ValueError(f"--min-signature-support must be between 1 and {max_possible_names}")
     for key in ("max_clones", "min_vdj_umis", "min_vdj_reads", "min_cd3",
                 "min_alpha_cdr3_length", "min_beta_cdr3_length", *QC_DEFAULTS):
         if not np.isfinite(getattr(args, key)) or getattr(args, key) < 0:
@@ -266,8 +282,8 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
             args.exclude_signatures,
             species=resolved_species,
         )
-        if not 1 <= args.min_signature_support <= len(names):
-            raise ValueError(f"--min-signature-support must be between 1 and {len(names)}")
+    if not 1 <= args.min_signature_support <= len(names):
+        raise ValueError(f"--min-signature-support must be between 1 and {len(names)}")
     logger.info(
         "Species: %s; Context: %s; T cells: %s; signatures: %s",
         resolved_species, args.context, args.tcell_type, ", ".join(names),
@@ -391,7 +407,11 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
 
     clonotypes["known_viral_match"] = clonotypes["is_viral"].fillna(False).astype(bool)
     clonotypes["known_mart1_match"] = _known_mart1_mask(clonotypes)
-    clonotypes["uses_trav12_2"] = _trav12_2_mask(clonotypes)
+    clonotypes["uses_trav12_2"] = (
+        _trav12_2_mask(clonotypes)
+        if resolved_species == "human"
+        else pd.Series(False, index=clonotypes.index)
+    )
 
     # ppost_either is ln(P) for the more common of the two chains. Higher
     # (less negative) values are more public; the percentile is cohort-relative.

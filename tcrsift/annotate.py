@@ -332,6 +332,15 @@ CANONICAL_SPECIES_CONTAINS: tuple[tuple[str, str], ...] = (
     ("ectromeliavirus", "Ectromelia virus"),
     ("murineleukemiavirus", "MuLV"),
     ("gallusgallus", "Gallus gallus"),
+    ("musmusculus", "Mus musculus"),
+    ("homosapiens", "Homo sapiens"),
+    ("c57bl", "Mus musculus"),
+    ("balbc", "Mus musculus"),
+    ("dba2", "Mus musculus"),
+    ("fvbn", "Mus musculus"),
+    ("129sv", "Mus musculus"),
+    ("sjlj", "Mus musculus"),
+    ("nodshi", "Mus musculus"),
 )
 
 CATEGORY_VIRAL = "viral"
@@ -614,8 +623,8 @@ _SELF_TUMOR_PROTEIN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"cancer/testis antigen 2\b|\bctag2\b|\blage[- _]?1[ab]?\b", re.I), "LAGE-1"),
     (re.compile(r"cancer/testis antigen 1\b|\bctag1[ab]?\b|\bny[- _]eso[- _]?1\b|\blage[- _]?2[ab]?\b", re.I), "NY-ESO-1"),
     (re.compile(r"melanocyte protein pmel|melanocyte-specific secreted glycoprotein|\bgp100\b|\bpmel\b|\bsilv\b", re.I), "gp100"),
-    (re.compile(r"dopachrome tautomerase|\bdct\b|\btrp[- _]?2\b|\btyrp2\b", re.I), "TRP-2"),
-    (re.compile(r"5,6-dihydroxyindole-2-carboxylic acid oxidase|\btyrp1\b|\btrp[- _]?1\b", re.I), "TRP-1"),
+    (re.compile(r"dopachrome tautomerase|tyrosinase[- _]?related protein[- _]?2\b|\bdct\b|\btrp[- _]?2\b|\btyrp2\b", re.I), "TRP-2"),
+    (re.compile(r"5,6-dihydroxyindole-2-carboxylic acid oxidase|tyrosinase[- _]?related protein[- _]?1\b|\bgp75\b|\btyrp1\b|\btrp[- _]?1\b", re.I), "TRP-1"),
     (re.compile(r"\btyrosinase\b|\btyr\b", re.I), "Tyrosinase"),
     (re.compile(r"\bwilms[' ]*tumor\b|\bwt1\b", re.I), "WT1"),
     (re.compile(r"\btelomerase\b|\bh?tert\b", re.I), "TERT"),
@@ -629,6 +638,8 @@ _SELF_TUMOR_PROTEIN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bmesothelin\b|\bmsln\b", re.I), "Mesothelin"),
     (re.compile(r"alpha[- ]fetoprotein|\bafp\b", re.I), "AFP"),
     (re.compile(r"\bovalbumin\b|\bserpinb14\b|\bova\b", re.I), "OVA"),
+    (re.compile(r"hen egg[- ]white lysozyme|\bhel\b", re.I), "HEL"),
+    (re.compile(r"keyhole limpet hemocyanin|\bklh\b", re.I), "KLH"),
     (re.compile(r"\binsulin\b", re.I), "Insulin"),
     (re.compile(r"beta-2-microglobulin|\bb2m\b", re.I), "B2M"),
     (re.compile(r"hla class i histocompatibility antigen|mhc class i(?: protein)?\b", re.I), "MHC class I"),
@@ -913,26 +924,38 @@ _CANONICAL_PROTEIN_TO_GENE_HGNC: dict[str, str] = {
     "B2M": "B2M",
 }
 
-_CANONICAL_PROTEIN_TO_GENE_MGI: dict[str, str] = {
+_CANONICAL_PROTEIN_TO_GENE_MGI: dict[str, str | None] = {
     "MART-1": "Mlana",
+    "LAGE-1": "Ctag2",
+    "NY-ESO-1": None,  # Human-specific X-linked duplication (no Mus musculus ortholog)
     "gp100": "Pmel",
     "TRP-2": "Dct",
     "TRP-1": "Tyrp1",
     "Tyrosinase": "Tyr",
+    "CEA": None,       # CEACAM5 is human/primate-specific
     "WT1": "Wt1",
     "TERT": "Tert",
     "HER2": "Erbb2",
     "Survivin": "Birc5",
+    "PSA": None,       # KLK3 is human/primate-specific
+    "NY-BR-1": None,   # ANKRD30A has no 1:1 mouse ortholog
     "BST2": "Bst2",
+    "PRAME": None,     # Expanded Pramel family in mouse; no single 1:1 ortholog
+    "SSX2": None,      # Human SSX2 has no 1:1 mouse ortholog
     "Mesothelin": "Msln",
     "AFP": "Afp",
     "Insulin": "Ins2",
     "B2M": "B2m",
 }
 
-_BARE_HGNC_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9-]{1,14}$")
-_BARE_MGI_SYMBOL_RE = re.compile(r"^[A-Z][a-z0-9-]{1,14}$")
-_NON_GENE_BARE_TOKENS = frozenset({"MHC", "HLA", "OVA", "UNKNOWN", "NONE", "NA", "NAN"})
+_BARE_HGNC_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9]{1,14}$")
+_BARE_MGI_SYMBOL_RE = re.compile(r"^[A-Z][a-z0-9]{1,14}$")
+_NON_GENE_BARE_TOKENS = frozenset(
+    {"MHC", "HLA", "OVA", "HEL", "KLH", "UNKNOWN", "NONE", "NA", "NAN"}
+)
+_NON_GENE_CANONICAL_ANTIGENS = frozenset(
+    {"OVA", "HEL", "KLH", "MAGE-A", "MHC class I", "MHC class II"}
+)
 
 
 def resolve_antigen_gene(
@@ -963,7 +986,7 @@ def resolve_antigen_gene(
         if (isinstance(canonical_protein, str) and canonical_protein)
         else canonicalize_antigen(raw, species=species)
     )
-    if canon == "OVA":
+    if canon in _NON_GENE_CANONICAL_ANTIGENS:
         return None
 
     # Paralog-exact CTAG1A vs CTAG1B preservation before generic NY-ESO-1 lookup.
@@ -1320,12 +1343,13 @@ def _infer_iedb_host_species(
     host_name: pd.Series, host_iri: pd.Series, mhc_allele: pd.Series
 ) -> pd.Series:
     """Infer TCR host species on IEDB/CEDAR v3 exports from Host Name, Host IRI, or MHC."""
+    known_hosts = {"Homo sapiens", "Mus musculus", "Macaca mulatta", "Rattus norvegicus", "Pan troglodytes"}
     out = pd.Series([pd.NA] * len(host_name), index=host_name.index, dtype=object)
     for idx in out.index:
         hn = host_name.at[idx]
         if pd.notna(hn) and str(hn).strip():
             canon = canonicalize_species(hn)
-            if canon:
+            if canon in known_hosts:
                 out.at[idx] = canon
                 continue
         iri = str(host_iri.at[idx]).strip() if pd.notna(host_iri.at[idx]) else ""
@@ -1333,8 +1357,7 @@ def _infer_iedb_host_species(
             if "NCBITaxon_9606" in iri:
                 out.at[idx] = "Homo sapiens"
                 continue
-            # IEDB mouse strain IRIs use NCBITaxon_10090 or ONTIE inbred mouse strain IDs.
-            if "NCBITaxon_10090" in iri or "/ONTIE_" in iri:
+            if "NCBITaxon_10090" in iri:
                 out.at[idx] = "Mus musculus"
                 continue
             if "NCBITaxon_9544" in iri:
@@ -1346,11 +1369,23 @@ def _infer_iedb_host_species(
         mhc = str(mhc_allele.at[idx]).strip().upper() if pd.notna(mhc_allele.at[idx]) else ""
         if mhc.startswith("HLA-"):
             out.at[idx] = "Homo sapiens"
-        elif mhc.startswith(("H2-", "H-2")):
+            continue
+        if mhc.startswith(("H2-", "H-2")):
             out.at[idx] = "Mus musculus"
-        elif mhc.startswith("MAMU-"):
+            continue
+        if mhc.startswith("MAMU-"):
             out.at[idx] = "Macaca mulatta"
+            continue
+        # IEDB inbred mouse strain IRIs (e.g. ONTIE_0000462 for C57BL/6) when MHC is absent.
+        if "/ONTIE_" in iri:
+            out.at[idx] = "Mus musculus"
+            continue
+        if pd.notna(hn) and str(hn).strip():
+            out.at[idx] = canonicalize_species(hn)
     return out
+
+
+_VALID_CDR3_ANCHOR_ENDS = frozenset({"F", "W", "C", "L", "Y"})
 
 
 def _upgrade_iedb_cdr3_with_junction(
@@ -1362,20 +1397,29 @@ def _upgrade_iedb_cdr3_with_junction(
     in ``CDR3 Curated`` / ``CDR3 Calculated`` while storing the IMGT-anchored
     sequence (``CASSIRSSYEQYF``) in ``Junction Calculated``; CellRanger and VDJdb
     always emit IMGT-anchored ``C...F/W`` CDR3s. Upgrade to ``Junction Calculated``
-    when it starts with ``C`` and either ``cdr3`` is missing or lacks a leading ``C``
-    while appearing inside ``Junction Calculated``.
+    only when it is a valid IMGT junction (length 7..30, starts with ``C``, ends
+    with a valid J-anchor residue ``F/W/C/L/Y``, and adds at most the two N/C
+    anchor residues over a non-empty core ``cdr3`` so trailing J-framework
+    ``FGXG`` tails are never grafted).
     """
     out = cdr3.astype(object).copy()
     for idx in out.index:
         c_val = out.at[idx]
         j_val = junction.at[idx] if idx in junction.index else pd.NA
-        c_str = str(c_val).strip() if pd.notna(c_val) else ""
-        j_str = str(j_val).strip() if pd.notna(j_val) else ""
-        if not j_str or not j_str.startswith("C"):
+        c_str = str(c_val).strip().upper() if pd.notna(c_val) else ""
+        j_str = str(j_val).strip().upper() if pd.notna(j_val) else ""
+        if c_str:
+            out.at[idx] = c_str
+        if (
+            not j_str
+            or not (7 <= len(j_str) <= 30)
+            or not j_str.startswith("C")
+            or j_str[-1] not in _VALID_CDR3_ANCHOR_ENDS
+        ):
             continue
         if not c_str:
             out.at[idx] = j_str
-        elif not c_str.startswith("C") and c_str in j_str:
+        elif not c_str.startswith("C") and c_str in j_str and len(j_str) <= len(c_str) + 2:
             out.at[idx] = j_str
     return out
 
@@ -2296,6 +2340,8 @@ def annotate_clonotypes(
     if not any([vdjdb_path, iedb_path, cedar_path]):
         logger.info("No annotation database paths provided; returning input with empty annotations")
         df = clonotypes.copy()
+        if "CDR3ab" not in df.columns and {"CDR3_alpha", "CDR3_beta"} <= set(df.columns):
+            df["CDR3ab"] = df["CDR3_alpha"].fillna("") + "_" + df["CDR3_beta"].fillna("")
         for col, default in _DEFAULT_ANNOTATION_COLUMNS.items():
             if col not in df.columns:
                 df[col] = default

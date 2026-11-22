@@ -690,7 +690,9 @@ def cmd_assemble(args):
         print(f"WARNING: {fidelity}")
 
     # Validate (per-row warnings + aggregate QC report).
-    warnings = validate_sequences(assembled)
+    warnings = validate_sequences(
+        assembled, species=getattr(args, "species", "auto") or "auto"
+    )
     for w in warnings:
         print(f"WARNING: {w}")
     print(assemble_qc_report(assembled))
@@ -1295,7 +1297,7 @@ def cmd_run(args):
     if "enrichment_method" in adata.obs.columns:
         try:
             from .sort_qc import sort_signature_consistency_from_adata
-            sort_qc = sort_signature_consistency_from_adata(adata)
+            sort_qc = sort_signature_consistency_from_adata(adata, species=run_species)
         except Exception as exc:  # GEX / signature genes may be absent
             logging.debug("sort-consistency QC skipped: %s", exc)
             sort_qc = pd.DataFrame()
@@ -1935,6 +1937,7 @@ def cmd_run(args):
                 output_dir / "tcr_sequences.pdf",
                 annotations=pdf_annotations,
                 strict="skip",
+                species=run_species,
             )
 
         if config.output.output_airr:
@@ -2120,7 +2123,21 @@ def cmd_annotate_gex(args):
     if augmented_df is not None:
         from .species import resolve_species
 
-        resolved_gex_sp = resolve_species(gex_species, df=augmented_df, warn_mismatch=False)
+        resolved_gex_sp = gex_species
+        if resolved_gex_sp == "auto":
+            try:
+                import scanpy as sc
+
+                from .species import detect_adata_species
+
+                resolved_gex_sp = (
+                    detect_adata_species(sc.read_10x_h5(str(args.gex_file)))
+                    or resolve_species("auto", df=augmented_df, warn_mismatch=False)
+                )
+            except Exception:
+                resolved_gex_sp = resolve_species("auto", df=augmented_df, warn_mismatch=False)
+        else:
+            resolved_gex_sp = resolve_species(gex_species, df=augmented_df, warn_mismatch=False)
         print("\nComputing per-clonotype signature scores...")
         sig_df = compute_signature_scores_per_clonotype(
             augmented_df,
@@ -2502,26 +2519,46 @@ def cmd_report_selected(args):
 
     assemble_kwargs = {}
     if args.config:
-        asm = TCRsiftConfig.from_yaml(args.config).assemble
+        cfg = TCRsiftConfig.from_yaml(args.config)
+        asm = cfg.assemble
         assemble_kwargs = dict(
-            alpha_leader=asm.alpha_leader, beta_leader=asm.beta_leader,
-            include_constant=asm.include_constant, constant_source=asm.constant_source,
-            linker=asm.linker, contigs_dir=asm.contigs_dir,
-            sample_name_from=asm.sample_name_from, cellranger_dir=asm.cellranger_dir,
+            alpha_leader=asm.alpha_leader,
+            beta_leader=asm.beta_leader,
+            include_constant=asm.include_constant,
+            constant_source=asm.constant_source,
+            linker=asm.linker if asm.single_chain else None,
+            contigs_dir=asm.contigs_dir,
+            sample_name_from=asm.sample_name_from,
+            cellranger_dir=asm.cellranger_dir,
+            trac_allele=getattr(asm, "trac_allele", "auto"),
+            trbc1_allele=getattr(asm, "trbc1_allele", "auto"),
+            trbc2_allele=getattr(asm, "trbc2_allele", "auto"),
+            stop_codons=tuple(getattr(asm, "stop_codons", ("TAA", "TGA"))),
+            leader_fallback=getattr(asm, "leader_fallback", None) or "germline",
+            force_alpha_leader=getattr(asm, "force_alpha_leader", None),
+            force_beta_leader=getattr(asm, "force_beta_leader", None),
+            secondary_alpha_leader=getattr(asm, "secondary_alpha_leader", None),
+            secondary_beta_leader=getattr(asm, "secondary_beta_leader", None),
             codon_optimization=getattr(asm, "codon_optimization", "focal"),
             max_codon_repeats=getattr(asm, "max_codon_repeats", 1),
             avoid_enzymes=tuple(getattr(asm, "avoid_enzymes", []) or []),
+            species=getattr(cfg, "species", "auto") or "auto",
+            constant_species=getattr(asm, "constant_species", None),
+            codon_species=getattr(asm, "codon_species", None),
         )
-    # Per-donor contig overrides (#196). The config's contigs path is per-donor
-    # but the config is typically shared, so without these the selected report
-    # re-assembles canonical constants with NO contigs — losing donor-allele
-    # fidelity + the #187 divergence flags that the contig-wired `run` produced.
+    # Per-donor contig + species overrides (#196).
     if args.cellranger_dir:
         assemble_kwargs["cellranger_dir"] = args.cellranger_dir
     if args.contigs_dir:
         assemble_kwargs["contigs_dir"] = args.contigs_dir
     if args.sample_name_from:
         assemble_kwargs["sample_name_from"] = args.sample_name_from
+    if getattr(args, "species", None) is not None:
+        assemble_kwargs["species"] = args.species
+    if getattr(args, "constant_species", None) is not None:
+        assemble_kwargs["constant_species"] = args.constant_species
+    if getattr(args, "codon_species", None) is not None:
+        assemble_kwargs["codon_species"] = args.codon_species
 
     prov_cols = [c for c in selected.columns if c != "CDR3ab"]
     build_selected_report(
@@ -3247,6 +3284,24 @@ def create_parser():
     ps.add_argument(
         "--sample-name-from", choices=["parent", "grandparent", "sheet"],
         help="Contig sample-name policy (overrides config, #196)",
+    )
+    ps.add_argument(
+        "--species",
+        choices=["auto", "human", "mouse"],
+        default=None,
+        help="Organism species override ('auto', 'human', or 'mouse'; overrides config)",
+    )
+    ps.add_argument(
+        "--constant-species",
+        choices=["human", "mouse"],
+        default=None,
+        help="Constant-region species override ('human' or 'mouse'; overrides config)",
+    )
+    ps.add_argument(
+        "--codon-species",
+        choices=["human", "mouse"],
+        default=None,
+        help="Codon-optimization table override ('human' or 'mouse'; overrides config)",
     )
     ps.add_argument("--output-dir", "-o", required=True, help="Output directory")
     ps.add_argument(
@@ -4223,7 +4278,7 @@ CONDITIONALLY REQUIRED:
     pf = p_pgen_sub.add_parser("fetch", help="Fetch a neutral observed "
                                "repertoire for Ppost training")
     pf.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
-    pf.add_argument("--url", default=None,
+    pf.add_argument("--url", "--repertoire", dest="url", default=None,
                     help="CSV/TSV (optionally .gz) with a CDR3 column")
     pf.add_argument("--source", default=None,
                     choices=["healthy-pbmc", "ots", "ireceptor"],
@@ -4248,7 +4303,8 @@ CONDITIONALLY REQUIRED:
         help="Role to request (default: ppost); packaged Pgen cannot be retrained",
     )
     pt.add_argument("--chain", choices=["alpha", "beta", "both"], default="both")
-    pt.add_argument("--url", default=None, help="observed repertoire for ppost")
+    pt.add_argument("--url", "--repertoire", dest="url", default=None,
+                    help="observed repertoire for ppost")
     pt.add_argument("--epochs", type=int, default=30, help="TCRpeg epochs")
     pt.add_argument("--device", default=None, help="torch device (auto: cuda/cpu)")
     pt.add_argument("--species", choices=["human", "mouse"], default="human",
@@ -4500,12 +4556,12 @@ CONDITIONALLY REQUIRED:
     )
     asm_group.add_argument(
         "--alpha-leader",
-        choices=["CD8A", "CD28", "mCD8A", "mCD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+        choices=[*_LEADER_CHOICES, "from_contig", "none"],
         help="Alpha chain leader (default: CD28). Use 'none' for no leader.",
     )
     asm_group.add_argument(
         "--beta-leader",
-        choices=["CD8A", "CD28", "mCD8A", "mCD28", "IgK", "TRAC", "TRBC", "from_contig", "none"],
+        choices=[*_LEADER_CHOICES, "from_contig", "none"],
         help="Beta chain leader (default: CD8A). Use 'none' for no leader.",
     )
     asm_group.add_argument(

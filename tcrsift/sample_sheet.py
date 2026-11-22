@@ -236,6 +236,32 @@ class SampleSheet:
     donors_share_antigen: bool = False
     species: str | None = None
 
+    def __post_init__(self):
+        from .species import normalize_species
+        from .validation import TCRsiftValidationError
+
+        if self.species is not None:
+            self.species = normalize_species(self.species, allow_auto=True)
+        explicit_sample_species = {
+            s.species
+            for s in self.samples
+            if getattr(s, "species", None) not in (None, "auto")
+        }
+        if len(explicit_sample_species) > 1:
+            raise TCRsiftValidationError(
+                f"SampleSheet mixes multiple explicit species: {sorted(explicit_sample_species)}",
+                hint="Run human and mouse cohorts in separate sample sheets.",
+            )
+        if len(explicit_sample_species) == 1:
+            only_sp = next(iter(explicit_sample_species))
+            if self.species in (None, "auto"):
+                self.species = only_sp
+            elif self.species != only_sp:
+                raise TCRsiftValidationError(
+                    f"SampleSheet species={self.species!r} conflicts with sample species={only_sp!r}",
+                    hint="Ensure top-level and per-sample species agree.",
+                )
+
     def __len__(self):
         return len(self.samples)
 
