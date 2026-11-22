@@ -170,21 +170,19 @@ def aggregate_clonotypes(
 
     # Build clone identifier. CDR3_alpha/CDR3_beta have been re-pinned to
     # object by rehydrate_obs above, so .fillna("") is safe.
+    a_str = df["CDR3_alpha"].astype("string").fillna("").astype(object)
+    b_str = df["CDR3_beta"].astype("string").fillna("").astype(object)
     if group_by == "CDR3ab":
-        df["CDR3ab"] = df["CDR3_alpha"].fillna("") + "_" + df["CDR3_beta"].fillna("")
+        df["CDR3ab"] = a_str + "_" + b_str
         df["is_complete_clone"] = (
-            df["CDR3_alpha"].notna()
-            & (df["CDR3_alpha"] != "")
-            & df["CDR3_beta"].notna()
-            & (df["CDR3_beta"] != "")
+            (a_str != "")
+            & (b_str != "")
             & df["TRA_pass_umi"]
             & df["TRB_pass_umi"]
         )
     elif group_by == "CDR3b_only":
-        df["CDR3ab"] = df["CDR3_beta"].fillna("")
-        df["is_complete_clone"] = (
-            df["CDR3_beta"].notna() & (df["CDR3_beta"] != "") & df["TRB_pass_umi"]
-        )
+        df["CDR3ab"] = b_str
+        df["is_complete_clone"] = (b_str != "") & df["TRB_pass_umi"]
     else:
         raise ValueError(f"Invalid group_by: {group_by}. Use 'CDR3ab' or 'CDR3b_only'")
 

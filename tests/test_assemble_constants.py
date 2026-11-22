@@ -445,6 +445,19 @@ class TestTRBC1VsTRBC2DistinguishingResidues:
         assert HUMAN_TRBC2_AA[175:] == "SRG"
 
 
+@pytest.fixture(scope="module")
+def ensembl_release():
+    pyensembl = pytest.importorskip("pyensembl")
+    ens = pyensembl.EnsemblRelease(110)
+    # Trigger a cheap lookup; if data isn't cached, skip rather than
+    # downloading multi-GB at test time.
+    try:
+        ens.transcript_by_id("ENST00000611116")
+    except Exception as exc:
+        pytest.skip(f"pyensembl GRCh38 release 110 not cached: {exc}")
+    return ens
+
+
 class TestCanonicalMatchesPyensembl:
     """Source-of-truth check (#100, refined in #113): the packaged
     FASTA's allele entries must match what pyensembl / NCBI / UniProt
@@ -466,19 +479,6 @@ class TestCanonicalMatchesPyensembl:
         # uses the *03 entry from the packaged multi-allele FASTA.
         "TRBC2": ("ENST00000466254", HUMAN_CONSTANT_ALLELES["TRBC2"]["03"]),
     }
-
-    @classmethod
-    @pytest.fixture(scope="class")
-    def ensembl_release(cls):
-        pyensembl = pytest.importorskip("pyensembl")
-        ens = pyensembl.EnsemblRelease(110)
-        # Trigger a cheap lookup; if data isn't cached, skip rather than
-        # downloading multi-GB at test time.
-        try:
-            ens.transcript_by_id("ENST00000611116")
-        except Exception as exc:
-            pytest.skip(f"pyensembl GRCh38 release 110 not cached: {exc}")
-        return ens
 
     @pytest.mark.parametrize(
         "gene,tx_id,expected_aa",

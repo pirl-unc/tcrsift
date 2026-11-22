@@ -77,6 +77,11 @@ VALID_PLOT_FORMATS = ("png", "pdf", "svg", "both")
 _PLOT_FORMAT = "png"
 
 
+def get_plot_format() -> str:
+    """Return the active module-level plot format (``'png'``, ``'pdf'``, ``'svg'``, or ``'both'``)."""
+    return _PLOT_FORMAT
+
+
 def set_plot_format(fmt: str | None) -> None:
     """Set the vector/raster format save_figure emits (#169): png/pdf/svg/both.
 

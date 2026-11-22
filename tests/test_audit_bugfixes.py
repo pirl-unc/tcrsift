@@ -403,7 +403,7 @@ class TestDtypesLoaderTilAndUnify:
         reloaded = ad.read_h5ad(out_h5)
         rehydrate_obs(reloaded)
         assert reloaded.obs["CDR3_alpha"].iloc[1] is None
-        assert reloaded.obs["CDR3_beta"].fillna("").tolist() == ["", ""]
+        assert reloaded.obs["CDR3_beta"].astype("string").fillna("").tolist() == ["", ""]
         assert pd.isna(reloaded.obs["all_na_str"]).all()
         assert pd.isna(reloaded.obs["custom_str_col"].iloc[1])
         assert reloaded.obs["CDR3_alpha"].fillna("").tolist() == ["CAVSD", ""]

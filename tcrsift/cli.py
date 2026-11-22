@@ -2725,30 +2725,39 @@ def cmd_report_polished(args):
     """Re-render a run's figures with a publication style profile (#123)."""
     import pandas as pd
 
-    from .plots import plot_clonotypes, plot_filter, set_plot_format, set_polished_style
+    from .plots import (
+        get_plot_format,
+        plot_clonotypes,
+        plot_filter,
+        set_plot_format,
+        set_polished_style,
+    )
 
     setup_logging(args.verbose)
+    prev_fmt = get_plot_format()
     set_polished_style(args.style)
     set_plot_format("pdf")
+    try:
+        run_dir = Path(args.input)
+        data = run_dir / "data" if (run_dir / "data").is_dir() else run_dir
+        out = Path(args.output_dir)
+        out.mkdir(parents=True, exist_ok=True)
 
-    run_dir = Path(args.input)
-    data = run_dir / "data" if (run_dir / "data").is_dir() else run_dir
-    out = Path(args.output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
-    n = 0
-    clo = data / "clonotypes.csv"
-    if clo.exists():
-        plot_clonotypes(pd.read_csv(clo), out)
-        n += 1
-    tier_csvs = sorted(data.glob("filtered_tier*.csv"))
-    if tier_csvs:
-        filt = pd.concat([pd.read_csv(t) for t in tier_csvs], ignore_index=True)
-        plot_filter(filt, out)
-        n += 1
-    if n == 0:
-        print(f"  No re-renderable data (clonotypes.csv / filtered_tier*.csv) under {data}")
-    print(f"Wrote polished figures ({args.style}) → {out}")
+        n = 0
+        clo = data / "clonotypes.csv"
+        if clo.exists():
+            plot_clonotypes(pd.read_csv(clo), out)
+            n += 1
+        tier_csvs = sorted(data.glob("filtered_tier*.csv"))
+        if tier_csvs:
+            filt = pd.concat([pd.read_csv(t) for t in tier_csvs], ignore_index=True)
+            plot_filter(filt, out)
+            n += 1
+        if n == 0:
+            print(f"  No re-renderable data (clonotypes.csv / filtered_tier*.csv) under {data}")
+        print(f"Wrote polished figures ({args.style}) → {out}")
+    finally:
+        set_plot_format(prev_fmt)
 
 
 # =============================================================================
