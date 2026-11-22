@@ -299,8 +299,8 @@ def call_multimer_specificity(
     calls = np.where(is_specific, top_names, None)
     return pd.DataFrame(
         {
-            "top_multimer": top_names,
-            "multimer_call": calls,
+            "top_multimer": pd.Series(top_names, index=counts_df.index, dtype=object),
+            "multimer_call": pd.Series(calls, index=counts_df.index, dtype=object),
             "multimer_umi": top_umi,
             "second_multimer_umi": second_umi,
             "max_nc_umi": nc_max,

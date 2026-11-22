@@ -541,9 +541,16 @@ class TestClonotypeSamplelessAndMultimerAndStimulation:
         assert calls.loc["BC1-1", "multimer_call"] == "A0201_GILGFVFTL_Flu"
         assert calls.loc["BC2-1", "multimer_call"] == "A0201_GILGFVFTL_Flu"
         assert bool(calls.loc["BC3-1", "is_multi_reactive"]) is True
-        assert calls.loc["BC3-1", "multimer_call"] is None
-        assert calls.loc["BC4-1", "multimer_call"] is None
-        assert calls.loc["BC5-1", "multimer_call"] is None
+        assert pd.isna(calls.loc["BC3-1", "multimer_call"])
+        assert pd.isna(calls.loc["BC4-1", "multimer_call"])
+        assert pd.isna(calls.loc["BC5-1", "multimer_call"])
+        assert calls.loc["BC5-1", "top_multimer"] == "A0201_GILGFVFTL_Flu"
+
+        zero_calls = call_multimer_specificity(
+            pd.DataFrame([[0.0, 0.0, 0.0]], index=["Z1"], columns=["A0201_GILGFVFTL_Flu", "A0201_GLCTLVAML_EBV", "A0201_ALIAPVHAV_NC"])
+        )
+        assert pd.isna(zero_calls.loc["Z1", "top_multimer"])
+        assert pd.isna(zero_calls.loc["Z1", "multimer_call"])
 
         obs = pd.DataFrame(
             {
