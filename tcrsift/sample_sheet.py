@@ -104,6 +104,11 @@ class Sample:
         # Coerce culture_days consistently for both CSV and YAML inputs (which
         # may deliver str/float). Round rather than silently truncate, and fail
         # clearly on non-numeric instead of raising a bare ValueError later.
+        if isinstance(self.culture_days, bool):
+            raise ValueError(
+                f"culture_days must be numeric for sample '{self.sample}', "
+                f"got {self.culture_days!r}"
+            )
         if self.culture_days is not None and not isinstance(self.culture_days, int):
             try:
                 self.culture_days = int(round(float(self.culture_days)))
@@ -261,6 +266,10 @@ class SampleSheet:
                     f"SampleSheet species={self.species!r} conflicts with sample species={only_sp!r}",
                     hint="Ensure top-level and per-sample species agree.",
                 )
+        if self.species not in (None, "auto"):
+            for s in self.samples:
+                if s.species is None:
+                    s.species = self.species
 
     def __len__(self):
         return len(self.samples)
@@ -298,7 +307,12 @@ class SampleSheet:
                 continue
             label = s.antigen_name
             if not label and getattr(s, "antigen_names", None):
-                label = " + ".join(str(a) for a in s.antigen_names if a)
+                raw_names = s.antigen_names
+                if isinstance(raw_names, str):
+                    parts = [p.strip() for p in raw_names.split(";") if p.strip()]
+                    label = " + ".join(parts)
+                else:
+                    label = " + ".join(str(a) for a in raw_names if a)
             if label:
                 out[str(token)] = str(label)
         return out
@@ -457,42 +471,66 @@ def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
     if not isinstance(data, dict) or "samples" not in data:
         raise ValueError("YAML sample sheet must have a 'samples' key with a list of samples")
 
+    raw_samples = data["samples"]
+    if raw_samples is None:
+        raw_samples = []
+    elif not isinstance(raw_samples, list):
+        raise ValueError("YAML sample sheet 'samples' key must map to a list of samples")
+
     samples = []
-    for sample_data in data["samples"]:
-        # Handle nested peptide_pool if present
-        if "peptide_pool" in sample_data and isinstance(sample_data["peptide_pool"], list):
-            # Keep as list of dicts
-            pass
+    for raw_item in raw_samples:
+        if not isinstance(raw_item, dict):
+            raise ValueError(f"Each sample entry in YAML must be a mapping, got {type(raw_item).__name__}")
+        sample_data = dict(raw_item)
+        # Translate legacy peptide_pool list if present before _build_sample checks columns
+        if "peptide_pool" in sample_data:
+            pool = sample_data.pop("peptide_pool")
+            if isinstance(pool, list) and pool:
+                names = []
+                epitopes = []
+                for entry in pool:
+                    if isinstance(entry, dict):
+                        if entry.get("name"):
+                            names.append(str(entry["name"]))
+                        if entry.get("sequence") or entry.get("epitope"):
+                            epitopes.append(str(entry.get("sequence") or entry.get("epitope")))
+                    elif entry:
+                        names.append(str(entry))
+                if names and not sample_data.get("antigen_names"):
+                    sample_data["antigen_names"] = names
+                if epitopes and not sample_data.get("epitope_sequences"):
+                    sample_data["epitope_sequences"] = epitopes
 
         # Convert None strings to actual None
-        for key, value in sample_data.items():
+        for key, value in list(sample_data.items()):
             if value == "null" or value == "":
                 sample_data[key] = None
 
         samples.append(_build_sample(sample_data))
 
     _reject_duplicate_samples(samples)
-    sheet = SampleSheet(samples=samples)
     # Sheet-level flags (#26). Accept any truthy YAML value — bare `true`
     # parses to bool, but quoted forms like "true" / "yes" parse to
     # strings; users shouldn't have their flag silently ignored over
     # quoting style.
     raw_dsa = data.get("donors_share_antigen")
     if isinstance(raw_dsa, str):
-        sheet.donors_share_antigen = raw_dsa.strip().lower() in (
+        donors_share_antigen = raw_dsa.strip().lower() in (
             "true", "yes", "y", "1", "on",
         )
     else:
-        sheet.donors_share_antigen = bool(raw_dsa)
+        donors_share_antigen = bool(raw_dsa)
     raw_species = data.get("species")
+    sheet_species = None
     if raw_species is not None and str(raw_species).strip():
         from .species import normalize_species
 
-        sheet.species = normalize_species(str(raw_species), allow_auto=True)
-        for s in sheet.samples:
-            if s.species is None:
-                s.species = sheet.species
-    return sheet
+        sheet_species = normalize_species(str(raw_species), allow_auto=True)
+    return SampleSheet(
+        samples=samples,
+        donors_share_antigen=donors_share_antigen,
+        species=sheet_species,
+    )
 
 
 def _load_csv_sample_sheet(path: Path, sep: str = ",") -> SampleSheet:
@@ -507,9 +545,13 @@ def _load_csv_sample_sheet(path: Path, sep: str = ",") -> SampleSheet:
     if "sample" not in df.columns:
         raise ValueError("Sample sheet must have a 'sample' column")
 
-    # At least one of gex_dir or vdj_dir must be present
-    if "gex_dir" not in df.columns and "vdj_dir" not in df.columns:
-        raise ValueError("Sample sheet must have at least 'gex_dir' or 'vdj_dir' column")
+    # At least one supported data-source column must be present
+    source_cols = {"gex_dir", "vdj_dir", "gex_path", "sct_path", "til_csv", "til_h5ad"}
+    if not (source_cols & set(df.columns)):
+        raise ValueError(
+            "Sample sheet must have at least 'gex_dir', 'vdj_dir', 'gex_path', "
+            "'sct_path', 'til_csv', or 'til_h5ad' column"
+        )
 
     samples = []
     for _, row in df.iterrows():

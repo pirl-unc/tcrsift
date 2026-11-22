@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -119,18 +120,20 @@ def select_candidates(
         # no signature score is not a top pick. (Ranking with na_option="bottom"
         # and nsmallest(top_n) would pull NaN-scored clones in whenever the
         # non-NaN pool is smaller than top_n — flagging zero-evidence clones.)
-        pool = df.loc[pool_mask, col].dropna()
-        if pool.empty:
+        pool_pos = np.flatnonzero(pool_mask.to_numpy(dtype=bool))
+        pool_vals = pd.to_numeric(df[col].iloc[pool_pos], errors="coerce")
+        valid_sub = pool_vals.notna().to_numpy(dtype=bool)
+        if not valid_sub.any():
             df[track_col] = False
             continue
-        top_indices = (
-            pool.rank(ascending=False, method="first")
-            .nsmallest(top_n)
-            .index
+        valid_pos = pool_pos[valid_sub]
+        ranked = pd.Series(pool_vals.iloc[np.flatnonzero(valid_sub)].to_numpy()).rank(
+            ascending=False, method="first"
         )
-        flags = pd.Series(False, index=df.index)
-        flags.loc[top_indices] = True
-        df[track_col] = flags
+        chosen_pos = valid_pos[ranked.nsmallest(top_n).index.to_numpy(dtype=int)]
+        flag_arr = np.zeros(len(df), dtype=bool)
+        flag_arr[chosen_pos] = True
+        df[track_col] = flag_arr
 
     df["is_selected"] = df["tier1_or_tier2"] | df[sig_columns].any(axis=1)
 

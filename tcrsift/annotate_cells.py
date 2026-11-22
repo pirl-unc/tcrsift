@@ -409,9 +409,7 @@ def _effective_adata_species(adata, species: str | None) -> str:
     if species is not None:
         return resolve_species(species, adata=adata, warn_mismatch=False)
     uns_sp = getattr(adata, "uns", {}).get("species")
-    if uns_sp:
-        return normalize_species(uns_sp)
-    return resolve_species("auto", adata=adata, warn_mismatch=False)
+    return resolve_species(uns_sp or "auto", adata=adata, warn_mismatch=False)
 
 
 def score_reference(
@@ -454,19 +452,42 @@ def score_reference(
             for g in genes
         }
     )
-    _, var_map = resolve_adata_var_map(adata, all_wanted)
+    if not adata.var_names.is_unique:
+        work = adata.copy()
+        work.var_names_make_unique()
+    else:
+        work = adata
+    _, var_map = resolve_adata_var_map(work, all_wanted)
 
-    ctrl = min(50, max(1, adata.n_vars - 1))
+    def _var_mean(mat_adata, var_cols: list[str]) -> np.ndarray:
+        sub_x = mat_adata[:, var_cols].X
+        arr = sub_x.toarray() if hasattr(sub_x, "toarray") else np.asarray(sub_x)
+        return np.asarray(arr, dtype=float).mean(axis=1)
+
     for prefix, registry in (("ct", cell_types), ("st", t_states), ("bt", b_states)):
         for name, genes in registry.items():
             col = f"{prefix}::{name}"
-            g = _resolve_present_vars(adata, genes, var_map)
-            if g:
-                sc.tl.score_genes(adata, g, score_name=col, ctrl_size=ctrl)
+            g = _resolve_present_vars(work, genes, var_map)
+            n_pool = work.n_vars - len(g)
+            if g and n_pool >= 1:
+                ctrl = min(50, max(1, n_pool))
+                n_bins = min(25, max(2, work.n_vars - 1))
+                try:
+                    sc.tl.score_genes(
+                        work, g, score_name=col, ctrl_size=ctrl, n_bins=n_bins, use_raw=False
+                    )
+                    if work is not adata:
+                        adata.obs[col] = work.obs[col].to_numpy()
+                except (RuntimeError, ZeroDivisionError, ValueError, KeyError):
+                    g_set = set(g)
+                    pool = [v for v in work.var_names if v not in g_set]
+                    adata.obs[col] = _var_mean(work, g) - _var_mean(work, pool)
+            elif g:
+                adata.obs[col] = _block_mean(work, genes, _var_map=var_map)
             else:
                 adata.obs[col] = np.nan
     for lin, genes in lineage_genes.items():
-        adata.obs[f"lin::{lin}"] = _block_mean(adata, genes, _var_map=var_map)
+        adata.obs[f"lin::{lin}"] = _block_mean(work, genes, _var_map=var_map)
 
 
 def annotate_clusters(
@@ -642,26 +663,61 @@ def top_markers(adata, leiden_col: str = "leiden", *, n_genes: int = 30) -> dict
     """Per-cluster top distinguishing gene (for the phenotype-label suffix).
 
     Ranks each cluster's DE genes (scanpy ``rank_genes_groups``, Wilcoxon) and
-    returns the top one that is NOT a clonal TCR/Ig segment. Empty when a
-    cluster can't be ranked.
+    returns the top one that is NOT a clonal TCR/Ig segment. Clusters with fewer
+    than 2 cells are excluded from ``groups`` so a singleton outlier cluster or
+    integer/unused-category Leiden column cannot abort DE across all clusters.
     """
     import scanpy as sc
 
     out: dict = {}
-    if adata.obs[leiden_col].nunique() < 2:
+    if leiden_col not in adata.obs.columns:
         return out
+    raw_series = adata.obs[leiden_col]
+    valid_mask = raw_series.notna()
+    if int(valid_mask.sum()) < 2:
+        return out
+    # Map stringified cluster IDs back to original keys (handles int/categorical).
+    orig_by_str: dict[str, object] = {}
+    for val in raw_series[valid_mask].unique():
+        orig_by_str[str(val)] = val
+    if len(orig_by_str) < 2:
+        return out
+    str_vals = raw_series.map(lambda v: str(v) if pd.notna(v) else np.nan)
+    counts = str_vals.value_counts()
+    rankable_groups = [cl_s for cl_s, cnt in counts.items() if cnt >= 2]
+    if not rankable_groups:
+        return out
+    # Needs at least 1 reference cell outside each ranked group.
+    rankable_groups = [cl_s for cl_s in rankable_groups if int(valid_mask.sum()) - int(counts[cl_s]) >= 1]
+    if not rankable_groups:
+        return out
+
+    tmp_col = "_tcrsift_top_markers_grp"
+    work = adata[valid_mask].copy() if not valid_mask.all() else adata
+    if not work.var_names.is_unique:
+        work = work.copy()
+        work.var_names_make_unique()
+    work.obs[tmp_col] = pd.Categorical(str_vals[valid_mask].to_numpy())
     try:
         sc.tl.rank_genes_groups(
-            adata, leiden_col, method="wilcoxon", n_genes=n_genes,
+            work,
+            tmp_col,
+            groups=rankable_groups,
+            method="wilcoxon",
+            n_genes=min(n_genes, max(1, work.n_vars)),
         )
-    except (ValueError, ZeroDivisionError):
+        names = work.uns["rank_genes_groups"]["names"]
+        for cl_s in names.dtype.names:
+            orig_key = orig_by_str.get(str(cl_s), cl_s)
+            for gene in names[cl_s]:
+                if gene and not _TOP_GENE_EXCLUDE.match(str(gene)):
+                    out[orig_key] = str(gene)
+                    break
+    except (ValueError, ZeroDivisionError, KeyError):
         return out
-    names = adata.uns["rank_genes_groups"]["names"]
-    for cl in names.dtype.names:
-        for gene in names[cl]:
-            if gene and not _TOP_GENE_EXCLUDE.match(str(gene)):
-                out[cl] = str(gene)
-                break
+    finally:
+        if work is adata and tmp_col in adata.obs.columns:
+            del adata.obs[tmp_col]
     return out
 
 
@@ -731,15 +787,20 @@ def annotate_cells(
             f"annotate_cells: {leiden_col!r} not in obs — run embed_cells first"
         )
     sp = _effective_adata_species(adata, species)
-    scored = adata
+    scored = adata.copy()
+    if not scored.var_names.is_unique:
+        scored.var_names_make_unique()
     if normalize:
         import scanpy as sc
 
-        scored = adata.copy()
         if "counts" in scored.layers:
             scored.X = scored.layers["counts"].copy()
-        sc.pp.normalize_total(scored, target_sum=1e4)
-        sc.pp.log1p(scored)
+            scored.uns.pop("log1p", None)
+            sc.pp.normalize_total(scored, target_sum=1e4)
+            sc.pp.log1p(scored)
+        elif "log1p" not in scored.uns:
+            sc.pp.normalize_total(scored, target_sum=1e4)
+            sc.pp.log1p(scored)
 
     score_reference(
         scored, cell_types=reference,

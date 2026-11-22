@@ -30,10 +30,36 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
+from ._dtypes import rehydrate_obs
 from .sample_sheet import Sample, SampleSheet
 from .validation import TCRsiftValidationError, parse_til_sample_spec, safe_divide, safe_percentage
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_cdr3_col(df: pd.DataFrame, col: str) -> pd.Series:
+    """Return a clean object-dtype string Series with missing values normalized to ``""``."""
+    if col not in df.columns:
+        return pd.Series("", index=df.index, dtype=object)
+    s = df[col]
+    if isinstance(s.dtype, pd.CategoricalDtype):
+        s = s.astype(object)
+    out = s.astype("string").fillna("").str.strip()
+    out = out.mask(out.str.lower().isin({"nan", "none", "<na>"}), "")
+    return out.astype(object)
+
+
+def _build_til_cdr3_key(df: pd.DataFrame, match_by: str) -> tuple[pd.Series, pd.Series]:
+    """Build ``(clone_key, valid_mask)`` excluding incomplete/single-chain rows."""
+    if match_by == "CDR3ab":
+        alpha = _clean_cdr3_col(df, "CDR3_alpha")
+        beta = _clean_cdr3_col(df, "CDR3_beta")
+        valid = (alpha != "") & (beta != "")
+        key = (alpha + "_" + beta).where(valid, "")
+        return key.astype(object), valid
+    beta = _clean_cdr3_col(df, "CDR3_beta")
+    valid = beta != ""
+    return beta.where(valid, "").astype(object), valid
 
 
 def load_til_data(
@@ -89,6 +115,7 @@ def _load_til_from_h5ad(path: Path, sample_name: str) -> pd.DataFrame:
         )
 
     adata = ad.read_h5ad(path)
+    rehydrate_obs(adata)
     df = adata.obs.copy()
 
     # Ensure sample column
@@ -280,6 +307,7 @@ def summarize_til_clonotypes(
 
     # Normalize til_data to dict format
     if isinstance(til_data, ad.AnnData):
+        rehydrate_obs(til_data)
         til_dict = {"TIL": til_data.obs.copy()}
     elif isinstance(til_data, pd.DataFrame):
         til_dict = {"TIL": til_data.copy()}
@@ -290,17 +318,8 @@ def summarize_til_clonotypes(
 
     sample_stats = {}
     for sample_name, df in til_dict.items():
-        if match_by == "CDR3ab":
-            clone_key = (
-                df.get("CDR3_alpha", pd.Series("", index=df.index)).fillna("")
-                + "_"
-                + df.get("CDR3_beta", pd.Series("", index=df.index)).fillna("")
-            )
-        else:
-            clone_key = df.get("CDR3_beta", pd.Series("", index=df.index)).fillna("")
-
-        clone_counts = clone_key.value_counts().to_dict()
-        valid_mask = (clone_key != "_") & (clone_key != "")
+        clone_key, valid_mask = _build_til_cdr3_key(df, match_by)
+        clone_counts = clone_key[valid_mask].value_counts().to_dict()
         total_cells = int(valid_mask.sum())
 
         sample_stats[sample_name] = {
@@ -401,6 +420,7 @@ def match_til(
     """
     # Normalize til_data to dict format
     if isinstance(til_data, ad.AnnData):
+        rehydrate_obs(til_data)
         til_dict = {"TIL": til_data.obs.copy()}
     elif isinstance(til_data, pd.DataFrame):
         til_dict = {"TIL": til_data.copy()}
@@ -419,21 +439,10 @@ def match_til(
     # Process each TIL sample
     sample_stats = {}
     for sample_name, til_df in til_dict.items():
-        # Build CDR3ab identifier
-        if match_by == "CDR3ab":
-            til_df["CDR3ab"] = (
-                til_df.get("CDR3_alpha", pd.Series("", index=til_df.index)).fillna("")
-                + "_"
-                + til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
-            )
-        else:
-            til_df["CDR3ab"] = til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
-
-        # Count cells per clone
-        # Exclude both "_" (empty alpha+beta) and "" (empty string) from counts
-        clone_counts = til_df["CDR3ab"].value_counts().to_dict()
-        valid_cdr3_mask = (til_df["CDR3ab"] != "_") & (til_df["CDR3ab"] != "")
-        total_til = len(til_df[valid_cdr3_mask])
+        clone_key, valid_cdr3_mask = _build_til_cdr3_key(til_df, match_by)
+        til_df["CDR3ab"] = clone_key
+        clone_counts = clone_key[valid_cdr3_mask].value_counts().to_dict()
+        total_til = int(valid_cdr3_mask.sum())
 
         sample_stats[sample_name] = {
             "clone_counts": clone_counts,
@@ -462,7 +471,10 @@ def match_til(
         else:
             cdr3ab = row.get("CDR3_beta", "")
 
-        if not cdr3ab:
+        if pd.isna(cdr3ab):
+            continue
+        cdr3ab = str(cdr3ab).strip()
+        if not cdr3ab or cdr3ab == "_":
             continue
 
         matching_samples = []
@@ -521,7 +533,10 @@ def match_til(
         til_cells_per_donor = []
         max_per_donor = []
         for _, row in df.iterrows():
-            cdr3ab = row.get("CDR3ab", "") if match_by == "CDR3ab" else row.get("CDR3_beta", "")
+            raw_key = row.get("CDR3ab", "") if match_by == "CDR3ab" else row.get("CDR3_beta", "")
+            cdr3ab = "" if pd.isna(raw_key) else str(raw_key).strip()
+            if cdr3ab == "_":
+                cdr3ab = ""
             per_donor = {
                 d: counts[cdr3ab]
                 for d, counts in donor_clone_counts.items()
@@ -602,7 +617,7 @@ def get_til_summary(
     if "tier" in matched_clonotypes.columns:
         tier_recovery = {}
         for tier in matched_clonotypes["tier"].unique():
-            if tier is not None:
+            if pd.notna(tier):
                 tier_df = matched_clonotypes[matched_clonotypes["tier"] == tier]
                 tier_matched = tier_df["til_match"].sum()
                 tier_recovery[tier] = safe_divide(tier_matched, len(tier_df), default=0.0)
@@ -642,14 +657,17 @@ def identify_til_specific_clones(
     pd.DataFrame
         TIL-specific clones
     """
+    rehydrate_obs(til_data)
     til_df = til_data.obs.copy()
 
-    # Build clone identifier
-    til_df["CDR3ab"] = (
-        til_df.get("CDR3_alpha", pd.Series("", index=til_df.index)).fillna("")
-        + "_"
-        + til_df.get("CDR3_beta", pd.Series("", index=til_df.index)).fillna("")
-    )
+    # Build clone identifier (excluding incomplete / single-chain rows)
+    clone_key, valid_mask = _build_til_cdr3_key(til_df, "CDR3ab")
+    til_df["CDR3ab"] = clone_key
+    til_df = til_df[valid_mask].copy()
+    if len(til_df) == 0:
+        return pd.DataFrame(
+            columns=["CDR3ab", "sample", "til_cell_count", "CDR3_alpha", "CDR3_beta"]
+        )
 
     # Aggregate TIL clones
     til_clones = (

@@ -101,30 +101,49 @@ def merge_experiments(
     if key_cols is None:
         key_cols = ["CDR3_pair", "CDR3_alpha", "CDR3_beta"]
 
-    def _ensure_cdr3_pair(df: pd.DataFrame, name: str) -> pd.DataFrame:
-        """Ensure a CDR3_pair column exists, deriving from CDR3ab or alpha/beta."""
-        if "CDR3_pair" in df.columns:
-            return df
+    def _clean_str_col(s: pd.Series) -> pd.Series:
+        if isinstance(s.dtype, pd.CategoricalDtype):
+            s = s.astype(object)
+        out = s.astype("string").fillna("")
+        out = out.mask(out.str.lower().isin({"nan", "none", "<na>"}), "")
+        return out.astype(object)
 
+    def _ensure_cdr3_pair(df: pd.DataFrame, name: str) -> pd.DataFrame:
+        """Ensure CDR3_pair, CDR3_alpha, and CDR3_beta exist with clean empty-string missing values."""
         df_copy = df.copy()
+
+        if "CDR3_pair" in df_copy.columns:
+            df_copy["CDR3_pair"] = _clean_str_col(df_copy["CDR3_pair"])
+            parts = df_copy["CDR3_pair"].str.split("/", n=1, expand=True)
+            if "CDR3_alpha" not in df_copy.columns:
+                df_copy["CDR3_alpha"] = parts[0] if parts.shape[1] > 0 else ""
+            else:
+                df_copy["CDR3_alpha"] = _clean_str_col(df_copy["CDR3_alpha"])
+            if "CDR3_beta" not in df_copy.columns:
+                df_copy["CDR3_beta"] = parts[1] if parts.shape[1] > 1 else ""
+            else:
+                df_copy["CDR3_beta"] = _clean_str_col(df_copy["CDR3_beta"])
+            return df_copy
 
         # Prefer explicit alpha/beta columns
         if "CDR3_alpha" in df_copy.columns and "CDR3_beta" in df_copy.columns:
-            df_copy["CDR3_pair"] = df_copy["CDR3_alpha"].fillna("") + "/" + df_copy[
-                "CDR3_beta"
-            ].fillna("")
+            df_copy["CDR3_alpha"] = _clean_str_col(df_copy["CDR3_alpha"])
+            df_copy["CDR3_beta"] = _clean_str_col(df_copy["CDR3_beta"])
+            df_copy["CDR3_pair"] = df_copy["CDR3_alpha"] + "/" + df_copy["CDR3_beta"]
             return df_copy
 
         # Fall back to CDR3ab if present
         if "CDR3ab" in df_copy.columns:
-            parts = df_copy["CDR3ab"].fillna("").str.split("_", n=1, expand=True)
+            parts = _clean_str_col(df_copy["CDR3ab"]).str.split("_", n=1, expand=True)
             if "CDR3_alpha" not in df_copy.columns:
-                df_copy["CDR3_alpha"] = parts[0]
+                df_copy["CDR3_alpha"] = parts[0] if parts.shape[1] > 0 else ""
+            else:
+                df_copy["CDR3_alpha"] = _clean_str_col(df_copy["CDR3_alpha"])
             if "CDR3_beta" not in df_copy.columns:
                 df_copy["CDR3_beta"] = parts[1] if parts.shape[1] > 1 else ""
-            df_copy["CDR3_pair"] = df_copy["CDR3_alpha"].fillna("") + "/" + df_copy[
-                "CDR3_beta"
-            ].fillna("")
+            else:
+                df_copy["CDR3_beta"] = _clean_str_col(df_copy["CDR3_beta"])
+            df_copy["CDR3_pair"] = df_copy["CDR3_alpha"] + "/" + df_copy["CDR3_beta"]
             return df_copy
 
         raise TCRsiftValidationError(
@@ -132,10 +151,48 @@ def merge_experiments(
             hint="Ensure all DataFrames have CDR3_pair, or provide CDR3_alpha/CDR3_beta or CDR3ab.",
         )
 
-    # Normalize experiments to ensure CDR3_pair exists
+    def _deduplicate_experiment(df: pd.DataFrame, name: str) -> pd.DataFrame:
+        """Collapse duplicate merge-key rows within a single experiment so outer merge cannot fan out."""
+        df_copy = df.copy()
+        for k in key_cols:
+            if k in df_copy.columns and (
+                pd.api.types.is_object_dtype(df_copy[k].dtype)
+                or pd.api.types.is_string_dtype(df_copy[k].dtype)
+                or isinstance(df_copy[k].dtype, pd.CategoricalDtype)
+            ):
+                df_copy[k] = _clean_str_col(df_copy[k])
+        present_keys = [k for k in key_cols if k in df_copy.columns]
+        if not present_keys or not df_copy.duplicated(subset=present_keys).any():
+            return df_copy
+        n_dupes = int(df_copy.duplicated(subset=present_keys).sum())
+        logger.warning(
+            f"Experiment '{name}' has {n_dupes} duplicate clonotype key row(s); "
+            "aggregating duplicates before merge."
+        )
+        agg_spec: dict[str, str] = {}
+        for col in df_copy.columns:
+            if col in present_keys:
+                continue
+            is_num = pd.api.types.is_numeric_dtype(df_copy[col].dtype) and not pd.api.types.is_bool_dtype(df_copy[col].dtype)
+            if is_num and (
+                col.endswith(".count")
+                or col.endswith(".sum")
+                or col in {"cell_count", "til_cell_count", "num_original_entries"}
+            ):
+                agg_spec[col] = "sum"
+            elif is_num and ("freq" in col or col.endswith(".frac")):
+                agg_spec[col] = "max"
+            else:
+                agg_spec[col] = "first"
+        if not agg_spec:
+            return df_copy.drop_duplicates(subset=present_keys, ignore_index=True)
+        return df_copy.groupby(present_keys, as_index=False, sort=False, dropna=False).agg(agg_spec)
+
+    # Normalize experiments to ensure CDR3_pair exists and keys are unique
     normalized_experiments = []
     for df, name in experiments:
-        normalized_experiments.append((_ensure_cdr3_pair(df, name), name))
+        ensured = _ensure_cdr3_pair(df, name)
+        normalized_experiments.append((_deduplicate_experiment(ensured, name), name))
     experiments = normalized_experiments
 
     if verbose:
@@ -159,6 +216,13 @@ def merge_experiments(
 
     for df, name in experiments:
         df_copy = df.copy()
+
+        # Map standard tcrsift count columns into total_cells.count when absent
+        if "total_cells.count" not in df_copy.columns:
+            for fallback_cnt in ("cell_count", "til_cell_count", "num_original_entries"):
+                if fallback_cnt in df_copy.columns:
+                    df_copy["total_cells.count"] = df_copy[fallback_cnt]
+                    break
 
         # Track which sources have count/gex columns
         if "total_cells.count" in df_copy.columns:
@@ -380,12 +444,15 @@ def compute_condition_statistics(
         # Compute sum and mean of fractions across sources
         data = df[frac_cols]
         df[f"combined.{condition}.frac.sum"] = data.sum(axis=1, skipna=True)
-        df[f"combined.{condition}.frac.mean"] = data.fillna(0).mean(axis=1)
-
-        # Standard deviation and CV
-        df[f"combined.{condition}.frac.std"] = data.fillna(0).std(axis=1)
         mean_vals = data.fillna(0).mean(axis=1)
-        std_vals = data.fillna(0).std(axis=1)
+        df[f"combined.{condition}.frac.mean"] = mean_vals
+
+        # Standard deviation and CV (for 1 source, std is 0 rather than ddof=1 NaN)
+        if len(frac_cols) == 1:
+            std_vals = pd.Series(0.0, index=df.index)
+        else:
+            std_vals = data.fillna(0).std(axis=1)
+        df[f"combined.{condition}.frac.std"] = std_vals
         cv = np.where(mean_vals > 0, std_vals / mean_vals, np.nan)
         df[f"combined.{condition}.frac.cv"] = cv
 
@@ -439,10 +506,10 @@ def find_top_condition(
     data = df[stat_cols].copy()
 
     def get_top(row):
-        sorted_vals = row.sort_values(ascending=False, na_position="last")
-        if len(sorted_vals.dropna()) < 1:
+        sorted_vals = row.dropna().sort_values(ascending=False)
+        if len(sorted_vals) < 1 or sorted_vals.iloc[0] <= 0:
             return None
-        if require_clear_winner and len(sorted_vals.dropna()) >= 2:
+        if require_clear_winner and len(sorted_vals) >= 2:
             if sorted_vals.iloc[0] <= sorted_vals.iloc[1]:
                 return None
         return sorted_vals.index[0].replace("combined.", "").replace(f".{stat}", "")

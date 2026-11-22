@@ -415,7 +415,7 @@ def annotate_tcrs(
     sp = resolve_species(species, df=df, warn_mismatch=False)
     methods = methods or ["pgen", "ppost", "promiscuity", "gex_signatures", "prism"]
     out = df.copy()
-    if "pgen" in methods or "ppost" in methods:
+    if "pgen" in methods or "ppost" in methods or "prism" in methods:
         out = add_pgen_ppost(
             out, chains=chains, backend=backend,
             with_pgen=("pgen" in methods or "prism" in methods),

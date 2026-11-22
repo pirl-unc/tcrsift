@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from importlib.resources import files as _pkg_files
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
@@ -1253,10 +1254,13 @@ def recode_codons(
     max_codon_repeats: int = 1,
     restriction_sites: tuple[str, ...] = (),
     species: str = "human",
+    right_context: str = "",
 ) -> tuple[str, list[int]]:
     """Minimal synonymous recoding of an in-frame coding NT (#293)."""
     if not isinstance(nt, str) or len(nt) < 3:
-        return nt or "", []
+        return (nt.upper() if isinstance(nt, str) else ""), []
+    nt = nt.upper()
+    rc_upper = str(right_context).upper() if right_context else ""
     codon_alts = CODON_ALTERNATIVES_BY_SPECIES.get(species, HUMAN_CODON_ALTERNATIVES)
     forbidden: set[str] = set()
     for site in restriction_sites:
@@ -1267,43 +1271,76 @@ def recode_codons(
     max_site = max((len(s) for s in forbidden), default=0)
     repeat_active = bool(max_codon_repeats and max_codon_repeats >= 1)
 
+    def _repeats_ok(prefix_codons: list[str], cand: str) -> bool:
+        if not repeat_active:
+            return True
+        run = 1
+        for pc in reversed(prefix_codons):
+            if pc == cand:
+                run += 1
+            else:
+                break
+        return run <= max_codon_repeats
+
+    def _sites_ok(trail_buf: str, cand: str, lookahead: str = "") -> bool:
+        if not forbidden:
+            return True
+        for f in forbidden:
+            k = len(f) - 1
+            left = trail_buf[-k:] if k > 0 else ""
+            right = lookahead[:k] if k > 0 else ""
+            if f in (left + cand + right):
+                return False
+        return True
+
     out: list[str] = []
-    changed: list[int] = []
-    buf = ""
     n_codons = len(nt) // 3
-    for i in range(n_codons):
-        orig = nt[3 * i: 3 * i + 3]
+    orig_codons = [nt[3 * i : 3 * i + 3] for i in range(n_codons)]
+    lookahead_tail = rc_upper[: max(0, max_site - 1)] if max_site > 1 else ""
+
+    for i, orig in enumerate(orig_codons):
         aa = CODON_TABLE.get(orig)
         alts = codon_alts.get(aa, [])
-        # Prefer the original codon; only consider synonyms if it violates.
         candidates = [orig, *[c for c in alts if c != orig]]
+        trail = "".join(out)[-(max_site - 1) :] if (max_site > 1 and out) else ""
+        la = lookahead_tail if i == n_codons - 1 else ""
         chosen = None
         for cand in candidates:
-            if repeat_active:
-                run = 1
-                for pc in reversed(out):
-                    if pc == cand:
-                        run += 1
-                    else:
+            if _repeats_ok(out, cand) and _sites_ok(trail, cand, la):
+                chosen = cand
+                break
+        if chosen is None and i > 0:
+            # 1-codon backtracking: needed when codon i has no alternative (e.g.
+            # ATG/Met or TGG/Trp at the 3' end of NcoI CCATGG or NdeI CATATG).
+            prev_orig = orig_codons[i - 1]
+            prev_aa = CODON_TABLE.get(prev_orig)
+            prev_alts = [prev_orig, *[c for c in codon_alts.get(prev_aa, []) if c != prev_orig]]
+            prefix_before_prev = out[:-1]
+            trail_before_prev = (
+                "".join(prefix_before_prev)[-(max_site - 1) :]
+                if (max_site > 1 and prefix_before_prev)
+                else ""
+            )
+            for prev_cand in prev_alts:
+                if prev_cand == out[-1]:
+                    continue
+                if not (_repeats_ok(prefix_before_prev, prev_cand) and _sites_ok(trail_before_prev, prev_cand)):
+                    continue
+                new_prefix = [*prefix_before_prev, prev_cand]
+                new_trail = "".join(new_prefix)[-(max_site - 1) :] if max_site > 1 else ""
+                for cand in candidates:
+                    if _repeats_ok(new_prefix, cand) and _sites_ok(new_trail, cand, la):
+                        out[-1] = prev_cand
+                        chosen = cand
                         break
-                if run > max_codon_repeats:
-                    continue
-            if forbidden:
-                # A site is "created" by cand if it appears once cand is added
-                # but wasn't already present in the trailing buffer.
-                combined = buf + cand
-                if any(f in combined and f not in buf for f in forbidden):
-                    continue
-            chosen = cand
-            break
+                if chosen is not None:
+                    break
         if chosen is None:
-            chosen = orig  # no constraint-satisfying synonym; keep original
-        if chosen != orig:
-            changed.append(3 * i)
+            chosen = orig
         out.append(chosen)
-        if max_site > 1:
-            buf = (buf + chosen)[-(max_site - 1):]
-    return "".join(out), changed
+
+    changed = [3 * i for i, (o, c) in enumerate(zip(orig_codons, out)) if o != c]
+    return "".join(out) + nt[3 * n_codons :], changed
 
 
 @dataclass(frozen=True)
@@ -1331,10 +1368,13 @@ class CodonOptimization:
 
     def restriction_sites(self) -> tuple[str, ...]:
         sites: list[str] = []
+        upper_map = {k.upper(): v for k, v in SYNTHESIS_RESTRICTION_SITES.items()}
         for e in self.avoid_enzymes:
             s = str(e).strip()
             if s in SYNTHESIS_RESTRICTION_SITES:
                 sites.append(SYNTHESIS_RESTRICTION_SITES[s])
+            elif s.upper() in upper_map:
+                sites.append(upper_map[s.upper()])
             elif s and set(s.upper()) <= set("ACGT"):
                 sites.append(s.upper())  # raw recognition site
             elif s:
@@ -1514,6 +1554,7 @@ def translate_dna(dna_seq: str) -> tuple[str, str]:
     tuple
         (amino_acid_sequence, ragged_3p_nucleotides)
     """
+    dna_seq = str(dna_seq).upper()
     seq_len = len(dna_seq)
     seq_len_trimmed = (seq_len // 3) * 3
 
@@ -2091,6 +2132,7 @@ def assemble_full_sequences(
         secondary_alpha=secondary_alpha_leader, secondary_beta=secondary_beta_leader,
         verbose=verbose,
         species=vdj_sp,
+        recode=recode,
     )
 
     # Summary
@@ -2323,7 +2365,13 @@ def _assemble_clone(
 
     if include_constant:
         if constant_source == "from-data":
-            _add_constant_from_row(row, result, species=constant_species)
+            _add_constant_from_row(
+                row,
+                result,
+                species=constant_species,
+                codon_species=codon_species,
+                stops_nt=stops_nt,
+            )
         else:
             _add_constant_regions(
                 result, constant_seqs,
@@ -3134,7 +3182,12 @@ def _extract_c_region_start_from_contig(
 
 
 def _add_constant_from_row(
-    row: pd.Series, result: dict, *, species: str = "human"
+    row: pd.Series,
+    result: dict,
+    *,
+    species: str = "human",
+    codon_species: str = "human",
+    stops_nt: str = "TAATGA",
 ):
     """Add constant region sequences directly from row columns if present."""
     for chain in ["alpha", "beta"]:
@@ -3143,14 +3196,35 @@ def _add_constant_from_row(
 
         aa_val = row.get(aa_col) if aa_col in row else None
         nt_val = row.get(nt_col) if nt_col in row else None
+        has_aa = pd.notna(aa_val) and str(aa_val).strip() != ""
+        has_nt = pd.notna(nt_val) and str(nt_val).strip() != ""
 
-        if pd.notna(aa_val):
-            result[f"{chain}_constant_aa"] = aa_val
-        if pd.notna(nt_val):
-            result[f"{chain}_constant_nt"] = nt_val
-            if pd.isna(aa_val):
-                const_aa, _ = translate_dna(str(nt_val))
+        if has_aa:
+            result[f"{chain}_constant_aa"] = str(aa_val).strip().rstrip("*")
+        if has_nt:
+            nt_str = str(nt_val).strip().upper()
+            if len(nt_str) >= 3 and nt_str[-3:] not in {"TAA", "TAG", "TGA"} and stops_nt:
+                nt_with_stop = nt_str + stops_nt
+            else:
+                nt_with_stop = nt_str
+            result[f"{chain}_constant_nt"] = nt_with_stop
+            result[f"{chain}_constant_nt_optimized"] = nt_with_stop
+            if not has_aa:
+                const_aa, _ = translate_dna(nt_str)
+                const_aa = const_aa.rstrip("*")
                 result[f"{chain}_constant_aa"] = const_aa
+                has_aa = bool(const_aa)
+        elif has_aa:
+            opt_nt = (
+                optimize_codons(result[f"{chain}_constant_aa"], species=codon_species)
+                + stops_nt
+            )
+            result[f"{chain}_constant_nt"] = opt_nt
+            result[f"{chain}_constant_nt_optimized"] = opt_nt
+
+        if has_aa or has_nt:
+            result[f"{chain}_constant_source"] = "from-data"
+            result[f"{chain}_junction_residue_source"] = "from-data"
 
         canonical_name, _ = pick_canonical_constant(
             chain,
@@ -3256,22 +3330,43 @@ def _build_full_sequences(
                 full_aa = result[f"full_{chain}_aa"]
                 donor_aa = full_aa[: len(full_aa) - len(const_aa)] if const_aa else full_aa
                 if recode.mode == "full":
-                    result[f"full_{chain}_nt_optimized"] = (
-                        optimize_codons(donor_aa, species=recode.codon_species)
-                        + const_opt
-                    )
+                    donor_opt = optimize_codons(donor_aa, species=recode.codon_species)
+                    if sites or recode.max_codon_repeats != 1:
+                        donor_opt, _ = recode_codons(
+                            donor_opt,
+                            max_codon_repeats=recode.max_codon_repeats,
+                            restriction_sites=sites,
+                            species=recode.codon_species,
+                            right_context=const_opt,
+                        )
+                    result[f"full_{chain}_nt_optimized"] = donor_opt + const_opt
                 else:
-                    native_prefix = opt_leader_nt + opt_vdj_nt
+                    eff_leader_nt = opt_leader_nt or (
+                        optimize_codons(
+                            result[f"{chain}_leader_aa"], species=recode.codon_species
+                        )
+                        if include_leader and result.get(f"{chain}_leader_aa")
+                        else ""
+                    )
+                    eff_vdj_nt = opt_vdj_nt or (
+                        optimize_codons(
+                            result[f"vdj_{chain}_aa"], species=recode.codon_species
+                        )
+                        if result.get(f"vdj_{chain}_aa")
+                        else ""
+                    )
+                    native_prefix = (eff_leader_nt + eff_vdj_nt).upper()
                     recoded_prefix, changed = recode_codons(
                         native_prefix,
                         max_codon_repeats=recode.max_codon_repeats,
                         restriction_sites=sites,
                         species=recode.codon_species,
+                        right_context=const_opt,
                     )
                     result[f"full_{chain}_nt_optimized"] = recoded_prefix + const_opt
                     # Record recodes by region — leader vs VDJ — so NONE are
                     # silently dropped (review #294). Offsets are construct-relative.
-                    vdj_start = len(opt_leader_nt)
+                    vdj_start = len(eff_leader_nt)
 
                     def _fmt(o, _np=native_prefix, _rp=recoded_prefix):
                         return f"{o}:{_np[o:o + 3]}>{_rp[o:o + 3]}"
@@ -3320,9 +3415,7 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
     def strip_stop(seq):
         if not isinstance(seq, str):
             return None
-        if seq.endswith("*"):
-            return seq[:-1]
-        return seq
+        return seq.rstrip("*")
 
     beta_aa = df["full_beta_aa"].apply(strip_stop)
     alpha_aa = df["full_alpha_aa"].where(df["full_alpha_aa"].apply(lambda x: isinstance(x, str)))
@@ -3439,11 +3532,20 @@ def _substitute_chain_leader(
     source: str,
     *,
     species: str = "human",
+    recode: CodonOptimization | None = None,
 ) -> None:
     """In ``target`` (a row dict), replace ``chain``'s leader with ``new_aa`` and
-    re-stitch the affected full-sequence columns."""
-    donor_aa = orig.get(f"{chain}_leader_aa") or ""
-    donor_nt = orig.get(f"{chain}_leader_nt") or ""
+    re-stitch the affected full-sequence columns (including recoded ``_optimized``)."""
+    eff_recode = recode or CodonOptimization(codon_species=species)
+    donor_aa = orig.get(f"{chain}_leader_aa")
+    donor_aa = donor_aa if isinstance(donor_aa, str) else ""
+    donor_nt = orig.get(f"{chain}_leader_nt")
+    donor_nt = donor_nt if isinstance(donor_nt, str) else ""
+    eff_new_nt = (
+        new_nt.upper()
+        if isinstance(new_nt, str) and new_nt
+        else optimize_codons(new_aa, species=eff_recode.codon_species)
+    )
     target[f"{chain}_leader_aa"] = new_aa
     target[f"{chain}_leader_nt"] = new_nt
     target[f"{chain}_leader_len"] = len(new_aa)
@@ -3465,13 +3567,77 @@ def _substitute_chain_leader(
 
     fa = orig.get(f"full_{chain}_aa")
     if isinstance(fa, str) and donor_aa and fa.startswith(donor_aa):
-        target[f"full_{chain}_aa"] = new_aa + fa[len(donor_aa):]
-    for nt_col in (
-        f"full_{chain}_nt", f"full_{chain}_nt_optimized", f"full_{chain}_nt_contig",
-    ):
-        fn = orig.get(nt_col)
-        if isinstance(fn, str) and donor_nt and fn.startswith(donor_nt):
-            target[nt_col] = (new_nt + fn[len(donor_nt):]) if new_nt else None
+        target[f"full_{chain}_aa"] = new_aa + fa[len(donor_aa) :]
+    elif isinstance(fa, str) and not donor_aa:
+        target[f"full_{chain}_aa"] = new_aa + fa
+
+    fn_blend = orig.get(f"full_{chain}_nt")
+    if isinstance(fn_blend, str) and donor_nt and fn_blend.upper().startswith(donor_nt.upper()):
+        target[f"full_{chain}_nt"] = (new_nt + fn_blend[len(donor_nt) :]) if new_nt else None
+    elif isinstance(fn_blend, str) and not donor_nt:
+        target[f"full_{chain}_nt"] = (new_nt + fn_blend) if new_nt else None
+
+    fn_contig = orig.get(f"full_{chain}_nt_contig")
+    if isinstance(fn_contig, str) and donor_nt and fn_contig.upper().startswith(donor_nt.upper()):
+        target[f"full_{chain}_nt_contig"] = (new_nt + fn_contig[len(donor_nt) :]) if new_nt else None
+    elif f"full_{chain}_nt_contig" in orig:
+        target[f"full_{chain}_nt_contig"] = None
+
+    # Rebuild full_{chain}_nt_optimized (and recoded position tags) from the new
+    # leader + VDJ + constant_nt_optimized so translation always matches full_{chain}_aa.
+    if f"full_{chain}_nt_optimized" in orig or orig.get(f"{chain}_constant_nt_optimized"):
+        const_opt = target.get(f"{chain}_constant_nt_optimized") or orig.get(f"{chain}_constant_nt_optimized") or ""
+        const_aa = target.get(f"{chain}_constant_aa") or orig.get(f"{chain}_constant_aa") or ""
+        full_aa_now = target.get(f"full_{chain}_aa") or ""
+        donor_aa_now = (
+            full_aa_now[: len(full_aa_now) - len(const_aa)]
+            if (const_aa and full_aa_now.endswith(const_aa))
+            else full_aa_now
+        )
+        sites = eff_recode.restriction_sites()
+        vdj_nt_raw = target.get(f"vdj_{chain}_nt") or orig.get(f"vdj_{chain}_nt") or orig.get(f"VDJ_{chain}_nt") or ""
+        if isinstance(vdj_nt_raw, str):
+            vdj_aa_raw = target.get(f"vdj_{chain}_aa") or orig.get(f"vdj_{chain}_aa") or orig.get(f"VDJ_{chain}_aa") or ""
+            if isinstance(vdj_aa_raw, str) and vdj_aa_raw:
+                vdj_nt_raw = vdj_nt_raw[: 3 * len(vdj_aa_raw)]
+        else:
+            vdj_nt_raw = ""
+        if eff_recode.mode == "full" or not vdj_nt_raw:
+            donor_opt = optimize_codons(donor_aa_now, species=eff_recode.codon_species)
+            if sites or eff_recode.max_codon_repeats != 1:
+                donor_opt, _ = recode_codons(
+                    donor_opt,
+                    max_codon_repeats=eff_recode.max_codon_repeats,
+                    restriction_sites=sites,
+                    species=eff_recode.codon_species,
+                    right_context=const_opt,
+                )
+            target[f"full_{chain}_nt_optimized"] = (donor_opt + const_opt) if eff_new_nt else None
+            target[f"{chain}_leader_recoded_positions"] = ""
+            target[f"{chain}_vdj_recoded_positions"] = ""
+        elif eff_new_nt:
+            native_prefix = (eff_new_nt + vdj_nt_raw).upper()
+            recoded_prefix, changed = recode_codons(
+                native_prefix,
+                max_codon_repeats=eff_recode.max_codon_repeats,
+                restriction_sites=sites,
+                species=eff_recode.codon_species,
+                right_context=const_opt,
+            )
+            target[f"full_{chain}_nt_optimized"] = recoded_prefix + const_opt
+            vdj_start = len(eff_new_nt)
+
+            def _fmt(o, _np=native_prefix, _rp=recoded_prefix):
+                return f"{o}:{_np[o : o + 3]}>{_rp[o : o + 3]}"
+
+            target[f"{chain}_leader_recoded_positions"] = ";".join(
+                _fmt(o) for o in changed if o < vdj_start
+            )
+            target[f"{chain}_vdj_recoded_positions"] = ";".join(
+                _fmt(o) for o in changed if o >= vdj_start
+            )
+        else:
+            target[f"full_{chain}_nt_optimized"] = None
 
 
 def _unanimous_divergent_genes(df: pd.DataFrame) -> set[tuple[str, str]]:
@@ -3556,6 +3722,20 @@ def _protected_divergent_leaders(
     return out
 
 
+def _validate_leader_directive(val: str | None, param_name: str, *, allow_keep: bool = False) -> None:
+    if val is None:
+        return
+    s = str(val).strip()
+    if s == "germline" or (allow_keep and s == "keep"):
+        return
+    if _lookup_default_leader(s) is not None:
+        return
+    valid = ["germline", *(["keep"] if allow_keep else []), *DEFAULT_LEADERS.keys()]
+    raise TCRsiftValidationError(
+        f"Unknown {param_name}={val!r}; expected one of {valid}"
+    )
+
+
 def apply_leader_policy(
     df: pd.DataFrame,
     linker: str | None,
@@ -3567,8 +3747,15 @@ def apply_leader_policy(
     secondary_beta: str | None = None,
     verbose: bool = False,
     species: str = "human",
+    recode: CodonOptimization | None = None,
 ) -> pd.DataFrame:
     """Decide the shipped signal peptide for every clone (von Heijne policy, #270)."""
+    _validate_leader_directive(leader_fallback, "leader_fallback", allow_keep=True)
+    _validate_leader_directive(force_alpha, "force_alpha")
+    _validate_leader_directive(force_beta, "force_beta")
+    _validate_leader_directive(secondary_alpha, "secondary_alpha")
+    _validate_leader_directive(secondary_beta, "secondary_beta")
+
     protected = _protected_divergent_leaders(df)
     force = {"alpha": force_alpha, "beta": force_beta}
     secondary = {"alpha": secondary_alpha, "beta": secondary_beta}
@@ -3580,23 +3767,29 @@ def apply_leader_policy(
         changed = False
         for chain in ("alpha", "beta"):
             aa = work.get(f"{chain}_leader_aa")
-            if not isinstance(aa, str) or not aa:
-                continue
+            has_leader = isinstance(aa, str) and bool(aa)
             if force[chain]:
+                if not has_leader and not isinstance(work.get(f"full_{chain}_aa"), str):
+                    continue
                 res = _resolve_named_leader(
                     force[chain], work, chain, species=species
                 )
                 if res is not None:
                     new_aa, new_nt, src = res
-                    _stash_preswitch(work, chain)
+                    if has_leader:
+                        _stash_preswitch(work, chain)
                     _substitute_chain_leader(
                         work, work, chain, new_aa, new_nt, f"forced_{src}",
-                        species=species,
+                        species=species, recode=recode,
                     )
                     changed = True
                     n_forced += 1
                 continue
+            if not has_leader:
+                continue
             if work.get(f"{chain}_leader_source") not in _FROM_CONTIG_SOURCES:
+                continue
+            if leader_fallback == "keep":
                 continue
             germ_aa = work.get(f"{chain}_germline_leader_aa")
             ident = work.get(f"{chain}_germline_identity")
@@ -3620,7 +3813,7 @@ def apply_leader_policy(
             new_aa, new_nt, src = res
             _stash_preswitch(work, chain)
             _substitute_chain_leader(
-                work, work, chain, new_aa, new_nt, src, species=species
+                work, work, chain, new_aa, new_nt, src, species=species, recode=recode
             )
             changed = True
             n_switched += 1
@@ -3642,12 +3835,13 @@ def apply_leader_policy(
             for chain in ("alpha", "beta"):
                 if not secondary[chain]:
                     continue
-                if not isinstance(row.get(f"{chain}_leader_aa"), str):
+                cur_aa = row.get(f"{chain}_leader_aa")
+                if not isinstance(cur_aa, str):
                     continue
                 res = _resolve_named_leader(
                     secondary[chain], row, chain, species=species
                 )
-                if res is not None:
+                if res is not None and res[0] != cur_aa:
                     sec.append((chain, secondary[chain], res))
             if not sec:
                 continue
@@ -3655,7 +3849,7 @@ def apply_leader_policy(
             for chain, name, (new_aa, new_nt, src) in sec:
                 _substitute_chain_leader(
                     twin, row, chain, new_aa, new_nt, f"secondary_{src}",
-                    species=species,
+                    species=species, recode=recode,
                 )
             twin["leader_variant"] = "secondary:" + "+".join(s[1] for s in sec)
             twins.append(twin)
@@ -3667,9 +3861,12 @@ def apply_leader_policy(
         df.loc[orig_idx, "leader_variant"] = "primary"
         df = pd.concat([df, pd.DataFrame(twins)], ignore_index=True)
 
-    # Rebuild single_chain wherever leaders changed (idempotent for unchanged).
-    if (n_forced or n_switched or twins) and linker and {"full_beta_aa", "full_alpha_aa"} <= set(df.columns):
-        df = _add_single_chain(df, linker)
+    # Rebuild single_chain (and refresh synthesis QC if already present) wherever leaders changed.
+    if n_forced or n_switched or twins:
+        if linker and {"full_beta_aa", "full_alpha_aa"} <= set(df.columns):
+            df = _add_single_chain(df, linker)
+        if "synth_gc_ok" in df.columns:
+            df = add_synthesis_qc(df)
     if verbose and (n_forced or n_switched or twins):
         logger.info(
             "  Leader policy: %d forced, %d switched to fallback, %d secondary constructs",
@@ -3718,32 +3915,45 @@ def collect_germline_variants(
             "identity": identity, "source": source, "shipped": shipped,
         })
 
+    # Exclude secondary twin rows so donor variants are counted once per primary construct.
+    base_df = (
+        df[~df["leader_variant"].fillna("").astype(str).str.startswith("secondary:")]
+        if "leader_variant" in df.columns
+        else df
+    )
+
     for ch in chains:
-        # --- leader (kept) ---
+        # --- leader (kept donor contig leader only — exclude exogenous curated leaders) ---
         vs = f"{ch}_leader_vs_germline"
-        if vs in df.columns:
-            d = df[df[vs].notna() & ~df[vs].astype(str).isin(["identical"])]
+        if vs in base_df.columns:
+            d = base_df[base_df[vs].notna() & ~base_df[vs].astype(str).isin(["identical"])]
             for _, r in d.iterrows():
+                lsrc = r.get(f"{ch}_leader_source")
+                if lsrc is not None and lsrc not in _FROM_CONTIG_SOURCES:
+                    continue
                 _add("leader", ch, gene=r.get(f"{ch}_v_gene"),
                      allele=r.get(f"{ch}_germline_allele"), donor=r.get(f"{ch}_leader_aa"),
                      germ=r.get(f"{ch}_germline_leader_aa"), variant=r.get(vs),
                      identity=r.get(f"{ch}_germline_identity"),
-                     source=r.get(f"{ch}_leader_source"), shipped="kept")
+                     source=lsrc, shipped="kept")
         # --- leader (switched-away, preserved pre-switch, #276) ---
         pv = f"{ch}_preswitch_variant"
-        if pv in df.columns:
-            d = df[df[pv].notna() & ~df[pv].astype(str).isin(["identical"])]
+        if pv in base_df.columns:
+            d = base_df[base_df[pv].notna() & ~base_df[pv].astype(str).isin(["identical"])]
             for _, r in d.iterrows():
+                psrc = r.get(f"{ch}_preswitch_leader_source")
+                if psrc is not None and psrc not in _FROM_CONTIG_SOURCES:
+                    continue
                 _add("leader", ch, gene=r.get(f"{ch}_v_gene"),
                      allele=r.get(f"{ch}_preswitch_germline_allele"),
                      donor=r.get(f"{ch}_preswitch_donor_aa"),
                      germ=r.get(f"{ch}_preswitch_germline_aa"), variant=r.get(pv),
                      identity=r.get(f"{ch}_preswitch_germline_identity"),
-                     source=r.get(f"{ch}_preswitch_leader_source"), shipped="switched")
+                     source=psrc, shipped="switched")
         # --- constant (detected donor-vs-canonical divergence, #187; canonical shipped) ---
         cpos = f"{ch}_allele_divergence_positions"
-        if cpos in df.columns:
-            d = df[df[cpos].notna() & ~df[cpos].astype(str).isin(["", "nan", "None"])]
+        if cpos in base_df.columns:
+            d = base_df[base_df[cpos].notna() & ~base_df[cpos].astype(str).isin(["", "nan", "None"])]
             for _, r in d.iterrows():
                 _add("constant", ch, gene=_resolve_c_gene(r, ch),
                      allele=_resolve_c_gene(r, ch), donor=None, germ=None,
@@ -3751,8 +3961,8 @@ def collect_germline_variants(
                      shipped="canonical")
         # --- framework / V-REGION (forward-compatible; needs the V-REGION ref) ---
         fvs = f"{ch}_vregion_vs_germline"
-        if fvs in df.columns:
-            d = df[df[fvs].notna() & ~df[fvs].astype(str).isin(["identical"])]
+        if fvs in base_df.columns:
+            d = base_df[base_df[fvs].notna() & ~base_df[fvs].astype(str).isin(["identical"])]
             for _, r in d.iterrows():
                 _add("framework", ch, gene=r.get(f"{ch}_v_gene"),
                      allele=r.get(f"{ch}_vregion_allele"),
@@ -3849,17 +4059,19 @@ def fix_jc_parity(df: pd.DataFrame) -> list[ValidationMessage]:
     # iterations.
     j_family_s = df["beta_j_gene"].apply(_beta_j_family)
     expected_s = j_family_s.map(BETA_JC_PARITY)
-    candidates = expected_s.dropna()
-    if candidates.empty:
+    cand_positions = np.flatnonzero(expected_s.notna().to_numpy())
+    if len(cand_positions) == 0:
         return messages
 
-    for idx in candidates.index:
-        row = df.loc[idx]
+    canon_col_idx = df.columns.get_loc("beta_c_gene_canonical")
+    for pos in cand_positions:
+        idx = df.index[pos]
+        row = df.iloc[pos]
         current = _resolve_c_gene(row, "beta")
         current_base = _beta_c_base(current)
-        expected_c = candidates.loc[idx]
+        expected_c = expected_s.iloc[pos]
         if current_base and current_base != expected_c:
-            df.at[idx, "beta_c_gene_canonical"] = expected_c
+            df.iat[pos, canon_col_idx] = expected_c
             messages.append(
                 ValidationMessage(
                     f"Clone {idx}: autocorrected β c_gene {current!r} → "
@@ -3873,16 +4085,16 @@ def fix_jc_parity(df: pd.DataFrame) -> list[ValidationMessage]:
 
 def _unverified_chains(row) -> list:
     """Chains present in ``row`` whose J→C junction residue was NOT read from
-    the contig (i.e. came from the canonical fallback). A non-empty list means
-    the construct is not contig-verified: its junction residue is defaulted
-    (α blanket N — wrong ~30%, #242) and its donor allele is unverified.
-    """
+    the contig (i.e. came from the canonical or from-data fallback)."""
     out = []
     for chain in ("alpha", "beta"):
         if not isinstance(row.get(f"full_{chain}_aa"), str) or not row.get(f"full_{chain}_aa"):
             continue
         src = row.get(f"{chain}_junction_residue_source")
+        has_const = isinstance(row.get(f"{chain}_constant_aa"), str) and bool(row.get(f"{chain}_constant_aa"))
         if src is not None and src != "contig":
+            out.append(chain)
+        elif src is None and has_const:
             out.append(chain)
     return out
 
@@ -5631,7 +5843,7 @@ def export_fasta(df: pd.DataFrame, output_path: str | Path, sequence_col: str = 
     with open(output_path, "w") as f:
         for idx, row in df.iterrows():
             seq = row.get(sequence_col, "")
-            if not seq:
+            if not isinstance(seq, str) or not seq.strip():
                 continue
 
             # Build header

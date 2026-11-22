@@ -159,14 +159,16 @@ def _flag_viral(df: pd.DataFrame) -> pd.Series:
 
 
 def load_vdjdb(path: str | Path) -> pd.DataFrame:
-    """Load VDJdb TSV and normalize core columns."""
+    """Load VDJdb TSV and normalize core columns (preserving paired TRA+TRB via complex.id)."""
+    from .annotate import load_vdjdb as _load_vdjdb_paired
+
     path = Path(path)
     if path.is_dir():
         full_file = path / "vdjdb_full.txt"
         candidates = (
             [full_file]
             if full_file.is_file()
-            else list(path.glob("vdjdb*.txt")) + list(path.glob("vdjdb*.tsv"))
+            else sorted(path.glob("vdjdb*.txt")) + sorted(path.glob("vdjdb*.tsv"))
         )
         if not candidates:
             raise TCRsiftValidationError(f"No VDJdb files found in directory: {path}")
@@ -174,34 +176,15 @@ def load_vdjdb(path: str | Path) -> pd.DataFrame:
     else:
         db_file = path
 
-    df = pd.read_csv(db_file, sep="\t", low_memory=False)
-    if df.empty:
-        raise TCRsiftValidationError(f"VDJdb file is empty: {db_file}")
-
-    if "cdr3.beta" not in df.columns and "gene" in df.columns and "cdr3" in df.columns:
-        df = df[df["gene"] == "TRB"].copy()
-
-    column_mapping = {
-        "cdr3": "cdr3_beta",
-        "cdr3.beta": "cdr3_beta",
-        "cdr3.alpha": "cdr3_alpha",
-        "antigen.epitope": "epitope",
-        "antigen.gene": "antigen_gene",
-        "antigen.species": "species",
-        "mhc.a": "mhc_allele",
-        "mhc.class": "mhc_class",
-        "reference.id": "reference",
-    }
-    for old, new in column_mapping.items():
-        if old in df.columns:
-            df[new] = df[old]
-    if "cdr3_beta" not in df.columns:
+    df = _load_vdjdb_paired(db_file, verbose=False)
+    if df.empty or "cdr3_beta" not in df.columns:
         raise TCRsiftValidationError(
             "VDJdb file missing CDR3 beta column after mapping",
-            hint=f"Available columns include: {list(df.columns)[:20]}",
+            hint=f"Path: {db_file}",
         )
-
-    df["database"] = "VDJdb"
+    df = df[df["cdr3_beta"].notna() & (df["cdr3_beta"].astype(str) != "")].copy()
+    if df.empty:
+        raise TCRsiftValidationError(f"VDJdb file has no TRB entries: {db_file}")
     df["is_viral"] = _flag_viral(df)
     return df
 
@@ -379,23 +362,26 @@ def viral_cdr3b_set(
 
 def plot_annotation_summary(df: pd.DataFrame, output_dir: Path) -> None:
     """Write annotation summary plots (pie + top species bar chart)."""
-    if "db_match" not in df.columns:
+    if "db_match" not in df.columns or len(df) == 0:
         return
-    matched = int(df["db_match"].sum())
-    viral = int(df.get("is_viral", pd.Series(False, index=df.index)).sum())
-    non_viral_matched = matched - viral
-    unmatched = len(df) - matched
+    matched_mask = df["db_match"].fillna(False).astype(bool)
+    viral_mask = matched_mask & df.get("is_viral", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    matched = int(matched_mask.sum())
+    viral = int(viral_mask.sum())
+    non_viral_matched = max(0, matched - viral)
+    unmatched = max(0, len(df) - matched)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(7, 7))
     sizes = [viral, non_viral_matched, unmatched]
-    labels = [f"Viral ({viral})", f"Non-viral matched ({non_viral_matched})", f"Unmatched ({unmatched})"]
-    colors = ["#d62728", "#ff7f0e", "#bdbdbd"]
-    ax.pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%", startangle=90)
-    ax.set_title("Database Match Summary")
-    fig.savefig(output_dir / "annotation_summary_pie.png", dpi=200)
-    plt.close(fig)
+    if sum(sizes) > 0:
+        fig, ax = plt.subplots(figsize=(7, 7))
+        labels = [f"Viral ({viral})", f"Non-viral matched ({non_viral_matched})", f"Unmatched ({unmatched})"]
+        colors = ["#d62728", "#ff7f0e", "#bdbdbd"]
+        ax.pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%", startangle=90)
+        ax.set_title("Database Match Summary")
+        fig.savefig(output_dir / "annotation_summary_pie.png", dpi=200)
+        plt.close(fig)
 
     species_col = "db_species_group" if "db_species_group" in df.columns else "db_species"
     if species_col in df.columns:
@@ -911,14 +897,23 @@ def _load_10x_h5_marker_counts(gex_h5_path: Path, marker_genes: list[str]) -> pd
 
     from .genes import GENE_SYNONYMS, ensembl_ids_to_symbols, strip_ensembl_version
 
+    gex_row_mask = np.ones(len(feature_names), dtype=bool)
+    if feature_types is not None:
+        gex_row_mask = np.array(
+            [ft == "Gene Expression" for ft in feature_types], dtype=bool
+        )
+    row_totals = np.asarray(matrix.sum(axis=1)).ravel().astype(float)
+
     gene_to_index: dict[str, int] = {}
     ensembl_candidates: list[tuple[int, str]] = []
     for idx, name in enumerate(feature_names):
-        if feature_types is not None and feature_types[idx] != "Gene Expression":
+        if not gex_row_mask[idx]:
             continue
         key = str(name).strip().upper()
-        if key and key not in gene_to_index:
-            gene_to_index[key] = idx
+        if key:
+            prev = gene_to_index.get(key)
+            if prev is None or row_totals[idx] > row_totals[prev]:
+                gene_to_index[key] = idx
         base_name = strip_ensembl_version(str(name).strip())
         if base_name.startswith(("ENSG", "ENSMUSG")):
             if base_name not in gene_to_index:
@@ -936,7 +931,10 @@ def _load_10x_h5_marker_counts(gex_h5_path: Path, marker_genes: list[str]) -> pd
         for idx, eid in ensembl_candidates:
             sym = ens_map.get(eid)
             if sym:
-                gene_to_index.setdefault(sym.upper(), idx)
+                su = sym.upper()
+                prev = gene_to_index.get(su)
+                if prev is None or row_totals[idx] > row_totals[prev]:
+                    gene_to_index[su] = idx
 
     for group in GENE_SYNONYMS:
         upper_group = [m.upper() for m in group]
@@ -945,24 +943,26 @@ def _load_10x_h5_marker_counts(gex_h5_path: Path, marker_genes: list[str]) -> pd
             for m in upper_group:
                 gene_to_index.setdefault(m, found_idx)
 
-    out = pd.DataFrame({"barcode": barcodes})
-    total_umis = np.asarray(matrix.sum(axis=0)).ravel().astype(float)
-    out["total_umis"] = total_umis
+    # Sum total UMIs across Gene Expression features ONLY (excluding CITE-seq / Antibody Capture).
+    gex_matrix = matrix[gex_row_mask, :] if not gex_row_mask.all() else matrix
+    total_umis = np.asarray(gex_matrix.sum(axis=0)).ravel().astype(float)
     total_safe = np.where(total_umis > 0, total_umis, np.nan)
 
+    cols_dict: dict[str, object] = {"barcode": barcodes, "total_umis": total_umis}
     for raw_gene, gene_upper in zip(marker_genes, marker_genes_upper):
         col_counts = f"count_{raw_gene}"
         col_cp10k = f"cp10k_{raw_gene}"
         idx = gene_to_index.get(gene_upper)
         if idx is None:
-            out[col_counts] = 0.0
-            out[col_cp10k] = 0.0
+            cols_dict[col_counts] = np.zeros(len(barcodes), dtype=float)
+            cols_dict[col_cp10k] = np.zeros(len(barcodes), dtype=float)
             continue
         counts = np.asarray(matrix.getrow(idx).toarray()).ravel().astype(float)
-        out[col_counts] = counts
-        out[col_cp10k] = np.where(total_safe > 0, (counts / total_safe) * 10000.0, 0.0)
+        cols_dict[col_counts] = counts
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cols_dict[col_cp10k] = np.where(total_safe > 0, (counts / total_safe) * 10000.0, 0.0)
 
-    return out
+    return pd.DataFrame(cols_dict)
 
 
 def _load_barcode_to_clonotype(contig_csv_path: Path) -> pd.DataFrame:
@@ -985,7 +985,23 @@ def _load_barcode_to_clonotype(contig_csv_path: Path) -> pd.DataFrame:
             hint=f"Expected raw_clonotype_id or clonotype_id in {contig_csv_path}",
         )
 
-    work = contigs[["barcode", clonotype_col]].copy()
+    keep_mask = pd.Series(True, index=contigs.index)
+    if "productive" in contigs.columns:
+        prod_mask = _truthy_mask(contigs["productive"])
+        if prod_mask.any():
+            keep_mask &= prod_mask
+    if "high_confidence" in contigs.columns:
+        hc_mask = _truthy_mask(contigs["high_confidence"])
+        if hc_mask.any():
+            keep_mask &= hc_mask
+    filtered_contigs = contigs[keep_mask].copy()
+    sort_cols = [c for c in ("umis", "reads") if c in filtered_contigs.columns]
+    if sort_cols:
+        filtered_contigs = filtered_contigs.sort_values(
+            sort_cols, ascending=[False] * len(sort_cols), kind="mergesort"
+        )
+
+    work = filtered_contigs[["barcode", clonotype_col]].copy()
     work = work.dropna(subset=[clonotype_col])
     work = work[work[clonotype_col].astype(str).str.len() > 0]
     work["clonotype_id"] = normalize_clonotype_id(work[clonotype_col])
@@ -1038,36 +1054,43 @@ def _compute_marker_scores_from_adata(
     keep = keep.drop_duplicates(subset=["barcode", "clonotype_id"]).reset_index(drop=True)
     adata_subset = adata[keep["barcode"].tolist(), :].copy()
 
-    if issparse(adata_subset.X):
-        total_umis = np.asarray(adata_subset.X.sum(axis=1)).ravel().astype(float)
-    else:
-        total_umis = np.asarray(adata_subset.X.sum(axis=1)).ravel().astype(float)
+    gex_mat = adata_subset.X
+    for ft_col in ("feature_types", "feature_type"):
+        if ft_col in adata_subset.var.columns:
+            ft_vals = adata_subset.var[ft_col].astype(str).to_numpy()
+            gex_mask = (ft_vals == "Gene Expression") | (ft_vals == "nan")
+            if gex_mask.any() and not gex_mask.all():
+                gex_mat = adata_subset[:, gex_mask].X
+            break
+    total_umis = np.asarray(gex_mat.sum(axis=1)).ravel().astype(float)
     total_umis = np.maximum(total_umis, 1.0)
 
     from .genes import resolve_adata_var_map
 
     _, sym_to_var = resolve_adata_var_map(adata_subset, marker_genes)
-    cell_df = keep.copy()
-    cell_df["total_umis"] = total_umis
+    extra_cols: dict[str, np.ndarray] = {"total_umis": total_umis}
     for gene in marker_genes:
         var_name = gene if gene in adata_subset.var_names else sym_to_var.get(str(gene).upper())
         if var_name is not None and var_name in adata_subset.var_names:
             vec = adata_subset[:, var_name].X
-            if issparse(vec):
+            if getattr(vec, "ndim", 1) == 2 and vec.shape[1] > 1:
+                counts = np.asarray(vec.sum(axis=1)).ravel().astype(float)
+            elif issparse(vec):
                 counts = np.asarray(vec.toarray()).ravel().astype(float)
             else:
                 counts = np.asarray(vec).ravel().astype(float)
         else:
-            counts = np.zeros(len(cell_df), dtype=float)
+            counts = np.zeros(len(keep), dtype=float)
         cp10k = counts / total_umis * 1e4
         log1p = np.log1p(cp10k)
         std = float(np.std(log1p, ddof=0))
         z = np.zeros(len(log1p), dtype=float) if std <= 1e-12 else (log1p - float(np.mean(log1p))) / std
-        cell_df[f"count_{gene}"] = counts
-        cell_df[f"cp10k_{gene}"] = cp10k
-        cell_df[f"log1p_cp10k_{gene}"] = log1p
-        cell_df[f"z_log1p_cp10k_{gene}"] = z
+        extra_cols[f"count_{gene}"] = counts
+        extra_cols[f"cp10k_{gene}"] = cp10k
+        extra_cols[f"log1p_cp10k_{gene}"] = log1p
+        extra_cols[f"z_log1p_cp10k_{gene}"] = z
 
+    cell_df = pd.concat([keep.copy(), pd.DataFrame(extra_cols, index=keep.index)], axis=1)
     cp10k_cols = [f"cp10k_{g}" for g in marker_genes]
     z_cols = [f"z_log1p_cp10k_{g}" for g in marker_genes]
     cell_df["marker_mean_cp10k"] = cell_df[cp10k_cols].mean(axis=1)
@@ -1125,21 +1148,30 @@ def compute_marker_scores_for_timepoint(
             )
 
         cp10k_cols = [f"cp10k_{g}" for g in marker_genes]
-        merged["marker_mean_cp10k"] = merged[cp10k_cols].mean(axis=1)
-        z_cols: list[str] = []
+        derived_cols: dict[str, object] = {
+            "marker_mean_cp10k": merged[cp10k_cols].mean(axis=1)
+        }
+        z_series_list: list[pd.Series] = []
         for gene in marker_genes:
             cp10k_col = f"cp10k_{gene}"
             log_col = f"log1p_cp10k_{gene}"
             z_col = f"z_log1p_cp10k_{gene}"
-            merged[log_col] = np.log1p(merged[cp10k_col])
-            mean_val = float(merged[log_col].mean())
-            std_val = float(merged[log_col].std(ddof=0))
+            log_s = np.log1p(merged[cp10k_col])
+            derived_cols[log_col] = log_s
+            mean_val = float(log_s.mean())
+            std_val = float(log_s.std(ddof=0))
             if std_val <= 1e-12:
-                merged[z_col] = 0.0
+                z_s = pd.Series(0.0, index=merged.index)
             else:
-                merged[z_col] = (merged[log_col] - mean_val) / std_val
-            z_cols.append(z_col)
-        merged["marker_mean_z"] = merged[z_cols].mean(axis=1)
+                z_s = (log_s - mean_val) / std_val
+            derived_cols[z_col] = z_s
+            z_series_list.append(z_s)
+        derived_cols["marker_mean_z"] = (
+            pd.concat(z_series_list, axis=1).mean(axis=1)
+            if z_series_list
+            else pd.Series(0.0, index=merged.index)
+        )
+        merged = pd.concat([merged, pd.DataFrame(derived_cols, index=merged.index)], axis=1)
 
         agg = {
             "n_cells_with_gex": ("barcode", "nunique"),
@@ -1376,7 +1408,7 @@ def compute_increasing_masks_from_frequencies(
         last = row[-1]
         if last <= 0.0:
             continue
-        baseline = float(np.max(row[:2])) if row.size >= 3 else float(np.max(row[:-1]))
+        baseline = float(np.max(row[:-1]))
         if baseline <= 0.0:
             continue
         if last + tol >= ratio_nonzero_min * baseline:
@@ -1549,9 +1581,20 @@ def run_selection_pipeline(
     else:
         df["is_non_viral"] = True
 
-    cd8_candidate_cols = [
-        c for c in df.columns if c.startswith("score_cp10k_CD8A") or c.startswith("score_cp10k_CD8B")
-    ]
+    def _exact_gene_score_cols(genes_tuple: tuple[str, ...]) -> list[str]:
+        valid_exact = {
+            f"score_cp10k_{g}_{suf}"
+            for g in genes_tuple
+            for suf in (*timepoint_order, "max", "mean")
+        } | {f"score_cp10k_{g}" for g in genes_tuple}
+        # Prefer per-timepoint / max / mean columns over _sum (which scales with n_timepoints).
+        found = [c for c in df.columns if c in valid_exact]
+        if found:
+            return found
+        sum_cols = {f"score_cp10k_{g}_sum" for g in genes_tuple}
+        return [c for c in df.columns if c in sum_cols]
+
+    cd8_candidate_cols = _exact_gene_score_cols(("CD8A", "CD8B", "CD8B1"))
     if cd8_candidate_cols:
         df["cd8_cp10k_max"] = (
             df[cd8_candidate_cols].apply(pd.to_numeric, errors="coerce").max(axis=1).fillna(0.0)
@@ -1560,7 +1603,7 @@ def run_selection_pipeline(
         df["cd8_cp10k_max"] = 0.0
     df["is_cd8_positive"] = df["cd8_cp10k_max"] > float(min_cd8_cp10k)
 
-    cd4_candidate_cols = [c for c in df.columns if c.startswith("score_cp10k_CD4")]
+    cd4_candidate_cols = _exact_gene_score_cols(("CD4",))
     if cd4_candidate_cols:
         df["cd4_cp10k_max"] = (
             df[cd4_candidate_cols].apply(pd.to_numeric, errors="coerce").max(axis=1).fillna(0.0)
@@ -1698,12 +1741,21 @@ def run_selection_pipeline(
         errors="coerce",
     ).fillna(0.0)
 
+    # Defragment before adding panel & immunogenic selection columns so wide
+    # harmonized tables never emit pandas PerformanceWarning.
+    df = df.copy()
+    last_present = pd.Series(True, index=df.index)
+    if f"cell_count_{last_tp}" in df.columns:
+        last_present = pd.to_numeric(df[f"cell_count_{last_tp}"], errors="coerce").fillna(0.0) > 0
+    elif f"frequency_{last_tp}" in df.columns:
+        last_present = pd.to_numeric(df[f"frequency_{last_tp}"], errors="coerce").fillna(0.0) > 0
+
     df["cytotoxic_score_z_delta_last_vs_first"] = last_z - first_z
     df["cytotoxic_score_cp10k_delta_last_vs_first"] = last_cp10k - first_cp10k
-    df["is_cytotoxic_at_last"] = (last_z >= cytotoxic_last_min_z) | (
-        last_cp10k >= cytotoxic_last_min_cp10k
+    df["is_cytotoxic_at_last"] = last_present & (
+        (last_z >= cytotoxic_last_min_z) | (last_cp10k >= cytotoxic_last_min_cp10k)
     )
-    df["is_became_cytotoxic"] = (
+    df["is_became_cytotoxic"] = last_present & (
         df["cytotoxic_score_z_delta_last_vs_first"] >= became_cytotoxic_min_delta_z
     )
     df["is_increasing_and_became_cytotoxic"] = (
@@ -1712,40 +1764,46 @@ def run_selection_pipeline(
 
     top_flag_cols = []
     immunogenic_branch_counts_within_base: list[tuple[str, int]] = []
+    imm_new_cols: dict[str, object] = {}
     for gene in immunogenic_genes:
         ranking_source, ranking_values = _resolve_gene_cp10k_series(df, gene, timepoint_order)
         flag_col = f"is_top_immunogenic_{gene}"
-        df[flag_col] = False
-        df[f"immunogenic_cp10k_source_{gene}"] = ranking_source if ranking_source else ""
+        flag_s = pd.Series(False, index=df.index)
+        imm_new_cols[f"immunogenic_cp10k_source_{gene}"] = ranking_source if ranking_source else ""
 
         base_mask = df["is_base_selected"] & ranking_values.notna()
         if int(base_mask.sum()) == 0:
-            df[f"immunogenic_cp10k_median_{gene}"] = np.nan
+            imm_new_cols[flag_col] = flag_s
+            imm_new_cols[f"immunogenic_cp10k_median_{gene}"] = np.nan
             immunogenic_branch_counts_within_base.append((gene, 0))
             continue
 
         median_value = float(ranking_values[base_mask].median())
-        df[f"immunogenic_cp10k_median_{gene}"] = median_value
+        imm_new_cols[f"immunogenic_cp10k_median_{gene}"] = median_value
         floor = max(float(immunogenic_min_cp10k), 0.0)
         eligible = df["is_base_selected"] & ranking_values.gt(floor)
         if immunogenic_require_above_median:
             eligible &= ranking_values.gt(median_value)
         if int(eligible.sum()) == 0:
-            df[f"immunogenic_cp10k_percentile_{gene}"] = np.nan
-            df[f"immunogenic_cp10k_cutoff_{gene}"] = np.nan
+            imm_new_cols[flag_col] = flag_s
+            imm_new_cols[f"immunogenic_cp10k_percentile_{gene}"] = np.nan
+            imm_new_cols[f"immunogenic_cp10k_cutoff_{gene}"] = np.nan
             immunogenic_branch_counts_within_base.append((gene, 0))
             continue
 
         values = ranking_values[eligible]
         percentile_value = float(np.nanquantile(values.to_numpy(dtype=float), immunogenic_percentile))
         cutoff_value = percentile_value * (1.0 - immunogenic_percentile_slack_frac)
-        df[f"immunogenic_cp10k_percentile_{gene}"] = percentile_value
-        df[f"immunogenic_cp10k_cutoff_{gene}"] = cutoff_value
+        imm_new_cols[f"immunogenic_cp10k_percentile_{gene}"] = percentile_value
+        imm_new_cols[f"immunogenic_cp10k_cutoff_{gene}"] = cutoff_value
         selected = eligible & ranking_values.ge(cutoff_value)
-        df.loc[selected, flag_col] = True
+        flag_s.loc[selected] = True
+        imm_new_cols[flag_col] = flag_s
         top_flag_cols.append(flag_col)
-        n_selected = int((df["is_base_selected"] & df[flag_col]).sum())
+        n_selected = int((df["is_base_selected"] & flag_s).sum())
         immunogenic_branch_counts_within_base.append((gene, n_selected))
+    if imm_new_cols:
+        df = pd.concat([df, pd.DataFrame(imm_new_cols, index=df.index)], axis=1)
 
     if top_flag_cols:
         df["is_top_immunogenic_any"] = df[top_flag_cols].any(axis=1)

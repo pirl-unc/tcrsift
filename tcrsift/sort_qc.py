@@ -158,6 +158,7 @@ def sort_signature_consistency(
     else:
         corr = {d: np.nan for d in donors}
 
+    donor_n_methods = agg.groupby(donor_col, observed=True)[method_col].nunique().to_dict()
     rows = []
     for _, r in agg.iterrows():
         donor, method = r[donor_col], r[method_col]
@@ -166,13 +167,20 @@ def sort_signature_consistency(
             expected.extend(sort_map.get(token, []))
         row = {donor_col: donor, method_col: method, "n_cells": int(r["n_cells"])}
         problems = []
+        can_compare_within_donor = (not zscore_within_donor) or donor_n_methods.get(donor, 0) >= 2
         for sig, direction in expected:
             col = next((c for c in signature_cols if sig_name[c] == sig), None)
             if col is None:
                 continue
             z = float(r[col])
             row[f"z_{sig}"] = z
-            ok = z >= enrich_threshold if direction == "high" else z <= -enrich_threshold
+            if not can_compare_within_donor:
+                continue
+            ok = (
+                z >= enrich_threshold - 1e-12
+                if direction == "high"
+                else z <= -enrich_threshold + 1e-12
+            )
             if not ok:
                 problems.append(
                     f"{sig} not {direction} (z={z:+.2f})")
@@ -233,6 +241,31 @@ def sort_signature_consistency_from_adata(
     out[method_col] = obs[method_col].to_numpy()
     if donor is not None:
         out["donor"] = obs[donor].to_numpy()
+    # Normalize raw UMI counts to CP10K before log1p signature scoring when
+    # adata is not already log-normalized, so sequencing depth across cells/sorts
+    # doesn't drive within-donor z-scores. Distinguish raw counts from unlabeled
+    # log1p(CP10K) matrices (where row sums across ~2,000 genes exceed 50 even
+    # though elementwise values are non-integer floats <= ~9.2).
+    already_log1p = "log1p" in getattr(adata, "uns", {})
+    raw_lib_sizes = None
+    apply_log1p = not already_log1p
+    if not already_log1p and getattr(adata, "X", None) is not None and adata.n_obs > 0 and adata.n_vars > 0:
+        x_mat = adata.X
+        x_min = float(x_mat.min())
+        x_max = float(x_mat.max())
+        x_vals = x_mat.data if hasattr(x_mat, "data") else np.asarray(x_mat).ravel()
+        sample_vals = x_vals[: min(len(x_vals), 10000)]
+        is_int_like = len(sample_vals) == 0 or bool(
+            np.allclose(sample_vals, np.round(sample_vals), atol=1e-4)
+        )
+        if x_min >= 0 and (x_max > 25 or is_int_like):
+            raw_sums = np.asarray(x_mat.sum(axis=1)).ravel().astype(float)
+            if np.nanmax(raw_sums) > 50:
+                raw_lib_sizes = np.where(raw_sums > 0, raw_sums, np.nan)
+        elif x_min >= 0 and x_max <= 25 and not is_int_like:
+            # Already continuous log-normalized expression without adata.uns["log1p"]
+            apply_log1p = False
+
     scored = 0
     for name in needed:
         sig = sig_registry.get(name)
@@ -241,8 +274,11 @@ def sort_signature_consistency_from_adata(
         expr = expression_frame_from_adata(adata, sig.all_genes, on_missing="ignore")
         if expr.shape[1] == 0:
             continue
+        if raw_lib_sizes is not None:
+            expr = expr.div(raw_lib_sizes, axis=0).fillna(0.0) * 1e4
         out[f"signature_{name}"] = score_signature(
-            expr, sig, on_missing="ignore").to_numpy()
+            expr, sig, log1p=apply_log1p, on_missing="ignore"
+        ).to_numpy()
         scored += 1
     if scored == 0:
         return pd.DataFrame()

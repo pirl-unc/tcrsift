@@ -354,7 +354,11 @@ def test_cli_subset_retains_ten_of_twenty_five_and_reports_support(tmp_path, mon
     base = _til_cells()[:1].copy()
     pairs = list(itertools.islice(itertools.product("ACDEFGHIKLMNPQRSTVWY", repeat=2), 101))
     labels = ["CAV" + "".join(pair) + "GNLIF" for pair in pairs]
-    cells = base[np.zeros(1025, dtype=int)].copy()
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Observation names are not unique", category=UserWarning)
+        cells = base[np.zeros(1025, dtype=int)].copy()
     cells.obs_names = [f"cell_{i}" for i in range(1025)]
     cells.obs["CDR3_alpha"] = [labels[0]] * 25 + list(np.repeat(labels[1:], 10))
     cell_scores = np.random.default_rng(12).normal(size=1025)

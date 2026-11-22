@@ -63,24 +63,17 @@ _PYENSEMBL_BY_SPECIES: dict[str, str] = {
 }
 
 # Unambiguous V-gene subfamilies that appear in only one of human vs mouse IMGT.
+# Note: TRAV15, TRAV16, TRBV12, TRBV14..17, TRBV26 exist in BOTH human and mouse
+# IMGT and must NOT be listed here; mouse duplicated-locus TRAV genes (e.g.
+# TRAV14D-1, TRAV14N-1, TRAV16D/DV11) are matched via _MOUSE_DUP_TRAV_RE so
+# slashless human TRAV14DV4 is never misclassified as mouse.
 _MOUSE_ONLY_V_PREFIXES = (
-    "TRAV14D",
-    "TRAV14N",
-    "TRAV6D",
-    "TRAV6N",
-    "TRAV7D",
-    "TRAV7N",
-    "TRAV9D",
-    "TRAV9N",
-    "TRAV12D",
-    "TRAV12N",
-    "TRAV13D",
-    "TRAV13N",
     "TRBV13-1",
     "TRBV13-2",
     "TRBV13-3",
     "TRBV31",
 )
+_MOUSE_DUP_TRAV_RE = re.compile(r"^TRAV\d+[DN](?:-|/|$)")
 _HUMAN_ONLY_V_PREFIXES = (
     "TRAV12-2",
     "TRAV38-2",
@@ -171,7 +164,11 @@ def detect_vdj_species(df: pd.DataFrame | None) -> str | None:
 
     # 2. Species-unique IMGT V-gene subfamilies (works even when uppercased).
     upper_bases = [t.upper().split("*", 1)[0] for t in tokens]
-    n_mouse_v = sum(1 for u in upper_bases if u.startswith(_MOUSE_ONLY_V_PREFIXES))
+    n_mouse_v = sum(
+        1
+        for u in upper_bases
+        if u.startswith(_MOUSE_ONLY_V_PREFIXES) or bool(_MOUSE_DUP_TRAV_RE.match(u))
+    )
     n_human_v = sum(1 for u in upper_bases if u.startswith(_HUMAN_ONLY_V_PREFIXES))
     if n_mouse_v > 0 and n_human_v == 0:
         return "mouse"

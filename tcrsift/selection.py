@@ -945,7 +945,16 @@ def _tie_break_sort(cand: pd.DataFrame, tie_break, clone_col: str):
             cols.append("_tb_dual")
             asc.append(True)  # single (False) before dual (True)
         elif key == "umi":
-            umi_cols = [c for c in ("TRA_1_umis", "TRB_1_umis") if c in cand.columns]
+            umi_cols = []
+            for pair in (
+                ("n_alpha_umis", "n_beta_umis"),
+                ("alpha_umis_sum", "beta_umis_sum"),
+                ("TRA_1_umis", "TRB_1_umis"),
+            ):
+                found = [c for c in pair if c in cand.columns]
+                if found:
+                    umi_cols = found
+                    break
             if umi_cols:
                 cand["_tb_umi"] = (
                     cand[umi_cols].apply(pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
@@ -1092,11 +1101,12 @@ def select_freq_prism_per_condition(
                 clone_col
             ].head(top_freq)
         )
+        scorable = cand[cand["prism_score"].notna()]
         top_p = list(
-            cand.sort_values(["prism_score", *tb_cols], ascending=[True, *tb_asc])[
+            scorable.sort_values(["prism_score", *tb_cols], ascending=[True, *tb_asc])[
                 clone_col
             ].head(top_prism)
-        )
+        ) if top_prism > 0 else []
         freq_set, prism_set = set(top_f), set(top_p)
         f_rank = {c: i + 1 for i, c in enumerate(top_f)}
         p_rank = {c: i + 1 for i, c in enumerate(top_p)}
@@ -1270,8 +1280,9 @@ def prism_candidates(
                 clone_col
             ].head(top_freq)
         )
+        scorable = cand[cand["prism_score"].notna()]
         prism_set = set(
-            cand.sort_values(["prism_score", *tb_cols], ascending=[True, *tb_asc])[
+            scorable.sort_values(["prism_score", *tb_cols], ascending=[True, *tb_asc])[
                 clone_col
             ].head(top_prism)
         ) if top_prism > 0 else set()

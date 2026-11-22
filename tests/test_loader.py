@@ -453,6 +453,8 @@ class TestH5GeneAxis:
         """read_10x_h5 names genes by symbol, and symbols repeat in 10x
         references. A repeated name made the marker lookup fail, and an h5
         sample combined with a matrix-directory sample doubled the gene axis."""
+        import warnings
+
         import scanpy as sc
 
         from tcrsift.loader import _extract_tcell_markers, load_cellranger_gex
@@ -463,9 +465,13 @@ class TestH5GeneAxis:
         symbols = ["CD3D", "CD3E", "CD3G", "CD4", "CD8A", "CD8B", "DUP", "DUP"]
         ids = ["ENSG00000167286", "ENSG00000198851", "ENSG00000160654", "ENSG00000010610",
                "ENSG00000153563", "ENSG00000172116", "ENSG00000000001", "ENSG00000000002"]
-        adata = ad.AnnData(X=sp.csr_matrix(np.arange(16, dtype=np.float32).reshape(2, 8)),
-                           obs=pd.DataFrame(index=["AAAA-1", "CCCC-1"]),
-                           var=pd.DataFrame({"gene_ids": ids}, index=symbols))
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Variable names are not unique", category=UserWarning)
+            adata = ad.AnnData(
+                X=sp.csr_matrix(np.arange(16, dtype=np.float32).reshape(2, 8)),
+                obs=pd.DataFrame(index=["AAAA-1", "CCCC-1"]),
+                var=pd.DataFrame({"gene_ids": ids}, index=symbols),
+            )
         monkeypatch.setattr(sc, "read_10x_h5", lambda _: adata)
 
         loaded = load_cellranger_gex(gex_dir, "S1", min_genes=0, min_counts=0, min_mito_pct=0, verbose=False)

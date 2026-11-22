@@ -77,6 +77,11 @@ VALID_PLOT_FORMATS = ("png", "pdf", "svg", "both")
 _PLOT_FORMAT = "png"
 
 
+def get_plot_format() -> str:
+    """Return the active module-level plot format (``'png'``, ``'pdf'``, ``'svg'``, or ``'both'``)."""
+    return _PLOT_FORMAT
+
+
 def set_plot_format(fmt: str | None) -> None:
     """Set the vector/raster format save_figure emits (#169): png/pdf/svg/both.
 
@@ -516,50 +521,69 @@ def plot_qc(adata: ad.AnnData, output_dir: str | Path):
     """Generate QC plots for loaded data."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if adata.n_obs == 0:
+        logger.info("plot_qc: empty AnnData; skipping.")
+        return
+    obs = adata.obs
+    samples = obs["sample"].dropna().unique() if "sample" in obs.columns else np.array(["all"])
 
     # Reads per cell distribution
-    if "n_counts" in adata.obs.columns:
+    if "n_counts" in obs.columns:
         fig, ax = plt.subplots(figsize=(10, 6))
-        for sample in adata.obs["sample"].unique():
-            sample_data = adata.obs[adata.obs["sample"] == sample]["n_counts"]
-            ax.hist(sample_data, bins=50, alpha=0.5, label=pretty_sample(sample))
+        for sample in samples:
+            sample_data = (
+                obs[obs["sample"] == sample]["n_counts"]
+                if "sample" in obs.columns
+                else obs["n_counts"]
+            ).dropna()
+            if len(sample_data) > 0:
+                ax.hist(sample_data, bins=50, alpha=0.5, label=pretty_sample(sample))
         ax.set_xlabel("Total Counts per Cell")
         ax.set_ylabel("Number of Cells")
         ax.set_title("Read Count Distribution by Sample")
         ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-        ax.set_xscale("log")
+        if (obs["n_counts"].dropna() > 0).any():
+            ax.set_xscale("log")
         save_figure(fig, output_dir / "qc_read_counts.png")
 
     # Genes detected distribution
-    if "n_genes" in adata.obs.columns:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        samples = adata.obs["sample"].unique()
-        data = [adata.obs[adata.obs["sample"] == s]["n_genes"].values for s in samples]
-        ax.violinplot(data, positions=range(len(samples)))
-        ax.set_xticks(range(len(samples)))
-        ax.set_xticklabels(pretty_samples(samples), rotation=45, ha="right")
-        ax.set_ylabel("Genes Detected")
-        ax.set_title("Gene Detection by Sample")
-        save_figure(fig, output_dir / "qc_genes_detected.png")
+    if "n_genes" in obs.columns:
+        valid_pairs = [
+            (s, (obs[obs["sample"] == s]["n_genes"] if "sample" in obs.columns else obs["n_genes"]).dropna().values)
+            for s in samples
+        ]
+        valid_pairs = [(s, vals) for s, vals in valid_pairs if len(vals) > 0]
+        if valid_pairs:
+            fig, ax = plt.subplots(figsize=(12, 6))
+            v_samples, data = zip(*valid_pairs)
+            ax.violinplot(data, positions=range(len(v_samples)))
+            ax.set_xticks(range(len(v_samples)))
+            ax.set_xticklabels(pretty_samples(v_samples), rotation=45, ha="right")
+            ax.set_ylabel("Genes Detected")
+            ax.set_title("Gene Detection by Sample")
+            save_figure(fig, output_dir / "qc_genes_detected.png")
 
     # Mitochondrial percentage
-    if "percent_mt" in adata.obs.columns:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        samples = adata.obs["sample"].unique()
-        data = [adata.obs[adata.obs["sample"] == s]["percent_mt"].values for s in samples]
-        ax.violinplot(data, positions=range(len(samples)))
-        ax.set_xticks(range(len(samples)))
-        ax.set_xticklabels(pretty_samples(samples), rotation=45, ha="right")
-        ax.set_ylabel("Mitochondrial %")
-        ax.set_title("Mitochondrial Content by Sample")
-        ax.axhline(y=8, color="red", linestyle="--", alpha=0.5, label="Max threshold")
-        ax.axhline(y=2, color="orange", linestyle="--", alpha=0.5, label="Min threshold")
-        ax.legend()
-        save_figure(fig, output_dir / "qc_mito_percent.png")
+    mt_col = "percent_mt" if "percent_mt" in obs.columns else ("pct_counts_mt" if "pct_counts_mt" in obs.columns else None)
+    if mt_col is not None:
+        valid_pairs = [
+            (s, (obs[obs["sample"] == s][mt_col] if "sample" in obs.columns else obs[mt_col]).dropna().values)
+            for s in samples
+        ]
+        valid_pairs = [(s, vals) for s, vals in valid_pairs if len(vals) > 0]
+        if valid_pairs:
+            fig, ax = plt.subplots(figsize=(12, 6))
+            v_samples, data = zip(*valid_pairs)
+            ax.violinplot(data, positions=range(len(v_samples)))
+            ax.set_xticks(range(len(v_samples)))
+            ax.set_xticklabels(pretty_samples(v_samples), rotation=45, ha="right")
+            ax.set_ylabel("Mitochondrial %")
+            ax.set_title("Mitochondrial Content by Sample")
+            ax.axhline(y=8, color="red", linestyle="--", alpha=0.5, label="Max threshold")
+            ax.axhline(y=2, color="orange", linestyle="--", alpha=0.5, label="Min threshold")
+            ax.legend()
+            save_figure(fig, output_dir / "qc_mito_percent.png")
 
-    # Cells per sample — stacked layout when QC/TCR masks are present
-    # (#76); falls back to a single-bar count when only ``sample`` is
-    # available on ``adata.obs``.
     plot_cells_per_sample_stacked(adata, output_dir / "qc_cells_per_sample.png")
 
 
@@ -572,13 +596,16 @@ def plot_phenotype(adata: ad.AnnData, output_dir: str | Path):
     """Generate phenotype plots."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if adata.n_obs == 0:
+        logger.info("plot_phenotype: empty AnnData; skipping.")
+        return
 
     # CD4 vs CD8 scatter
     if "CD4" in adata.obs.columns and "CD8" in adata.obs.columns:
         fig, ax = plt.subplots(figsize=(10, 10))
 
         if "Tcell_type" in adata.obs.columns:
-            for tcell_type in adata.obs["Tcell_type"].unique():
+            for tcell_type in adata.obs["Tcell_type"].dropna().unique():
                 mask = adata.obs["Tcell_type"] == tcell_type
                 ax.scatter(
                     adata.obs.loc[mask, "CD4"] + 0.1,
@@ -600,34 +627,42 @@ def plot_phenotype(adata: ad.AnnData, output_dir: str | Path):
 
     # T cell type composition by sample
     if "Tcell_type" in adata.obs.columns:
-        fig, ax = plt.subplots(figsize=(14, 8))
-
-        # Create stacked bar chart
-        samples = adata.obs["sample"].unique()
-        tcell_types = adata.obs["Tcell_type"].cat.categories
-
-        # Calculate percentages
+        tt_series = adata.obs["Tcell_type"]
+        tcell_types = (
+            list(tt_series.cat.categories)
+            if isinstance(tt_series.dtype, pd.CategoricalDtype)
+            else sorted(tt_series.dropna().astype(str).unique())
+        )
+        samples = (
+            adata.obs["sample"].dropna().unique()
+            if "sample" in adata.obs.columns
+            else ["all"]
+        )
         data = []
         for sample in samples:
-            sample_data = adata.obs[adata.obs["sample"] == sample]
+            sample_data = (
+                adata.obs[adata.obs["sample"] == sample]
+                if "sample" in adata.obs.columns
+                else adata.obs
+            )
             total = len(sample_data)
+            if total == 0:
+                continue
             row = {"sample": sample}
             for tt in tcell_types:
                 row[tt] = (sample_data["Tcell_type"] == tt).sum() / total * 100
             data.append(row)
 
-        df_plot = pd.DataFrame(data)
-        df_plot = df_plot.set_index("sample")
-        # pandas bar plot uses the index as tick labels — pretty-rename
-        # so the x-axis renders ``AIM⁺`` etc. instead of ``AIMpos-2`` (#109).
-        df_plot.index = pretty_samples(df_plot.index)
-
-        df_plot.plot(kind="bar", stacked=True, ax=ax, colormap="viridis")
-        ax.set_ylabel("Percentage")
-        ax.set_title("T Cell Type Composition by Sample")
-        ax.legend(title="T Cell Type", bbox_to_anchor=(1.05, 1), loc="upper left")
-        plt.xticks(rotation=45, ha="right")
-        save_figure(fig, output_dir / "phenotype_composition.png")
+        if data and tcell_types:
+            fig, ax = plt.subplots(figsize=(14, 8))
+            df_plot = pd.DataFrame(data).set_index("sample")
+            df_plot.index = pretty_samples(df_plot.index)
+            df_plot.plot(kind="bar", stacked=True, ax=ax, colormap="viridis")
+            ax.set_ylabel("Percentage")
+            ax.set_title("T Cell Type Composition by Sample")
+            ax.legend(title="T Cell Type", bbox_to_anchor=(1.05, 1), loc="upper left")
+            plt.xticks(rotation=45, ha="right")
+            save_figure(fig, output_dir / "phenotype_composition.png")
 
 
 # =============================================================================
@@ -639,25 +674,33 @@ def plot_clonotypes(clonotypes: pd.DataFrame, output_dir: str | Path):
     """Generate clonotype analysis plots."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if clonotypes is None or len(clonotypes) == 0 or "cell_count" not in clonotypes.columns:
+        logger.info("plot_clonotypes: empty or missing cell_count; skipping.")
+        return
 
     # Clone size distribution (rank plot)
     fig, ax = plt.subplots(figsize=(12, 6))
-    sorted_counts = clonotypes["cell_count"].sort_values(ascending=False).values
+    sorted_counts = pd.to_numeric(clonotypes["cell_count"], errors="coerce").dropna().sort_values(ascending=False).values
+    if len(sorted_counts) == 0:
+        plt.close(fig)
+        return
     ax.plot(range(1, len(sorted_counts) + 1), sorted_counts, linewidth=2)
     ax.set_xlabel("Clone Rank")
     ax.set_ylabel("Cell Count")
     ax.set_title("Clone Size Distribution (Rank Plot)")
     ax.set_xscale("log")
-    ax.set_yscale("log")
+    if (sorted_counts > 0).any():
+        ax.set_yscale("log")
     ax.fill_between(range(1, len(sorted_counts) + 1), sorted_counts, alpha=0.3)
     save_figure(fig, output_dir / "clonotype_rank_plot.png")
 
     # Clone size histogram. cell_count is float under attribution (#176), so
     # ceil to an int range for integer histogram bins.
     fig, ax = plt.subplots(figsize=(10, 6))
-    max_size = int(min(50, np.ceil(clonotypes["cell_count"].max())))
+    raw_max = float(pd.to_numeric(clonotypes["cell_count"], errors="coerce").max() or 1.0)
+    max_size = max(1, int(min(50, np.ceil(raw_max))))
     ax.hist(
-        clonotypes["cell_count"].clip(upper=max_size),
+        pd.to_numeric(clonotypes["cell_count"], errors="coerce").fillna(0).clip(upper=max_size),
         bins=range(1, max_size + 2),
         edgecolor="black",
     )
@@ -681,19 +724,26 @@ def plot_clonotypes(clonotypes: pd.DataFrame, output_dir: str | Path):
                 ax.invert_yaxis()
                 save_figure(fig, output_dir / f"clonotype_{chain}_v_gene_usage.png")
 
-    # Sample sharing matrix
-    if "samples" in clonotypes.columns:
-        samples = set()
-        for s in clonotypes["samples"].dropna():
-            samples.update(s.split(";"))
-        samples = sorted(samples)
+    # Sample sharing matrix (exact token match on `;`-delimited sample names, not regex substring)
+    if "samples" in clonotypes.columns and "CDR3ab" in clonotypes.columns:
+        parsed_sample_sets = [
+            {tok.strip() for tok in str(val).split(";") if tok.strip()}
+            if pd.notna(val)
+            else set()
+            for val in clonotypes["samples"]
+        ]
+        samples = sorted(set().union(*parsed_sample_sets)) if parsed_sample_sets else []
 
         if len(samples) > 1:
-            # Calculate Jaccard similarity
-            sample_clones = {}
-            for sample in samples:
-                mask = clonotypes["samples"].fillna("").str.contains(sample)
-                sample_clones[sample] = set(clonotypes.loc[mask, "CDR3ab"])
+            cdr3_vals = clonotypes["CDR3ab"].tolist()
+            sample_clones = {
+                sample: {
+                    cdr3
+                    for cdr3, sset in zip(cdr3_vals, parsed_sample_sets)
+                    if sample in sset and pd.notna(cdr3)
+                }
+                for sample in samples
+            }
 
             jaccard_matrix = np.zeros((len(samples), len(samples)))
             for i, s1 in enumerate(samples):
@@ -824,25 +874,27 @@ def plot_annotations(clonotypes: pd.DataFrame, output_dir: str | Path):
         return
 
     # Viral vs non-viral pie chart
-    if "is_viral" in clonotypes.columns:
-        fig, ax = plt.subplots(figsize=(8, 8))
-
-        matched = clonotypes["db_match"].sum()
-        viral = clonotypes["is_viral"].sum()
-        non_viral_matched = matched - viral
-        unmatched = len(clonotypes) - matched
+    if "is_viral" in clonotypes.columns and len(clonotypes) > 0:
+        matched_mask = clonotypes["db_match"].fillna(False).astype(bool)
+        viral_mask = matched_mask & clonotypes["is_viral"].fillna(False).astype(bool)
+        matched = int(matched_mask.sum())
+        viral = int(viral_mask.sum())
+        non_viral_matched = max(0, matched - viral)
+        unmatched = max(0, len(clonotypes) - matched)
 
         sizes = [viral, non_viral_matched, unmatched]
-        labels = [
-            f"Viral ({viral})",
-            f"Non-viral matched ({non_viral_matched})",
-            f"Unmatched ({unmatched})",
-        ]
-        colors = ["red", "orange", "gray"]
+        if sum(sizes) > 0:
+            fig, ax = plt.subplots(figsize=(8, 8))
+            labels = [
+                f"Viral ({viral})",
+                f"Non-viral matched ({non_viral_matched})",
+                f"Unmatched ({unmatched})",
+            ]
+            colors = ["red", "orange", "gray"]
 
-        ax.pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%", startangle=90)
-        ax.set_title("Database Match Summary")
-        save_figure(fig, output_dir / "annotation_summary_pie.png")
+            ax.pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%", startangle=90)
+            ax.set_title("Database Match Summary")
+            save_figure(fig, output_dir / "annotation_summary_pie.png")
 
     # Top species/epitopes
     if "db_species" in clonotypes.columns:
@@ -1120,8 +1172,7 @@ def plot_category_composition_bar(
 
     filename = filename or f"annotation_composition_{granularity}.png"
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def plot_match_strength_comparison(
@@ -1350,8 +1401,7 @@ def plot_rank_curves_per_sample(
         f"Clone-frequency rank curves per sample ({x_scale}-x)", y=1.02, fontsize=13
     )
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def plot_cumulative_coverage(
@@ -1408,8 +1458,7 @@ def plot_cumulative_coverage(
     ax.legend(loc="lower right", fontsize=9, title="sample")
 
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def plot_top_n_labeled_bars_per_sample(
@@ -1498,8 +1547,7 @@ def plot_top_n_labeled_bars_per_sample(
 
     fig.suptitle(f"Top-{n} clones per sample", y=1.02, fontsize=13)
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def plot_top_n_cumulative_stacked(
@@ -1564,8 +1612,7 @@ def plot_top_n_cumulative_stacked(
     cbar.set_label("clone rank within sample")
 
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def plot_rank_family(
@@ -1728,8 +1775,7 @@ def plot_clone_tracking_slopes(
     )
     fig.tight_layout()
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 # =============================================================================
@@ -1831,8 +1877,7 @@ def plot_clones_by_n_methods(
     ax.legend()
 
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 # =============================================================================
@@ -2007,8 +2052,7 @@ def plot_clone_freq_vs_signature_per_sample(
     fig.tight_layout()
     filename = filename or f"clone_freq_vs_{signature_label.split()[0]}.png"
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def _coerce_row_mask(
@@ -3924,6 +3968,8 @@ def plot_funnel(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if not stage_counts:
+        return output_dir / filename
 
     stages = list(stage_counts.keys())
     counts = list(stage_counts.values())
@@ -4018,7 +4064,7 @@ def plot_funnel(
             style="italic",
         )
 
-    save_figure(fig, output_dir / filename)
+    return save_figure(fig, output_dir / filename)
 
 
 # =============================================================================
@@ -4033,12 +4079,9 @@ def plot_funnel(
 
 
 def _log_stage_widths(counts: list[int], floor: float = 0.10) -> np.ndarray:
-    """Map stage counts to relative widths in [floor, 1.0].
-
-    Log-spaced so a 10× narrowing reads as a 10× width drop visually
-    (rather than 10% as it would on a linear scale). The smallest
-    stage gets ``floor`` width to stay visible; the largest gets 1.0.
-    """
+    """Map stage counts to relative widths in [floor, 1.0]."""
+    if not counts:
+        return np.array([], dtype=float)
     arr = np.array([max(c, 1) for c in counts], dtype=float)
     log_counts = np.log10(arr)
     lo, hi = log_counts.min(), log_counts.max()
@@ -4078,6 +4121,8 @@ def plot_funnel_ribbon(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if not stage_counts:
+        return output_dir / filename
 
     stages = list(stage_counts.keys())
     counts = list(stage_counts.values())
@@ -4108,8 +4153,7 @@ def plot_funnel_ribbon(
     ax.set_title(title, pad=14)
 
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def plot_funnel_lollipop(
@@ -4127,6 +4171,8 @@ def plot_funnel_lollipop(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if not stage_counts:
+        return output_dir / filename
 
     stages = list(stage_counts.keys())
     counts = np.array([max(c, 1) for c in stage_counts.values()], dtype=float)
@@ -4155,8 +4201,7 @@ def plot_funnel_lollipop(
     ax.set_title(title, pad=14)
 
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def plot_funnel_terrace(
@@ -4173,6 +4218,8 @@ def plot_funnel_terrace(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if not stage_counts:
+        return output_dir / filename
 
     stages = list(stage_counts.keys())
     counts = list(stage_counts.values())
@@ -4210,8 +4257,7 @@ def plot_funnel_terrace(
     ax.set_title(title, pad=14)
 
     out_path = output_dir / filename
-    save_figure(fig, out_path)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def plot_funnel_variants(
@@ -4227,11 +4273,12 @@ def plot_funnel_variants(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if not stage_counts:
+        return []
     paths: list[Path] = []
-    # The legacy bars renderer writes to ``funnel_plot.png``; use the
-    # same path so existing pipelines pick it up unchanged.
-    plot_funnel(stage_counts, output_dir, title=title)
-    paths.append(output_dir / "funnel_plot.png")
+    # The legacy bars renderer writes to ``funnel_plot.<ext>``; capture its
+    # returned Path so plot_format="pdf"/"svg" returns the vector path too.
+    paths.append(plot_funnel(stage_counts, output_dir, title=title))
     paths.append(plot_funnel_ribbon(stage_counts, output_dir, title=title))
     paths.append(plot_funnel_lollipop(stage_counts, output_dir, title=title))
     paths.append(plot_funnel_terrace(stage_counts, output_dir, title=title))

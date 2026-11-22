@@ -131,12 +131,13 @@ def phenotype_cells(
     required_cols = ["CD4", "CD8"]
     missing = [c for c in required_cols if c not in adata.obs.columns]
     if missing:
-        # Try to compute CD8 from CD8A + CD8B
-        if "CD8" in missing and "CD8A" in adata.obs.columns and "CD8B" in adata.obs.columns:
-            adata.obs["CD8"] = adata.obs["CD8A"] + adata.obs["CD8B"]
+        # Try to compute CD8 from CD8A + CD8B / CD8B1
+        cd8b_col = "CD8B" if "CD8B" in adata.obs.columns else ("CD8B1" if "CD8B1" in adata.obs.columns else None)
+        if "CD8" in missing and "CD8A" in adata.obs.columns and cd8b_col is not None:
+            adata.obs["CD8"] = adata.obs["CD8A"].fillna(0) + adata.obs[cd8b_col].fillna(0)
             missing.remove("CD8")
             if verbose:
-                logger.info("  Computed CD8 = CD8A + CD8B")
+                logger.info(f"  Computed CD8 = CD8A + {cd8b_col}")
         if missing:
             available = list(adata.obs.columns)[:20]
             raise TCRsiftValidationError(
@@ -189,7 +190,7 @@ def phenotype_cells(
 
     # CD3 filter
     if "CD3" in adata.obs.columns:
-        adata.obs["filter:min_cd3"] = adata.obs["CD3"] >= min_cd3_reads
+        adata.obs["filter:min_cd3"] = adata.obs["CD3"].fillna(0) >= min_cd3_reads
         n_pass_cd3 = adata.obs["filter:min_cd3"].sum()
         if verbose:
             logger.info(
@@ -231,12 +232,10 @@ def validate_phenotype_vs_expected(
     """
     warnings = []
 
-    if "expected_tcell_type" not in adata.obs.columns:
+    if "expected_tcell_type" not in adata.obs.columns or "sample" not in adata.obs.columns:
         return warnings
 
-    for sample in adata.obs["sample"].unique():
-        sample_mask = adata.obs["sample"] == sample
-        sample_data = adata.obs[sample_mask]
+    for sample, sample_data in adata.obs.dropna(subset=["sample"]).groupby("sample", observed=True):
 
         expected = sample_data["expected_tcell_type"].iloc[0]
         if pd.isna(expected) or expected == "mixed":
@@ -363,8 +362,11 @@ def get_phenotype_summary(adata: ad.AnnData) -> pd.DataFrame:
         raise ValueError("AnnData must have Tcell_type column. Run phenotype_cells first.")
 
     summary_data = []
-    for sample in adata.obs["sample"].unique():
-        sample_data = adata.obs[adata.obs["sample"] == sample]
+    if "sample" in adata.obs.columns:
+        groups = adata.obs.dropna(subset=["sample"]).groupby("sample", observed=True)
+    else:
+        groups = [("all", adata.obs)]
+    for sample, sample_data in groups:
         total = len(sample_data)
 
         row = {

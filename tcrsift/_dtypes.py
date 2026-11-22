@@ -99,31 +99,94 @@ _INT_COLS: frozenset[str] = frozenset(
 )
 
 
+def _to_clean_object_series(s: pd.Series) -> pd.Series:
+    """Convert Categorical / Arrow StringDtype / nullable object columns to plain
+    ``object`` with ``pd.NA`` / ``np.nan`` normalized to ``None`` for h5py.
+
+    When 100% of entries are missing (``len(s) > 0``), returns ``float64`` ``NaN``
+    because AnnData's ``write_h5ad`` rejects all-``None`` ``object`` arrays
+    (``infer_dtype == 'empty'``), whereas ``float64`` ``NaN`` round-trips cleanly
+    and supports ``.fillna("")`` / ``.isna()`` without error.
+    """
+    if len(s) > 0 and not s.notna().any():
+        return pd.Series(np.nan, index=s.index, dtype=float)
+    arr = s.astype(object)
+    return arr.where(pd.notna(arr), None)
+
+
+def _coerce_bool_array(s: pd.Series) -> np.ndarray:
+    """Coerce boolean / nullable / stringified boolean Series to plain ``bool``."""
+    vals = s.astype(object).to_numpy()
+    out = np.zeros(len(vals), dtype=bool)
+    for i, v in enumerate(vals):
+        if v is None or v is pd.NA or (isinstance(v, float) and np.isnan(v)):
+            out[i] = False
+        elif isinstance(v, (bool, np.bool_)):
+            out[i] = bool(v)
+        elif isinstance(v, str):
+            tok = v.strip().lower()
+            out[i] = tok not in ("", "0", "false", "f", "no", "n", "nan", "none", "<na>")
+        else:
+            out[i] = bool(v)
+    return out
+
+
 def rehydrate_obs(adata: ad.AnnData) -> ad.AnnData:
-    """Normalize known obs columns to the dtypes tcrsift expects.
+    """Normalize known obs columns (and any StringDtype columns) to the dtypes
+    tcrsift and h5py expect.
 
     Mutates ``adata.obs`` in place; returns ``adata`` for chaining. Apply at
-    every pipeline-stage entry to immunize against the h5ad-roundtrip
-    dtype-drift class of bugs (#3 / #5 / #7 / #11).
+    every pipeline-stage entry and prior to ``write_h5ad`` to immunize against
+    h5ad-roundtrip and Pandas 2.x/3.x ``StringDtype`` / ``pd.NA`` drift.
 
     Idempotent: re-running on already-normalized data is a no-op.
     """
     obs = adata.obs
     columns = set(obs.columns)
 
-    for col in _STRING_COLS & columns:
-        if not pd.api.types.is_object_dtype(obs[col]):
-            obs[col] = obs[col].astype(object)
+    for col in list(obs.columns):
+        if col in _BOOL_COLS or col in _INT_COLS:
+            continue
+        s = obs[col]
+        if col in _STRING_COLS or isinstance(s.dtype, pd.StringDtype):
+            if s.dtype == np.dtype(float) and len(s) > 0 and not s.notna().any():
+                continue
+            if not pd.api.types.is_object_dtype(s) or s.isna().any():
+                obs[col] = _to_clean_object_series(s)
+        elif isinstance(s.dtype, pd.CategoricalDtype) and isinstance(
+            s.cat.categories.dtype, pd.StringDtype
+        ):
+            obs[col] = s.cat.rename_categories(s.cat.categories.astype(object))
+        elif pd.api.types.is_object_dtype(s) and s.isna().any():
+            if len(s) > 0 and not s.notna().any():
+                obs[col] = pd.Series(np.nan, index=s.index, dtype=float)
+            else:
+                non_na = s.dropna()
+                if all(isinstance(x, str) for x in non_na):
+                    obs[col] = s.where(pd.notna(s), None)
+                elif all(isinstance(x, (bool, np.bool_)) for x in non_na):
+                    obs[col] = s.astype("boolean")
+                else:
+                    obs[col] = s.where(pd.notna(s), np.nan).infer_objects(copy=False)
+
+    if isinstance(obs.index.dtype, pd.StringDtype):
+        obs.index = obs.index.astype(object)
+
+    var = getattr(adata, "var", None)
+    if var is not None:
+        for col in list(var.columns):
+            if isinstance(var[col].dtype, pd.StringDtype):
+                var[col] = _to_clean_object_series(var[col])
+        if isinstance(var.index.dtype, pd.StringDtype):
+            var.index = var.index.astype(object)
 
     for col in _BOOL_COLS & columns:
-        if obs[col].dtype != bool:
-            values = obs[col].to_numpy()
-            mask = pd.isna(values)
-            obs[col] = np.where(mask, False, values).astype(bool)
+        if obs[col].dtype != np.dtype(bool):
+            obs[col] = _coerce_bool_array(obs[col])
 
     for col in _INT_COLS & columns:
-        if not pd.api.types.is_integer_dtype(obs[col]):
-            values = obs[col].to_numpy()
+        if obs[col].dtype != np.dtype(np.int64):
+            values = pd.to_numeric(obs[col], errors="coerce").to_numpy()
             mask = pd.isna(values)
             obs[col] = np.where(mask, 0, values).astype(np.int64)
 

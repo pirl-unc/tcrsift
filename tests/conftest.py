@@ -93,6 +93,10 @@ def _fast_savefig(monkeypatch):
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(mfig.Figure, "savefig", _capped)
+    yield
+    from tcrsift.plots import set_plot_format
+
+    set_plot_format("png")
 
 
 @pytest.fixture(autouse=True)
