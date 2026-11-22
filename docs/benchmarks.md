@@ -532,9 +532,12 @@ seconds on a laptop with 32 GB of RAM.
   programs often shared by tumor-reactive TIL; they do not predict cognate
   epitope or MHC restriction.
 - **Unvalidated contexts and lineages.** Only `--context solid-tumor` on CD8 T
-  cells is evaluated here. The `blood`, `blood-tumor`, `mpe`, and `heme`
-  presets, CD4 prioritization, and the `tcrsift run` culture pipeline are not
-  tested by these datasets.
+  cells is evaluated on this page. Peripheral blood (`--context blood`), VDJdb
+  specificity matching, pMHC multimer calling, and short-term peptide
+  stimulation are evaluated separately on the
+  [infectious-disease benchmark page](benchmarks-infectious.md). The
+  `blood-tumor`, `mpe`, and `heme` presets, CD4 prioritization, and multi-week
+  expansion cultures remain untested here.
 - **Virus-driven tumors.** None of the nine signatures ranked virus-specific
   clones above unlabeled TIL in either virus-driven cancer, and TCRsift ships
   no dedicated viral-TIL state signature.

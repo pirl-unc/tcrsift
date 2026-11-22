@@ -1,0 +1,6 @@
+dataset,donor_category,n_cells,n_clones,mean_Differentiated,mean_AntigenExperienced,mean_Cytolytic,mean_AcuteActivation,mean_Proliferation,mean_AIM,mean_CirculatingMemory,mean_TumorReactive
+minervina_2022,break,2227,1328,-0.6166,-0.35,-0.4396,-0.0687,-0.0986,0.0127,-0.1719,-0.1164
+minervina_2022,inf_after_1,2393,1087,-0.0506,-0.0479,-0.0606,-0.0579,-0.1116,-0.0151,0.0291,-0.0324
+minervina_2022,inf_after_2,911,157,0.5719,0.197,0.4113,0.5859,0.7723,0.1793,0.0771,0.5062
+minervina_2022,naive,566,384,-0.566,-0.3715,-0.4223,0.2065,0.3125,0.1754,0.0655,-0.0267
+minervina_2022,post_inf,4387,1877,0.2948,0.2108,0.2253,-0.0819,-0.0897,-0.0581,0.0469,-0.0249

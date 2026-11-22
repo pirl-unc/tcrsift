@@ -137,6 +137,13 @@ _MODULE_EXPORTS = {
         "strictest_tier_met",
         "per_sample_tier",
         "get_filter_summary",
+        "score_stimulation_response",
+    ),
+    ".multimer": (
+        "extract_feature_barcodes",
+        "classify_feature_columns",
+        "call_multimer_specificity",
+        "summarize_clone_multimer_specificity",
     ),
     ".annotate": (
         "CATEGORY_BACTERIAL",

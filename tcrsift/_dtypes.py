@@ -56,6 +56,7 @@ _STRING_COLS: frozenset[str] = frozenset(
         "antigen_sequences",
         "epitope_sequences",
         "source",
+        "control_sample",
         "expected_tcell_type",
         "Tcell_type",
         "tissue",

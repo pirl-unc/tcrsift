@@ -22,8 +22,9 @@ Standard 10x Genomics Cell Ranger directories serve as input:
   (optional for VDJ-only workflows).
 
 For an overview of the data flow and selection algorithms, see
-[How TCRsift works](how-it-works.md), and for empirical performance on five
-public tumor datasets, see [Benchmark on public TIL data](benchmarks.md).
+[How TCRsift works](how-it-works.md). For empirical evaluations on public
+human cohorts, see [Benchmark on public TIL data](benchmarks.md) and
+[Benchmark on infectious disease and blood](benchmarks-infectious.md).
 
 ## Choose a workflow
 

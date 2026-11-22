@@ -159,32 +159,18 @@ def _flag_viral(df: pd.DataFrame) -> pd.Series:
 
 
 def load_vdjdb(path: str | Path) -> pd.DataFrame:
-    """Load VDJdb TSV and normalize core columns (preserving paired TRA+TRB via complex.id)."""
+    """Load VDJdb TSV or directory and normalize core columns (preserving paired TRA+TRB)."""
     from .annotate import load_vdjdb as _load_vdjdb_paired
 
-    path = Path(path)
-    if path.is_dir():
-        full_file = path / "vdjdb_full.txt"
-        candidates = (
-            [full_file]
-            if full_file.is_file()
-            else sorted(path.glob("vdjdb*.txt")) + sorted(path.glob("vdjdb*.tsv"))
-        )
-        if not candidates:
-            raise TCRsiftValidationError(f"No VDJdb files found in directory: {path}")
-        db_file = candidates[0]
-    else:
-        db_file = path
-
-    df = _load_vdjdb_paired(db_file, verbose=False)
+    df = _load_vdjdb_paired(path, verbose=False)
     if df.empty or "cdr3_beta" not in df.columns:
         raise TCRsiftValidationError(
             "VDJdb file missing CDR3 beta column after mapping",
-            hint=f"Path: {db_file}",
+            hint=f"Path: {path}",
         )
     df = df[df["cdr3_beta"].notna() & (df["cdr3_beta"].astype(str) != "")].copy()
     if df.empty:
-        raise TCRsiftValidationError(f"VDJdb file has no TRB entries: {db_file}")
+        raise TCRsiftValidationError(f"VDJdb file has no TRB entries: {path}")
     df["is_viral"] = _flag_viral(df)
     return df
 

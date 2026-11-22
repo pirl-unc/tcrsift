@@ -70,7 +70,9 @@ nav:
     - Quick Start: getting-started/quickstart.md
     - Sample Sheets: getting-started/sample-sheets.md
   - How It Works: how-it-works.md
-  - Benchmarks: benchmarks.md
+  - Benchmarks:
+    - TIL Prioritization: benchmarks.md
+    - Infectious Disease & Blood: benchmarks-infectious.md
   - Workflows:
     - Culture Pipeline: user-guide/pipeline.md
     - Filtering Strategies: user-guide/filtering.md
@@ -85,6 +87,7 @@ nav:
       - Loading: api/loader.md
       - Phenotyping: api/phenotype.md
       - Clonotyping: api/clonotype.md
+      - Multimer Calling: api/multimer.md
     - Selection:
       - Filtering: api/filter.md
       - Signatures: api/signatures.md

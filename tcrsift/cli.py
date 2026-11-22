@@ -382,6 +382,11 @@ def cmd_annotate(args):
             or ensure_cached("iedb_epitope", cache_dir, auto_download=auto_dl)
         ),
         match_by=args.match_by if hasattr(args, "match_by") else "CDR3ab",
+        match_strictness=getattr(args, "database_match", None),
+        match_mode=getattr(args, "match_mode", None) or "exact",
+        max_distance=(
+            args.max_distance if getattr(args, "max_distance", None) is not None else 1
+        ),
         exclude_viral=args.exclude_viral,
         flag_only=args.flag_only,
         species=getattr(args, "species", "auto") or "auto",
@@ -1002,11 +1007,16 @@ def _common_contig_root(vdj_dirs):
     ancestor or it resolves to the filesystem root (too broad to rglob safely)."""
     import os
 
-    paths = [os.path.abspath(str(d)) for d in vdj_dirs if d]
-    if not paths:
+    dir_paths = []
+    for d in vdj_dirs:
+        if not d:
+            continue
+        p_raw = Path(os.path.abspath(str(d)))
+        dir_paths.append(str(p_raw.parent if p_raw.is_file() else p_raw))
+    if not dir_paths:
         return None
     try:
-        root = os.path.commonpath(paths)
+        root = os.path.commonpath(dir_paths)
     except ValueError:
         return None  # mixed drives / no common path
     p = Path(root)
@@ -1217,6 +1227,29 @@ def cmd_run(args):
             print(f"  [embed] skipped — install tcrsift[atlas] to enable ({e})")
 
     # Step 3: Clonotype
+    stim_resp_df = None
+    stim_join_col = "CDR3ab" if config.clonotype.group_by == "CDR3ab" else "CDR3_beta"
+    if "source" in adata.obs.columns and (adata.obs["source"].astype(str) == "control").any():
+        non_ctrl_mask = adata.obs["source"].astype(str) != "control"
+        n_ctrl_cells = int((~non_ctrl_mask).sum())
+        if int(non_ctrl_mask.sum()) == 0:
+            raise TCRsiftValidationError(
+                "No non-control stimulated/culture cells remain for clonotype aggregation",
+                hint="Provide at least one positive sample (e.g. source='culture') alongside source='control'.",
+            )
+        try:
+            from .filter import score_stimulation_response
+
+            stim_resp_df = score_stimulation_response(adata, clone_col=stim_join_col)
+            stim_resp_df.to_csv(data_dir / "stimulation_response.csv", index=False)
+            print(
+                f"  Scored stimulation vs control ({n_ctrl_cells} control cells) -> stimulation_response.csv"
+            )
+        except TCRsiftValidationError as exc:
+            print(f"  [stimulation] skipped control comparison: {exc}")
+        adata = adata[non_ctrl_mask].copy()
+        print(f"  Excluded {n_ctrl_cells} control cells before positive clonotype aggregation")
+
     print("\n[3/7] Aggregating clonotypes...")
     clonotypes = aggregate_clonotypes(
         adata,
@@ -1226,6 +1259,30 @@ def cmd_run(args):
         attribution=config.attribution,
         doublet_warn_rate=config.clonotype.doublet_warn_rate,
     )
+    if stim_resp_df is not None and stim_join_col in clonotypes.columns:
+        stim_cols = (
+            stim_resp_df[
+                [
+                    stim_join_col,
+                    "control_cells",
+                    "control_frequency",
+                    "log2_fold_change",
+                    "fisher_pvalue",
+                    "fisher_fdr",
+                ]
+            ]
+            .rename(
+                columns={
+                    "log2_fold_change": "stim_log2_fc",
+                    "fisher_pvalue": "stim_fisher_pvalue",
+                    "fisher_fdr": "stim_fisher_fdr",
+                }
+            )
+            .drop_duplicates(stim_join_col)
+        )
+        clonotypes = clonotypes.merge(stim_cols, on=stim_join_col, how="left")
+        clonotypes["control_cells"] = clonotypes["control_cells"].fillna(0).astype(int)
+        clonotypes["control_frequency"] = clonotypes["control_frequency"].fillna(0.0)
     if config.attribution.enabled:
         print("  Attribution ON: weighted fractional clone counts (#176)")
 
@@ -1653,6 +1710,9 @@ def cmd_run(args):
             cedar_path=cedar_path,
             iedb_epitope_path=iedb_epitope_path,
             match_by=config.annotate.match_by,
+            match_strictness=getattr(config.annotate, "match_strictness", None),
+            match_mode=getattr(config.annotate, "match_mode", "exact"),
+            max_distance=getattr(config.annotate, "max_distance", 1),
             exclude_viral=config.annotate.exclude_viral,
             flag_only=config.annotate.flag_only,
             species=run_species,
@@ -3526,6 +3586,27 @@ def create_parser():
         default="CDR3ab",
         help="Matching strategy (default: CDR3ab)",
     )
+    p_annot.add_argument(
+        "--database-match",
+        dest="database_match",
+        choices=["strict_ab", "ab_with_partial", "b_only"],
+        default=None,
+        help="Explicit chain-matching strictness (overrides --match-by when set): "
+        "'strict_ab' (paired α+β exact only), 'ab_with_partial' (paired α+β with β-only fallback), "
+        "or 'b_only' (CDR3β only).",
+    )
+    p_annot.add_argument(
+        "--match-mode",
+        choices=["exact", "levenshtein"],
+        default="exact",
+        help="CDR3β distance mode: 'exact' (default) or 'levenshtein' (edit distance <= --max-distance).",
+    )
+    p_annot.add_argument(
+        "--max-distance",
+        type=int,
+        default=1,
+        help="Maximum Levenshtein edit distance for --match-mode levenshtein (default: 1).",
+    )
     p_annot.add_argument("--exclude-viral", action="store_true", help="Remove viral clones")
     p_annot.add_argument("--flag-only", action="store_true", help="Just flag, don't remove")
     p_annot.add_argument(
@@ -4644,6 +4725,24 @@ CONDITIONALLY REQUIRED:
     )
     annot_group.add_argument(
         "--match-by", choices=["CDR3ab", "CDR3b_only"], help="Matching strategy (default: CDR3ab)"
+    )
+    annot_group.add_argument(
+        "--database-match",
+        choices=["strict_ab", "ab_with_partial", "b_only"],
+        default=None,
+        help="Chain-matching policy: 'ab_with_partial' (default), 'strict_ab', or 'b_only'.",
+    )
+    annot_group.add_argument(
+        "--match-mode",
+        choices=["exact", "levenshtein"],
+        default=None,
+        help="CDR3 comparison mode: 'exact' (default) or 'levenshtein'.",
+    )
+    annot_group.add_argument(
+        "--max-distance",
+        type=int,
+        default=None,
+        help="Maximum Levenshtein edit distance when --match-mode=levenshtein (default: 1).",
     )
     annot_group.add_argument(
         "--exclude-viral", action="store_true", default=None, help="Remove viral clones"

@@ -14,5 +14,6 @@ thresholds or logistic FDR estimation.
         - clone_clears_tier
         - strictest_tier_met
         - get_filter_summary
+        - score_stimulation_response
         - DEFAULT_THRESHOLD_TIERS
         - DEFAULT_FDR_TIERS

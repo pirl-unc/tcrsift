@@ -82,15 +82,15 @@ P1_TIL,P1,/data/p1_til/vdj,/data/p1_til/gex,,,til
 | Field | Requirement |
 | --- | --- |
 | `sample` | Unique sample identifier (numeric YAML values are coerced to text; duplicates raise an error). |
-| Data path | At least one of `vdj_dir`, `gex_dir`, `sct_path`, `til_csv`, or `til_h5ad`. (`tcrsift prioritize` requires both `vdj_dir` and `gex_dir`.) |
+| Data path | At least one of `vdj_dir`, `gex_dir`, `gex_path`, `sct_path`, `til_csv`, or `til_h5ad`. (`tcrsift prioritize` requires VDJ plus either `gex_dir` or `gex_path`.) |
 
 ### Input path fields
 
 | Field | Description |
 | --- | --- |
-| `vdj_dir` | Cell Ranger VDJ output directory (`filtered_contig_annotations.csv` or `all_contig_annotations.csv`). |
-| `gex_dir` | Cell Ranger GEX output directory (`filtered_feature_bc_matrix/` or `filtered_feature_bc_matrix.h5`). |
-| `gex_path` | Standalone 10x `.h5` expression matrix when a full `gex_dir` is not used. |
+| `vdj_dir` | Cell Ranger VDJ output directory or direct contig CSV (`filtered_contig_annotations.csv(.gz)`, `all_contig_annotations.csv(.gz)`, or sample-prefixed GEO/10x equivalents). Pre-Cell Ranger 6 sibling `*contig_annotations*.json(.gz)` files are automatically read to supply full-length `VDJ_aa`/`VDJ_nt` when `fwr1..fwr4` columns are absent. |
+| `gex_dir` | Cell Ranger GEX output directory (`filtered_feature_bc_matrix(.h5)`, `raw_feature_bc_matrix(.h5)`, `sample_filtered_feature_bc_matrix(.h5)`, or an unambiguous sample-prefixed 10x `.h5`/MTX file). |
+| `gex_path` | Direct path to a standalone 10x `.h5` expression matrix (or MTX directory) when `gex_dir` is omitted. |
 | `sct_path`, `sct_sheet` | SCT platform Excel workbook path and sheet name (default sheet `"Cell"`). |
 | `til_csv`, `til_h5ad` | Pre-processed TIL CSV or `.h5ad` file (alternatives to `vdj_dir` for `source: til`). |
 
@@ -99,7 +99,8 @@ P1_TIL,P1,/data/p1_til/vdj,/data/p1_til/gex,,,til
 | Field | Description |
 | --- | --- |
 | `patient_id` | Donor or patient identifier. Enables per-donor tiering, per-patient clone deduplication in `prioritize`, and multi-donor sharing buckets. |
-| `source` | Pipeline role: `culture` (default; blank CSV cells also resolve to `culture`), `til`, `tetramer`, or `sct`. Ignored by `prioritize`, which uses `--context` instead. |
+| `source` | Pipeline role: `culture` (default; blank CSV cells also resolve to `culture`), `control` (unstimulated/DMSO negative control), `til`, `tetramer`, or `sct`. Ignored by `prioritize`, which uses `--context` instead. |
+| `control_sample` | Sample identifier of the paired negative-control well (e.g. unstimulated or DMSO PBMC) for stimulation fold-change and activation-delta scoring (`score_stimulation_response`). |
 | `tissue` | Free-text anatomical site (such as `tumor`, `blood`, `LN`, `normal`). |
 | `enrichment_method` | Free-text sorting or stimulation label (such as `AIMpos`, `tetpos`, `CTYneg`). Populating this in `tcrsift run` enables `filtered_by_method/` rankings, per-donor method overlap matrices, and method recovery plots. |
 | `timepoint` | Free-text longitudinal label (such as `D7`, `D14`, `pre`, `post`). |

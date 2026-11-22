@@ -36,8 +36,8 @@ from .sample_sheet import Sample, SampleSheet, load_sample_sheet
 from .species import resolve_species
 from .validation import (
     TCRsiftValidationError,
-    validate_cellranger_gex_dir,
-    validate_cellranger_vdj_dir,
+    resolve_cellranger_gex_source,
+    resolve_cellranger_vdj_file,
     validate_file_exists,
     validate_numeric_param,
 )
@@ -83,6 +83,193 @@ VDJ_SEGMENT_COLS = ["fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4"]
 VDJ_SEGMENT_NT_COLS = [c + "_nt" for c in VDJ_SEGMENT_COLS]
 
 
+def _sample_prefix_from_contig_file(annotations_path: Path) -> str:
+    """Extract sample filename prefix (e.g. ``'GSM1_'``) before ``filtered_contig`` / ``all_contig``."""
+    lower = annotations_path.name.lower()
+    for token in ("filtered_contig_annotations", "all_contig_annotations"):
+        idx = lower.find(token)
+        if idx > 0:
+            return annotations_path.name[:idx]
+    return ""
+
+
+def _resolve_clonotypes_path(
+    vdj_base_dir: Path,
+    clonotypes_filename: str,
+    *,
+    sample_prefix: str = "",
+) -> Path | None:
+    """Locate an optional CellRanger ``clonotypes.csv(.gz)`` file in ``vdj_base_dir``."""
+    if not vdj_base_dir.is_dir():
+        return None
+    if sample_prefix:
+        for name in (
+            f"{sample_prefix}{clonotypes_filename}",
+            f"{sample_prefix}{clonotypes_filename}.gz",
+        ):
+            cand = vdj_base_dir / name
+            if cand.is_file():
+                return cand
+        return None
+    for name in (clonotypes_filename, f"{clonotypes_filename}.gz"):
+        cand = vdj_base_dir / name
+        if cand.is_file():
+            return cand
+    hits = sorted(
+        p
+        for p in (*vdj_base_dir.glob("*clonotypes.csv"), *vdj_base_dir.glob("*clonotypes.csv.gz"))
+        if p.is_file()
+    )
+    return hits[0] if len(hits) == 1 else None
+
+
+def _enrich_vdj_from_json(
+    df: pd.DataFrame,
+    vdj_base_dir: Path,
+    *,
+    sample_prefix: str = "",
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """Populate ``vdj_aa`` and ``vdj_nt`` from CellRanger ``*contig_annotations*.json(.gz)``
+    when pre-CellRanger-6 CSV tables lack ``fwr1..fwr4`` segment columns."""
+    if "vdj_aa" in df.columns or "contig_id" not in df.columns or not vdj_base_dir.is_dir():
+        return df
+
+    json_candidates: list[Path] = []
+    if sample_prefix:
+        patterns: tuple[str, ...] = (
+            f"{sample_prefix}filtered_contig_annotations.json",
+            f"{sample_prefix}filtered_contig_annotations.json.gz",
+            f"{sample_prefix}all_contig_annotations.json",
+            f"{sample_prefix}all_contig_annotations.json.gz",
+        )
+    else:
+        patterns = (
+            "filtered_contig_annotations.json",
+            "filtered_contig_annotations.json.gz",
+            "all_contig_annotations.json",
+            "all_contig_annotations.json.gz",
+            "*filtered_contig_annotations.json",
+            "*filtered_contig_annotations.json.gz",
+            "*all_contig_annotations.json",
+            "*all_contig_annotations.json.gz",
+        )
+    for pat in patterns:
+        found = sorted(p for p in vdj_base_dir.glob(pat) if p.is_file())
+        if len(found) == 1:
+            json_candidates = found
+            break
+    if not json_candidates:
+        return df
+
+    import gzip
+    import json
+
+    from .assemble import translate_dna
+    from .leaders import GERMLINE_MIN_IDENTITY, germline_vgene_leaders
+    from .species import detect_vdj_species
+
+    json_path = json_candidates[0]
+    needed_ids = set(df["contig_id"].dropna().astype(str))
+    if not needed_ids:
+        return df
+
+    sp = detect_vdj_species(df) or "human"
+    opener = gzip.open if json_path.name.lower().endswith(".gz") else open
+    try:
+        with opener(json_path, "rt", encoding="utf-8") as fh:
+            records = json.load(fh)
+    except Exception as exc:
+        logger.warning("Could not parse VDJ JSON annotations %s: %s", json_path, exc)
+        return df
+
+    vdj_aa_map: dict[str, str] = {}
+    vdj_nt_map: dict[str, str] = {}
+    for rec in records:
+        cid = rec.get("contig_name")
+        if not cid or cid not in needed_ids:
+            continue
+        seq = str(rec.get("sequence") or "").upper()
+        start_pos = rec.get("start_codon_pos")
+        if not seq or not isinstance(start_pos, int) or start_pos < 0:
+            continue
+        anns = rec.get("annotations") or []
+        j_ends: list[int] = []
+        v_start_explicit = None
+        v_gene = None
+        for ann in anns:
+            feat = ann.get("feature") or {}
+            rtype = feat.get("region_type")
+            if rtype == "J-REGION":
+                cend = ann.get("contig_match_end")
+                if isinstance(cend, int) and start_pos < cend <= len(seq):
+                    j_ends.append(cend)
+            elif rtype == "V-REGION":
+                v_gene = v_gene or feat.get("gene_name")
+                cstart = ann.get("contig_match_start")
+                amatch = ann.get("annotation_match_start", 0)
+                if (
+                    v_start_explicit is None
+                    and isinstance(cstart, int)
+                    and cstart >= start_pos
+                    and amatch == 0
+                    and (cstart - start_pos) % 3 == 0
+                ):
+                    v_start_explicit = cstart
+            elif rtype == "L-REGION+V-REGION":
+                v_gene = v_gene or feat.get("gene_name")
+        if not j_ends:
+            continue
+        j_end = max(j_ends)
+        raw_len = j_end - start_pos
+        full_nt = seq[start_pos : j_end - (raw_len % 3)]
+        if len(full_nt) < 240:
+            continue
+        full_aa, _ = translate_dna(full_nt)
+        if not full_aa or "*" in full_aa:
+            continue
+
+        vdj_start_aa: int | None = None
+        if isinstance(v_start_explicit, int) and v_start_explicit >= start_pos:
+            vdj_start_aa = (v_start_explicit - start_pos) // 3
+        elif v_gene:
+            best_score = -1.0
+            for _allele, _func, g_leader in germline_vgene_leaders(v_gene, species=sp):
+                glen = len(g_leader)
+                max_k = min(15, max(0, len(full_aa) - glen - 60))
+                for k in range(max_k + 1):
+                    if full_aa[k] != "M":
+                        continue
+                    window = full_aa[k : k + glen]
+                    if len(window) != glen:
+                        continue
+                    ident = sum(a == b for a, b in zip(window, g_leader)) / glen
+                    if ident >= GERMLINE_MIN_IDENTITY and ident > best_score:
+                        best_score = ident
+                        vdj_start_aa = k + glen
+
+        if vdj_start_aa is None or vdj_start_aa >= len(full_aa):
+            continue
+        cand_aa = full_aa[vdj_start_aa:]
+        cand_nt = full_nt[3 * vdj_start_aa :]
+        cdr3 = str(rec.get("cdr3") or "")
+        if cdr3 and cdr3 not in cand_aa:
+            continue
+        vdj_aa_map[str(cid)] = cand_aa
+        vdj_nt_map[str(cid)] = cand_nt.lower()
+
+    if vdj_aa_map:
+        df = df.copy()
+        cids = df["contig_id"].astype(str)
+        df["vdj_aa"] = cids.map(vdj_aa_map)
+        df["vdj_nt"] = cids.map(vdj_nt_map)
+        if verbose:
+            logger.info(
+                f"  Extracted full-length VDJ sequences for {len(vdj_aa_map):,} contigs from {json_path.name}"
+            )
+    return df
+
+
 def load_cellranger_vdj(
     vdj_dir: str | Path,
     sample_name: str,
@@ -96,7 +283,7 @@ def load_cellranger_vdj(
     Parameters
     ----------
     vdj_dir : str or Path
-        Path to CellRanger VDJ output directory
+        Path to CellRanger VDJ output directory (or contig CSV/.csv.gz file)
     sample_name : str
         Name to assign to this sample
     annotations_filename : str
@@ -113,38 +300,29 @@ def load_cellranger_vdj(
     """
     vdj_dir = Path(vdj_dir)
 
-    # Validate directory exists and has expected files
     try:
-        vdj_dir = validate_cellranger_vdj_dir(vdj_dir)
-    except TCRsiftValidationError:
-        # Re-raise with more context
+        annotations_path, unfiltered = resolve_cellranger_vdj_file(
+            vdj_dir, annotations_filename=annotations_filename
+        )
+    except TCRsiftValidationError as exc:
+        if "Multiple " in str(exc):
+            raise
         raise TCRsiftValidationError(
             f"Invalid CellRanger VDJ directory for sample '{sample_name}': {vdj_dir}",
             hint="Make sure this is the 'outs' directory from 'cellranger vdj'. "
-            "It should contain 'filtered_contig_annotations.csv' or 'all_contig_annotations.csv'.",
-        )
+            "It should contain 'filtered_contig_annotations.csv(.gz)' or 'all_contig_annotations.csv(.gz)'.",
+        ) from exc
 
-    annotations_path = vdj_dir / annotations_filename
-    clonotypes_path = vdj_dir / clonotypes_filename
-
-    unfiltered = False
-    if not annotations_path.exists():
-        # Try alternative filename
-        alt_path = vdj_dir / "all_contig_annotations.csv"
-        if alt_path.exists():
-            annotations_path = alt_path
-            unfiltered = True
-            if verbose:
-                logger.info("  Using all_contig_annotations.csv (filtered not found)")
-        else:
-            raise TCRsiftValidationError(
-                f"VDJ annotations file not found: {annotations_path}",
-                hint=f"Expected one of: {annotations_filename}, all_contig_annotations.csv "
-                f"in directory: {vdj_dir}",
-            )
+    vdj_base_dir = annotations_path.parent
+    sample_prefix = _sample_prefix_from_contig_file(annotations_path) if vdj_dir.is_file() else ""
+    clonotypes_path = _resolve_clonotypes_path(
+        vdj_base_dir, clonotypes_filename, sample_prefix=sample_prefix
+    )
+    if unfiltered and verbose:
+        logger.info(f"  Using unfiltered contig table {annotations_path.name}")
 
     logger.info(f"Loading VDJ annotations from {annotations_path}")
-    df = pd.read_csv(annotations_path)
+    df = pd.read_csv(annotations_path, low_memory=False)
 
     # Validate the VDJ data
     if len(df) == 0:
@@ -170,7 +348,7 @@ def load_cellranger_vdj(
         keep = pd.Series(True, index=df.index)
         for flag in ("is_cell", "high_confidence"):
             if flag in df.columns:
-                keep &= df[flag].astype(str).str.lower().eq("true")
+                keep &= df[flag].astype(str).str.strip().str.lower().isin({"true", "t", "1", "yes", "y"})
         if verbose and not keep.all():
             logger.info(f"  Kept {int(keep.sum()):,} of {len(df):,} contigs (called cells, high confidence)")
         df = df[keep]
@@ -183,16 +361,49 @@ def load_cellranger_vdj(
             logger.info(f"  Dropped {int(no_chain.sum()):,} contigs with no chain call")
         df = df[~no_chain]
     # Cell Ranger's filtered table still lists non-productive contigs (frame
-    # shifts, stop codons, no CDR3). Chains are ranked by UMI count below, so
-    # a non-productive contig with more UMIs displaced the cell's real chain,
-    # or left the cell with no CDR3 at all. Cell Ranger builds its own
-    # clonotypes from productive contigs only; do the same.
+    # shifts, stop codons, no CDR3). Keep explicitly productive contigs, plus
+    # 5'-partial contigs where Cell Ranger left ``productive="None"`` because
+    # 5' coverage stopped downstream of the leader ATG despite a complete
+    # V+J call and a stop-free canonical IMGT C...[FW] CDR3 (common in Cell
+    # Ranger 2/3 and targeted TCR libraries such as GSE171037).
     if "productive" in df.columns:
-        productive = df["productive"].astype(str).str.lower().isin({"true", "t", "1", "yes", "y"})
-        if verbose and not productive.all():
-            logger.info(f"  Dropped {int((~productive).sum()):,} non-productive contigs")
-        df = df[productive]
-    df = df.copy()
+        prod_str = df["productive"].astype(str).str.strip().str.lower()
+        productive = prod_str.isin({"true", "t", "1", "yes", "y"})
+        undetermined = df["productive"].isna() | prod_str.isin({"none", "", "nan", "<na>"})
+        if undetermined.any() and {"v_gene", "j_gene", "cdr3"} <= set(df.columns):
+            v_ok = ~df["v_gene"].isna() & ~df["v_gene"].astype(str).str.strip().str.lower().isin(
+                {"none", "", "nan"}
+            )
+            j_ok = ~df["j_gene"].isna() & ~df["j_gene"].astype(str).str.strip().str.lower().isin(
+                {"none", "", "nan"}
+            )
+            cdr3_ok = (
+                df["cdr3"]
+                .astype("string")
+                .str.strip()
+                .str.fullmatch(r"C[ACDEFGHIKLMNPQRSTVWY]{3,28}[FW]", na=False)
+                .to_numpy(dtype=bool)
+            )
+            cell_ok = pd.Series(True, index=df.index)
+            for flag in ("is_cell", "high_confidence"):
+                if flag in df.columns:
+                    cell_ok &= df[flag].astype(str).str.strip().str.lower().isin({"true", "t", "1", "yes", "y"})
+            partial_rescue = undetermined & v_ok & j_ok & cdr3_ok & cell_ok
+        else:
+            partial_rescue = pd.Series(False, index=df.index)
+        keep_prod = productive | partial_rescue
+        if verbose and not keep_prod.all():
+            logger.info(f"  Dropped {int((~keep_prod).sum()):,} non-productive contigs")
+        if verbose and partial_rescue.any():
+            logger.info(
+                f"  Retained {int(partial_rescue.sum()):,} 5'-partial contigs "
+                "(productive=None) with complete V+J genes and in-frame CDR3"
+            )
+        df = df[keep_prod].copy()
+        df["_is_full_productive"] = productive.loc[df.index].to_numpy(dtype=bool)
+    else:
+        df = df.copy()
+        df["_is_full_productive"] = True
     if len(df) == 0:
         raise TCRsiftValidationError(
             f"No usable contigs in: {annotations_path}",
@@ -220,10 +431,10 @@ def load_cellranger_vdj(
 
     # Add sample information
     df["sample"] = sample_name
-    df["vdj_dir"] = str(vdj_dir)
+    df["vdj_dir"] = str(vdj_base_dir)
 
     # Load clonotypes if available
-    if clonotypes_path.exists():
+    if clonotypes_path is not None and clonotypes_path.exists():
         logger.info(f"Loading clonotypes from {clonotypes_path}")
         df_clonotypes = pd.read_csv(clonotypes_path)
         # Clonotypes contain MAIT/NKT evidence
@@ -253,11 +464,31 @@ def load_cellranger_vdj(
             )
             df = df.merge(df_clonotypes_subset, on="raw_clonotype_id", how="left")
 
-    # Combine VDJ segments into full sequence if available
+    # Combine VDJ segments into full sequence ONLY on rows where all 7 segments
+    # (fwr1..fwr4) are present and stop-free; 5'-partial contigs leave vdj_aa as None
+    # rather than emitting an N-terminally truncated fragment.
     if all(col in df.columns for col in VDJ_SEGMENT_COLS):
-        df["vdj_aa"] = df[VDJ_SEGMENT_COLS].fillna("").agg("".join, axis=1)
-    if all(col in df.columns for col in VDJ_SEGMENT_NT_COLS):
-        df["vdj_nt"] = df[VDJ_SEGMENT_NT_COLS].fillna("").agg("".join, axis=1)
+        seg_complete = pd.Series(True, index=df.index)
+        for col in VDJ_SEGMENT_COLS:
+            s_val = df[col].astype("string").str.strip()
+            seg_complete &= (
+                df[col].notna()
+                & ~s_val.str.lower().isin({"", "none", "nan", "<na>"})
+                & ~s_val.str.contains(r"\*", regex=True, na=True)
+            )
+        joined_aa = df[VDJ_SEGMENT_COLS].fillna("").agg("".join, axis=1)
+        df["vdj_aa"] = joined_aa.where(seg_complete, other=None)
+        if all(col in df.columns for col in VDJ_SEGMENT_NT_COLS):
+            nt_complete = seg_complete.copy()
+            for col in VDJ_SEGMENT_NT_COLS:
+                s_nt = df[col].astype("string").str.strip()
+                nt_complete &= df[col].notna() & ~s_nt.str.lower().isin({"", "none", "nan", "<na>"})
+            joined_nt = df[VDJ_SEGMENT_NT_COLS].fillna("").agg("".join, axis=1)
+            df["vdj_nt"] = joined_nt.where(nt_complete, other=None)
+    if "vdj_aa" not in df.columns:
+        df = _enrich_vdj_from_json(
+            df, vdj_base_dir, sample_prefix=sample_prefix, verbose=verbose
+        )
 
     return df
 
@@ -331,47 +562,38 @@ def load_cellranger_gex(
 
     gex_dir = Path(gex_dir)
 
-    # Validate directory
     try:
-        gex_dir = validate_cellranger_gex_dir(gex_dir)
-    except TCRsiftValidationError:
+        source_kind, resolved_source = resolve_cellranger_gex_source(gex_dir)
+    except TCRsiftValidationError as exc:
+        if "Multiple " in str(exc):
+            raise
         raise TCRsiftValidationError(
             f"Invalid CellRanger GEX directory for sample '{sample_name}': {gex_dir}",
-            hint="Make sure this is the 'outs' directory from 'cellranger count'. "
+            hint="Make sure this is the 'outs' directory from 'cellranger count' (or a 10x .h5 file). "
             "It should contain 'filtered_feature_bc_matrix' or 'filtered_feature_bc_matrix.h5'.",
-        )
+        ) from exc
 
-    # Try standard CellRanger output locations
-    matrix_dir = gex_dir / "filtered_feature_bc_matrix"
-    if not matrix_dir.exists():
-        matrix_dir = gex_dir / "outs" / "filtered_feature_bc_matrix"
-    if not matrix_dir.exists():
-        # Try h5 file
-        h5_path = gex_dir / "filtered_feature_bc_matrix.h5"
-        if not h5_path.exists():
-            h5_path = gex_dir / "outs" / "filtered_feature_bc_matrix.h5"
-        if h5_path.exists():
-            logger.info(f"Loading GEX from h5 file: {h5_path}")
-            adata = sc.read_10x_h5(str(h5_path))
-            # Index genes by Ensembl id, as the matrix-directory reader does.
-            # Symbols repeat in 10x references, and a repeated name makes
-            # every name-based gene lookup fail; an h5 sample combined with a
-            # matrix-directory sample also needs the same gene axis.
-            if "gene_ids" in adata.var.columns:
-                adata.var["gene_symbols"] = adata.var_names.astype(str)
-                adata.var_names = adata.var["gene_ids"].astype(str)
-                adata.var = adata.var.drop(columns="gene_ids")
-                adata.var.index.name = None
-        else:
-            available = [f.name for f in gex_dir.iterdir()][:15]
-            raise TCRsiftValidationError(
-                f"Gene expression matrix not found in: {gex_dir}",
-                hint=f"Expected 'filtered_feature_bc_matrix' directory or 'filtered_feature_bc_matrix.h5'. "
-                f"Available files/directories: {available}",
+    if source_kind == "h5":
+        logger.info(f"Loading GEX from h5 file: {resolved_source}")
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Variable names are not unique",
+                category=UserWarning,
             )
+            adata = sc.read_10x_h5(str(resolved_source))
+        # Index genes by Ensembl id, as the matrix-directory reader does.
+        # Symbols repeat in 10x references, and a repeated name makes
+        # every name-based gene lookup fail; an h5 sample combined with a
+        # matrix-directory sample also needs the same gene axis.
+        if "gene_ids" in adata.var.columns:
+            adata.var["gene_symbols"] = adata.var_names.astype(str)
+            adata.var_names = adata.var["gene_ids"].astype(str)
+            adata.var = adata.var.drop(columns="gene_ids")
+            adata.var.index.name = None
     else:
-        logger.info(f"Loading GEX from matrix directory: {matrix_dir}")
-        adata = sc.read_10x_mtx(str(matrix_dir), var_names="gene_ids")
+        logger.info(f"Loading GEX from matrix directory: {resolved_source}")
+        adata = sc.read_10x_mtx(str(resolved_source), var_names="gene_ids")
 
     # Validate loaded data
     if adata.n_obs == 0:
@@ -385,7 +607,7 @@ def load_cellranger_gex(
 
     # Add sample information
     adata.obs["sample"] = sample_name
-    adata.obs["gex_dir"] = str(gex_dir)
+    adata.obs["gex_dir"] = str(resolved_source.parent if gex_dir.is_file() else gex_dir)
 
     # Calculate QC metrics - detect mitochondrial genes across human (MT-*, ENSG*)
     # and mouse (mt-*, ENSMUSG*) inputs via the shared symbol resolver.
@@ -556,6 +778,11 @@ def combine_gex_and_vdj(
     adata.obs["CD3"] = adata.obs["CD3D"] + adata.obs["CD3E"] + adata.obs["CD3G"]
     adata.obs["CD8"] = adata.obs["CD8A"] + adata.obs["CD8B"]
 
+    if "sample" not in adata.obs.columns and "sample" in vdj_df.columns:
+        uniq_samples = vdj_df["sample"].dropna().astype(str).unique()
+        if len(uniq_samples) == 1:
+            adata.obs["sample"] = uniq_samples[0]
+
     # Pivot VDJ data to get one row per barcode with chain info
     if len(vdj_df) > 0:
         vdj_pivoted = _pivot_vdj_by_barcode(vdj_df)
@@ -623,10 +850,16 @@ def _pivot_vdj_by_barcode(vdj_df: pd.DataFrame) -> pd.DataFrame:
 
     Handles doublets by keeping track of multiple chains per barcode.
     """
-    # Sort by UMI count to prioritize high-quality chains
-    vdj_df = vdj_df.sort_values(
-        ["barcode", "chain", "umis", "reads"], ascending=[True, True, False, False]
-    )
+    # Sort explicitly productive full-length contigs ahead of 5'-partial rescued
+    # contigs, then by UMI and read count.
+    sort_cols = ["barcode", "chain"]
+    sort_asc = [True, True]
+    if "_is_full_productive" in vdj_df.columns:
+        sort_cols.append("_is_full_productive")
+        sort_asc.append(False)
+    sort_cols.extend(["umis", "reads"])
+    sort_asc.extend([False, False])
+    vdj_df = vdj_df.sort_values(sort_cols, ascending=sort_asc)
 
     # Create entry ID for each chain per barcode (1, 2, etc.)
     vdj_df["entry_id"] = vdj_df.groupby(
@@ -713,10 +946,11 @@ def load_sample(
     adata = None
     vdj_df = None
 
-    # Load GEX if available
-    if sample.gex_dir:
+    # Load GEX if available (from gex_dir or standalone gex_path)
+    gex_source = sample.gex_dir or getattr(sample, "gex_path", None)
+    if gex_source:
         adata = load_cellranger_gex(
-            sample.gex_dir,
+            gex_source,
             sample.sample,
             min_genes=min_genes,
             max_genes=max_genes,
@@ -754,6 +988,7 @@ def load_sample(
             ("antigen_sequences", sample.antigen_sequences),
             ("epitope_sequences", sample.epitope_sequences),
             ("source", sample.source),
+            ("control_sample", getattr(sample, "control_sample", None)),
             ("patient_id", sample.patient_id),
             ("enrichment_method", sample.enrichment_method),
             ("timepoint", sample.timepoint),
@@ -887,6 +1122,10 @@ def load_samples(
             validation_errors.append(
                 f"Sample '{sample.sample}': GEX directory not found: {sample.gex_dir}"
             )
+        if getattr(sample, "gex_path", None) and not Path(sample.gex_path).exists():
+            validation_errors.append(
+                f"Sample '{sample.sample}': GEX file not found: {sample.gex_path}"
+            )
 
     if validation_errors:
         raise TCRsiftValidationError(
@@ -932,7 +1171,7 @@ def load_samples(
                 raise TCRsiftValidationError(
                     f"Failed to load sample '{sample.sample}': {e}",
                     hint="Check that the CellRanger output directories are valid and complete. "
-                    f"VDJ: {sample.vdj_dir}, GEX: {sample.gex_dir}",
+                    f"VDJ: {sample.vdj_dir}, GEX: {sample.gex_dir or sample.gex_path}",
                 ) from e
 
             if adata is None:
