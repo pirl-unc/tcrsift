@@ -1055,21 +1055,16 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
       clonotype, with ``cdr3.alpha`` and ``cdr3.beta`` as separate
       columns. This is what αβ matching needs.
     - ``vdjdb.txt`` — *long/slim* format: one row per **chain**, keyed
-      by ``complex.id`` and ``gene`` (``TRA``/``TRB``). The ``cdr3``
-      column holds an α-CDR3 when ``gene == TRA`` and a β-CDR3 when
-      ``gene == TRB``. A naive ``cdr3 → cdr3_beta`` rename mixes the
-      two and matches alpha sequences as if they were beta. To avoid
-      that, the long-format path is filtered to ``gene == TRB`` rows
-      so ``cdr3_beta`` only carries actual β-CDR3s; α rows are
-      dropped (would need a ``complex.id`` pivot to recover αβ pairs,
-      which is best deferred to the full file).
+      by ``complex.id`` and ``gene`` (``TRA``/``TRB``). Output rows are
+      restricted to ``gene == TRB`` so ``cdr3_beta`` only carries actual
+      β-CDR3s; when ``complex.id > 0`` links a ``TRB`` row to a paired
+      ``TRA`` row, ``cdr3_alpha`` and ``v_alpha`` are reconstructed onto
+      that row (unpaired ``complex.id == 0`` rows keep ``cdr3_alpha = pd.NA``).
 
-    When given a directory, looks for one of three canonical filenames
-    in priority order: ``vdjdb_full.txt``, ``vdjdb.txt``,
-    ``vdjdb.slim.txt``. Other files in the directory (metadata
-    sidecars, processed views, etc.) are ignored — a directory that
-    has none of these names raises with a hint to re-run
-    ``tcrsift data download`` or pass the file path explicitly.
+    When given a directory, looks for canonical filenames in priority
+    order (``vdjdb_full.txt``, ``vdjdb.txt``, ``vdjdb.slim.txt``, or a
+    date-stamped ``vdjdb-YYYY-MM-DD.txt``). Other sidecar files in the
+    directory (``.meta.txt``, ``.scored.txt``, etc.) are ignored.
 
     Parameters
     ----------
@@ -1083,9 +1078,7 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     pd.DataFrame
         VDJdb entries with standardized columns (``cdr3_alpha``,
         ``cdr3_beta``, ``epitope``, ``antigen_gene``, ``species``,
-        ``mhc_allele``, ``database``, ``is_viral``). The
-        ``cdr3_alpha`` column is empty when loaded from the
-        long/slim format.
+        ``mhc_allele``, ``database``, ``is_viral``).
     """
     path = Path(path)
 
@@ -1121,11 +1114,11 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     elif "cdr3" in df.columns and "gene" in df.columns:
         n_total = len(df)
         df = _normalize_vdjdb_long(df)
+        n_paired = int(df["cdr3_alpha"].notna().sum()) if "cdr3_alpha" in df.columns else 0
         if verbose:
             logger.info(
                 f"  Long/slim VDJdb format: kept {len(df):,} TRB rows "
-                f"out of {n_total:,} total (α rows discarded — load "
-                f"vdjdb_full.txt for αβ matching)."
+                f"({n_paired:,} paired αβ via complex.id) out of {n_total:,} total rows."
             )
     else:
         raise TCRsiftValidationError(
@@ -1183,13 +1176,32 @@ def _normalize_vdjdb_paired(df: pd.DataFrame) -> pd.DataFrame:
 def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
     """Standardize the long/slim ``vdjdb.txt`` format.
 
-    The long format has one row per chain. We filter to ``gene == TRB``
-    so the resulting ``cdr3_beta`` column only contains actual β-CDR3s
+    The long format has one row per chain. We filter output rows to
+    ``gene == TRB`` so ``cdr3_beta`` only contains actual β-CDR3s
     (α-CDR3s share the same ``cdr3`` column under ``gene == TRA`` rows
-    and would otherwise leak into ``cdr3_beta`` and produce wrong-chain
-    matches). Recovering αβ pairs would require a pivot on
-    ``complex.id`` — deferred; use ``vdjdb_full.txt`` for that.
+    and must never leak into ``cdr3_beta``). When ``complex.id > 0``
+    links a ``TRB`` row to a paired ``TRA`` row in the same file, we
+    join the ``TRA`` row's ``cdr3`` and ``v.segm`` onto ``cdr3_alpha``
+    and ``v_alpha``; unpaired rows (``complex.id == 0``) keep
+    ``cdr3_alpha = pd.NA``.
     """
+    tra_cdr3_by_complex: dict[int, object] = {}
+    tra_v_by_complex: dict[int, object] = {}
+    if "complex.id" in df.columns:
+        cid_num = pd.to_numeric(df["complex.id"], errors="coerce")
+        has_cdr3 = (
+            df["cdr3"].notna() & (df["cdr3"].astype(str).str.strip() != "")
+            if "cdr3" in df.columns
+            else pd.Series(False, index=df.index)
+        )
+        tra_rows = df[(df["gene"] == "TRA") & cid_num.gt(0) & has_cdr3].copy()
+        if not tra_rows.empty:
+            tra_rows["_cid_int"] = cid_num.loc[tra_rows.index].astype(int)
+            tra_rows = tra_rows.drop_duplicates("_cid_int", keep="first")
+            tra_cdr3_by_complex = dict(zip(tra_rows["_cid_int"], tra_rows["cdr3"]))
+            if "v.segm" in tra_rows.columns:
+                tra_v_by_complex = dict(zip(tra_rows["_cid_int"], tra_rows["v.segm"]))
+
     # Exact-string match on the canonical VDJdb labels (``TRA``/``TRB``).
     # Any other gene (``TRG``/``TRD`` etc.) is silently dropped — αβ
     # matching can't consume them anyway.
@@ -1215,10 +1227,19 @@ def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
 
     if "antigen.species" in df.columns:
         df["species"] = df["antigen.species"]
-    # No α data in this format; explicit empty column keeps the
-    # downstream schema stable.
-    df["cdr3_alpha"] = pd.NA
-    df["v_alpha"] = pd.NA
+
+    if tra_cdr3_by_complex and "complex.id" in df.columns:
+        trb_cid = pd.to_numeric(df["complex.id"], errors="coerce")
+        valid_cid = trb_cid.where(trb_cid.gt(0))
+        df["cdr3_alpha"] = valid_cid.map(
+            lambda x: tra_cdr3_by_complex.get(int(x), pd.NA) if pd.notna(x) else pd.NA
+        )
+        df["v_alpha"] = valid_cid.map(
+            lambda x: tra_v_by_complex.get(int(x), pd.NA) if pd.notna(x) else pd.NA
+        )
+    else:
+        df["cdr3_alpha"] = pd.NA
+        df["v_alpha"] = pd.NA
     return df
 
 
@@ -1226,30 +1247,26 @@ def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
 # release zip drops a swarm of processed sidecars (``vdjdb.meta.txt``,
 # ``vdjdb.scored.txt``, ``vdjdb_full_*_broken.txt`` etc.) alongside
 # these, but they have different schemas / are incomplete. We only
-# look for the names below; everything else stays invisible to the
-# loader. Users with a custom file should pass its path directly.
+# look for the names below (plus date-stamped ``vdjdb-YYYY-MM-DD.txt``
+# archives when none of the canonical names exist).
 _VDJDB_CANONICAL_FILENAMES = ("vdjdb_full.txt", "vdjdb.txt", "vdjdb.slim.txt")
+_VDJDB_SIDECAR_SUFFIXES = (".meta.txt", ".scored.txt", "_broken.txt", ".meta.tsv", ".scored.tsv")
 
 
 def _pick_vdjdb_file(dir_path: Path) -> Path:
-    """Choose the canonical VDJdb data file from an extracted release dir.
-
-    Priority:
-
-    1. ``vdjdb_full.txt`` — paired αβ-per-row, the format αβ matching
-       needs.
-    2. ``vdjdb.txt`` — long/slim, one chain per row (β-only after the
-       gene filter applied in ``_normalize_vdjdb_long``).
-    3. ``vdjdb.slim.txt`` — smaller variant of the long format.
-
-    A directory without any of these (e.g. the cache was corrupted or
-    the release format changed) raises with a clear hint pointing back
-    at ``tcrsift data download`` (#45).
-    """
+    """Choose the canonical VDJdb data file from an extracted release dir."""
     for name in _VDJDB_CANONICAL_FILENAMES:
         candidate = dir_path / name
         if candidate.is_file():
             return candidate
+
+    dated_candidates = sorted(
+        p
+        for p in (*dir_path.glob("vdjdb-*.txt"), *dir_path.glob("vdjdb-*.tsv"))
+        if p.is_file() and not p.name.lower().endswith(_VDJDB_SIDECAR_SUFFIXES)
+    )
+    if dated_candidates:
+        return dated_candidates[-1]
 
     available = [f.name for f in dir_path.iterdir()][:15]
     raise TCRsiftValidationError(
@@ -1732,6 +1749,7 @@ def load_databases(
     iedb_path: str | Path | None = None,
     cedar_path: str | Path | None = None,
     iedb_epitope_path: str | Path | None = None,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """
     Load and combine multiple TCR databases.
@@ -1748,6 +1766,8 @@ def load_databases(
         Path to IEDB epitope-level table (companion to ``iedb_path``).
         When provided, ``load_iedb`` defers to its shorter/more
         canonical antigen and organism names — see :func:`load_iedb`.
+    verbose : bool
+        Print progress information.
 
     Returns
     -------
@@ -1757,7 +1777,7 @@ def load_databases(
     dfs = []
 
     if vdjdb_path:
-        dfs.append(load_vdjdb(vdjdb_path))
+        dfs.append(load_vdjdb(vdjdb_path, verbose=verbose))
     if iedb_path:
         dfs.append(load_iedb(iedb_path, epitope_path=iedb_epitope_path))
     if cedar_path:
@@ -1772,7 +1792,8 @@ def load_databases(
     # Keep only rows with at least a beta CDR3
     combined = combined[combined["cdr3_beta"].notna() & (combined["cdr3_beta"] != "")]
 
-    logger.info(f"Combined database has {len(combined)} entries")
+    if verbose:
+        logger.info(f"Combined database has {len(combined)} entries")
     return combined
 
 
@@ -1990,18 +2011,37 @@ def match_clonotypes(
         else None
     )
 
+    # Pre-index positional row slices by CDR3β and paired (CDR3α, CDR3β) once
+    # so per-clone lookups run in O(1) instead of scanning a 140k-row DataFrame.
+    import numpy as np
+
+    b_to_pos: dict[str, np.ndarray] = {}
+    if strictness in ("ab_with_partial", "b_only"):
+        valid_b = database["cdr3_beta"].notna() & (database["cdr3_beta"].astype(str) != "")
+        if valid_b.any():
+            b_sub = database.loc[valid_b, "cdr3_beta"].astype(str)
+            b_positions = np.flatnonzero(valid_b.to_numpy())
+            for beta_key, rel_idx in b_sub.groupby(b_sub, sort=False).indices.items():
+                if len(rel_idx):
+                    b_to_pos[str(beta_key)] = b_positions[rel_idx]
+
     if strictness in ("strict_ab", "ab_with_partial"):
         allow_b_fallback = strictness == "ab_with_partial"
-        _db_paired = database[
+        valid_ab = (
             database["cdr3_alpha"].notna()
             & (database["cdr3_alpha"].astype(str) != "")
-        ]
-        db_alpha_beta = set(
-            zip(_db_paired["cdr3_alpha"], _db_paired["cdr3_beta"].fillna(""))
+            & database["cdr3_beta"].notna()
+            & (database["cdr3_beta"].astype(str) != "")
         )
-        db_beta_values = (
-            set(database["cdr3_beta"].dropna()) if allow_b_fallback else set()
-        )
+        ab_to_pos: dict[tuple[str, str], np.ndarray] = {}
+        if valid_ab.any():
+            ab_positions = np.flatnonzero(valid_ab.to_numpy())
+            ab_sub = database.loc[valid_ab, ["cdr3_alpha", "cdr3_beta"]].astype(str)
+            for (a_key, b_key), rel_idx in ab_sub.groupby(
+                ["cdr3_alpha", "cdr3_beta"], sort=False
+            ).indices.items():
+                if len(rel_idx):
+                    ab_to_pos[(str(a_key), str(b_key))] = ab_positions[rel_idx]
 
         row_iter = df.iterrows()
         if show_progress:
@@ -2017,15 +2057,13 @@ def match_clonotypes(
             alpha = raw_a.strip() if isinstance(raw_a, str) else ""
             beta = raw_b.strip() if isinstance(raw_b, str) else ""
 
-            if alpha and (alpha, beta) in db_alpha_beta:
-                matches = database[
-                    (database["cdr3_alpha"] == alpha) & (database["cdr3_beta"] == beta)
-                ]
+            if alpha and beta and (alpha, beta) in ab_to_pos:
+                matches = database.iloc[ab_to_pos[(alpha, beta)]]
                 _annotate_match(
                     df, idx, matches, strength="ab", distance=0, query_species=query_species
                 )
-            elif allow_b_fallback and beta and beta in db_beta_values:
-                matches = database[database["cdr3_beta"] == beta]
+            elif allow_b_fallback and beta and beta in b_to_pos:
+                matches = database.iloc[b_to_pos[beta]]
                 _annotate_match(
                     df, idx, matches, strength="b_only", partial=True, distance=0,
                     query_species=query_species,
@@ -2034,17 +2072,17 @@ def match_clonotypes(
                 neighbors = _find_lev_neighbors(beta, beta_neighbor_index, max_distance)
                 if neighbors:
                     best_d = neighbors[0][1]
-                    best_cdr3s = [c for c, d in neighbors if d == best_d]
-                    matches = database[database["cdr3_beta"].isin(best_cdr3s)]
-                    _annotate_match(
-                        df, idx, matches,
-                        strength="b_only_near", partial=True, distance=best_d,
-                        query_species=query_species,
-                    )
+                    pos_list = [b_to_pos[c] for c, d in neighbors if d == best_d and c in b_to_pos]
+                    if pos_list:
+                        pos = np.sort(np.concatenate(pos_list))
+                        matches = database.iloc[pos]
+                        _annotate_match(
+                            df, idx, matches,
+                            strength="b_only_near", partial=True, distance=best_d,
+                            query_species=query_species,
+                        )
 
     else:  # strictness == "b_only"
-        db_beta_set = set(database["cdr3_beta"].dropna())
-
         row_iter = df.iterrows()
         if show_progress:
             row_iter = tqdm(
@@ -2056,8 +2094,8 @@ def match_clonotypes(
         for idx, row in row_iter:
             raw_b = row.get("CDR3_beta", "")
             beta = raw_b.strip() if isinstance(raw_b, str) else ""
-            if beta and beta in db_beta_set:
-                matches = database[database["cdr3_beta"] == beta]
+            if beta and beta in b_to_pos:
+                matches = database.iloc[b_to_pos[beta]]
                 _annotate_match(
                     df, idx, matches, strength="b_only", distance=0,
                     query_species=query_species,
@@ -2066,13 +2104,15 @@ def match_clonotypes(
                 neighbors = _find_lev_neighbors(beta, beta_neighbor_index, max_distance)
                 if neighbors:
                     best_d = neighbors[0][1]
-                    best_cdr3s = [c for c, d in neighbors if d == best_d]
-                    matches = database[database["cdr3_beta"].isin(best_cdr3s)]
-                    _annotate_match(
-                        df, idx, matches,
-                        strength="b_only_near", distance=best_d,
-                        query_species=query_species,
-                    )
+                    pos_list = [b_to_pos[c] for c, d in neighbors if d == best_d and c in b_to_pos]
+                    if pos_list:
+                        pos = np.sort(np.concatenate(pos_list))
+                        matches = database.iloc[pos]
+                        _annotate_match(
+                            df, idx, matches,
+                            strength="b_only_near", distance=best_d,
+                            query_species=query_species,
+                        )
 
     n_matches = df["db_match"].sum()
     n_viral = df["is_viral"].sum()
@@ -2306,6 +2346,8 @@ def annotate_clonotypes(
     exclude_viral: bool = False,
     flag_only: bool = False,
     *,
+    verbose: bool = True,
+    show_progress: bool = True,
     add_publicness: bool = False,
     publicness_cdr3_col: str = "CDR3_beta",
     publicness_v_gene_col: str = "beta_v_gene",
@@ -2342,7 +2384,8 @@ def annotate_clonotypes(
     }
 
     if not any([vdjdb_path, iedb_path, cedar_path]):
-        logger.info("No annotation database paths provided; returning input with empty annotations")
+        if verbose:
+            logger.info("No annotation database paths provided; returning input with empty annotations")
         df = clonotypes.copy()
         if "CDR3ab" not in df.columns and {"CDR3_alpha", "CDR3_beta"} <= set(df.columns):
             df["CDR3ab"] = df["CDR3_alpha"].fillna("") + "_" + df["CDR3_beta"].fillna("")
@@ -2365,6 +2408,7 @@ def annotate_clonotypes(
         iedb_path=iedb_path,
         cedar_path=cedar_path,
         iedb_epitope_path=iedb_epitope_path,
+        verbose=verbose,
     )
 
     df = match_clonotypes(
@@ -2374,6 +2418,8 @@ def annotate_clonotypes(
         match_strictness=match_strictness,
         match_mode=match_mode,
         max_distance=max_distance,
+        verbose=verbose,
+        show_progress=show_progress,
         species=resolved_species,
         host_species_filter=host_species_filter,
     )
@@ -2381,7 +2427,8 @@ def annotate_clonotypes(
     if exclude_viral and not flag_only:
         initial = len(df)
         df = df[~df["is_viral"]]
-        logger.info(f"Excluded {initial - len(df)} viral clones")
+        if verbose:
+            logger.info(f"Excluded {initial - len(df)} viral clones")
 
     if add_publicness:
         df = _apply_publicness(
@@ -2389,7 +2436,7 @@ def annotate_clonotypes(
             cdr3_col=publicness_cdr3_col,
             v_gene_col=publicness_v_gene_col,
             j_gene_col=publicness_j_gene_col,
-            log_summary=True,
+            log_summary=verbose,
             species=resolved_species,
         )
 

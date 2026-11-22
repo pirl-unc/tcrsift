@@ -7,6 +7,37 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.30.0
+
+Database-cache, VDJ-loading, and public-deposit compatibility fixes uncovered by
+the [infectious-disease and blood benchmark](benchmarks-infectious.md):
+
+- **Cached VDJdb resolves paired α/β entries (`vdjdb_full.txt`).** The VDJdb
+  release archive contains both `vdjdb_full.txt` (paired α/β rows) and
+  `vdjdb.txt` (one chain per row). `cached_path("vdjdb")` previously returned
+  `vdjdb.txt` directly, losing α-chain pairing under `prioritize`'s default
+  `--database-match ab_with_partial` (degrading paired VDJdb entries into
+  β-only matches during default MART-1 exclusion and `--exclude-known-viral`)
+  and giving zero matches under `--database-match strict_ab` when VDJdb was read
+  from the `tcrsift data` cache. `cached_path("vdjdb")` now returns the cache
+  directory so `vdjdb_full.txt` is preferred, and standalone
+  `vdjdb.txt`/`vdjdb.slim.txt` files reconstruct paired α/β entries from
+  `complex.id > 0` rows.
+- **5'-partial Cell Ranger contigs (`productive == "None"`) with complete V/J
+  genes and in-frame CDR3 are retained.** In 5'-truncated VDJ libraries where
+  reads start downstream of the V-leader `ATG` (`full_length == False`), Cell
+  Ranger marks `productive` as `"None"` rather than `"True"`, while true
+  frameshift or stop-codon contigs are marked `"False"`. Retaining `is_cell`,
+  `high_confidence` contigs with `productive == "None"`, valid V and J gene
+  calls, and a stop-free canonical `C...[FW]` CDR3 recovers 5'-partial cohorts
+  (such as GSE171037) while changing ≤0.01% of contigs in standard full-length
+  libraries.
+- **Compressed, sample-prefixed, and pre-Cell Ranger 6 inputs.** VDJ and GEX
+  loaders accept `.csv.gz` contig tables, unambiguous sample-prefixed GEO/10x
+  contig and `.h5` filenames, `Sample.gex_path`, and sibling
+  `*contig_annotations*.json(.gz)` files to populate full-length `VDJ_aa` and
+  `VDJ_nt` when `fwr1..fwr4` CSV columns are absent.
+
 ## 3.28.0
 
 Bug fixes affecting receptor assignment and shortlist selection. Re-run

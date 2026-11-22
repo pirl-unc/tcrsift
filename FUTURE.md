@@ -28,5 +28,7 @@ Current species boundaries:
 - Bundled murine naive/splenocyte `Pgen` and `Ppost` background models
 - TCR sequence-similarity clustering across clonotypes
 - Depth-normalized CD3 gating and adaptive shortlist budgets for large cohorts
-- Expanded validation cohorts for `blood`, `mpe`, and `heme` prioritization
-  presets
+- Expanded validation cohorts for `blood-tumor`, `mpe`, and `heme`
+  prioritization presets (for peripheral-blood, pMHC-multimer, public-database,
+  and peptide-restimulation benchmarks across Influenza, SARS-CoV-2, EBV, and
+  CMV, see [docs/benchmarks-infectious.md](docs/benchmarks-infectious.md))

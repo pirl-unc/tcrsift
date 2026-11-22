@@ -1,0 +1,88 @@
+{
+  "tcrsift_version": "3.30.0",
+  "vdjdb_entries": 139744,
+  "vdjdb_paired_ab_entries": 102654,
+  "tenx_dextramer": {
+    "tenx_donor1": {
+      "seconds": 58.0,
+      "cells_after_gex_qc": 34220,
+      "cells_retained": 24887,
+      "clones_scored": 15132,
+      "expanded_clones_ge2": 743,
+      "mart1_clones_total": 142,
+      "mart1_singleton_clones": 141,
+      "mart1_singleton_fraction": 0.993,
+      "mart1_mean_memory_clr_diff": -2.988,
+      "viral_mean_memory_clr_diff": 0.954,
+      "multimer_features": 44,
+      "negative_control_features": 6,
+      "cell_peptide_agreement_vs_10x": 1.0
+    },
+    "tenx_donor2": {
+      "seconds": 53.3,
+      "cells_after_gex_qc": 67789,
+      "cells_retained": 38314,
+      "clones_scored": 7741,
+      "expanded_clones_ge2": 1829,
+      "mart1_clones_total": 19,
+      "mart1_singleton_clones": 19,
+      "mart1_singleton_fraction": 1.0,
+      "mart1_mean_memory_clr_diff": -4.611,
+      "viral_mean_memory_clr_diff": -0.293,
+      "multimer_features": 44,
+      "negative_control_features": 6,
+      "cell_peptide_agreement_vs_10x": 1.0
+    }
+  },
+  "minervina_2022": {
+    "cells_after_gex_qc": 21573,
+    "cells_retained": 13614,
+    "clones_scored": 7317,
+    "sars_cov_2_labelled_clones": 4212,
+    "n_distinct_epitopes": 19,
+    "top_epitope": "A01_TTD",
+    "top_epitope_clones": 1801,
+    "shared_longitudinal_clones_excluded_from_auroc": 0,
+    "leave_study_out_ab_with_partial_off_target_species": {
+      "CMV": 78,
+      "EBV": 18,
+      "Homo sapiens": 12,
+      "Influenza A": 11,
+      "HIV-1": 9
+    }
+  },
+  "fischer_2021": {
+    "GT_6": {
+      "total_pbmc_loaded": 12385,
+      "cd3_gated_t_cells": 11684,
+      "cd4_cells": 1806,
+      "cd8_cells": 4528,
+      "five_prime_truncated_contig_fraction_min": 0.9868,
+      "five_prime_truncated_contig_fraction_max": 0.989,
+      "paired_ab_clones": 137,
+      "beta_clones_evaluated": 2227,
+      "persistent_clones_ge2_both": 58,
+      "cytokine_activated_persistent_clones_delta_gt_0_5": 9,
+      "fisher_expanded_persistent_clones_fdr_lt_0_05": 0,
+      "json_full_vdj_paired_clones": 0,
+      "json_assembled_valid_constructs": 0,
+      "json_contig_verified_constructs": 0
+    },
+    "GT_2": {
+      "total_pbmc_loaded": 16799,
+      "cd3_gated_t_cells": 15429,
+      "cd4_cells": 2335,
+      "cd8_cells": 3919,
+      "five_prime_truncated_contig_fraction_min": 0.996,
+      "five_prime_truncated_contig_fraction_max": 0.9967,
+      "paired_ab_clones": 23,
+      "beta_clones_evaluated": 1247,
+      "persistent_clones_ge2_both": 15,
+      "cytokine_activated_persistent_clones_delta_gt_0_5": 2,
+      "fisher_expanded_persistent_clones_fdr_lt_0_05": 0,
+      "json_full_vdj_paired_clones": 0,
+      "json_assembled_valid_constructs": 0,
+      "json_contig_verified_constructs": 0
+    }
+  }
+}

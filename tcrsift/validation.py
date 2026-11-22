@@ -234,80 +234,235 @@ def validate_anndata(
     return adata
 
 
-def validate_cellranger_vdj_dir(path: str | Path) -> Path:
-    """
-    Validate a CellRanger VDJ output directory.
+def resolve_cellranger_vdj_file(
+    path: str | Path,
+    annotations_filename: str = "filtered_contig_annotations.csv",
+) -> tuple[Path, bool]:
+    """Resolve a CellRanger VDJ contig annotations CSV (plain or ``.gz``).
 
-    Parameters
-    ----------
-    path : str or Path
-        Path to CellRanger VDJ output directory
+    Accepts:
+    - a direct ``.csv`` or ``.csv.gz`` file path,
+    - a CellRanger ``outs`` directory (or parent of ``outs/``) containing
+      ``filtered_contig_annotations.csv(.gz)`` or ``all_contig_annotations.csv(.gz)``,
+    - a GEO / 10x directory containing an unambiguous sample-prefixed file
+      such as ``GSM123_sample_filtered_contig_annotations.csv.gz`` or
+      ``donor1_all_contig_annotations.csv``.
 
     Returns
     -------
-    Path
-        Validated path
+    tuple[Path, bool]
+        ``(resolved_csv_path, is_unfiltered)`` where ``is_unfiltered`` is True
+        when an ``all_contig_annotations`` table was selected so the caller can
+        apply ``is_cell`` and ``high_confidence`` filtering.
     """
-    path = Path(path)
-
-    # Check directory exists
-    path = validate_directory_exists(path, "CellRanger VDJ directory")
-
-    # Check for key files
-    contig_files = [
-        "filtered_contig_annotations.csv",
-        "all_contig_annotations.csv",
-    ]
-
-    found_contig = any((path / f).exists() for f in contig_files)
-    if not found_contig:
-        available = [f.name for f in path.iterdir()][:15]
+    raw_path = Path(path)
+    if not raw_path.exists():
         raise TCRsiftValidationError(
-            f"No contig annotations file found in CellRanger VDJ directory: {path}",
-            hint=f"Expected one of: {contig_files}. "
-            f"Available files: {available}. "
-            "This should be the 'outs' directory from cellranger vdj.",
+            f"The CellRanger VDJ path does not exist: {raw_path}",
+            hint=f"Check that the path is correct. Current working directory: {Path.cwd()}",
         )
 
+    if raw_path.is_file():
+        lower_name = raw_path.name.lower()
+        if not (lower_name.endswith(".csv") or lower_name.endswith(".csv.gz")):
+            raise TCRsiftValidationError(
+                f"Unsupported VDJ annotations file format: {raw_path}",
+                hint="Expected a CellRanger contig annotations .csv or .csv.gz file, or an outs/ directory.",
+            )
+        is_unfiltered = "all_contig" in lower_name and "filtered_contig" not in lower_name
+        return raw_path, is_unfiltered
+
+    search_dirs = [raw_path]
+    if (raw_path / "outs").is_dir():
+        search_dirs.append(raw_path / "outs")
+
+    # 1. Exact preferred filename (or .gz twin)
+    pref_names = [annotations_filename]
+    if not annotations_filename.endswith(".gz"):
+        pref_names.append(f"{annotations_filename}.gz")
+    for d in search_dirs:
+        for name in pref_names:
+            cand = d / name
+            if cand.is_file():
+                unfiltered = "all_contig" in name.lower() and "filtered_contig" not in name.lower()
+                return cand, unfiltered
+
+    # 2. Exact canonical filtered / all_contig filenames (.csv or .csv.gz)
+    exact_candidates = (
+        ("filtered_contig_annotations.csv", False),
+        ("filtered_contig_annotations.csv.gz", False),
+        ("all_contig_annotations.csv", True),
+        ("all_contig_annotations.csv.gz", True),
+    )
+    for d in search_dirs:
+        for name, unfiltered in exact_candidates:
+            cand = d / name
+            if cand.is_file():
+                return cand, unfiltered
+
+    # 3. Unambiguous sample-prefixed contig annotations in directory (GEO / 10x / cellranger multi)
+    for patterns, unfiltered in (
+        (("*filtered_contig_annotations.csv", "*filtered_contig_annotations.csv.gz"), False),
+        (("*all_contig_annotations.csv", "*all_contig_annotations.csv.gz"), True),
+    ):
+        for d in search_dirs:
+            hits = sorted({p for pat in patterns for p in d.glob(pat) if p.is_file()})
+            if len(hits) == 1:
+                return hits[0], unfiltered
+            if len(hits) > 1:
+                names = [p.name for p in hits[:10]]
+                raise TCRsiftValidationError(
+                    f"Multiple VDJ contig annotation files found in {d}: {names}",
+                    hint="Pass the specific contig CSV/.csv.gz file path or separate samples into per-sample directories.",
+                )
+
+    available = [f.name for f in raw_path.iterdir()][:15]
+    raise TCRsiftValidationError(
+        f"No contig annotations file found in CellRanger VDJ directory: {raw_path}",
+        hint=(
+            "Expected 'filtered_contig_annotations.csv(.gz)' or 'all_contig_annotations.csv(.gz)' "
+            "(with optional sample prefix). "
+            f"Available files: {available}. "
+            "This should be the 'outs' directory from cellranger vdj."
+        ),
+    )
+
+
+def resolve_cellranger_gex_source(path: str | Path) -> tuple[str, Path]:
+    """Resolve a CellRanger GEX input into ``('mtx' | 'h5', resolved_path)``.
+
+    Accepts:
+    - a direct ``.h5`` / ``.hdf5`` file path,
+    - a direct 10x Matrix Market directory containing ``matrix.mtx(.gz)``,
+    - a CellRanger ``outs`` directory (or parent of ``outs/``) containing
+      ``filtered_feature_bc_matrix``, ``filtered_feature_bc_matrix.h5``,
+      an unambiguous ``*filtered_feature_bc_matrix.h5`` (GEO / 10x / ``cellranger multi``),
+      ``raw_feature_bc_matrix``, or ``raw_feature_bc_matrix.h5``.
+    """
+    raw_path = Path(path)
+    if not raw_path.exists():
+        raise TCRsiftValidationError(
+            f"The CellRanger GEX path does not exist: {raw_path}",
+            hint=f"Check that the path is correct. Current working directory: {Path.cwd()}",
+        )
+
+    if raw_path.is_file():
+        lower_name = raw_path.name.lower()
+        if lower_name.endswith((".h5", ".hdf5")):
+            return ("h5", raw_path)
+        raise TCRsiftValidationError(
+            f"Unsupported CellRanger GEX file format: {raw_path}",
+            hint="Provide a 10x .h5 file or a CellRanger directory containing filtered_feature_bc_matrix(.h5).",
+        )
+
+    # Direct MTX directory passed as gex_dir
+    if (raw_path / "matrix.mtx.gz").is_file() or (raw_path / "matrix.mtx").is_file():
+        return ("mtx", raw_path)
+
+    search_dirs = [raw_path]
+    if (raw_path / "outs").is_dir():
+        search_dirs.append(raw_path / "outs")
+
+    # Priority 1: filtered matrix directory or exact filtered .h5
+    for d in search_dirs:
+        mdir = d / "filtered_feature_bc_matrix"
+        if mdir.is_dir():
+            return ("mtx", mdir)
+    for d in search_dirs:
+        h5 = d / "filtered_feature_bc_matrix.h5"
+        if h5.is_file():
+            return ("h5", h5)
+
+    # Priority 2: unambiguous sample-prefixed *filtered_feature_bc_matrix(.h5) (GEO / 10x / multi)
+    for d in search_dirs:
+        dir_hits = sorted(
+            p
+            for p in d.glob("*filtered_feature_bc_matrix")
+            if p.is_dir() and ((p / "matrix.mtx.gz").is_file() or (p / "matrix.mtx").is_file())
+        )
+        if len(dir_hits) == 1:
+            return ("mtx", dir_hits[0])
+        if len(dir_hits) > 1:
+            names = [p.name for p in dir_hits[:10]]
+            raise TCRsiftValidationError(
+                f"Multiple GEX matrix directories found in {d}: {names}",
+                hint="Pass the specific matrix directory via gex_path/gex_dir or place each sample in its own directory.",
+            )
+        hits = sorted(p for p in d.glob("*filtered_feature_bc_matrix.h5") if p.is_file())
+        if len(hits) == 1:
+            return ("h5", hits[0])
+        if len(hits) > 1:
+            names = [p.name for p in hits[:10]]
+            raise TCRsiftValidationError(
+                f"Multiple GEX .h5 files found in {d}: {names}",
+                hint="Pass the specific .h5 file via gex_path/gex_dir or place each sample in its own directory.",
+            )
+
+    # Priority 3: raw_feature_bc_matrix directory or .h5 (unfiltered droplets — log warning)
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+    for d in search_dirs:
+        raw_mdir = d / "raw_feature_bc_matrix"
+        if raw_mdir.is_dir():
+            _log.warning(
+                "Using unfiltered CellRanger matrix %s (filtered_feature_bc_matrix not found)",
+                raw_mdir,
+            )
+            return ("mtx", raw_mdir)
+    for d in search_dirs:
+        raw_h5 = d / "raw_feature_bc_matrix.h5"
+        if raw_h5.is_file():
+            _log.warning(
+                "Using unfiltered CellRanger H5 %s (filtered_feature_bc_matrix.h5 not found)",
+                raw_h5,
+            )
+            return ("h5", raw_h5)
+        hits = sorted(p for p in d.glob("*raw_feature_bc_matrix.h5") if p.is_file())
+        if len(hits) == 1:
+            _log.warning(
+                "Using unfiltered CellRanger H5 %s (filtered_feature_bc_matrix.h5 not found)",
+                hits[0],
+            )
+            return ("h5", hits[0])
+        if len(hits) > 1:
+            names = [p.name for p in hits[:10]]
+            raise TCRsiftValidationError(
+                f"Multiple raw GEX .h5 files found in {d}: {names}",
+                hint="Pass the specific .h5 file via gex_path/gex_dir or place each sample in its own directory.",
+            )
+
+    available = [f.name for f in raw_path.iterdir()][:15]
+    raise TCRsiftValidationError(
+        f"No gene expression matrix found in CellRanger GEX directory: {raw_path}",
+        hint=(
+            "Expected 'filtered_feature_bc_matrix', 'filtered_feature_bc_matrix.h5' "
+            "(with optional sample prefix), or 'raw_feature_bc_matrix'. "
+            f"Available files: {available}. "
+            "This should be the 'outs' directory from cellranger count."
+        ),
+    )
+
+
+def validate_cellranger_vdj_dir(path: str | Path) -> Path:
+    """Validate a CellRanger VDJ output directory (or direct contig CSV/.csv.gz)."""
+    path = Path(path)
+    if path.exists() and path.is_file():
+        resolved, _ = resolve_cellranger_vdj_file(path)
+        return resolved
+    path = validate_directory_exists(path, "CellRanger VDJ directory")
+    resolve_cellranger_vdj_file(path)
     return path
 
 
 def validate_cellranger_gex_dir(path: str | Path) -> Path:
-    """
-    Validate a CellRanger GEX output directory.
-
-    Parameters
-    ----------
-    path : str or Path
-        Path to CellRanger GEX output directory
-
-    Returns
-    -------
-    Path
-        Validated path
-    """
+    """Validate a CellRanger GEX output directory (or direct 10x .h5 file)."""
     path = Path(path)
-
-    # Check directory exists
+    if path.exists() and path.is_file():
+        _, resolved = resolve_cellranger_gex_source(path)
+        return resolved
     path = validate_directory_exists(path, "CellRanger GEX directory")
-
-    # Check for key files/directories
-    matrix_locations = [
-        "filtered_feature_bc_matrix",
-        "filtered_feature_bc_matrix.h5",
-        "raw_feature_bc_matrix",
-    ]
-
-    found_matrix = any((path / f).exists() for f in matrix_locations)
-    if not found_matrix:
-        available = [f.name for f in path.iterdir()][:15]
-        raise TCRsiftValidationError(
-            f"No gene expression matrix found in CellRanger GEX directory: {path}",
-            hint=f"Expected one of: {matrix_locations}. "
-            f"Available files: {available}. "
-            "This should be the 'outs' directory from cellranger count.",
-        )
-
+    resolve_cellranger_gex_source(path)
     return path
 
 

@@ -1,0 +1,17 @@
+dataset,multimer,is_known_sticky,expanded_clones_with_any_call,confident_clones_concordance_ge_50pct,median_clone_concordance,mean_clone_cells,mean_cd45ro_clr,mean_cd45ra_clr,mean_memory_clr_diff,mean_cd45ro_log1p,mean_cd45ra_log1p,cell_peptide_agreement_vs_10x
+tenx_donor1,AVFDRKSDAK_EBNA-3B_EBV,False,19,5,0.25,97.21,1.242,-1.287,2.529,4.293,4.877,1.0
+tenx_donor1,FLYALALLL_LMP2A_EBV,False,5,5,1.0,3.6,2.474,-3.07,5.544,5.525,3.094,1.0
+tenx_donor1,GILGFVFTL_Flu-MP_Influenza,False,171,160,1.0,12.16,0.714,-0.739,1.453,3.766,5.425,1.0
+tenx_donor1,GLCTLVAML_BMLF1_EBV,False,8,7,1.0,4.5,1.035,-0.534,1.57,4.087,5.629,1.0
+tenx_donor1,IVTDFSVIK_EBNA-3B_EBV,False,29,17,0.9918,103.14,2.102,-1.742,3.844,5.153,4.422,1.0
+tenx_donor1,KLGGALQAK_IE-1_CMV,True,284,10,0.2447,26.07,0.997,-0.912,1.909,4.049,5.252,1.0
+tenx_donor1,RAKFKQLL_BZLF1_EBV,False,22,3,0.3542,4.27,0.986,0.059,0.927,4.037,6.222,1.0
+tenx_donor2,AVFDRKSDAK_EBNA-3B_EBV,False,15,0,0.1667,11.87,0.302,-0.068,0.37,4.118,5.32,1.0
+tenx_donor2,FLYALALLL_LMP2A_EBV,False,9,8,1.0,63.22,1.836,-2.002,3.838,5.652,3.386,1.0
+tenx_donor2,GILGFVFTL_Flu-MP_Influenza,False,327,296,1.0,18.84,-0.082,-0.118,0.037,3.734,5.27,1.0
+tenx_donor2,GLCTLVAML_BMLF1_EBV,False,37,30,0.9716,43.11,-0.269,0.708,-0.978,3.547,6.097,1.0
+tenx_donor2,IVTDFSVIK_EBNA-3B_EBV,False,18,4,0.3333,10.33,0.743,0.146,0.597,4.559,5.535,1.0
+tenx_donor2,KLGGALQAK_IE-1_CMV,True,739,29,0.25,24.71,0.187,-0.281,0.468,4.003,5.107,1.0
+tenx_donor2,RAKFKQLL_BZLF1_EBV,False,265,207,1.0,74.5,-0.044,0.513,-0.557,3.772,5.901,1.0
+tenx_donor2,RLRAEAQVK_EMNA-3A_EBV,False,6,0,0.3667,5.17,0.129,-0.633,0.763,3.945,4.755,1.0
+tenx_donor2,RTLNAWVKV_Gag-protein_HIV,False,5,0,0.25,47.2,0.465,0.112,0.352,4.28,5.501,1.0

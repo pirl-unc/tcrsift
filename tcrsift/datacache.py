@@ -307,16 +307,24 @@ def cached_path(db: str, data_dir: str | Path | None = None) -> Path | None:
     base = resolve_cache_dir(data_dir) / db
     if not base.exists():
         return None
+    # VDJdb releases ship multiple files in the same directory (`vdjdb_full.txt`
+    # with paired alpha+beta chains AND `vdjdb.txt` with single-chain rows) or
+    # date-stamped `vdjdb-YYYY-MM-DD.txt` files. Always return the directory
+    # when VDJdb text files are present so `load_vdjdb` -> `_pick_vdjdb_file`
+    # resolves `vdjdb_full.txt` ahead of `vdjdb.txt`.
+    if db == "vdjdb" and base.is_dir():
+        sidecars = (".meta.txt", ".scored.txt", "_broken.txt", ".meta.tsv", ".scored.tsv")
+        canonical_names = ("vdjdb_full.txt", "vdjdb.txt", "vdjdb.slim.txt")
+        has_valid = any((base / n).is_file() for n in canonical_names) or any(
+            p.is_file() and not p.name.lower().endswith(sidecars)
+            for p in (*base.glob("vdjdb-*.txt"), *base.glob("vdjdb-*.tsv"))
+        )
+        if has_valid:
+            return base
+        return None
     canonical = base / spec.filename
     if canonical.exists():
         return canonical
-    # VDJdb releases ship with versioned filenames; the annotate loader
-    # globs `vdjdb*.{txt,tsv}` against the parent dir, so pass the
-    # directory when at least one match exists.
-    if db == "vdjdb":
-        matches = list(base.glob("vdjdb*.txt")) + list(base.glob("vdjdb*.tsv"))
-        if matches:
-            return base
     # CEDAR back-compat: the canonical is now the bulk `tcr_full_v3.csv`, but a
     # user who hand-exported the older `cedar.tsv` (or `.csv`) from the web UI
     # should still be found. `load_cedar` sniffs the format either way.

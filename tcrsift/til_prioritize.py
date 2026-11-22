@@ -254,8 +254,8 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
     sample_names = [s.sample for s in sheet]
     if len(set(sample_names)) != len(sample_names):
         raise ValueError("Each sample must have a unique name")
-    if any(not s.gex_dir or not s.vdj_dir for s in sheet):
-        raise ValueError("Every sample requires paired gex_dir and vdj_dir inputs")
+    if any(not (s.gex_dir or s.gex_path) or not s.vdj_dir for s in sheet):
+        raise ValueError("Every sample requires paired GEX (gex_dir or gex_path) and vdj_dir inputs")
     if any(s.patient_id is not None for s in sheet) and any(
         s.patient_id is None or not str(s.patient_id).strip() for s in sheet
     ):

@@ -1602,19 +1602,22 @@ def find_longest_orf(dna_seq: str) -> tuple[str, int, str]:
 
 def parse_fasta(path: str | Path) -> dict[str, str]:
     """
-    Parse a FASTA file.
+    Parse a FASTA (or ``.fasta.gz``) file.
 
     Returns
     -------
     dict
         Mapping from sequence ID to sequence
     """
+    import gzip
+
     path = Path(path)
     results = {}
     curr_id = None
     lines = []
 
-    with open(path) as f:
+    opener = gzip.open if path.name.lower().endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line.startswith(">"):
@@ -1629,6 +1632,27 @@ def parse_fasta(path: str | Path) -> dict[str, str]:
         if curr_id and lines:
             results[curr_id] = "".join(lines)
 
+    return results
+
+
+def parse_contig_json(path: str | Path) -> dict[str, str]:
+    """Parse a CellRanger ``*contig_annotations*.json(.gz)`` file into ``{contig_id: sequence}``."""
+    import gzip
+    import json
+
+    path = Path(path)
+    opener = gzip.open if path.name.lower().endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8") as fh:
+        records = json.load(fh)
+    results: dict[str, str] = {}
+    if isinstance(records, list):
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            cid = rec.get("contig_name") or rec.get("contig_id")
+            seq = rec.get("sequence")
+            if cid and isinstance(seq, str) and seq:
+                results[str(cid)] = seq.strip().upper()
     return results
 
 
@@ -1708,10 +1732,10 @@ def load_contigs(
             raise ValueError(
                 f"load_contigs: sample_sheet is missing required columns {sorted(missing)}"
             )
-        sheet_dir_to_sample = {
-            Path(row.vdj_dir).resolve(): row.sample
-            for row in sample_sheet.itertuples(index=False)
-        }
+        sheet_dir_to_sample = {}
+        for row in sample_sheet.itertuples(index=False):
+            p = Path(row.vdj_dir).resolve()
+            sheet_dir_to_sample[p.parent if p.is_file() else p] = row.sample
 
     def _sample_for(fasta_path: Path) -> str | None:
         if sample_name_from == "parent":
@@ -1728,7 +1752,15 @@ def load_contigs(
             return sample
         return None
 
-    for fasta_path in contig_dir.rglob("*contig*.fasta"):
+    fasta_candidates = sorted(
+        {
+            *contig_dir.rglob("*contig*.fasta"),
+            *contig_dir.rglob("*contig*.fasta.gz"),
+        }
+    )
+    for fasta_path in fasta_candidates:
+        if not fasta_path.is_file():
+            continue
         sample_name = _sample_for(fasta_path)
         if sample_name is None:
             logger.warning(
@@ -1738,14 +1770,41 @@ def load_contigs(
             continue
         sample_contigs.setdefault(sample_name, {}).update(parse_fasta(fasta_path))
 
-    # Flat-layout fallback: bare ``*.fasta`` files directly in contig_dir.
-    # Only meaningful for the 'parent' default — the grandparent/sheet
-    # modes assume the CellRanger-style nested layout where this wouldn't
-    # match anything.
+    # Flat-layout fallback: bare ``*.fasta(.gz)`` files directly in contig_dir
+    # that were not already matched above by ``*contig*.fasta(.gz)``.
     if sample_name_from == "parent":
-        for fasta_path in contig_dir.glob("*.fasta"):
-            sample_name = fasta_path.stem.split("_")[0]
+        seen_fastas = {p.resolve() for p in fasta_candidates}
+        for fasta_path in sorted({*contig_dir.glob("*.fasta"), *contig_dir.glob("*.fasta.gz")}):
+            if not fasta_path.is_file() or fasta_path.resolve() in seen_fastas:
+                continue
+            stem = fasta_path.name[:-9] if fasta_path.name.lower().endswith(".fasta.gz") else fasta_path.stem
+            sample_name = stem.split("_")[0]
             sample_contigs.setdefault(sample_name, {}).update(parse_fasta(fasta_path))
+
+    # CellRanger JSON fallback: GEO deposits frequently ship
+    # ``all_contig_annotations.json(.gz)`` instead of ``filtered_contig.fasta``.
+    # Supplement any sample lacking FASTA coverage (or missing contig IDs) from JSON.
+    json_candidates = sorted(
+        {
+            *contig_dir.rglob("*contig_annotations*.json"),
+            *contig_dir.rglob("*contig_annotations*.json.gz"),
+        }
+    )
+    for json_path in json_candidates:
+        if not json_path.is_file():
+            continue
+        sample_name = _sample_for(json_path)
+        if sample_name is None:
+            continue
+        try:
+            parsed_json = parse_contig_json(json_path)
+        except Exception as exc:
+            logger.warning("load_contigs: could not parse %s: %s", json_path, exc)
+            continue
+        if parsed_json:
+            target = sample_contigs.setdefault(sample_name, {})
+            for cid, seq in parsed_json.items():
+                target.setdefault(cid, seq)
 
     logger.info(f"Loaded contigs from {len(sample_contigs)} samples")
     return sample_contigs

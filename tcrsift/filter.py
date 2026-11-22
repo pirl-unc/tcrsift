@@ -1057,3 +1057,229 @@ def get_filter_summary(clonotypes: pd.DataFrame) -> dict:
             )
 
     return summary
+
+
+def _benjamini_hochberg(pvalues: np.ndarray) -> np.ndarray:
+    """Return Benjamini–Hochberg FDR-adjusted p-values preserving input order (NaN-safe)."""
+    p = np.asarray(pvalues, dtype=float)
+    out = np.full(len(p), np.nan, dtype=float)
+    valid = np.isfinite(p)
+    m = int(valid.sum())
+    if m == 0:
+        return out
+    p_valid = p[valid]
+    order = np.argsort(p_valid, kind="mergesort")
+    ranked = p_valid[order]
+    ranks = np.arange(1, m + 1, dtype=float)
+    q = ranked * (m / ranks)
+    q = np.minimum.accumulate(q[::-1])[::-1]
+    q = np.clip(q, 0.0, 1.0)
+    adj_valid = np.empty(m, dtype=float)
+    adj_valid[order] = q
+    out[valid] = adj_valid
+    return out
+
+
+def score_stimulation_response(
+    adata_or_obs,
+    *,
+    stim_samples: str | list[str] | tuple[str, ...] | None = None,
+    control_samples: str | list[str] | tuple[str, ...] | None = None,
+    clone_col: str = "CDR3ab",
+    sample_col: str = "sample",
+    score_cols: list[str] | tuple[str, ...] | None = None,
+    pseudocount: float = 0.5,
+    min_testable_cells: int = 2,
+) -> pd.DataFrame:
+    """Compare peptide-stimulated samples against paired unstimulated/DMSO controls.
+
+    Separates genuinely antigen-responsive clonotypes from abundant pre-existing
+    bystander clones across both long-term expansion cultures (via fold-expansion
+    and one-sided Fisher's exact test) and short-term / overnight restimulation
+    or AIM assays where reactive clones have not yet divided but upregulate
+    activation transcripts relative to their own unstimulated baseline
+    (``delta_<score_col>``).
+
+    Parameters
+    ----------
+    adata_or_obs : AnnData or pd.DataFrame
+        Per-cell table (or ``AnnData`` whose ``.obs`` holds per-cell metadata and
+        optional signature scores).
+    stim_samples : str or sequence of str, optional
+        Stimulated sample name(s). When ``None``, inferred as all non-control,
+        non-TIL samples in ``sample_col``.
+    control_samples : str or sequence of str, optional
+        Baseline / unstimulated negative-control sample name(s). When ``None``,
+        inferred from ``source == "control"`` or values referenced by
+        ``control_sample`` in ``obs``.
+    clone_col : str
+        Clone identifier column (default ``"CDR3ab"``; pass ``"CDR3_beta"`` for
+        β-chain grouping).
+    sample_col : str
+        Sample identifier column (default ``"sample"``).
+    score_cols : sequence of str, optional
+        Numeric per-cell signature or expression columns in ``obs`` (for example,
+        ``["signature_AIM", "signature_AIMBroad", "signature_AcuteActivation"]``)
+        for which ``stim_mean_<col>``, ``control_mean_<col>``, and paired
+        ``delta_<col>`` (stimulated minus unstimulated within the same clone) are
+        computed.
+    pseudocount : float
+        Positive Haldane-style pseudocount added to clone counts for
+        ``log2_fold_change`` (default ``0.5``).
+    min_testable_cells : int
+        Independent-filtering total cell threshold (``stim_cells + control_cells``)
+        for Benjamini–Hochberg multiple-testing adjustment (default ``2``;
+        1-cell singletons cannot achieve a discrete Fisher exact p-value below
+        ``~0.5`` and receive ``fisher_fdr = 1.0`` without inflating the family
+        size ``m`` across testable multi-cell clones).
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per clonotype observed in ``stim_samples`` or ``control_samples``,
+        sorted by ``fisher_pvalue`` ascending then ``stim_cells`` descending.
+    """
+    from scipy.stats import fisher_exact
+
+    if pseudocount <= 0 or not np.isfinite(pseudocount):
+        raise TCRsiftValidationError(
+            f"pseudocount must be a finite positive float, got {pseudocount!r}"
+        )
+    if min_testable_cells < 1:
+        raise TCRsiftValidationError(
+            f"min_testable_cells must be >= 1, got {min_testable_cells!r}"
+        )
+
+    obs = adata_or_obs.obs if hasattr(adata_or_obs, "obs") else adata_or_obs
+    if not isinstance(obs, pd.DataFrame):
+        raise TCRsiftValidationError(
+            "Expected AnnData or pandas DataFrame for score_stimulation_response"
+        )
+    for req in (clone_col, sample_col):
+        if req not in obs.columns:
+            raise TCRsiftValidationError(
+                f"Missing required column {req!r} in score_stimulation_response",
+                hint=f"Available columns: {list(obs.columns)[:15]}",
+            )
+
+    def _as_list(val) -> list[str]:
+        if val is None:
+            return []
+        if isinstance(val, str):
+            return [val]
+        return [str(x) for x in val]
+
+    ctrl_list = list(dict.fromkeys(_as_list(control_samples)))
+    if not ctrl_list:
+        if "source" in obs.columns:
+            ctrl_list.extend(
+                obs.loc[obs["source"].astype(str) == "control", sample_col]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+        if not ctrl_list and "control_sample" in obs.columns:
+            ctrl_list.extend(
+                obs["control_sample"].dropna().astype(str).unique().tolist()
+            )
+        ctrl_list = list(dict.fromkeys(ctrl_list))
+    if not ctrl_list:
+        raise TCRsiftValidationError(
+            "No control_samples specified or detected",
+            hint="Pass control_samples=[...] or mark baseline samples with source='control' in the sample sheet.",
+        )
+
+    stim_list = list(dict.fromkeys(_as_list(stim_samples)))
+    if not stim_list:
+        cand_obs = (
+            obs[obs["source"].astype(str) != "til"]
+            if "source" in obs.columns
+            else obs
+        )
+        all_samples = cand_obs[sample_col].dropna().astype(str).unique().tolist()
+        stim_list = [s for s in all_samples if s not in set(ctrl_list)]
+    if not stim_list:
+        raise TCRsiftValidationError(
+            "No stimulated samples remain after excluding control_samples",
+            hint=f"control_samples={ctrl_list}; check stim_samples and {sample_col!r}.",
+        )
+    overlap = sorted(set(stim_list) & set(ctrl_list))
+    if overlap:
+        raise TCRsiftValidationError(
+            f"stim_samples and control_samples must be disjoint; overlap={overlap}"
+        )
+
+    c_str = obs[clone_col].astype(str).str.strip()
+    valid_clone = obs[clone_col].notna() & ~c_str.isin({"", "_", "nan", "None", "<NA>"})
+    if clone_col == "CDR3ab":
+        valid_clone &= ~c_str.str.startswith("_") & ~c_str.str.endswith("_")
+    sub = obs[valid_clone & obs[sample_col].astype(str).isin({*stim_list, *ctrl_list})].copy()
+    sub["_clone"] = sub[clone_col].astype(str).str.strip()
+    sub["_is_stim"] = sub[sample_col].astype(str).isin(set(stim_list))
+
+    stim_df = sub[sub["_is_stim"]]
+    ctrl_df = sub[~sub["_is_stim"]]
+    n_stim_total = len(stim_df)
+    n_ctrl_total = len(ctrl_df)
+    if n_stim_total == 0 or n_ctrl_total == 0:
+        raise TCRsiftValidationError(
+            f"Stimulated ({n_stim_total} cells) and control ({n_ctrl_total} cells) groups must both be non-empty",
+            hint=f"stim_samples={stim_list}, control_samples={ctrl_list}",
+        )
+
+    stim_counts = stim_df["_clone"].value_counts()
+    ctrl_counts = ctrl_df["_clone"].value_counts()
+    all_clones = sorted(set(stim_counts.index) | set(ctrl_counts.index))
+
+    out = pd.DataFrame({clone_col: all_clones})
+    out["stim_cells"] = out[clone_col].map(stim_counts).fillna(0).astype(int)
+    out["control_cells"] = out[clone_col].map(ctrl_counts).fillna(0).astype(int)
+    out["stim_total_cells"] = n_stim_total
+    out["control_total_cells"] = n_ctrl_total
+    out["stim_frequency"] = out["stim_cells"] / n_stim_total
+    out["control_frequency"] = out["control_cells"] / n_ctrl_total
+
+    stim_rate = (out["stim_cells"] + pseudocount) / (n_stim_total + 2.0 * pseudocount)
+    ctrl_rate = (out["control_cells"] + pseudocount) / (n_ctrl_total + 2.0 * pseudocount)
+    out["log2_fold_change"] = np.log2(stim_rate / ctrl_rate)
+
+    # Memoize Fisher exact p-values across identical (stim_cells, control_cells) pairs
+    # so thousands of singleton/doublet clones evaluate in milliseconds.
+    pval_cache: dict[tuple[int, int], float] = {}
+    pvals = np.empty(len(out), dtype=float)
+    for i, (sc_val, cc_val) in enumerate(zip(out["stim_cells"], out["control_cells"])):
+        key = (int(sc_val), int(cc_val))
+        if key not in pval_cache:
+            table = [
+                [key[0], max(0, n_stim_total - key[0])],
+                [key[1], max(0, n_ctrl_total - key[1])],
+            ]
+            _, pv = fisher_exact(table, alternative="greater")
+            pval_cache[key] = float(pv)
+        pvals[i] = pval_cache[key]
+    out["fisher_pvalue"] = pvals
+
+    testable = (out["stim_cells"] + out["control_cells"]).to_numpy() >= min_testable_cells
+    fdr = np.ones(len(out), dtype=float)
+    if testable.any():
+        fdr[testable] = _benjamini_hochberg(pvals[testable])
+    out["fisher_fdr"] = fdr
+
+    for col in score_cols or []:
+        if col not in sub.columns:
+            raise TCRsiftValidationError(
+                f"Score column {col!r} not found in input",
+                hint=f"Available columns: {list(sub.columns)[:20]}",
+            )
+        s_vals = pd.to_numeric(stim_df[col], errors="coerce").groupby(stim_df["_clone"]).mean()
+        c_vals = pd.to_numeric(ctrl_df[col], errors="coerce").groupby(ctrl_df["_clone"]).mean()
+        out[f"stim_mean_{col}"] = out[clone_col].map(s_vals)
+        out[f"control_mean_{col}"] = out[clone_col].map(c_vals)
+        out[f"delta_{col}"] = out[f"stim_mean_{col}"] - out[f"control_mean_{col}"]
+
+    return out.sort_values(
+        ["fisher_pvalue", "stim_cells", "log2_fold_change"],
+        ascending=[True, False, False],
+        kind="mergesort",
+    ).reset_index(drop=True)

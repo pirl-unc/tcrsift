@@ -37,7 +37,7 @@ ANTIGEN_TYPE_TCELL_EXPECTATIONS = {
 }
 
 VALID_ANTIGEN_TYPES = set(ANTIGEN_TYPE_TCELL_EXPECTATIONS.keys())
-VALID_SOURCES = {"culture", "tetramer", "sct", "til"}
+VALID_SOURCES = {"culture", "tetramer", "sct", "til", "control"}
 VALID_TCELL_TYPES = {"CD4", "CD8", "mixed", None}
 VALID_MHC_BLOCKING = {"MHC-I", "MHC-II", None}
 VALID_PRE_SORTED = {"CD4", "CD8", None}
@@ -90,6 +90,8 @@ class Sample:
     sct_sheet: str = "Cell"  # sheet name in SCT Excel file
     # Standalone GEX file (for augmentation without full CellRanger output)
     gex_path: str | None = None  # path to 10x filtered_feature_bc_matrix.h5 file
+    # Optional paired baseline / unstimulated negative-control sample name
+    control_sample: str | None = None
     # TIL-specific input fields (alternative to vdj_dir for TIL samples)
     til_csv: str | None = None  # path to CSV with CDR3_alpha, CDR3_beta columns
     til_h5ad: str | None = None  # path to pre-processed h5ad file
@@ -119,12 +121,12 @@ class Sample:
                 )
 
         # Validate at least one data source
-        has_cellranger = self.gex_dir or self.vdj_dir
+        has_cellranger = bool(self.gex_dir or self.gex_path or self.vdj_dir)
         has_sct = self.sct_path is not None
         has_til_data = self.til_csv is not None or self.til_h5ad is not None
         if not has_cellranger and not has_sct and not has_til_data:
             raise ValueError(
-                f"Sample '{self.sample}' must have at least gex_dir, vdj_dir, sct_path, til_csv, or til_h5ad"
+                f"Sample '{self.sample}' must have at least gex_dir, gex_path, vdj_dir, sct_path, til_csv, or til_h5ad"
             )
 
         # Validate antigen type
@@ -202,6 +204,10 @@ class Sample:
     def is_sct_data(self) -> bool:
         """Check if this sample is SCT platform data."""
         return self.source == "sct" or self.sct_path is not None
+
+    def is_control(self) -> bool:
+        """Check if this sample is a baseline / unstimulated negative control."""
+        return self.source == "control"
 
     def get_til_data_source(self) -> tuple[str, str] | None:
         """
@@ -333,6 +339,10 @@ class SampleSheet:
         """Get all SCT platform samples."""
         return [s for s in self.samples if s.is_sct_data()]
 
+    def get_control_samples(self) -> list[Sample]:
+        """Get all baseline / unstimulated negative-control samples."""
+        return [s for s in self.samples if s.is_control()]
+
     def get_samples_by_experiment(self) -> dict[str, list[Sample]]:
         """
         Group samples by experiment name.
@@ -381,6 +391,7 @@ class SampleSheet:
                 "pre_sorted": s.pre_sorted,
                 "mhc_blocking": s.mhc_blocking,
                 "source": s.source,
+                "control_sample": s.control_sample,
                 "patient_id": s.patient_id,
                 "enrichment_method": s.enrichment_method,
                 "timepoint": s.timepoint,
@@ -443,7 +454,7 @@ def _build_sample(data: dict) -> Sample:
     # A blank cell means "not given": let the field's default apply instead of
     # passing None over it (a blank ``source`` was rejected as invalid).
     data = {key: value for key, value in data.items() if value is not None}
-    for key in ("sample", "patient_id"):  # YAML reads a bare 12 as an integer
+    for key in ("sample", "patient_id", "control_sample"):  # YAML reads a bare 12 as an integer
         if key in data:
             data[key] = str(data[key])
     return Sample(**data)
@@ -539,7 +550,11 @@ def _load_csv_sample_sheet(path: Path, sep: str = ",") -> SampleSheet:
     # e.g. sample "0012" as int 12 (leading zeros dropped) or "12" as 12.0,
     # which would collide distinct samples and diverge from the YAML loader.
     # (pandas ignores dtype keys for columns not present in the file.)
-    df = pd.read_csv(path, sep=sep, dtype={"sample": str, "patient_id": str})
+    df = pd.read_csv(
+        path,
+        sep=sep,
+        dtype={"sample": str, "patient_id": str, "control_sample": str},
+    )
 
     # Required column
     if "sample" not in df.columns:

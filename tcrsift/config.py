@@ -191,6 +191,9 @@ class AnnotateConfig:
     cedar_path: str | None = None
     iedb_epitope_path: str | None = None
     match_by: str = "CDR3ab"
+    match_strictness: str | None = None
+    match_mode: str = "exact"
+    max_distance: int = 1
     exclude_viral: bool = False
     flag_only: bool = False
     host_species_filter: str = "all"
@@ -201,6 +204,23 @@ class AnnotateConfig:
             raise ValueError(
                 f"Invalid host_species_filter: {self.host_species_filter!r}; "
                 "expected 'all' or 'same'"
+            )
+        if self.match_strictness is not None and self.match_strictness not in (
+            "strict_ab",
+            "ab_with_partial",
+            "b_only",
+        ):
+            raise ValueError(
+                f"Invalid match_strictness: {self.match_strictness!r}; "
+                "expected 'strict_ab', 'ab_with_partial', or 'b_only'"
+            )
+        if self.match_mode not in ("exact", "levenshtein"):
+            raise ValueError(
+                f"Invalid match_mode: {self.match_mode!r}; expected 'exact' or 'levenshtein'"
+            )
+        if not isinstance(self.max_distance, int) or isinstance(self.max_distance, bool) or self.max_distance < 1:
+            raise ValueError(
+                f"Invalid max_distance: {self.max_distance!r}; expected an integer >= 1"
             )
 
 
@@ -520,6 +540,10 @@ class TCRsiftConfig:
             "cedar": ("annotate", "cedar_path"),  # alias
             "iedb_epitope": ("annotate", "iedb_epitope_path"),  # alias
             "match_by": ("annotate", "match_by"),
+            "match_strictness": ("annotate", "match_strictness"),
+            "database_match": ("annotate", "match_strictness"),
+            "match_mode": ("annotate", "match_mode"),
+            "max_distance": ("annotate", "max_distance"),
             "exclude_viral": ("annotate", "exclude_viral"),
             "flag_only": ("annotate", "flag_only"),
             "host_species_filter": ("annotate", "host_species_filter"),

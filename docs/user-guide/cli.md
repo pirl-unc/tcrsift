@@ -84,6 +84,7 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 | `--vdjdb`, `--iedb`, `--cedar`, `--iedb-epitope` | Reference databases (auto-discovered from `tcrsift data` cache if omitted) |
 | `--cache-dir`, `--auto-download` | Cache directory override and on-demand database download |
 | `--species` | `auto` (default), `human`, or `mouse` |
+| `--database-match` | Chain-matching policy for database annotations and exclusions: `ab_with_partial` (default), `strict_ab`, or `b_only` |
 | `--exclude-known-viral` | Exclude clones matching viral entries in VDJdb/IEDB/CEDAR |
 | `--no-exclude-known-mart1` | Retain known MART-1 database matches |
 
@@ -240,7 +241,10 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
 | `--cache-dir`, `--auto-download` | Cache directory override and on-demand download |
 | `--species` | Query TCR species: `auto` (default), `human`, or `mouse` |
 | `--host-species-filter` | `all` (default; marks cross-species matches with `_cross`) or `same` (drop heterologous host entries) |
-| `--match-by` | `CDR3ab` or `CDR3b_only` |
+| `--database-match` | Chain-matching policy: `ab_with_partial` (default), `strict_ab` (require paired αβ on both query and database entry), or `b_only` |
+| `--match-mode` | CDR3 comparison: `exact` (default) or `levenshtein` |
+| `--max-distance` | Maximum edit distance when `--match-mode levenshtein` is set (default `1`) |
+| `--match-by` | Legacy alias for `--database-match`: `CDR3ab` (`ab_with_partial`) or `CDR3b_only` (`b_only`) |
 | `--exclude-viral` | Drop clonotypes matching viral epitopes |
 | `--flag-only` | Add annotation columns without dropping viral rows |
 
@@ -265,7 +269,7 @@ tcrsift assemble -i annotated.csv -o sequences.csv \
 | Option | Description |
 | --- | --- |
 | `-i`, `--input` / `-o`, `--output` | Input and output CSV paths (required) |
-| `--contigs-dir` | Directory of Cell Ranger contig FASTAs (required for contig verification unless `--allow-canonical-fallback` is set, and required for `--leaders-from-contigs` / `from_contig` leaders) |
+| `--contigs-dir` | Directory of Cell Ranger contig FASTAs (`*.fasta`, `*.fasta.gz`) or pre-CR6 `all_contig_annotations.json(.gz)` files (required for contig verification unless `--allow-canonical-fallback` is set, and required for `--leaders-from-contigs` / `from_contig` leaders) |
 | `--allow-canonical-fallback` | Permit canonical constant-region assembly when Cell Ranger contig FASTAs are unavailable |
 | `--alpha-leader`, `--beta-leader` | `CD8A`, `CD28`, `mCD8B`, `mCD28`, `H2Kb`, `IgK`, `TRAC`, `TRBC`, `from_contig`, or `none` (defaults: α `CD28`, β `CD8A`) |
 | `--no-leaders` | Omit signal peptides on both chains |
@@ -473,7 +477,7 @@ tcrsift mnemonic -i clonotypes.csv -o clonotypes_with_names.csv
 | --- | --- |
 | `-i`, `--input` / `-o`, `--output` | Input and output CSV paths (required) |
 | `--cdr3-col` | Source CDR3 column (auto-detected if omitted) |
-| `--name-col` | Output column name (default `mnemonic_name`) |
+| `--name-col` | Output column name (default `tcr_name`) |
 
 ---
 
