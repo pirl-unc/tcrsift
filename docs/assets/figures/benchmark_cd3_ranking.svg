@@ -9,7 +9,7 @@
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
-      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+      <dc:title>Matplotlib v3.11.1, https://matplotlib.org/</dc:title>
      </cc:Agent>
     </dc:creator>
    </cc:Work>
@@ -187,12 +187,12 @@ L 419.819107 16.50024
     </g>
    </g>
    <g id="line2d_20">
-    <path d="M 187.983194 50.435453 
-L 358.32104 50.435453 
+    <path d="M 183.879903 50.435453 
+L 358.269749 50.435453 
 " clip-path="url(#p574e900d05)" style="fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_21">
-    <path d="M 177.673676 106.994141 
+    <path d="M 179.776613 106.994141 
 L 354.166459 106.994141 
 " clip-path="url(#p574e900d05)" style="fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linecap: round"/>
    </g>

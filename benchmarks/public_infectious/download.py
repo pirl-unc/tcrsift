@@ -40,7 +40,8 @@ TENX_DONORS = {
 }
 
 MINERVINA_ZIP = "https://zenodo.org/api/records/6232103/files/libs_aggregate_rev.zip/content"
-MINERVINA_TSV = "https://raw.githubusercontent.com/pogorely/COVID_vax_CD8/main/cd8_only_dextr_rev_clean.tsv"
+MINERVINA_TSV = "https://raw.githubusercontent.com/pogorely/COVID_vax_CD8/master/cd8_only_dextr_rev_clean.tsv"
+MINERVINA_TSV_FALLBACK = "https://raw.githubusercontent.com/pogorely/COVID_vax_CD8/main/cd8_only_dextr_rev_clean.tsv"
 
 
 def fetch(url: str, dest: Path, fallback_url: str | None = None) -> Path:
@@ -98,7 +99,7 @@ def main() -> None:
 
     print("3. Minervina et al. 2022 (Zenodo 6232103 — SARS-CoV-2 CD8 dextramers)")
     mdir = root / "minervina_2022_covid_flu"
-    fetch(MINERVINA_TSV, mdir / "cd8_only_dextr_rev_clean.tsv")
+    fetch(MINERVINA_TSV, mdir / "cd8_only_dextr_rev_clean.tsv", fallback_url=MINERVINA_TSV_FALLBACK)
     zip_path = fetch(MINERVINA_ZIP, mdir / "libs_aggregate_rev.zip")
     target_h5 = mdir / "extracted" / "libs_aggregate_rev" / "filtered_feature_bc_matrix.h5"
     if not target_h5.exists():

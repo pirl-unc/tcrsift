@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from ._dtypes import rehydrate_obs
+from ._schema import clean_cdr3_series, paired_cdr3ab_key
 from .sample_sheet import Sample, SampleSheet
 from .validation import TCRsiftValidationError, parse_til_sample_spec, safe_divide, safe_percentage
 
@@ -39,25 +40,14 @@ logger = logging.getLogger(__name__)
 
 def _clean_cdr3_col(df: pd.DataFrame, col: str) -> pd.Series:
     """Return a clean object-dtype string Series with missing values normalized to ``""``."""
-    if col not in df.columns:
-        return pd.Series("", index=df.index, dtype=object)
-    s = df[col]
-    if isinstance(s.dtype, pd.CategoricalDtype):
-        s = s.astype(object)
-    out = s.astype("string").fillna("").str.strip()
-    out = out.mask(out.str.lower().isin({"nan", "none", "<na>"}), "")
-    return out.astype(object)
+    return clean_cdr3_series(df, col)
 
 
 def _build_til_cdr3_key(df: pd.DataFrame, match_by: str) -> tuple[pd.Series, pd.Series]:
     """Build ``(clone_key, valid_mask)`` excluding incomplete/single-chain rows."""
     if match_by == "CDR3ab":
-        alpha = _clean_cdr3_col(df, "CDR3_alpha")
-        beta = _clean_cdr3_col(df, "CDR3_beta")
-        valid = (alpha != "") & (beta != "")
-        key = (alpha + "_" + beta).where(valid, "")
-        return key.astype(object), valid
-    beta = _clean_cdr3_col(df, "CDR3_beta")
+        return paired_cdr3ab_key(df, "CDR3_alpha", "CDR3_beta")
+    beta = clean_cdr3_series(df, "CDR3_beta")
     valid = beta != ""
     return beta.where(valid, "").astype(object), valid
 

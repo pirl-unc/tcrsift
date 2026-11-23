@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import logging
 from collections import Counter, deque
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -62,6 +65,97 @@ QC_DEFAULTS = {
     "min_counts": 500, "max_counts": 100000,
     "min_mito_pct": 0.0, "max_mito_pct": 8.0,
 }
+
+
+@dataclass
+class PrioritizeConfig:
+    """Typed configuration for :func:`tcrsift.til_prioritize.run_til_prioritize`."""
+
+    sample_sheet: Path
+    output_dir: Path
+    context: str = "generic"
+    tcell_type: str = "cd8"
+    species: str = "auto"
+    signatures: list[str] | None = None
+    exclude_signatures: list[str] | None = None
+    max_clones: int = 200
+    min_cells: int = 2
+    min_frequency: float = 0.001
+    signature_quantile: float = 0.9
+    signature_cutoff: str = "background"
+    signature_evidence: str | None = None
+    signature_high_quantile: float = 0.9
+    min_signature_high_cells: int = 5
+    min_signature_high_fraction: float = 0.0
+    signature_subset_pvalue: float = 0.01
+    signature_background_quantile: float = 0.99
+    signature_background_draws: int = 2000
+    signature_background_seed: int = 0
+    min_signature_score: float | None = None
+    min_signature_support: int = 1
+    vdjdb: Path | None = None
+    iedb: Path | None = None
+    iedb_epitope: Path | None = None
+    cedar: Path | None = None
+    cache_dir: Path | None = None
+    auto_download: bool = False
+    database_match: str = "ab_with_partial"
+    exclude_known_viral: bool = False
+    exclude_known_mart1: bool = True
+    exclude_trav12_2: bool = False
+    exclude_public_quantile: float | None = None
+    min_genes: int = 250
+    max_genes: int = 15000
+    min_counts: int = 500
+    max_counts: int = 100000
+    min_mito_pct: float = 0.0
+    max_mito_pct: float = 8.0
+    min_vdj_umis: int = 2
+    min_vdj_reads: int = 0
+    min_cd3: int = 3
+    min_alpha_cdr3_length: int = 0
+    min_beta_cdr3_length: int = 0
+    min_expression: list[str] = field(default_factory=list)
+    max_expression: list[str] = field(default_factory=list)
+    include_v_gene: list[str] = field(default_factory=list)
+    exclude_v_gene: list[str] = field(default_factory=list)
+    include_j_gene: list[str] = field(default_factory=list)
+    exclude_j_gene: list[str] = field(default_factory=list)
+    verbose: bool = False
+
+    def __post_init__(self) -> None:
+        self.sample_sheet = Path(self.sample_sheet)
+        self.output_dir = Path(self.output_dir)
+        for attr in ("vdjdb", "iedb", "iedb_epitope", "cedar", "cache_dir"):
+            val = getattr(self, attr)
+            if isinstance(val, str) and not val.strip():
+                setattr(self, attr, None)
+            elif val is not None and not isinstance(val, Path):
+                setattr(self, attr, Path(val))
+        for list_attr in (
+            "min_expression",
+            "max_expression",
+            "include_v_gene",
+            "exclude_v_gene",
+            "include_j_gene",
+            "exclude_j_gene",
+        ):
+            if getattr(self, list_attr) is None:
+                setattr(self, list_attr, [])
+
+    @classmethod
+    def from_namespace(cls, args: Any) -> PrioritizeConfig:
+        """Build a :class:`PrioritizeConfig` from an ``argparse.Namespace`` or similar object."""
+        if isinstance(args, cls):
+            return args
+        kwargs: dict[str, Any] = {}
+        for f in fields(cls):
+            if hasattr(args, f.name):
+                kwargs[f.name] = getattr(args, f.name)
+        return cls(**kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 def resolve_signatures(

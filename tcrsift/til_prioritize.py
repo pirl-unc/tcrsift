@@ -34,10 +34,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ._schema import truthy_flag_series
 from .prioritize import (
     CONTEXT_SIGNATURES,
     QC_DEFAULTS,
     SIGNATURE_LINEAGE,
+    PrioritizeConfig,
     filter_cells,
     gene_filter_mask,
     parse_expression_limits,
@@ -169,11 +171,15 @@ def _join_flags(df: pd.DataFrame, columns: list[tuple[str, str]]) -> pd.Series:
     return pd.Series(values, index=df.index, dtype="string")
 
 
-def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
+def run_til_prioritize(
+    args: PrioritizeConfig | argparse.Namespace,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Score and prioritize clones from a standard CellRanger sample sheet."""
     from .species import normalize_species, resolve_species
 
-    arg_species = normalize_species(getattr(args, "species", "auto"), allow_auto=True)
+    func_name = getattr(getattr(args, "func", None), "__name__", "run_til_prioritize")
+    args = PrioritizeConfig.from_namespace(args)
+    arg_species = normalize_species(args.species, allow_auto=True)
     initial_species = "human" if arg_species == "auto" else arg_species
     names = resolve_signatures(
         args.context,
@@ -402,7 +408,7 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
         host_species_filter="same",
     )
 
-    clonotypes["known_viral_match"] = clonotypes["is_viral"].fillna(False).astype(bool)
+    clonotypes["known_viral_match"] = truthy_flag_series(clonotypes["is_viral"])
     clonotypes["known_mart1_match"] = _known_mart1_mask(clonotypes)
     clonotypes["uses_trav12_2"] = (
         _trav12_2_mask(clonotypes)
@@ -484,9 +490,8 @@ def run_til_prioritize(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataF
     candidates.to_csv(args.output_dir / "candidate_clones.csv", index=False)
     from .version import __version__
 
-    func_name = getattr(getattr(args, "func", None), "__name__", "run_til_prioritize")
     config = {
-        "version": __version__, "arguments": vars(args) | {"func": func_name},
+        "version": __version__, "arguments": args.to_dict() | {"func": func_name},
         "species": resolved_species,
         "resolved_signatures": names, "signature_lineages": SIGNATURE_LINEAGE,
         "cell_filters": cell_filters, "sample_cell_counts": sample_counts,

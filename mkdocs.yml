@@ -82,6 +82,7 @@ nav:
   - Reference:
     - CLI Reference: user-guide/cli.md
     - Prioritization Release Notes: release-notes.md
+    - Pipeline & Prioritization API: api/pipeline.md
     - Loading and cells:
       - Sample Sheet: api/sample_sheet.md
       - Loading: api/loader.md

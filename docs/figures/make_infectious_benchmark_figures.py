@@ -321,8 +321,8 @@ def vdjdb_precision_recall() -> None:
     pooled["recall"] = pooled["n_exact_epitope"] / pooled["n_query_clones"]
 
     panel_a_offsets = {
-        ("full_vdjdb", "strict_ab"): (-7, 7, "right"),
-        ("full_vdjdb", "levenshtein b_only"): (-7, -12, "right"),
+        ("full_vdjdb", "strict_ab"): (-8, -11, "right"),
+        ("full_vdjdb", "levenshtein b_only"): (-7, 7, "right"),
         ("leave_study_out", "strict_ab"): (6, 6, "left"),
         ("leave_study_out", "ab_with_partial"): (6, 7, "left"),
         ("leave_study_out", "b_only"): (6, -12, "left"),

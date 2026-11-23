@@ -42,6 +42,13 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .signatures import (
+    ANTIGEN_RESPONSE_GENES_HGNC,
+    CYTOLYTIC_GENES_HGNC,
+    EFFECTOR_GENES_HGNC,
+    NAIVE_STEM_GENES_HGNC,
+)
+
 logger = logging.getLogger(__name__)
 
 # TCR / Ig V-D-J-C *segment* transcripts. Including these in a signature or
@@ -118,7 +125,7 @@ _INVARIANT_SIGNATURES = [
         panel="broad", description="Cell-cycle / proliferation program.",
     ),
     Signature(
-        "Cytolytic", ("PRF1", "GZMB"), panel="focal",
+        "Cytolytic", CYTOLYTIC_GENES_HGNC, panel="focal",
         description="Canonical cytotoxic effector pair (Caushi/Krishna/Hanada).",
     ),
     Signature(
@@ -128,8 +135,8 @@ _INVARIANT_SIGNATURES = [
     ),
     Signature(
         "Differentiated",
-        ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7"),
-        ("TCF7", "LEF1", "CCR7", "SELL"),
+        EFFECTOR_GENES_HGNC,
+        NAIVE_STEM_GENES_HGNC[:4],
         panel="broad",
         description="Effector−naïve differentiation contrast (up effector "
         "core, down naïve/stem). Best axis for separating antigen-expanded "
@@ -138,15 +145,14 @@ _INVARIANT_SIGNATURES = [
     ),
     Signature(
         "DifferentiatedBroad",
-        ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7", "GZMH", "GZMA", "KLRG1",
-         "CX3CR1", "TBX21", "PRDM1"),
-        ("TCF7", "LEF1", "CCR7", "SELL", "IL7R", "CD27", "CD28"),
+        (*EFFECTOR_GENES_HGNC, "GZMH", "GZMA", "KLRG1", "CX3CR1", "TBX21", "PRDM1"),
+        NAIVE_STEM_GENES_HGNC,
         panel="broad",
         description="Broad effector−naïve contrast: extended effector program "
         "up, full naïve/stem program down.",
     ),
     Signature(
-        "AcuteActivation", ("TNFRSF9", "MKI67"), panel="focal",
+        "AcuteActivation", ANTIGEN_RESPONSE_GENES_HGNC, panel="focal",
         description="Recent antigen-response / proliferation axis (4-1BB + "
         "Ki-67). The newer clone-level compartment analysis found both genes "
         "positively associated with culture expansion (#303), while the "
@@ -171,7 +177,7 @@ _COMPOSITE_SIGNATURES = [
     ),
     Signature(
         "AntigenExperienced",
-        ("IFNG", "GZMB", "PRF1", "GNLY", "NKG7"),
+        EFFECTOR_GENES_HGNC,
         panel="broad",
         description="Effector program of antigen-experienced cells (IFNG + "
         "cytolytic core). Recomposed in #142 to keep this effector axis "

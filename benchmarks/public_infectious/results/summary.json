@@ -1,10 +1,43 @@
 {
-  "tcrsift_version": "3.30.0",
-  "vdjdb_entries": 139744,
-  "vdjdb_paired_ab_entries": 102654,
+  "tcrsift_version": "3.31.0",
+  "vdjdb_release": "vdjdb-2026-11-06",
+  "vdjdb_entries": 280894,
+  "vdjdb_paired_ab_entries": 200180,
+  "ground_truth_provenance": {
+    "tenx_dextramer": {
+      "citation": "10x Genomics Application Note (2019): 'A new way of exploring immunity: linking highly multiplexed antigen recognition to immune repertoire and phenotype' (Cell Ranger 3.0.2 Healthy Donors 1 & 2)",
+      "setting": "Resting steady-state peripheral blood CD8+ T cells from healthy HLA-typed donors",
+      "gex_vdj_accession": "https://cf.10xgenomics.com/samples/cell-vdj/3.0.2/vdj_v1_hs_aggregated_donor{1,2}/ (*_sc5p_v2_hs_B_T_all_feature_bc_matrix_filtered.h5, saved locally as filtered_feature_bc_matrix.h5, + *_all_contig_annotations.csv)",
+      "label_source": "10x Genomics published binarized_matrix.csv (44 viral/cancer pMHC dextramer '*_binder' columns) + raw Antibody Capture UMI counts for 6 negative-control ('*_NC') dextramers and TotalSeq-C CD45RO/CD45RA surface antibodies.",
+      "experimental_assay": "Simultaneous staining with 50 DNA-barcoded dCODE MHC class I dextramers (44 viral/self epitopes + 6 negative-control peptides) + CITE-seq TotalSeq-C antibodies + 5' scRNA-seq + scTCR-seq.",
+      "positive_definition": "Paired CDR3ab clonotypes where >=50% of cells in the clone carry the same single-specificity binder call in binarized_matrix.csv (plus >=2 single-binder cells for all expanded >=2-cell evaluations): bona fide viral memory = Influenza A M1 (GILGFVFTL), EBV (BMLF1/BZLF1/EBNA-3A/3B/LMP2A), and CMV pp65 (NLVPMVATV). Sticky reagent A0301_KLGGALQAK_IE-1_CMV is excluded from ground-truth viral positives and evaluated separately as a multimer QC stress test.",
+      "negative_definition": "(A) Naive antigen-specific precursors: HLA-A*02:01 MART-1 (ELAGIGILTV) dextramer+ clones (verified phenotypically naive via TotalSeq-C CLR(CD45RO) - CLR(CD45RA) < -2.9 and >99% singletons). (B) Unlabeled expanded blood clones: paired CD8 clones (>=2 cells) negative for all 44 panel dextramers (representing memory T cells against unpanelled antigens). (C) Memory subtype contrast: Influenza M1 GILGFVFTL vs EBV expanded clones.",
+      "circularity_controls": "10x Genomics dextramer data were ingested into VDJdb (reference containing '10xgenomics'); VDJdb matching reports both unmodified VDJdb (circular) and 10x-study-held-out VDJdb (independent)."
+    },
+    "minervina_2022": {
+      "citation": "Minervina, Pogorelyy, Kirk et al., Nature Immunology 2022 (23:781-790; DOI:10.1038/s41590-022-01184-4; PMID:35383307)",
+      "setting": "Longitudinal human peripheral blood SARS-CoV-2 CD8+ T cells across pre-exposure, convalescence, mRNA vaccination, acute post-dose-2 recall, and breakthrough infection",
+      "gex_vdj_accession": "Zenodo 6232103 (libs_aggregate_rev.zip: aggregated Cell Ranger filtered_feature_bc_matrix.h5 + filtered_contig_annotations.csv)",
+      "label_source": "Curated single-cell dextramer & cohort metadata table pogorely/COVID_vax_CD8 (cd8_only_dextr_rev_clean.tsv; columns 'barcode', 'donor', 'epitope', 'spike', 'donor_category', 'sample_category').",
+      "experimental_assay": "FACS and DNA-barcoded HLA class I dextramer profiling across 18 SARS-CoV-2 Spike and non-Spike (ORF1ab, N, M, ORF3a) epitopes.",
+      "positive_definition": "(1) State recall AUROC: paired-TCR CD8 clones (>=2 cells) sampled during acute post-vaccine dose-2 recall (donor_category == 'inf_after_2'). (2) VDJdb specificity recovery: paired-TCR CD8 clones carrying a curated SARS-CoV-2 epitope call in cd8_only_dextr_rev_clean.tsv.",
+      "negative_definition": "State recall AUROC: disjoint paired-TCR SARS-CoV-2 CD8 clones (>=2 cells) sampled during resting post-infection convalescence (donor_category == 'post_inf'), excluding longitudinal clones observed in both categories.",
+      "circularity_controls": "PMID:35383307 is indexed in VDJdb; VDJdb matching reports both unmodified VDJdb (circular) and PMID:35383307-held-out VDJdb (independent)."
+    },
+    "fischer_2021": {
+      "citation": "Fischer, Ansari, Wagner et al., Nature Communications 2021 (12:4515; DOI:10.1038/s41467-021-25548-w; PMID:34301934)",
+      "setting": "Paired unstimulated control vs 16-hour SARS-CoV-2 Spike peptide-pool-stimulated PBMCs from hospitalized severe COVID-19 patients (Gauting cohort)",
+      "gex_vdj_accession": "GEO GSE171037 (GSM5216975 GT6_unstim, GSM5216976 GT6_covid_stim, GSM5216977 GT_unstim, GSM5216978 GT_covid_stim: Cell Ranger 3 .h5 + .csv.gz + all_contig_annotations.json.gz)",
+      "label_source": "Experimental well assignment from GEO sample metadata (unstimulated control well vs autologous 16 h SARS-CoV-2 Spike overlapping peptide pool well) across persistent CDR3_beta clonotypes (>=2 CD3-gated T cells in both wells).",
+      "experimental_assay": "Ex vivo 16 h overlapping SARS-CoV-2 Spike peptide pool restimulation ('reverse phenotyping') vs parallel unstimulated PBMC control from the same blood draw.",
+      "positive_definition": "Persistent T-cell clones exhibiting paired within-clone effector cytokine transcript induction (delta mean log1p CP10K of IFNG, TNF, IL2, CCL4 > 0.5 and/or AIM/AIMBroad induction) upon Spike peptide stimulation.",
+      "negative_definition": "Persistent bystander T-cell clones present at >=2 cells in both unstimulated and Spike-stimulated wells showing no transcriptional cytokine/AIM induction.",
+      "circularity_controls": "None of TCRsift's signatures (AIM, AIMBroad, AcuteActivation, Differentiated, Cytolytic) were derived from GSE171037."
+    }
+  },
   "tenx_dextramer": {
     "tenx_donor1": {
-      "seconds": 58.0,
+      "seconds": null,
       "cells_after_gex_qc": 34220,
       "cells_retained": 24887,
       "clones_scored": 15132,
@@ -13,13 +46,13 @@
       "mart1_singleton_clones": 141,
       "mart1_singleton_fraction": 0.993,
       "mart1_mean_memory_clr_diff": -2.988,
-      "viral_mean_memory_clr_diff": 0.954,
+      "viral_mean_memory_clr_diff": 0.959,
       "multimer_features": 44,
       "negative_control_features": 6,
       "cell_peptide_agreement_vs_10x": 1.0
     },
     "tenx_donor2": {
-      "seconds": 53.3,
+      "seconds": null,
       "cells_after_gex_qc": 67789,
       "cells_retained": 38314,
       "clones_scored": 7741,
@@ -28,7 +61,7 @@
       "mart1_singleton_clones": 19,
       "mart1_singleton_fraction": 1.0,
       "mart1_mean_memory_clr_diff": -4.611,
-      "viral_mean_memory_clr_diff": -0.293,
+      "viral_mean_memory_clr_diff": -0.295,
       "multimer_features": 44,
       "negative_control_features": 6,
       "cell_peptide_agreement_vs_10x": 1.0
@@ -41,14 +74,14 @@
     "sars_cov_2_labelled_clones": 4212,
     "n_distinct_epitopes": 19,
     "top_epitope": "A01_TTD",
-    "top_epitope_clones": 1801,
+    "top_epitope_clones": 1800,
     "shared_longitudinal_clones_excluded_from_auroc": 0,
     "leave_study_out_ab_with_partial_off_target_species": {
-      "CMV": 78,
-      "EBV": 18,
-      "Homo sapiens": 12,
-      "Influenza A": 11,
-      "HIV-1": 9
+      "YFV": 91,
+      "EBV": 44,
+      "CMV": 42,
+      "Homo sapiens": 33,
+      "Influenza A": 8
     }
   },
   "fischer_2021": {

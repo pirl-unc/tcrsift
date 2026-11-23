@@ -21,7 +21,8 @@ required.
 
 - **Documentation:** [pirl-unc.github.io/tcrsift](https://pirl-unc.github.io/tcrsift/)
 - **Method overview:** [How TCRsift works](https://pirl-unc.github.io/tcrsift/how-it-works/)
-- **Empirical evaluation (5 public TIL cohorts, 33 patients):** [Benchmark on public TIL data](https://pirl-unc.github.io/tcrsift/benchmarks/)
+- **Empirical evaluation (solid-tumor TIL, 5 cohorts / 33 patients):** [Benchmark on public TIL data](https://pirl-unc.github.io/tcrsift/benchmarks/)
+- **Empirical evaluation (infectious disease & blood, 3 cohorts):** [Benchmark on infectious disease and blood](https://pirl-unc.github.io/tcrsift/benchmarks-infectious/)
 
 ## Quick example
 

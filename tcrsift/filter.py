@@ -1210,12 +1210,11 @@ def score_stimulation_response(
             f"stim_samples and control_samples must be disjoint; overlap={overlap}"
         )
 
-    c_str = obs[clone_col].astype(str).str.strip()
-    valid_clone = obs[clone_col].notna() & ~c_str.isin({"", "_", "nan", "None", "<NA>"})
-    if clone_col == "CDR3ab":
-        valid_clone &= ~c_str.str.startswith("_") & ~c_str.str.endswith("_")
+    from ._schema import clean_str_series, valid_clone_mask
+
+    valid_clone = valid_clone_mask(obs[clone_col], clone_col=clone_col)
     sub = obs[valid_clone & obs[sample_col].astype(str).isin({*stim_list, *ctrl_list})].copy()
-    sub["_clone"] = sub[clone_col].astype(str).str.strip()
+    sub["_clone"] = clean_str_series(sub[clone_col])
     sub["_is_stim"] = sub[sample_col].astype(str).isin(set(stim_list))
 
     stim_df = sub[sub["_is_stim"]]

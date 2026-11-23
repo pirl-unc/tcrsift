@@ -51,6 +51,20 @@ _MODULE_EXPORTS = {
         "AssembleConfig",
         "OutputConfig",
     ),
+    ".pipeline": (
+        "PipelineResult",
+        "run_pipeline",
+    ),
+    ".prioritize": (
+        "PrioritizeConfig",
+        "CONTEXT_SIGNATURES",
+        "resolve_signatures",
+        "select_round_robin",
+        "signature_pass_mask",
+    ),
+    ".til_prioritize": (
+        "run_til_prioritize",
+    ),
     ".embed": (
         "embed_cells",
         "refine_cluster",

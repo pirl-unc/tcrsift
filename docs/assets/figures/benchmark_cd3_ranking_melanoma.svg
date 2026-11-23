@@ -9,7 +9,7 @@
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
-      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+      <dc:title>Matplotlib v3.11.1, https://matplotlib.org/</dc:title>
      </cc:Agent>
     </dc:creator>
    </cc:Work>
@@ -187,18 +187,18 @@ L 419.819107 16.50024
     </g>
    </g>
    <g id="line2d_20">
-    <path d="M 279.582 50.531693 
-L 348.58018 50.531693 
+    <path d="M 281.813974 50.531693 
+L 347.809868 50.531693 
 " clip-path="url(#p628364a672)" style="fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_21">
-    <path d="M 281.776939 107.250781 
-L 346.334467 107.250781 
+    <path d="M 276.673199 107.250781 
+L 343.140639 107.250781 
 " clip-path="url(#p628364a672)" style="fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_22">
-    <path d="M 261.572911 163.96987 
-L 342.490732 163.96987 
+    <path d="M 256.097816 163.96987 
+L 337.905305 163.96987 
 " clip-path="url(#p628364a672)" style="fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_23">
@@ -226,15 +226,15 @@ z
 " style="stroke: #fcfcfb; stroke-width: 1.5"/>
     </defs>
     <g clip-path="url(#p628364a672)">
-     <use xlink:href="#m8643592c82" x="316.783323" y="50.531693" style="fill: #2a78d6; stroke: #fcfcfb; stroke-width: 1.5"/>
+     <use xlink:href="#m8643592c82" x="314.818062" y="50.531693" style="fill: #2a78d6; stroke: #fcfcfb; stroke-width: 1.5"/>
     </g>
    </g>
    <g id="text_13">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="439.022506" y="52.988412" transform="rotate(-0 439.022506 52.988412)">0.79  (72 vs 95 clones)</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="439.022506" y="52.988412" transform="rotate(-0 439.022506 52.988412)">0.78  (72 vs 95 clones)</text>
    </g>
    <g id="PathCollection_2">
     <g clip-path="url(#p628364a672)">
-     <use xlink:href="#m8643592c82" x="314.835983" y="107.250781" style="fill: #2a78d6; stroke: #fcfcfb; stroke-width: 1.5"/>
+     <use xlink:href="#m8643592c82" x="312.778881" y="107.250781" style="fill: #2a78d6; stroke: #fcfcfb; stroke-width: 1.5"/>
     </g>
    </g>
    <g id="text_14">
@@ -242,11 +242,11 @@ z
    </g>
    <g id="PathCollection_3">
     <g clip-path="url(#p628364a672)">
-     <use xlink:href="#m8643592c82" x="302.427696" y="163.96987" style="fill: #2a78d6; stroke: #fcfcfb; stroke-width: 1.5"/>
+     <use xlink:href="#m8643592c82" x="299.51809" y="163.96987" style="fill: #2a78d6; stroke: #fcfcfb; stroke-width: 1.5"/>
     </g>
    </g>
    <g id="text_15">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="439.022506" y="166.426588" transform="rotate(-0 439.022506 166.426588)">0.76  (65 vs 66 clones)</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="439.022506" y="166.426588" transform="rotate(-0 439.022506 166.426588)">0.75  (65 vs 66 clones)</text>
    </g>
    <g id="text_16">
     <text style="font-weight: 700; font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="83.759615" y="10.50024" transform="rotate(-0 83.759615 10.50024)">Ranking of validated clones</text>

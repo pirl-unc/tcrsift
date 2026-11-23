@@ -66,13 +66,13 @@ def naive_signature(species: str = "human"):
     IL7R, CD27, CD28 (or MGI orthologs when ``species == 'mouse'``).
     """
     from .signature_methods import Signature
+    from .signatures import NAIVE_STEM_GENES_HGNC
     from .species import normalize_species
 
     normalize_species(species)
-    genes = ("TCF7", "LEF1", "CCR7", "SELL", "IL7R", "CD27", "CD28")
     return Signature(
         "Naive",
-        genes,
+        NAIVE_STEM_GENES_HGNC,
         panel="broad",
         description="Naïve/stem-memory program (#141/#145) for naive_score.",
     )
