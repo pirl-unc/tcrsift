@@ -1,0 +1,273 @@
+{
+  "tcrsift_version": "3.33.0",
+  "vdjdb_release": "vdjdb-2026-11-06",
+  "elapsed_seconds": 28.7,
+  "ground_truth_provenance": {
+    "pulliam_blood": {
+      "study": "Pulliam et al., Cell Reports Medicine 2024 (PMID:38340723)",
+      "accession": "GSE227708 + Table S4 (mmc5.xlsx)",
+      "ground_truth": "DNA-barcoded MCPyV T-antigen multimer+ antitumor CD8+ T cells vs CMV/EBV/Influenza viral control CD8+ T cells across 10 demultiplexed peripheral blood libraries + 2 matched tumor libraries (>=20 cells across 5 hashed 10x runs) in 4 MCC patients"
+    },
+    "chiffelle_act": {
+      "study": "Chiffelle et al., Immunity 2024 / Barras et al., Science Immunology 2024 (PMID:39321802)",
+      "accession": "GSE222448 + Table S3 (mmc3.xlsx)",
+      "ground_truth": "Autologous melanoma co-culture verified tumor-reactive (TR) vs non-reactive (NTR) TCRs across paired baseline T0 (8 samples) and Day-30 post-ACT T30 (6 samples) biopsies in Patients 1, 5, 7, 8, 10, and 13"
+    },
+    "veatch_cd4": {
+      "study": "Veatch et al., Cancer Cell 2022 (PMID:35413271)",
+      "accession": "GSE198265 (GSM5942454-GSM5942471)",
+      "ground_truth": "Autologous neoantigen-specific (CD4_neo: BRAF V600E, ERAP1, SNRPB, HTATSF1, ITGB5, B7/C8/F3) and melanoma self-antigen (CD4_self) CD4+ TIL clonotypes across 4 melanoma patients (397-gene targeted BD Rhapsody mRNA + AbSeq)"
+    },
+    "oh_cd4": {
+      "study": "Oh et al., Cell 2020 (PMID:32497499)",
+      "accession": "GSE149652 (GSM4506643-GSM4506662)",
+      "ground_truth": "Whole-transcriptome 10x scRNA-seq + paired alpha/beta TCR across 7 human bladder tumors and 6 matched normal bladder CD4+ T-cell libraries with author-curated CD4CXCL13, cytotoxic CD4GZMB/CD4GZMK, FOXP3+ CD4IL2RAHI Treg, and CD4CM states"
+    }
+  },
+  "pulliam_blood": {
+    "demux_cells": {
+      "Z1210": {
+        "H1_MccLy0940_Blood": 1602,
+        "H2_MccLy0951_Blood": 1437,
+        "H3_MccB1500_Blood": 54,
+        "H4_MccLy1017_Blood": 0,
+        "H5_MccLy1027_Blood": 0,
+        "H6_MccLy1033_Blood": 1760,
+        "H7_MccLy1037_Blood": 273,
+        "H8_TD7459_Tumor": 0
+      },
+      "Z1249": {
+        "H1_TD6222_Tumor": 8475,
+        "H2_MccLy0965_Blood": 448,
+        "H3_MccLy0945_Blood": 19
+      },
+      "Z1308": {
+        "H1_TD7000_Tumor": 350,
+        "H2_MccLy1000_Blood": 522
+      },
+      "Z1493": {
+        "H1_MccLy1192_Blood": 578,
+        "H2_MccLy1200_Blood": 1548
+      },
+      "Z1493B": {
+        "H1_MccLy1192_Blood": 828,
+        "H2_MccLy1200_Blood": 0,
+        "H3_MccLy1266_Blood": 0,
+        "H4_TD8206_Tumor": 0
+      }
+    },
+    "runs": {
+      "blood_tumor_default": {
+        "cohort": "pulliam_blood",
+        "run": "blood_tumor_default",
+        "retained_cells": 1014,
+        "total_clones": 548,
+        "expanded_ge2": 91,
+        "shortlisted": 18,
+        "mcpyv_total_ge2": 21,
+        "mcpyv_shortlisted": 3,
+        "control_viral_total_ge2": 5,
+        "control_viral_shortlisted": 1,
+        "tumor_infiltrating_ab_total_ge2": 12,
+        "tumor_infiltrating_ab_shortlisted": 4
+      },
+      "blood_tumor_min1": {
+        "cohort": "pulliam_blood",
+        "run": "blood_tumor_min1",
+        "retained_cells": 1014,
+        "total_clones": 548,
+        "expanded_ge2": 91,
+        "shortlisted": 31,
+        "mcpyv_total_ge2": 21,
+        "mcpyv_shortlisted": 4,
+        "control_viral_total_ge2": 5,
+        "control_viral_shortlisted": 1,
+        "tumor_infiltrating_ab_total_ge2": 12,
+        "tumor_infiltrating_ab_shortlisted": 4
+      },
+      "blood_default": {
+        "cohort": "pulliam_blood",
+        "run": "blood_default",
+        "retained_cells": 1014,
+        "total_clones": 548,
+        "expanded_ge2": 91,
+        "shortlisted": 16,
+        "mcpyv_total_ge2": 21,
+        "mcpyv_shortlisted": 2,
+        "control_viral_total_ge2": 5,
+        "control_viral_shortlisted": 1,
+        "tumor_infiltrating_ab_total_ge2": 12,
+        "tumor_infiltrating_ab_shortlisted": 4
+      },
+      "blood_tumor_excl_viral_strict": {
+        "cohort": "pulliam_blood",
+        "run": "blood_tumor_excl_viral_strict",
+        "retained_cells": 1014,
+        "total_clones": 548,
+        "expanded_ge2": 91,
+        "shortlisted": 18,
+        "mcpyv_total_ge2": 21,
+        "mcpyv_shortlisted": 3,
+        "control_viral_total_ge2": 5,
+        "control_viral_shortlisted": 1,
+        "tumor_infiltrating_ab_total_ge2": 12,
+        "tumor_infiltrating_ab_shortlisted": 4
+      },
+      "blood_tumor_excl_viral_partial": {
+        "cohort": "pulliam_blood",
+        "run": "blood_tumor_excl_viral_partial",
+        "retained_cells": 1014,
+        "total_clones": 548,
+        "expanded_ge2": 91,
+        "shortlisted": 17,
+        "mcpyv_total_ge2": 21,
+        "mcpyv_shortlisted": 3,
+        "control_viral_total_ge2": 5,
+        "control_viral_shortlisted": 1,
+        "tumor_infiltrating_ab_total_ge2": 12,
+        "tumor_infiltrating_ab_shortlisted": 4
+      }
+    }
+  },
+  "chiffelle_act": {
+    "T0_pre_ACT": {
+      "cohort": "chiffelle_act",
+      "run": "T0_pre_ACT",
+      "retained_cells": 4933,
+      "total_clones": 3032,
+      "expanded_ge2": 620,
+      "shortlisted": 118,
+      "tr_scored": 31,
+      "tr_shortlisted": 10,
+      "ntr_scored": 49,
+      "ntr_shortlisted": 6,
+      "tested_shortlist_precision": 0.625
+    },
+    "T30_post_ACT": {
+      "cohort": "chiffelle_act",
+      "run": "T30_post_ACT",
+      "retained_cells": 5595,
+      "total_clones": 2004,
+      "expanded_ge2": 484,
+      "shortlisted": 87,
+      "tr_scored": 18,
+      "tr_shortlisted": 2,
+      "ntr_scored": 32,
+      "ntr_shortlisted": 5,
+      "tested_shortlist_precision": 0.2857
+    },
+    "t30_persisted_from_t0_tr": 16,
+    "t30_persisted_from_t0_ntr": 27,
+    "t30_newly_detected_tr": 2,
+    "t30_newly_detected_ntr": 5
+  },
+  "veatch_cd4": {
+    "targeted_mrna_genes": 397,
+    "signature_panel_coverage": {
+      "TumorReactive": "8/9",
+      "NeoTCR4": "9/40",
+      "Differentiated": "9/9",
+      "AntigenExperienced": "5/5",
+      "Cytolytic": "2/2",
+      "AcuteActivation": "2/2",
+      "Proliferation": "1/1",
+      "AIM": "2/2"
+    },
+    "retained_cd4_cells": 9705,
+    "total_clones": 5121,
+    "expanded_clones_ge2": 1163,
+    "cd4_neo_clones_ge2": 28,
+    "cd4_self_clones_ge2": 13,
+    "treg_clones_ge2": 477,
+    "runs": {
+      "default_keep_treg": {
+        "cohort": "veatch_melanoma_cd4",
+        "run": "default_keep_treg",
+        "retained_cells": 9705,
+        "total_clones": 5121,
+        "expanded_ge2": 1163,
+        "shortlisted": 160,
+        "cd4_neo_ge2": 28,
+        "cd4_neo_shortlisted": 9,
+        "cd4_self_ge2": 13,
+        "cd4_self_shortlisted": 5,
+        "treg_ge2": 477,
+        "treg_shortlisted": 61
+      },
+      "exclude_treg_0.50": {
+        "cohort": "veatch_melanoma_cd4",
+        "run": "exclude_treg_0.50",
+        "retained_cells": 9705,
+        "total_clones": 5121,
+        "expanded_ge2": 1163,
+        "shortlisted": 99,
+        "cd4_neo_ge2": 28,
+        "cd4_neo_shortlisted": 9,
+        "cd4_self_ge2": 13,
+        "cd4_self_shortlisted": 5,
+        "treg_ge2": 477,
+        "treg_shortlisted": 0
+      }
+    }
+  },
+  "oh_cd4": {
+    "runs": {
+      "presorted_default": {
+        "cohort": "oh_bladder_cd4",
+        "run": "presorted_default",
+        "retained_cells": 6144,
+        "total_clones": 4755,
+        "expanded_ge2": 544,
+        "shortlisted": 103,
+        "eff_cxcl13_cyto_shortlisted": 61,
+        "cxcl13_shortlisted": 7,
+        "cyto_gzmb_gzmk_shortlisted": 54,
+        "treg_il2rahi_shortlisted": 28,
+        "cm_th17_shortlisted": 10,
+        "normal_shared_shortlisted": 3
+      },
+      "presorted_exclude_treg_0.50": {
+        "cohort": "oh_bladder_cd4",
+        "run": "presorted_exclude_treg_0.50",
+        "retained_cells": 6144,
+        "total_clones": 4755,
+        "expanded_ge2": 544,
+        "shortlisted": 93,
+        "eff_cxcl13_cyto_shortlisted": 58,
+        "cxcl13_shortlisted": 6,
+        "cyto_gzmb_gzmk_shortlisted": 52,
+        "treg_il2rahi_shortlisted": 21,
+        "cm_th17_shortlisted": 10,
+        "normal_shared_shortlisted": 3
+      },
+      "presorted_exclude_treg_0.25": {
+        "cohort": "oh_bladder_cd4",
+        "run": "presorted_exclude_treg_0.25",
+        "retained_cells": 6144,
+        "total_clones": 4755,
+        "expanded_ge2": 544,
+        "shortlisted": 88,
+        "eff_cxcl13_cyto_shortlisted": 58,
+        "cxcl13_shortlisted": 6,
+        "cyto_gzmb_gzmk_shortlisted": 52,
+        "treg_il2rahi_shortlisted": 17,
+        "cm_th17_shortlisted": 9,
+        "normal_shared_shortlisted": 3
+      },
+      "no_presorted_cd4_mrna_only": {
+        "cohort": "oh_bladder_cd4",
+        "run": "no_presorted_cd4_mrna_only",
+        "retained_cells": 708,
+        "total_clones": 636,
+        "expanded_ge2": 44,
+        "shortlisted": 7,
+        "eff_cxcl13_cyto_shortlisted": 6,
+        "cxcl13_shortlisted": 1,
+        "cyto_gzmb_gzmk_shortlisted": 5,
+        "treg_il2rahi_shortlisted": 1,
+        "cm_th17_shortlisted": 0,
+        "normal_shared_shortlisted": 0
+      }
+    }
+  }
+}

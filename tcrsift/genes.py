@@ -124,6 +124,7 @@ def canonicalize_gene(name: str | None, *, keep_allele: bool = False) -> str | N
     if "*" in g:
         g, _, allele = g.partition("*")
     g = re.sub(r"^TCR([ABDG])", r"TR\1", g)
+    g = re.sub(r"-DV(\d+[A-Z]*(?:-\d+)?)$", r"DV\1", g)
     g = g.replace("/", "")
     g = re.sub(r"(?<=[A-Z-])0+(\d)", r"\1", g)
     if keep_allele and allele:
@@ -472,16 +473,32 @@ def ensembl_to_gene_name(
 # between 1:1 human HGNC and mouse MGI official symbols (uppercased).
 # Each tuple is ONE orthologous gene group: Ensembl IDs + human/mouse symbols.
 GENE_SYNONYMS: tuple[tuple[str, ...], ...] = (
-    # Human GENCODE / HGNC version renames
+    # Human GENCODE / HGNC version renames (including Cell Ranger hg19 -> GRCh38)
     ("ENSG00000176485", "ENSMUSG00000060675", "PLA2G16", "PLAAT3"),
     ("ENSG00000110619", "ENSMUSG00000010755", "CARS", "CARS1"),
     ("ENSG00000184584", "ENSMUSG00000024349", "TMEM173", "STING1"),
     ("ENSG00000119979", "FAM45A", "DENND10"),
     ("ENSG00000104964", "AES", "TLE5"),
     ("ENSG00000135842", "FAM129A", "NIBAN1"),
-    ("ENSG00000265206", "AC004687.1", "MIR142HG"),
+    ("ENSG00000205336", "ENSMUSG00000031785", "ADGRG1", "GPR56"),
+    ("ENSG00000264868", "LINC01943", "RP11-291B21.2"),
+    ("ENSG00000067113", "ENSMUSG00000021759", "PLPP1", "PPAP2A"),
+    ("ENSG00000145740", "ENSMUSG00000021668", "SLF1", "ANKRD32"),
+    ("ENSG00000160593", "ENSMUSG00000032068", "JAML", "AMICA1"),
+    ("ENSG00000162585", "ENSMUSG00000042670", "FAAP20", "C1ORF86"),
+    ("ENSG00000082074", "ENSMUSG00000022148", "FYB1", "FYB"),
+    ("ENSG00000166681", "ENSMUSG00000047841", "BEX3", "NGFRAP1"),
+    ("ENSG00000222041", "CYTOR", "LINC00152"),
+    ("ENSG00000167863", "ENSMUSG00000034566", "ATP5PD", "ATP5H"),
+    ("ENSG00000107738", "ENSMUSG00000020101", "VSIR", "C10ORF54"),
+    ("ENSG00000005059", "ENSMUSG00000031987", "MCUB", "CCDC109B"),
+    ("ENSG00000122085", "ENSMUSG00000040652", "MTERF4", "MTERFD2"),
+    ("ENSG00000133872", "ENSMUSG00000031532", "SARAF", "TMEM66"),
+    ("ENSG00000172965", "MIR4435-2HG", "MIR4435-1HG"),
+    ("ENSG00000255197", "LINC01480", "AP001055.6"),
+    ("ENSG00000265206", "AC004687.1", "MIR142HG", "RP11-47I22.3"),
     ("ENSG00000267364", "AC022706.1"),
-    ("ENSG00000263264", "AC119396.1"),
+    ("ENSG00000263264", "AC119396.1", "CTB-61M7.2"),
     ("ENSG00000268027", "AC243960.1"),
     # 1:1 Human HGNC <-> Mouse MGI official symbol differences (uppercased)
     ("ENSG00000172116", "ENSMUSG00000053044", "CD8B", "CD8B1"),

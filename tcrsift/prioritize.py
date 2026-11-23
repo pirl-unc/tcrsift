@@ -116,6 +116,8 @@ class PrioritizeConfig:
     exclude_known_mart1: bool = True
     exclude_trav12_2: bool = False
     exclude_public_quantile: float | None = None
+    exclude_treg: bool = False
+    treg_foxp3_fraction: float = 0.5
     call_multimers: bool = False
     multimer_min_umi: float = 10.0
     multimer_min_nc_ratio: float = 5.0

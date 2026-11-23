@@ -477,9 +477,13 @@ each paired α/β clone (`summarize_clone_multimer_specificity`):
   `2`), while stamping `construct_contig_verified = False` because N-terminal
   framework residues on imputed chains come from IMGT germline rather than
   5'-complete donor reads.
-- **Unvalidated presets.** `--context blood-tumor`, `mpe`, and `heme`, CD4
-  blood prioritization, and murine infectious-disease cohorts are not evaluated
-  on this page.
+- **Other contexts, lineages, and species.** Cancer-patient circulating
+  antitumor blood (`--context blood-tumor`), longitudinal post-ACT (`T30`)
+  biopsies, and human CD4+ TILs (`--tcell-type cd4`) are evaluated on the
+  [paired blood-tumor & CD4+ TIL benchmark page](benchmarks-blood-cd4.md), and
+  murine tumor, autoimmune, and acute viral (`GP66:I-Ab` CD4+) cohorts are
+  evaluated on the [murine benchmark page](benchmarks-mouse.md). The `mpe` and
+  `heme` context presets remain untested against public ground-truth labels.
 
 ## Reproducing
 
@@ -517,6 +521,9 @@ percentile bootstraps over clones (2,000 draws, fixed seed).
   neoantigen-reactive CD8+ T cells in patients with metastatic
   cancers](https://doi.org/10.1016/j.ccell.2023.10.012). *Cancer Cell* 2023
   (`NeoTCR_PBL`).
-- Goncharov M, Bagaev D, Shcherbinin D, et al. [VDJdb in 2022: database upgrade,
-  new analysis infrastructure and a silly little
-  virus](https://doi.org/10.1093/nar/gkac596). *Nucleic Acids Res* 2022.
+- Goncharov M, Bagaev D, Shcherbinin D, et al. [VDJdb in the pandemic era: a
+  compendium of T cell receptors specific for
+  SARS-CoV-2](https://doi.org/10.1038/s41592-022-01578-0). *Nat Methods* 2022.
+- Bagaev DV, Vroomans RMA, Samir J, et al. [VDJdb in 2019: database extension,
+  new analysis infrastructure and a T-cell receptor motif
+  compendium](https://doi.org/10.1093/nar/gkz874). *Nucleic Acids Res* 2020.

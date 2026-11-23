@@ -547,13 +547,15 @@ seconds on a laptop with 32 GB of RAM.
 - **State, not antigen identity.** Gene signatures measure transcriptional
   programs often shared by tumor-reactive TIL; they do not predict cognate
   epitope or MHC restriction.
-- **Unvalidated contexts and lineages.** Only `--context solid-tumor` on CD8 T
-  cells is evaluated on this page. Peripheral blood (`--context blood`), VDJdb
-  specificity matching, pMHC multimer calling, and short-term peptide
-  stimulation are evaluated separately on the
-  [infectious-disease benchmark page](benchmarks-infectious.md). The
-  `blood-tumor`, `mpe`, and `heme` presets, CD4 prioritization, and multi-week
-  expansion cultures remain untested here.
+- **Other contexts, lineages, and species.** Only `--context solid-tumor` on
+  human CD8 T cells is evaluated on this page. Companion benchmark pages
+  evaluate [infectious-disease peripheral blood (`--context blood`), VDJdb
+  matching, multimer calling, and short-term peptide stimulation](benchmarks-infectious.md),
+  [cancer-patient blood (`--context blood-tumor`), post-ACT (`T30`) TILs, and
+  human CD4+ TILs (`--tcell-type cd4`, `--exclude-treg`)](benchmarks-blood-cd4.md),
+  and [murine models (`--species mouse`)](benchmarks-mouse.md). The `mpe` and
+  `heme` context presets and multi-week expansion cultures remain untested
+  against public ground-truth labels.
 - **Virus-driven tumors.** None of the nine signatures ranked virus-specific
   clones above unlabeled TIL in either virus-driven cancer, and TCRsift ships
   no dedicated viral-TIL state signature.

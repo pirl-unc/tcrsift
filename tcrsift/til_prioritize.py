@@ -227,6 +227,8 @@ def run_til_prioritize(
             raise ValueError("--multimer-min-specific-cells must be >= 1")
     if args.exclude_public_quantile is not None and not (0 < args.exclude_public_quantile <= 1):
         raise ValueError("--exclude-public-quantile must be in (0, 1]")
+    if not np.isfinite(args.treg_foxp3_fraction) or not (0 < args.treg_foxp3_fraction <= 1):
+        raise ValueError("--treg-foxp3-fraction must be in (0, 1]")
     if not 0 <= args.min_frequency <= 1:
         raise ValueError("--min-frequency must be in [0, 1]")
     if args.min_cells < 1:
@@ -460,6 +462,43 @@ def run_til_prioritize(
         else pd.Series(False, index=clonotypes.index)
     )
 
+    # Audit per-clone FOXP3+ regulatory T-cell fraction on raw counts (human FOXP3 / mouse Foxp3).
+    from .signature_methods import expression_frame_from_adata
+
+    foxp3_expr = (
+        expression_frame_from_adata(adata, ["FOXP3"], on_missing="ignore")
+        if adata.n_obs > 0 and adata.n_vars > 0
+        else pd.DataFrame()
+    )
+    foxp3_detected_in_matrix = "FOXP3" in foxp3_expr.columns
+    if foxp3_detected_in_matrix:
+        foxp3_raw = foxp3_expr["FOXP3"].to_numpy(dtype=float)
+        foxp3_obs = pd.DataFrame(
+            {
+                "donor": _analysis_units(adata).to_numpy(),
+                "CDR3ab": adata.obs["CDR3ab"].to_numpy(),
+                "_foxp3_pos": (foxp3_raw > 0).astype(float),
+            }
+        ).dropna(subset=["CDR3ab"])
+        foxp3_by_clone = (
+            foxp3_obs.groupby(["donor", "CDR3ab"], observed=True)["_foxp3_pos"]
+            .mean()
+            .rename("foxp3_pos_fraction")
+            .reset_index()
+        )
+        clonotypes = clonotypes.merge(
+            foxp3_by_clone, on=["donor", "CDR3ab"], how="left", validate="one_to_one"
+        )
+        clonotypes["foxp3_pos_fraction"] = clonotypes["foxp3_pos_fraction"].fillna(0.0)
+    else:
+        if args.exclude_treg:
+            logger.warning(
+                "--exclude-treg requested, but FOXP3/Foxp3 is absent from the expression matrix; "
+                "no clones excluded for Treg state."
+            )
+        clonotypes["foxp3_pos_fraction"] = 0.0
+    clonotypes["is_treg_like"] = clonotypes["foxp3_pos_fraction"].ge(args.treg_foxp3_fraction)
+
     # ppost_either is ln(P) for the more common of the two chains. Higher
     # (less negative) values are more public; the percentile is cohort-relative.
     clonotypes["publicness_percentile"] = clonotypes.groupby("donor", observed=True)[
@@ -495,6 +534,7 @@ def run_til_prioritize(
         ("uses_trav12_2", "TRAV12-2"),
         ("high_publicness", "high_publicness"),
         ("alpha_promiscuous", "promiscuous_alpha"),
+        ("is_treg_like", "treg_FOXP3"),
     ]
     clonotypes["risk_flags"] = _join_flags(clonotypes, risk_flags)
 
@@ -516,6 +556,9 @@ def run_til_prioritize(
     if args.exclude_public_quantile is not None:
         excluded |= clonotypes["high_publicness"]
         exclusion_flags.append(("high_publicness", "high_publicness"))
+    if args.exclude_treg:
+        excluded |= clonotypes["is_treg_like"]
+        exclusion_flags.append(("is_treg_like", "treg_FOXP3"))
     clonotypes["excluded_reason"] = _join_flags(clonotypes, exclusion_flags)
 
     clonotypes["eligible_for_review"] = (
@@ -695,6 +738,18 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
         default=None,
         metavar="Q",
         help="Optionally remove the most public cohort fraction, e.g. 0.90",
+    )
+    parser.add_argument(
+        "--exclude-treg",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Optionally exclude FOXP3+ regulatory T-cell clones (default: disabled; always audited in risk_flags)",
+    )
+    parser.add_argument(
+        "--treg-foxp3-fraction",
+        type=float,
+        default=0.5,
+        help="Minimum fraction of clone cells with FOXP3/Foxp3 > 0 to flag is_treg_like (default: 0.5)",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose logging and error tracebacks")
     parser.add_argument("--context", choices=CONTEXT_SIGNATURES, default=context,

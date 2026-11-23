@@ -1,0 +1,361 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="797.51952pt" height="358.31952pt" viewBox="0 0 797.51952 358.31952" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.1, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 358.31952 
+L 797.51952 358.31952 
+L 797.51952 0 
+L 0 0 
+z
+" style="fill: #fcfcfb"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 133.775112 145.881018 
+L 272.402875 145.881018 
+Q 277.709201 145.881018 277.709201 140.276177 
+L 277.709201 77.922324 
+Q 277.709201 72.317484 272.402875 72.317484 
+L 133.775112 72.317484 
+Q 128.468786 72.317484 128.468786 77.922324 
+L 128.468786 140.276177 
+Q 128.468786 145.881018 133.775112 145.881018 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 302.914249 145.881018 
+L 441.542012 145.881018 
+Q 446.848338 145.881018 446.848338 140.276177 
+L 446.848338 77.922324 
+Q 446.848338 72.317484 441.542012 72.317484 
+L 302.914249 72.317484 
+Q 297.607923 72.317484 297.607923 77.922324 
+L 297.607923 140.276177 
+Q 297.607923 145.881018 302.914249 145.881018 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 472.053386 145.881018 
+L 610.68115 145.881018 
+Q 615.987475 145.881018 615.987475 140.276177 
+L 615.987475 77.922324 
+Q 615.987475 72.317484 610.68115 72.317484 
+L 472.053386 72.317484 
+Q 466.74706 72.317484 466.74706 77.922324 
+L 466.74706 140.276177 
+Q 466.74706 145.881018 472.053386 145.881018 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 641.192523 145.881018 
+L 779.820287 145.881018 
+Q 785.126613 145.881018 785.126613 140.276177 
+L 785.126613 77.922324 
+Q 785.126613 72.317484 779.820287 72.317484 
+L 641.192523 72.317484 
+Q 635.886197 72.317484 635.886197 77.922324 
+L 635.886197 140.276177 
+Q 635.886197 145.881018 641.192523 145.881018 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 133.775112 243.965731 
+L 272.402875 243.965731 
+Q 277.709201 243.965731 277.709201 238.36089 
+L 277.709201 176.007037 
+Q 277.709201 170.402196 272.402875 170.402196 
+L 133.775112 170.402196 
+Q 128.468786 170.402196 128.468786 176.007037 
+L 128.468786 238.36089 
+Q 128.468786 243.965731 133.775112 243.965731 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 302.914249 243.965731 
+L 441.542012 243.965731 
+Q 446.848338 243.965731 446.848338 238.36089 
+L 446.848338 176.007037 
+Q 446.848338 170.402196 441.542012 170.402196 
+L 302.914249 170.402196 
+Q 297.607923 170.402196 297.607923 176.007037 
+L 297.607923 238.36089 
+Q 297.607923 243.965731 302.914249 243.965731 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 472.053386 243.965731 
+L 610.68115 243.965731 
+Q 615.987475 243.965731 615.987475 238.36089 
+L 615.987475 176.007037 
+Q 615.987475 170.402196 610.68115 170.402196 
+L 472.053386 170.402196 
+Q 466.74706 170.402196 466.74706 176.007037 
+L 466.74706 238.36089 
+Q 466.74706 243.965731 472.053386 243.965731 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 641.192523 243.965731 
+L 779.820287 243.965731 
+Q 785.126613 243.965731 785.126613 238.36089 
+L 785.126613 176.007037 
+Q 785.126613 170.402196 779.820287 170.402196 
+L 641.192523 170.402196 
+Q 635.886197 170.402196 635.886197 176.007037 
+L 635.886197 238.36089 
+Q 635.886197 243.965731 641.192523 243.965731 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 133.775112 342.050444 
+L 272.402875 342.050444 
+Q 277.709201 342.050444 277.709201 336.445603 
+L 277.709201 274.09175 
+Q 277.709201 268.486909 272.402875 268.486909 
+L 133.775112 268.486909 
+Q 128.468786 268.486909 128.468786 274.09175 
+L 128.468786 336.445603 
+Q 128.468786 342.050444 133.775112 342.050444 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_11">
+    <path d="M 302.914249 342.050444 
+L 441.542012 342.050444 
+Q 446.848338 342.050444 446.848338 336.445603 
+L 446.848338 274.09175 
+Q 446.848338 268.486909 441.542012 268.486909 
+L 302.914249 268.486909 
+Q 297.607923 268.486909 297.607923 274.09175 
+L 297.607923 336.445603 
+Q 297.607923 342.050444 302.914249 342.050444 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_12">
+    <path d="M 472.053386 342.050444 
+L 610.68115 342.050444 
+Q 615.987475 342.050444 615.987475 336.445603 
+L 615.987475 274.09175 
+Q 615.987475 268.486909 610.68115 268.486909 
+L 472.053386 268.486909 
+Q 466.74706 268.486909 466.74706 274.09175 
+L 466.74706 336.445603 
+Q 466.74706 342.050444 472.053386 342.050444 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_13">
+    <path d="M 641.192523 342.050444 
+L 779.820287 342.050444 
+Q 785.126613 342.050444 785.126613 336.445603 
+L 785.126613 274.09175 
+Q 785.126613 268.486909 779.820287 268.486909 
+L 641.192523 268.486909 
+Q 635.886197 268.486909 635.886197 274.09175 
+L 635.886197 336.445603 
+Q 635.886197 342.050444 641.192523 342.050444 
+z
+" clip-path="url(#p1539d73fe8)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="203.088993" y="28.132314" transform="rotate(-0 203.088993 28.132314)">Cohort</text>
+   </g>
+   <g id="text_2">
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="372.228131" y="27.937489" transform="rotate(-0 372.228131 27.937489)">Sequenced</text>
+   </g>
+   <g id="text_3">
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="541.367268" y="27.904833" transform="rotate(-0 541.367268 27.904833)">Biological ground truth</text>
+   </g>
+   <g id="text_4">
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="710.506405" y="28.132314" transform="rotate(-0 710.506405 28.132314)">Benchmark role</text>
+   </g>
+   <g id="text_5">
+    <text style="font-weight: 700; font-size: 9.3px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(58.149955 107.232621)">MC38 tumor</text>
+    <text style="font-weight: 700; font-size: 9.3px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(55.02283 116.064896)">(GSE168944)</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(159.155282 102.3718)">2 C57BL/6 mice across</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(167.890361 111.21761)">4 matched organs:</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(152.216493 121.11928)">Tumor, Blood, dLN, Spleen</text>
+   </g>
+   <g id="patch_14">
+    <path d="M 282.360981 109.099251 
+Q 287.657071 109.099251 291.723323 109.099251 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 287.723323 107.099251 
+L 291.723323 109.099251 
+L 287.723323 111.099251 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(335.019381 101.57094)">8 paired 10x GEX +</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(348.139928 112.072923)">VDJ libraries</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(334.239771 121.137874)">(CD8 + CD4 T cells)</text>
+   </g>
+   <g id="patch_15">
+    <path d="M 451.500118 109.099251 
+Q 456.796208 109.099251 460.862461 109.099251 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 456.862461 107.099251 
+L 460.862461 109.099251 
+L 456.862461 111.099251 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(500.50551 101.487933)">4-compartment clonal</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(495.311877 111.257454)">tracking (tumor-enriched</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(503.105315 121.060843)">vs lymphoid-shared)</text>
+   </g>
+   <g id="patch_16">
+    <path d="M 620.639255 109.099251 
+Q 625.935345 109.099251 630.001598 109.099251 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 626.001598 107.099251 
+L 630.001598 109.099251 
+L 626.001598 111.099251 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(671.535897 101.82594)">MGI TumorReactive,</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(670.588944 111.21761)">blood-tumor tracking,</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(670.349882 121.020999)">and mouse assembly</text>
+   </g>
+   <g id="text_10">
+    <text style="font-weight: 700; font-size: 9.3px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(49.851158 200.901196)">Kasmani 2022</text>
+    <text style="font-weight: 700; font-size: 9.3px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(50.909033 209.733471)">NOD diabetes</text>
+    <text style="font-weight: 700; font-size: 9.3px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(55.02283 218.565747)">(GSE200608)</text>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(150.894345 200.452528)">NOD mice across 2 rounds:</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(164.347587 209.356776)">pancreatic islets and</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(173.085986 219.130946)">matched spleen</text>
+   </g>
+   <g id="patch_17">
+    <path d="M 282.360981 207.183964 
+Q 287.657071 207.183964 291.723323 207.183964 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 287.723323 205.183964 
+L 291.723323 207.183964 
+L 287.723323 209.183964 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(335.019381 199.655653)">6 paired 10x GEX +</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(342.232428 210.157636)">VDJ libraries on</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(337.423951 220.004852)">sorted CD8 T cells</text>
+   </g>
+   <g id="patch_18">
+    <path d="M 451.500118 207.183964 
+Q 456.796208 207.183964 460.862461 207.183964 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 456.862461 205.183964 
+L 460.862461 207.183964 
+L 456.862461 209.183964 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(488.541096 199.674247)">H-2Kd IGRP (KYNKANVFL)</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(504.405549 210.147675)">tetramer+ in islet vs</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(501.757932 219.120985)">spleen, plus islet Tet-</text>
+   </g>
+   <g id="patch_19">
+    <path d="M 620.639255 207.183964 
+Q 625.935345 207.183964 630.001598 207.183964 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 626.001598 205.183964 
+L 630.001598 207.183964 
+L 626.001598 209.183964 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(666.571366 199.518192)">Target-organ vs splenic</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(668.935429 210.157636)">sister clones &amp; VDJdb</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(674.842264 219.931805)">circular vs held-out</text>
+   </g>
+   <g id="text_15">
+    <text style="font-weight: 700; font-size: 9.3px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(56.590752 298.985909)">Khatun 2021</text>
+    <text style="font-weight: 700; font-size: 9.3px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(37.987846 307.818184)">LCMV GP66 CD4</text>
+    <text style="font-weight: 700; font-size: 9.3px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(55.02283 316.65046)">(GSE158896)</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(155.619814 297.75896)">5 C57BL/6 mice (M1-M5)</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(163.874775 307.406294)">at Day 10 post-acute</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(170.731884 317.234253)">LCMV Armstrong</text>
+   </g>
+   <g id="patch_20">
+    <path d="M 282.360981 305.268676 
+Q 287.657071 305.268676 291.723323 305.268676 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 287.723323 303.268676 
+L 291.723323 305.268676 
+L 287.723323 307.268676 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(335.019381 297.740366)">5 paired 10x GEX +</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(342.232428 308.242348)">VDJ libraries on</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(336.006178 317.288706)">splenic CD4 T cells</text>
+   </g>
+   <g id="patch_21">
+    <path d="M 451.500118 305.268676 
+Q 456.796208 305.268676 460.862461 305.268676 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 456.862461 303.268676 
+L 460.862461 305.268676 
+L 456.862461 307.268676 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(515.383166 298.54521)">I-Ab GP66-77</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(490.59969 307.533129)">(DIYKGVYQFKSV) MHC-II</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(500.069885 318.089565)">tetramer+ CD4 T cells</text>
+   </g>
+   <g id="patch_22">
+    <path d="M 620.639255 305.268676 
+Q 625.935345 305.268676 630.001598 305.268676 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 626.001598 303.268676 
+L 630.001598 305.268676 
+L 626.001598 307.268676 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(662.549804 297.685913)">Mouse CD4 phenotyping,</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(671.055116 307.460083)">public GP66 sharing,</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(674.603202 317.263471)">and CD4 assembly</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p1539d73fe8">
+   <rect x="5.76" y="5.76" width="785.99952" height="346.79952"/>
+  </clipPath>
+ </defs>
+</svg>

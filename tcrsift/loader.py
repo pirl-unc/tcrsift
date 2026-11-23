@@ -1087,6 +1087,7 @@ def load_sample(
             ("timepoint", sample.timepoint),
             ("apc_type", sample.apc_type),
             ("tissue", sample.tissue),
+            ("pre_sorted", getattr(sample, "pre_sorted", None)),
             ("expected_tcell_type", sample.get_expected_tcell_type()),
             ("species", getattr(sample, "species", None)),
         ]

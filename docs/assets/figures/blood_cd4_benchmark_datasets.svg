@@ -1,0 +1,466 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="811.91952pt" height="451.91952pt" viewBox="0 0 811.91952 451.91952" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.1, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 451.91952 
+L 811.91952 451.91952 
+L 811.91952 0 
+L 0 0 
+z
+" style="fill: #fcfcfb"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 136.120428 145.791644 
+L 277.287938 145.791644 
+Q 282.691479 145.791644 282.691479 140.190378 
+L 282.691479 77.876297 
+Q 282.691479 72.275031 277.287938 72.275031 
+L 136.120428 72.275031 
+Q 130.716887 72.275031 130.716887 77.876297 
+L 130.716887 140.190378 
+Q 130.716887 145.791644 136.120428 145.791644 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 308.3583 145.791644 
+L 449.52581 145.791644 
+Q 454.929351 145.791644 454.929351 140.190378 
+L 454.929351 77.876297 
+Q 454.929351 72.275031 449.52581 72.275031 
+L 308.3583 72.275031 
+Q 302.954758 72.275031 302.954758 77.876297 
+L 302.954758 140.190378 
+Q 302.954758 145.791644 308.3583 145.791644 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 480.596171 145.791644 
+L 621.763681 145.791644 
+Q 627.167222 145.791644 627.167222 140.190378 
+L 627.167222 77.876297 
+Q 627.167222 72.275031 621.763681 72.275031 
+L 480.596171 72.275031 
+Q 475.19263 72.275031 475.19263 77.876297 
+L 475.19263 140.190378 
+Q 475.19263 145.791644 480.596171 145.791644 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 652.834042 145.791644 
+L 794.001553 145.791644 
+Q 799.405094 145.791644 799.405094 140.190378 
+L 799.405094 77.876297 
+Q 799.405094 72.275031 794.001553 72.275031 
+L 652.834042 72.275031 
+Q 647.430501 72.275031 647.430501 77.876297 
+L 647.430501 140.190378 
+Q 647.430501 145.791644 652.834042 145.791644 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 136.120428 242.413478 
+L 277.287938 242.413478 
+Q 282.691479 242.413478 282.691479 236.812212 
+L 282.691479 174.498131 
+Q 282.691479 168.896865 277.287938 168.896865 
+L 136.120428 168.896865 
+Q 130.716887 168.896865 130.716887 174.498131 
+L 130.716887 236.812212 
+Q 130.716887 242.413478 136.120428 242.413478 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 308.3583 242.413478 
+L 449.52581 242.413478 
+Q 454.929351 242.413478 454.929351 236.812212 
+L 454.929351 174.498131 
+Q 454.929351 168.896865 449.52581 168.896865 
+L 308.3583 168.896865 
+Q 302.954758 168.896865 302.954758 174.498131 
+L 302.954758 236.812212 
+Q 302.954758 242.413478 308.3583 242.413478 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 480.596171 242.413478 
+L 621.763681 242.413478 
+Q 627.167222 242.413478 627.167222 236.812212 
+L 627.167222 174.498131 
+Q 627.167222 168.896865 621.763681 168.896865 
+L 480.596171 168.896865 
+Q 475.19263 168.896865 475.19263 174.498131 
+L 475.19263 236.812212 
+Q 475.19263 242.413478 480.596171 242.413478 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 652.834042 242.413478 
+L 794.001553 242.413478 
+Q 799.405094 242.413478 799.405094 236.812212 
+L 799.405094 174.498131 
+Q 799.405094 168.896865 794.001553 168.896865 
+L 652.834042 168.896865 
+Q 647.430501 168.896865 647.430501 174.498131 
+L 647.430501 236.812212 
+Q 647.430501 242.413478 652.834042 242.413478 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 136.120428 339.035312 
+L 277.287938 339.035312 
+Q 282.691479 339.035312 282.691479 333.434047 
+L 282.691479 271.119965 
+Q 282.691479 265.518699 277.287938 265.518699 
+L 136.120428 265.518699 
+Q 130.716887 265.518699 130.716887 271.119965 
+L 130.716887 333.434047 
+Q 130.716887 339.035312 136.120428 339.035312 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_11">
+    <path d="M 308.3583 339.035312 
+L 449.52581 339.035312 
+Q 454.929351 339.035312 454.929351 333.434047 
+L 454.929351 271.119965 
+Q 454.929351 265.518699 449.52581 265.518699 
+L 308.3583 265.518699 
+Q 302.954758 265.518699 302.954758 271.119965 
+L 302.954758 333.434047 
+Q 302.954758 339.035312 308.3583 339.035312 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_12">
+    <path d="M 480.596171 339.035312 
+L 621.763681 339.035312 
+Q 627.167222 339.035312 627.167222 333.434047 
+L 627.167222 271.119965 
+Q 627.167222 265.518699 621.763681 265.518699 
+L 480.596171 265.518699 
+Q 475.19263 265.518699 475.19263 271.119965 
+L 475.19263 333.434047 
+Q 475.19263 339.035312 480.596171 339.035312 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_13">
+    <path d="M 652.834042 339.035312 
+L 794.001553 339.035312 
+Q 799.405094 339.035312 799.405094 333.434047 
+L 799.405094 271.119965 
+Q 799.405094 265.518699 794.001553 265.518699 
+L 652.834042 265.518699 
+Q 647.430501 265.518699 647.430501 271.119965 
+L 647.430501 333.434047 
+Q 647.430501 339.035312 652.834042 339.035312 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_14">
+    <path d="M 136.120428 435.657147 
+L 277.287938 435.657147 
+Q 282.691479 435.657147 282.691479 430.055881 
+L 282.691479 367.741799 
+Q 282.691479 362.140534 277.287938 362.140534 
+L 136.120428 362.140534 
+Q 130.716887 362.140534 130.716887 367.741799 
+L 130.716887 430.055881 
+Q 130.716887 435.657147 136.120428 435.657147 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_15">
+    <path d="M 308.3583 435.657147 
+L 449.52581 435.657147 
+Q 454.929351 435.657147 454.929351 430.055881 
+L 454.929351 367.741799 
+Q 454.929351 362.140534 449.52581 362.140534 
+L 308.3583 362.140534 
+Q 302.954758 362.140534 302.954758 367.741799 
+L 302.954758 430.055881 
+Q 302.954758 435.657147 308.3583 435.657147 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_16">
+    <path d="M 480.596171 435.657147 
+L 621.763681 435.657147 
+Q 627.167222 435.657147 627.167222 430.055881 
+L 627.167222 367.741799 
+Q 627.167222 362.140534 621.763681 362.140534 
+L 480.596171 362.140534 
+Q 475.19263 362.140534 475.19263 367.741799 
+L 475.19263 430.055881 
+Q 475.19263 435.657147 480.596171 435.657147 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_17">
+    <path d="M 652.834042 435.657147 
+L 794.001553 435.657147 
+Q 799.405094 435.657147 799.405094 430.055881 
+L 799.405094 367.741799 
+Q 799.405094 362.140534 794.001553 362.140534 
+L 652.834042 362.140534 
+Q 647.430501 362.140534 647.430501 367.741799 
+L 647.430501 430.055881 
+Q 647.430501 435.657147 652.834042 435.657147 
+z
+" clip-path="url(#p7f032e447a)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.3; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="206.704183" y="28.119801" transform="rotate(-0 206.704183 28.119801)">Cohort</text>
+   </g>
+   <g id="text_2">
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="378.942055" y="27.924977" transform="rotate(-0 378.942055 27.924977)">Sequenced</text>
+   </g>
+   <g id="text_3">
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="551.179926" y="27.892321" transform="rotate(-0 551.179926 27.892321)">Experimental ground truth</text>
+   </g>
+   <g id="text_4">
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="723.417797" y="28.119801" transform="rotate(-0 723.417797 28.119801)">Benchmark role</text>
+   </g>
+   <g id="text_5">
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(58.090321 102.818126)">Pulliam 2024</text>
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(28.742321 111.555431)">MCC blood + tumor</text>
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(57.578571 120.292736)">(GSE227708)</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(162.592371 102.306939)">4 Merkel cell carcinoma</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(165.845402 111.219962)">patients (10 blood &amp; 2</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(158.387777 120.897517)">tumor libraries &gt;=20 cells)</text>
+   </g>
+   <g id="patch_18">
+    <path d="M 287.392204 109.033337 
+Q 292.822557 109.033337 297.023073 109.033337 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 293.023073 107.033337 
+L 297.023073 109.033337 
+L 293.023073 111.033337 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(333.770398 102.385033)">Hashed 10x GEX + VDJ</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(342.527398 111.180587)">across pre- and on-</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(343.70143 120.897517)">anti-PD-(L)1 draws</text>
+   </g>
+   <g id="patch_19">
+    <path d="M 459.630075 109.033337 
+Q 465.060428 109.033337 469.260944 109.033337 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 465.260944 107.033337 
+L 469.260944 109.033337 
+L 465.260944 111.033337 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(513.845207 101.593595)">pMHC multimers for</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(509.642582 111.227837)">MCPyV tumor virus vs</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(504.326957 121.163955)">CMV, EBV, and Influenza</text>
+   </g>
+   <g id="patch_20">
+    <path d="M 631.867947 109.033337 
+Q 637.2983 109.033337 641.498815 109.033337 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 637.498815 107.033337 
+L 641.498815 109.033337 
+L 637.498815 111.033337 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(683.504672 102.316783)">--context blood-tumor</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(676.742016 111.27115)">(NeoTCR_PBL) &amp; tumor-</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(683.034141 120.818767)">infiltrating clone recall</text>
+   </g>
+   <g id="text_10">
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(54.521009 199.439961)">Chiffelle 2024</text>
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(38.185259 208.177265)">Pre/Post-ACT TIL</text>
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(57.578571 216.91457)">(GSE222448)</text>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(166.634215 199.010804)">6 melanoma TIL-ACT</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(168.184277 207.841797)">patients (P1, P5, P7,</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(180.555902 217.519351)">P8, P10, P13)</text>
+   </g>
+   <g id="patch_21">
+    <path d="M 287.392204 205.655172 
+Q 292.822557 205.655172 297.023073 205.655172 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 293.023073 203.655172 
+L 297.023073 205.655172 
+L 293.023073 207.655172 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(337.697398 198.200992)">Paired baseline T0 (8)</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(338.326742 207.849672)">and Day-30 post-ACT</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(336.92893 217.500976)">T30 (6) tumor biopsies</text>
+   </g>
+   <g id="patch_22">
+    <path d="M 459.630075 205.655172 
+Q 465.060428 205.655172 469.260944 205.655172 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 465.260944 203.655172 
+L 469.260944 205.655172 
+L 465.260944 207.655172 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(508.072176 199.006867)">Cloned TCRs tested vs</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(509.855864 207.738765)">autologous melanoma</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(517.814864 217.519351)">lines (TR vs NTR)</text>
+   </g>
+   <g id="patch_23">
+    <path d="M 631.867947 205.655172 
+Q 637.2983 205.655172 641.498815 205.655172 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 637.498815 203.655172 
+L 641.498815 205.655172 
+L 637.498815 207.655172 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(679.449047 198.967492)">Post-infusion T30 vs T0</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(687.001829 207.748609)">signature stability &amp;</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(689.646516 217.533789)">ACTP persistence</text>
+   </g>
+   <g id="text_15">
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(61.146446 296.061795)">Veatch 2022</text>
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(47.884071 304.7991)">Melanoma CD4</text>
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(57.578571 313.536404)">(GSE198265)</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(167.717683 294.755232)">4 melanoma patients</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(170.046715 304.482006)">(X197, X198, X205,</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(175.733121 314.141186)">X422) fresh TILs</text>
+   </g>
+   <g id="patch_24">
+    <path d="M 287.392204 302.277006 
+Q 292.822557 302.277006 297.023073 302.277006 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 293.023073 300.277006 
+L 297.023073 302.277006 
+L 293.023073 304.277006 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(334.11493 294.711264)">BD Rhapsody 397-gene</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(333.061648 304.442631)">targeted mRNA + AbSeq</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(341.787148 314.208779)">+ dominant TCR Vβ</text>
+   </g>
+   <g id="patch_25">
+    <path d="M 459.630075 302.277006 
+Q 465.060428 302.277006 469.260944 302.277006 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 465.260944 300.277006 
+L 469.260944 302.277006 
+L 465.260944 304.277006 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(498.034176 295.628701)">Cloned CD4 TCRs screened</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(515.921582 304.3606)">against autologous</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(516.624426 314.062436)">neoantigens &amp; self</text>
+   </g>
+   <g id="patch_26">
+    <path d="M 631.867947 302.277006 
+Q 637.2983 302.277006 641.498815 302.277006 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 637.498815 300.277006 
+L 641.498815 302.277006 
+L 637.498815 304.277006 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(685.129547 295.187701)">Verified CD4_neo vs</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(678.244829 305.283943)">untested/self &amp; FOXP3+</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(704.662829 314.029623)">Treg audit</text>
+   </g>
+   <g id="text_20">
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(78.035634 392.683629)">Oh 2020</text>
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(58.619321 401.420934)">Bladder CD4</text>
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(57.578571 410.158239)">(GSE149652)</text>
+   </g>
+   <g id="text_21">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(175.42009 392.184254)">7 bladder cancer</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(169.472496 401.085465)">patients (7 tumors +</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(169.591933 410.76302)">6 matched normals)</text>
+   </g>
+   <g id="patch_27">
+    <path d="M 287.392204 398.89884 
+Q 292.822557 398.89884 297.023073 398.89884 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 293.023073 396.89884 
+L 297.023073 398.89884 
+L 293.023073 400.89884 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_22">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(340.199023 391.386911)">Whole-transcriptome</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(338.209273 401.118278)">10x GEX + paired α/β</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(339.61168 411.568895)">TCR on sorted CD4+</text>
+   </g>
+   <g id="patch_28">
+    <path d="M 459.630075 398.89884 
+Q 465.060428 398.89884 469.260944 398.89884 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 465.260944 396.89884 
+L 469.260944 398.89884 
+L 465.260944 400.89884 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_23">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(509.628801 391.711098)">Curated CD4CXCL13,</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(507.077301 401.09334)">cytotoxic GZMB/GZMK,</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(507.409364 410.723645)">FOXP3+ Treg &amp; normal</text>
+   </g>
+   <g id="patch_29">
+    <path d="M 631.867947 398.89884 
+Q 637.2983 398.89884 641.498815 398.89884 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+    <path d="M 637.498815 396.89884 
+L 641.498815 398.89884 
+L 637.498815 400.89884 
+" style="fill: none; stroke: #52514e; stroke-width: 1.1; stroke-linecap: round"/>
+   </g>
+   <g id="text_24">
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(684.674766 391.386911)">Whole-transcriptome</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(667.862297 401.118278)">NeoTCR4 (40/40), pre_sorted</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(693.542016 410.651457)">&amp; --exclude-treg</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p7f032e447a">
+   <rect x="5.76" y="5.76" width="800.39952" height="440.39952"/>
+  </clipPath>
+ </defs>
+</svg>

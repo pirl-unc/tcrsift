@@ -181,14 +181,7 @@ def phenotype_cells(
     # Confident CD8+ (ratio exceeds threshold)
     tcell_types[ratio_cd8_over_cd4 > cd4_cd8_ratio] = "Confident CD8+"
 
-    adata.obs["Tcell_type"] = pd.Categorical(tcell_types, categories=TCELL_TYPE_CATEGORIES)
-
-    # Add convenience columns
-    adata.obs["is_CD8"] = adata.obs["Tcell_type"].str.contains("CD8")
-    adata.obs["is_CD4"] = adata.obs["Tcell_type"].str.contains("CD4")
-    adata.obs["is_confident"] = adata.obs["Tcell_type"].str.startswith("Confident")
-
-    # CD3 filter
+    # CD3 filter (evaluated before pre_sorted rescue so non-T contaminants stay Unknown)
     if "CD3" in adata.obs.columns:
         adata.obs["filter:min_cd3"] = adata.obs["CD3"].fillna(0) >= min_cd3_reads
         n_pass_cd3 = adata.obs["filter:min_cd3"].sum()
@@ -200,6 +193,35 @@ def phenotype_cells(
         adata.obs["filter:min_cd3"] = True
         if verbose:
             logger.info("  CD3 column not found, skipping CD3 filter")
+
+    # On FACS pre-sorted CD4 or CD8 samples (`pre_sorted` in SampleSheet),
+    # CD3-passing cells with double-zero coreceptor counts (`CD4 == 0, CD8 == 0`,
+    # common in human CD4 scRNA-seq due to low CD4 mRNA copy number) inherit
+    # `"Likely CD4+"` / `"Likely CD8+"`, while cells expressing the opposite
+    # coreceptor remain classified by their observed transcript counts.
+    if "pre_sorted" in adata.obs.columns:
+        pre = adata.obs["pre_sorted"].astype("string").fillna("").str.strip().str.upper().to_numpy()
+        double_zero_cd3 = (
+            (cd4_expr == 0)
+            & (cd8_expr == 0)
+            & adata.obs["filter:min_cd3"].to_numpy(dtype=bool)
+        )
+        cd4_rescued = double_zero_cd3 & (pre == "CD4")
+        cd8_rescued = double_zero_cd3 & (pre == "CD8")
+        tcell_types[cd4_rescued] = "Likely CD4+"
+        tcell_types[cd8_rescued] = "Likely CD8+"
+        n_rescued = int(cd4_rescued.sum() + cd8_rescued.sum())
+        if verbose and n_rescued > 0:
+            logger.info(
+                f"  Rescued {n_rescued:,} CD3+ coreceptor-dropout cells via sample pre_sorted metadata"
+            )
+
+    adata.obs["Tcell_type"] = pd.Categorical(tcell_types, categories=TCELL_TYPE_CATEGORIES)
+
+    # Add convenience columns
+    adata.obs["is_CD8"] = adata.obs["Tcell_type"].str.contains("CD8")
+    adata.obs["is_CD4"] = adata.obs["Tcell_type"].str.contains("CD4")
+    adata.obs["is_confident"] = adata.obs["Tcell_type"].str.startswith("Confident")
 
     # Combined filter for confident T cells with complete TCR
     has_tcr = adata.obs.get("has_both_chains", pd.Series(True, index=adata.obs_names))

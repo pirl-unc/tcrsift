@@ -144,89 +144,90 @@ DATABASES: dict[str, DatabaseSpec] = {
         archive_format="zip",
         archive_member="tcr_full_v3.csv",
     ),
-    # IMGT/GENE-DB V-REGION germline reference (one HTML per locus). Backs the
-    # framework (FR1–FR3) germline comparison in tcrsift.vregion — large and
-    # rarely-changing, so cached rather than vendored. The raw GENElect HTML is
-    # stored as-is; tcrsift.vregion parses the <pre> FASTA and translates it.
+    # IMGT V-QUEST reference directory FASTAs (one per locus and species). Backs
+    # framework (FR1–FR3) and J-region (FR4) germline comparison and 5'-partial
+    # contig rescue in tcrsift.vregion and tcrsift._assemble_germline. Cached
+    # rather than vendored; tcrsift.vregion parses both raw gapped FASTA and
+    # legacy GENElect <pre> HTML.
     "imgt_trav_vregion": DatabaseSpec(
         name="imgt_trav_vregion",
         filename="TRAV_V-REGION.html",
-        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAV, IMGTlabel=V-REGION)",
+        source="https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/Homo_sapiens/TR/TRAV.fasta",
         download_url=(
-            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAV"
-            "&species=Homo+sapiens&IMGTlabel=V-REGION"
+            "https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/"
+            "Homo_sapiens/TR/TRAV.fasta"
         ),
         archive_format="raw",
     ),
     "imgt_trbv_vregion": DatabaseSpec(
         name="imgt_trbv_vregion",
         filename="TRBV_V-REGION.html",
-        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBV, IMGTlabel=V-REGION)",
+        source="https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/Homo_sapiens/TR/TRBV.fasta",
         download_url=(
-            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBV"
-            "&species=Homo+sapiens&IMGTlabel=V-REGION"
+            "https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/"
+            "Homo_sapiens/TR/TRBV.fasta"
         ),
         archive_format="raw",
     ),
     "imgt_traj_jregion": DatabaseSpec(
         name="imgt_traj_jregion",
         filename="TRAJ_J-REGION.html",
-        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAJ, IMGTlabel=J-REGION)",
+        source="https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/Homo_sapiens/TR/TRAJ.fasta",
         download_url=(
-            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAJ"
-            "&species=Homo+sapiens&IMGTlabel=J-REGION"
+            "https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/"
+            "Homo_sapiens/TR/TRAJ.fasta"
         ),
         archive_format="raw",
     ),
     "imgt_trbj_jregion": DatabaseSpec(
         name="imgt_trbj_jregion",
         filename="TRBJ_J-REGION.html",
-        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBJ, IMGTlabel=J-REGION)",
+        source="https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/Homo_sapiens/TR/TRBJ.fasta",
         download_url=(
-            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBJ"
-            "&species=Homo+sapiens&IMGTlabel=J-REGION"
+            "https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/"
+            "Homo_sapiens/TR/TRBJ.fasta"
         ),
         archive_format="raw",
     ),
-    # Mouse (Mus musculus) IMGT/GENE-DB V-REGION, J-REGION, and L-PART1+L-PART2
+    # Mouse (Mus musculus) IMGT V-REGION, J-REGION, and L-PART1+L-PART2
     # references for murine framework/J germline comparison and 5'-partial rescue.
     "imgt_trav_vregion_mouse": DatabaseSpec(
         name="imgt_trav_vregion_mouse",
         filename="TRAV_V-REGION_mouse.html",
-        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAV, species=Mus musculus, IMGTlabel=V-REGION)",
+        source="https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/Mus_musculus/TR/TRAV.fasta",
         download_url=(
-            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAV"
-            "&species=Mus+musculus&IMGTlabel=V-REGION"
+            "https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/"
+            "Mus_musculus/TR/TRAV.fasta"
         ),
         archive_format="raw",
     ),
     "imgt_trbv_vregion_mouse": DatabaseSpec(
         name="imgt_trbv_vregion_mouse",
         filename="TRBV_V-REGION_mouse.html",
-        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBV, species=Mus musculus, IMGTlabel=V-REGION)",
+        source="https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/Mus_musculus/TR/TRBV.fasta",
         download_url=(
-            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBV"
-            "&species=Mus+musculus&IMGTlabel=V-REGION"
+            "https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/"
+            "Mus_musculus/TR/TRBV.fasta"
         ),
         archive_format="raw",
     ),
     "imgt_traj_jregion_mouse": DatabaseSpec(
         name="imgt_traj_jregion_mouse",
         filename="TRAJ_J-REGION_mouse.html",
-        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAJ, species=Mus musculus, IMGTlabel=J-REGION)",
+        source="https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/Mus_musculus/TR/TRAJ.fasta",
         download_url=(
-            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAJ"
-            "&species=Mus+musculus&IMGTlabel=J-REGION"
+            "https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/"
+            "Mus_musculus/TR/TRAJ.fasta"
         ),
         archive_format="raw",
     ),
     "imgt_trbj_jregion_mouse": DatabaseSpec(
         name="imgt_trbj_jregion_mouse",
         filename="TRBJ_J-REGION_mouse.html",
-        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBJ, species=Mus musculus, IMGTlabel=J-REGION)",
+        source="https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/Mus_musculus/TR/TRBJ.fasta",
         download_url=(
-            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBJ"
-            "&species=Mus+musculus&IMGTlabel=J-REGION"
+            "https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory/"
+            "Mus_musculus/TR/TRBJ.fasta"
         ),
         archive_format="raw",
     ),
@@ -507,6 +508,47 @@ class DownloadError(RuntimeError):
     """Raised when an automated database download fails."""
 
 
+def _default_urlopen(url: str, *, timeout: float = 20.0):
+    """Open ``url`` with a User-Agent, cookie jar, and IPv4 fallback on hang/403.
+
+    Several upstream scientific mirrors (including ``www.imgt.org`` and
+    ``ftp.ncbi.nlm.nih.gov``) advertise IPv6 ``AAAA`` records that time out or
+    return HTTP 403 on dual-stack hosts while succeeding immediately over IPv4,
+    and IMGT ``GENElect`` leader queries redirect via a ``JSESSIONID`` cookie.
+    """
+    import socket
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": "tcrsift/3.33"})
+
+    def _open_once():
+        # Respect monkeypatched urllib.request.urlopen in tests; otherwise attach
+        # an ephemeral cookie jar so Struts/Tomcat 302 redirects succeed.
+        if getattr(urllib.request.urlopen, "__module__", "") == "urllib.request":
+            opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
+            return opener.open(req, timeout=timeout)
+        return urllib.request.urlopen(req, timeout=timeout)
+
+    try:
+        return _open_once()
+    except (urllib.error.URLError, TimeoutError, OSError) as first_err:
+        if isinstance(first_err, urllib.error.HTTPError) and first_err.code not in (403, 502, 503, 504):
+            raise
+        orig_getaddrinfo = socket.getaddrinfo
+
+        def _ipv4_only(*args, **kwargs):
+            res = orig_getaddrinfo(*args, **kwargs)
+            v4 = [r for r in res if r[0] == socket.AF_INET]
+            return v4 or res
+
+        socket.getaddrinfo = _ipv4_only
+        try:
+            return _open_once()
+        finally:
+            socket.getaddrinfo = orig_getaddrinfo
+
+
 def _resolve_vdjdb_url(opener: Callable[[str], object]) -> str:
     """Resolve the latest VDJdb release asset URL via the GitHub releases API.
 
@@ -583,8 +625,7 @@ def download_database(
         )
 
     if opener is None:
-        import urllib.request
-        opener = urllib.request.urlopen
+        opener = _default_urlopen
 
     existing = cached_path(db, data_dir)
     if existing is not None and not force:

@@ -118,23 +118,35 @@ each candidate. Full details, CLI flags, and statistical assumptions are in the
 ## Empirical validation
 
 Default cutoffs are fixed operating choices rather than parameters fitted to
-labeled training data. Three empirical evaluations are documented:
+labeled training data. Five empirical evaluations are documented:
 
 - [Benchmark on public TIL data](benchmarks.md): evaluation of `tcrsift
-  prioritize --context solid-tumor` across five public tumor cohorts (33
-  patients) with experimentally tested clones. TumorReactive separates reactive
-  from non-reactive clones in pancreatic cancer (AUROC 0.81) and melanoma
-  (0.78), more weakly in lung cancer (0.69 across 31 labeled clones), and shows
-  no enrichment for virus-multimer-binding clones in two virus-driven tumors.
+  prioritize --context solid-tumor` across five public human CD8+ tumor cohorts
+  (33 patients) with experimentally tested clones. TumorReactive separates
+  reactive from non-reactive clones in pancreatic cancer (AUROC 0.81) and
+  melanoma (0.78), more weakly in lung cancer (0.69 across 31 labeled clones),
+  and shows no enrichment for virus-multimer-binding clones in two virus-driven
+  tumors.
 - [Benchmark on infectious disease and blood](benchmarks-infectious.md):
   evaluation of `tcrsift prioritize --context blood`, VDJdb specificity matching
   with study holdouts, pMHC multimer clonal concordance, and paired 16 h peptide
   restimulation (`score_stimulation_response`) across Influenza, EBV, CMV,
   SARS-CoV-2, and naive `MART-1` cohorts.
+- [Benchmark on paired blood-tumor, post-ACT, and CD4+ TILs](benchmarks-blood-cd4.md):
+  evaluation of `tcrsift prioritize --context blood-tumor` (`NeoTCR_PBL` AUROC
+  0.82 vs viral memory in Merkel cell carcinoma blood), pre-ACT (`T0`) vs Day-30
+  post-ACT (`T30`) melanoma biopsies, and human CD4+ TIL prioritization
+  (`NeoTCR4`, FACS `pre_sorted: CD4`, and `--exclude-treg` across melanoma and
+  bladder cancer).
+- [Benchmark on murine models (`--species mouse`)](benchmarks-mouse.md):
+  evaluation of MGI murine signatures, `MusMusculus` VDJdb circularity/strictness
+  controls, and IMGT mouse germline construct assembly across multi-organ MC38
+  colon adenocarcinoma, NOD islet vs splenic `IGRP` tetramer+ CD8+ T cells, and
+  LCMV `GP66:I-Ab` CD4+ T cells.
 - [Signature reproducibility map](reproducibility_map.md): cross-donor behavior
   of expression signatures versus TCR sequence probability in an in-vitro
   MART-1 peptide-expansion pilot.
 
 Expression signatures measure T-cell transcriptional state rather than cognate
-epitope identity; the `blood-tumor`, `mpe`, and `heme` context presets remain
-untested against ground-truth labels.
+epitope identity; the `mpe` and `heme` context presets remain untested against
+public ground-truth labels.
