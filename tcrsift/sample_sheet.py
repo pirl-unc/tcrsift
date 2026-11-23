@@ -150,7 +150,9 @@ class Sample:
                 f"Valid types: {VALID_TCELL_TYPES}"
             )
 
-        # Validate pre_sorted
+        # Validate pre_sorted (case-insensitive normalization for CSV/YAML sheets)
+        if isinstance(self.pre_sorted, str):
+            self.pre_sorted = self.pre_sorted.strip().upper() or None
         if self.pre_sorted and self.pre_sorted not in VALID_PRE_SORTED:
             raise ValueError(
                 f"Invalid pre_sorted '{self.pre_sorted}' for sample '{self.sample}'. "

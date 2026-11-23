@@ -91,6 +91,7 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 | `--database-match` | Chain-matching policy for database annotations and exclusions: `strict_ab` (default for paired α/β `prioritize`), `ab_with_partial`, or `b_only` |
 | `--exclude-known-viral` | Exclude clones matching viral entries in VDJdb/IEDB/CEDAR |
 | `--no-exclude-known-mart1` | Retain known MART-1 database matches |
+| `--exclude-treg`, `--treg-foxp3-fraction` | Opt-in exclusion of `FOXP3`/`Foxp3`+ Treg-like clones (audited in `risk_flags` as `treg_FOXP3`; default fraction threshold `0.5`) |
 | `--call-multimers` | Call 10x Feature Barcode pMHC multimers and attach clonal specificity/concordance columns |
 
 See [Clone Prioritization](til-signatures.md) for all QC, VDJ, expression, V/J

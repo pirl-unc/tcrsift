@@ -1,0 +1,117 @@
+{
+  "tcrsift_version": "3.33.0",
+  "vdjdb_release": "vdjdb-2026-11-06",
+  "vdjdb_mus_musculus_trb_entries": 14008,
+  "vdjdb_mus_musculus_paired_ab_entries": 9647,
+  "elapsed_seconds": 97.9,
+  "ground_truth_provenance": {
+    "mc38": {
+      "study": "Multi-tissue murine MC38 colon adenocarcinoma (GEO GSE168944)",
+      "accession": "GSE168944 (GSM5172668-GSM5172675 GEX; GSM5172684-GSM5172691 VDJ)",
+      "ground_truth": "Matched 4-organ paired alpha/beta TCR tracking across Tumor, Blood, dLN, and Spleen in biological replicate C57BL/6 mice (Mouse01 & Mouse02)"
+    },
+    "kasmani": {
+      "study": "Kasmani et al., Life Science Alliance 2022 (PMID:35667687)",
+      "accession": "GSE200608 (GSM6038943-GSM6038954)",
+      "ground_truth": "FACS-sorted H-2Kd IGRP206-214 / NRP-V7 (KYNKANVFL) MHC-I tetramer+ CD8+ T cells in NOD mouse pancreatic islets vs spleen, and islet tetramer- CD8+ T cells",
+      "circularity_note": "PMID:35667687 contributes 780 MusMusculus TRB rows in VDJdb 2026-11-06; both circular full-VDJdb and study-held-out VDJdb evaluations are reported."
+    },
+    "khatun": {
+      "study": "Khatun et al., J Exp Med 2021 (PMID:33201171)",
+      "accession": "GSE158896 (GSM4815363-GSM4815372)",
+      "ground_truth": "FACS-sorted I-Ab LCMV GP66-77 (DIYKGVYQFKSV) MHC-II tetramer+ splenic CD4+ T cells at Day 10 post-acute LCMV Armstrong infection across 5 C57BL/6 mice (M1-M5)"
+    }
+  },
+  "mc38": {
+    "tumor_retained_cd8_cells": 11779,
+    "tumor_clones": 1763,
+    "tumor_expanded_clones": 368,
+    "tumor_shortlisted": 24,
+    "blood_retained_cd8_cells": 3831,
+    "blood_clones": 3725,
+    "blood_expanded_clones": 44,
+    "blood_shortlisted": 17,
+    "mouse_cd8_cxcl13_pos_cell_fraction": 0.0011,
+    "mouse_cd8_ccl3_pos_cell_fraction": 0.3876,
+    "mouse_cd8_ccl4_pos_cell_fraction": 0.7356,
+    "assembled_candidates": 41,
+    "assembled_complete": 41,
+    "assembly_validation_errors": 0
+  },
+  "kasmani": {
+    "retained_cd8_cells": 13455,
+    "islet_tet_pos_expanded_clones": 59,
+    "spleen_tet_pos_expanded_clones": 75,
+    "islet_tet_neg_expanded_clones": 684,
+    "unique_igrp_tet_pos_clones": 545,
+    "vdjdb_pmid_35667687_entries": 780,
+    "sister_clones_islet_and_spleen": {
+      "TumorReactive": {
+        "n_sister_clones": 51,
+        "mean_delta_islet_minus_spleen": 0.5573,
+        "frac_higher_in_islet": 0.9804
+      },
+      "Differentiated": {
+        "n_sister_clones": 51,
+        "mean_delta_islet_minus_spleen": 0.0073,
+        "frac_higher_in_islet": 0.4706
+      },
+      "AntigenExperienced": {
+        "n_sister_clones": 51,
+        "mean_delta_islet_minus_spleen": -0.2796,
+        "frac_higher_in_islet": 0.1569
+      },
+      "Cytolytic": {
+        "n_sister_clones": 51,
+        "mean_delta_islet_minus_spleen": 0.0849,
+        "frac_higher_in_islet": 0.5098
+      },
+      "CirculatingMemory": {
+        "n_sister_clones": 51,
+        "mean_delta_islet_minus_spleen": -0.7529,
+        "frac_higher_in_islet": 0.0784
+      },
+      "AcuteActivation": {
+        "n_sister_clones": 51,
+        "mean_delta_islet_minus_spleen": 0.8147,
+        "frac_higher_in_islet": 0.9412
+      },
+      "Proliferation": {
+        "n_sister_clones": 51,
+        "mean_delta_islet_minus_spleen": 0.3151,
+        "frac_higher_in_islet": 0.6078
+      },
+      "AIM": {
+        "n_sister_clones": 51,
+        "mean_delta_islet_minus_spleen": 1.0132,
+        "frac_higher_in_islet": 0.9412
+      }
+    }
+  },
+  "khatun": {
+    "vdjdb_pmid_33201171_entries": 0,
+    "unsorted_retained_cells": 9046,
+    "presorted_retained_cells": 11413,
+    "unsorted_clones": 1886,
+    "presorted_clones": 2316,
+    "presorted_expanded_clones": 693,
+    "shortlisted_candidates": 60,
+    "shortlisted_by_signature": {
+      "CirculatingMemory": 15,
+      "Differentiated": 14,
+      "AntigenExperienced": 8,
+      "Cytolytic": 8,
+      "AcuteActivation": 7,
+      "Proliferation": 4,
+      "AIM": 4
+    },
+    "foxp3_treg_like_clones": 240,
+    "foxp3_treg_like_shortlisted": 4,
+    "unique_cdr3_beta_across_5_mice": 1781,
+    "public_cdr3_beta_ge2_mice": 72,
+    "public_cdr3_ab_ge2_mice": 26,
+    "assembled_cd4_candidates": 60,
+    "assembled_cd4_complete": 60,
+    "assembled_cd4_validation_errors": 0
+  }
+}

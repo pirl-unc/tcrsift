@@ -1,0 +1,13 @@
+cohort,database,strictness,n_query_clones,n_matched,any_match_rate,n_igrp_matched,igrp_recall,igrp_precision_among_matched,mc38_control_clones,mc38_any_matched,mc38_false_igrp_matches
+kasmani_igrp_nod,vdjdb_full_circular,strict_ab,545,0,0.0,0,0.0,,1763,1,0
+kasmani_igrp_nod,vdjdb_full_circular,ab_with_partial,545,508,0.9321,498,0.9138,0.9803,1763,138,5
+kasmani_igrp_nod,vdjdb_full_circular,b_only,545,508,0.9321,498,0.9138,0.9803,1763,138,5
+kasmani_igrp_nod,vdjdb_full_circular,b_only_lev1,545,518,0.9505,498,0.9138,0.9614,1763,977,65
+kasmani_igrp_nod,vdjdb_heldout_no_kasmani,strict_ab,545,0,0.0,0,0.0,,1763,1,0
+kasmani_igrp_nod,vdjdb_heldout_no_kasmani,ab_with_partial,545,29,0.0532,0,0.0,0.0,1763,135,0
+kasmani_igrp_nod,vdjdb_heldout_no_kasmani,b_only,545,29,0.0532,0,0.0,0.0,1763,135,0
+kasmani_igrp_nod,vdjdb_heldout_no_kasmani,b_only_lev1,545,280,0.5138,0,0.0,0.0,1763,954,0
+khatun_gp66_cd4,vdjdb_independent,strict_ab,2285,0,0.0,0,0.0,,0,0,0
+khatun_gp66_cd4,vdjdb_independent,ab_with_partial,2285,139,0.0608,24,0.0105,0.1727,0,0,0
+khatun_gp66_cd4,vdjdb_independent,b_only,2285,139,0.0608,24,0.0105,0.1727,0,0,0
+khatun_gp66_cd4,vdjdb_independent,b_only_lev1,2285,1094,0.4788,72,0.0315,0.0658,0,0,0

@@ -1,0 +1,6 @@
+cohort,run,retained_cells,total_clones,expanded_ge2,shortlisted,mcpyv_total_ge2,mcpyv_shortlisted,control_viral_total_ge2,control_viral_shortlisted,tumor_infiltrating_ab_total_ge2,tumor_infiltrating_ab_shortlisted
+pulliam_blood,blood_tumor_default,1014,548,91,18,21,3,5,1,12,4
+pulliam_blood,blood_tumor_min1,1014,548,91,31,21,4,5,1,12,4
+pulliam_blood,blood_default,1014,548,91,16,21,2,5,1,12,4
+pulliam_blood,blood_tumor_excl_viral_strict,1014,548,91,18,21,3,5,1,12,4
+pulliam_blood,blood_tumor_excl_viral_partial,1014,548,91,17,21,3,5,1,12,4

@@ -7,6 +7,56 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.33.0
+
+Empirical validation and real-data fixes across human `--context blood-tumor`
+(`NeoTCR_PBL`), longitudinal post-ACT (`T30`) TILs, human `--tcell-type cd4`
+(`NeoTCR4`, `pre_sorted`, and `--exclude-treg`), and murine `--species mouse`
+workflows:
+
+- **FACS `pre_sorted` coreceptor-dropout rescue (`Sample.pre_sorted`).**
+  `load_sample` now propagates `pre_sorted` (`"CD4"` or `"CD8"`, case-insensitive)
+  into `adata.obs["pre_sorted"]`, and `phenotype_cells` assigns `CD3`-passing
+  cells with zero `CD4` and zero `CD8` UMIs to `"Likely CD4+"` / `"Likely CD8+"`
+  on FACS pre-sorted libraries while still rejecting cells expressing the
+  opposite coreceptor (`8.7x` cell retention, `708` → `6,144` cells by rescuing
+  `88.5%` *CD4* mRNA dropout on human CD4+ 10x libraries in Oh et al. 2020;
+  `+26.2%` cell retention, `9,046` → `11,413` cells on murine `GP66:I-Ab` CD4+
+  sorts in Khatun et al. 2021). Unsorted samples are unchanged.
+- **`FOXP3+` regulatory T-cell auditing and `--exclude-treg`.** `prioritize` and
+  `til-prioritize` now compute per-clone raw-count `foxp3_pos_fraction` and
+  `is_treg_like` (human `FOXP3` / mouse `Foxp3`, default threshold
+  `--treg-foxp3-fraction 0.5`), append `treg_FOXP3` to `risk_flags`, and exclude
+  `is_treg_like` clones from candidate selection when `--exclude-treg` is passed
+  (removing `61/61` `FOXP3+` Treg picks on Veatch et al. 2022 melanoma CD4+ TILs
+  while retaining `100%` of shortlisted neoantigen/self-antigen CD4+ clones).
+- **Cell Ranger `hg19` (GENCODE v19) ↔ GRCh38 gene symbol synonyms.** Extended
+  `GENE_SYNONYMS` in `tcrsift/genes.py` with 18 official HGNC/GENCODE symbol
+  aliases (`ADGRG1`/`GPR56`, `LINC01943`/`RP11-291B21.2`, `PLPP1`/`PPAP2A`,
+  `SLF1`/`ANKRD32`, `JAML`/`AMICA1`, `FAAP20`/`C1ORF86`, `FYB1`/`FYB`,
+  `BEX3`/`NGFRAP1`, `CYTOR`/`LINC00152`, `ATP5PD`/`ATP5H`, `VSIR`/`C10ORF54`,
+  `MCUB`/`CCDC109B`, `MTERF4`/`MTERFD2`, `SARAF`/`TMEM66`,
+  `MIR4435-2HG`/`MIR4435-1HG`, `LINC01480`/`AP001055.6`, `RP11-47I22.3`, and
+  `CTB-61M7.2`), resolving `40/40` (`100%`) `NeoTCR4` genes on legacy `hg19`
+  matrices instead of failing strict gene resolution.
+- **Murine Ensembl `-dv` V-gene normalization and static IMGT V-QUEST germline
+  downloads.** Normalized Cell Ranger mouse Ensembl shared α/δ V-gene names
+  (`TRAV13-4-dv7` → `TRAV13-4/DV7`, `TRAV16d-dv11` → `TRAV16D/DV11`) in
+  `normalize_vgene` and `canonicalize_gene` (raising murine germline V+J
+  construct assembly to `101/101` = `100%`), switched all eight human and mouse
+  IMGT `V-REGION` and `J-REGION` download specs in `datacache.py` from IMGT's
+  `GENElect` CGI to static IMGT V-QUEST reference FASTAs while adding session
+  cookie + automatic IPv4 fallback to `_default_urlopen` (fixing
+  `imgt_trav_leader_mouse` / `imgt_trbv_leader_mouse` redirects as well), and
+  pre-filtered `host_species` in `match_clonotypes` before full-table species
+  canonicalization.
+- **New public benchmark suites.** Added reproducible evaluations and
+  provenance documentation for
+  [paired blood-tumor, post-ACT, and CD4+ TILs](benchmarks-blood-cd4.md)
+  (`benchmarks/public_blood_cd4/`) and
+  [murine `--species mouse` models](benchmarks-mouse.md)
+  (`benchmarks/public_mouse/`).
+
 ## 3.32.0
 
 Priority-tiered round-robin scheduling, single-pass `strict_ab` database matching

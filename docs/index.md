@@ -23,8 +23,10 @@ Standard 10x Genomics Cell Ranger directories serve as input:
 
 For an overview of the data flow and selection algorithms, see
 [How TCRsift works](how-it-works.md). For empirical evaluations on public
-human cohorts, see [Benchmark on public TIL data](benchmarks.md) and
-[Benchmark on infectious disease and blood](benchmarks-infectious.md).
+human and murine cohorts, see [Benchmark on public TIL data](benchmarks.md),
+[Benchmark on infectious disease and blood](benchmarks-infectious.md),
+[Benchmark on paired blood-tumor, post-ACT, and CD4+ TILs](benchmarks-blood-cd4.md),
+and [Benchmark on murine models (`--species mouse`)](benchmarks-mouse.md).
 
 ## Choose a workflow
 

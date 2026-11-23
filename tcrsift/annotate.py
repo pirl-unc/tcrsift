@@ -2137,13 +2137,6 @@ def match_clonotypes(
         )
         max_distance = 1
 
-    if verbose:
-        logger.info(
-            f"Matching {len(clonotypes):,} clonotypes against "
-            f"{len(database):,} database entries "
-            f"(strictness={strictness}, mode={match_mode})"
-        )
-
     from .species import resolve_species, species_to_binomial
 
     query_species = resolve_species(species, df=clonotypes, warn_mismatch=False)
@@ -2190,13 +2183,11 @@ def match_clonotypes(
         )
         return df
 
-    database = _canonicalize_database_species(database)
-
     if host_species_filter == "same" and "host_species" in database.columns:
         target_host = species_to_binomial(query_species)
-        database = database[
-            database["host_species"].isna() | (database["host_species"] == target_host)
-        ]
+        canon_host = canonicalize_species_labels(database["host_species"])
+        keep_host = canon_host.isna() | (canon_host == target_host)
+        database = database.loc[keep_host].assign(host_species=canon_host.loc[keep_host])
         if database.empty:
             if verbose:
                 logger.info(
@@ -2204,6 +2195,15 @@ def match_clonotypes(
                     target_host,
                 )
             return df
+
+    if verbose:
+        logger.info(
+            f"Matching {len(clonotypes):,} clonotypes against "
+            f"{len(database):,} database entries "
+            f"(strictness={strictness}, mode={match_mode})"
+        )
+
+    database = _canonicalize_database_species(database)
 
     species_col = (
         database["species"]

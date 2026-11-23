@@ -73,6 +73,8 @@ nav:
   - Benchmarks:
     - TIL Prioritization: benchmarks.md
     - Infectious Disease & Blood: benchmarks-infectious.md
+    - Blood-Tumor, Post-ACT & CD4+ TIL: benchmarks-blood-cd4.md
+    - Murine Models (--species mouse): benchmarks-mouse.md
   - Workflows:
     - Culture Pipeline: user-guide/pipeline.md
     - Filtering Strategies: user-guide/filtering.md

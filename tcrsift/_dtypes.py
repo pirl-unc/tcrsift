@@ -60,6 +60,8 @@ _STRING_COLS: frozenset[str] = frozenset(
         "expected_tcell_type",
         "Tcell_type",
         "tissue",
+        "pre_sorted",
+        "species",
         "TRA_1_v_gene",
         "TRA_1_d_gene",
         "TRA_1_j_gene",

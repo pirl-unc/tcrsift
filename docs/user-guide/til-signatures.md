@@ -241,7 +241,10 @@ Context applies to the entire run and is never inferred from sample names,
 
 **Lineage compatibility:** `--tcell-type` defaults to `cd8` (`cd4` and `both`
 are also supported; `Confident` and `Likely` cells of the requested lineage are
-kept, and `Unknown` cells are dropped). `NeoTCR4` is CD4-only, while `NeoTCR8`,
+kept, and `Unknown` cells are dropped — except on samples explicitly tagged with
+`pre_sorted: CD4` or `pre_sorted: CD8` in the sample sheet, where `CD3`-passing
+coreceptor-dropout cells with `CD4 == 0` and `CD8 == 0` are retained as `Likely
+CD4+` or `Likely CD8+`). `NeoTCR4` is CD4-only, while `NeoTCR8`,
 `NeoTCR_PBL`, and `MANAscore` are CD8-only. Presets automatically drop
 signatures incompatible with `--tcell-type` (under `both`, each scores only in
 its compatible lineage); explicitly passing an incompatible signature to
@@ -375,6 +378,15 @@ tcrsift prioritize samples.yaml -o candidates/ --context blood \
   (`multimer_call`, `multimer_concordance`, `multimer_confident`, also written
   to `multimer_specificity.csv`) onto `all_scored_clones.csv` and
   `candidate_clones.csv`.
+- **Regulatory T-cell (`FOXP3`) audit and opt-in exclusion (`--exclude-treg`).**
+  Intratumoral `FOXP3+` regulatory T cells express `ENTPD1`, `CTLA4`, `TIGIT`,
+  `TNFRSF9`, and `TNFRSF4`, overlapping `TumorReactive` and `AIM` on `--tcell-type
+  cd4` runs. `prioritize` records per-clone `foxp3_pos_fraction` (fraction of
+  retained cells with raw `FOXP3`/`Foxp3` > 0) and `is_treg_like`
+  (`foxp3_pos_fraction >= --treg-foxp3-fraction`, default `0.5`, surfaced in
+  `risk_flags` as `treg_FOXP3`). Pass `--exclude-treg` (optionally lowering
+  `--treg-foxp3-fraction 0.25` in shallow libraries) to exclude Treg-like clones
+  from CD4 effector shortlists.
 - **Heuristic sequence exclusions are opt-in.** `--exclude-trav12-2` drops all
   `TRAV12-2` clones (an aggressive proxy for germline-biased MART-1 binders),
   and `--exclude-public-quantile 0.90` drops the top decile of k-mer sequence

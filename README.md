@@ -21,8 +21,10 @@ required.
 
 - **Documentation:** [pirl-unc.github.io/tcrsift](https://pirl-unc.github.io/tcrsift/)
 - **Method overview:** [How TCRsift works](https://pirl-unc.github.io/tcrsift/how-it-works/)
-- **Empirical evaluation (solid-tumor TIL, 5 cohorts / 33 patients):** [Benchmark on public TIL data](https://pirl-unc.github.io/tcrsift/benchmarks/)
+- **Empirical evaluation (solid-tumor CD8 TIL, 5 cohorts / 33 patients):** [Benchmark on public TIL data](https://pirl-unc.github.io/tcrsift/benchmarks/)
 - **Empirical evaluation (infectious disease & blood, 3 cohorts):** [Benchmark on infectious disease and blood](https://pirl-unc.github.io/tcrsift/benchmarks-infectious/)
+- **Empirical evaluation (paired blood-tumor, post-ACT & CD4+ TIL, 4 cohorts):** [Benchmark on paired blood-tumor, post-ACT, and CD4+ TILs](https://pirl-unc.github.io/tcrsift/benchmarks-blood-cd4/)
+- **Empirical evaluation (murine `--species mouse`, 3 cohorts / 19 libraries):** [Benchmark on murine models](https://pirl-unc.github.io/tcrsift/benchmarks-mouse/)
 
 ## Quick example
 

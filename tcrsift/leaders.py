@@ -273,15 +273,17 @@ def germline_leader_nt(
 
 
 def normalize_vgene(v_gene: str | None) -> str | None:
-    """Strip allele/suffix noise and ImmunoSEQ zero-padding → uppercase bare IMGT V-gene name.
+    """Strip allele/suffix noise and ImmunoSEQ/CellRanger mouse formatting → uppercase IMGT V-gene name.
 
     ``TRBV13*01`` / ``Trbv13-2*01`` / ``TRBV05-01`` / ``TRBV13 (gene)`` →
-    ``TRBV13`` / ``TRBV13-2`` / ``TRBV5-1``; ``TRAV14/DV4*01`` → ``TRAV14/DV4``.
-    Returns None for empty/non-string input.
+    ``TRBV13`` / ``TRBV13-2`` / ``TRBV5-1``; ``TRAV14/DV4*01`` and Cell Ranger
+    mouse Ensembl ``TRAV13-4-dv7`` / ``TRAV16d-dv11`` → ``TRAV14/DV4``,
+    ``TRAV13-4/DV7``, ``TRAV16D/DV11``. Returns None for empty/non-string input.
     """
     if not isinstance(v_gene, str) or not v_gene.strip():
         return None
     bare = v_gene.strip().upper().split("*")[0].split()[0]
+    bare = re.sub(r"-DV(\d+[A-Z]*(?:-\d+)?)$", r"/DV\1", bare)
     return re.sub(r"(?<=[A-Z/-])0+(\d)", r"\1", bare)
 
 

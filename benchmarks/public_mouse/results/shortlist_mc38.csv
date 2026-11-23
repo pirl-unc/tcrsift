@@ -1,0 +1,3 @@
+dataset,setting,retained_cells,total_clones,expanded_ge2,shortlisted,tumor_enriched_total,tumor_enriched_shortlisted,lymphoid_shared_total,lymphoid_shared_shortlisted
+mc38_tumor,solid-tumor default,11779,1763,368,24,120,17,3,0
+mc38_blood,blood default,3831,3725,44,17,20,13,21,3

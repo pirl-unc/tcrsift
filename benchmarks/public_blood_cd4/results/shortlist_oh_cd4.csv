@@ -1,0 +1,5 @@
+cohort,run,retained_cells,total_clones,expanded_ge2,shortlisted,eff_cxcl13_cyto_shortlisted,cxcl13_shortlisted,cyto_gzmb_gzmk_shortlisted,treg_il2rahi_shortlisted,cm_th17_shortlisted,normal_shared_shortlisted
+oh_bladder_cd4,presorted_default,6144,4755,544,103,61,7,54,28,10,3
+oh_bladder_cd4,presorted_exclude_treg_0.50,6144,4755,544,93,58,6,52,21,10,3
+oh_bladder_cd4,presorted_exclude_treg_0.25,6144,4755,544,88,58,6,52,17,9,3
+oh_bladder_cd4,no_presorted_cd4_mrna_only,708,636,44,7,6,1,5,1,0,0

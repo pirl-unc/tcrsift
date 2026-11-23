@@ -130,7 +130,10 @@ TCRsift infers the expected T-cell lineage for a culture sample using the first
 available signal in this order:
 
 1. `tcell_type_expected`: explicit `CD4`, `CD8`, or `mixed`
-2. `pre_sorted`: FACS pre-sort (`CD4` or `CD8`)
+2. `pre_sorted`: FACS pre-sort (`CD4` or `CD8`; also rescues `CD3`-passing
+   coreceptor-mRNA-dropout cells with `CD4 == 0` and `CD8 == 0` as `Likely CD4+`
+   or `Likely CD8+` during phenotyping while rejecting cells expressing the
+   opposite coreceptor)
 3. `mhc_blocking`: `MHC-I` block implies `CD4`; `MHC-II` block implies `CD8`
 4. `antigen_type`: biological default from the table below
 
