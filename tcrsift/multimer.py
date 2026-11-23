@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ._schema import truthy_flag_series, valid_clone_mask
 from .validation import TCRsiftValidationError, resolve_cellranger_gex_source
 
 logger = logging.getLogger(__name__)
@@ -402,10 +403,7 @@ def summarize_clone_multimer_specificity(
             "Missing 'multimer_call' column; pass calls_df from call_multimer_specificity()."
         )
 
-    c_str = work[clone_col].astype(str).str.strip()
-    valid_clone = work[clone_col].notna() & ~c_str.isin({"", "_", "nan", "None", "<NA>"})
-    if clone_col == "CDR3ab":
-        valid_clone &= ~c_str.str.startswith("_") & ~c_str.str.endswith("_")
+    valid_clone = valid_clone_mask(work[clone_col], clone_col=clone_col)
     work = work[valid_clone].copy()
     if work.empty:
         return pd.DataFrame(
@@ -423,12 +421,12 @@ def summarize_clone_multimer_specificity(
             ]
         )
 
-    work["_is_spec"] = work.get(
-        "is_multimer_specific", work["multimer_call"].notna()
-    ).fillna(False).astype(bool)
-    work["_is_multi"] = work.get(
-        "is_multi_reactive", pd.Series(False, index=work.index)
-    ).fillna(False).astype(bool)
+    work["_is_spec"] = truthy_flag_series(
+        work.get("is_multimer_specific", work["multimer_call"].notna())
+    )
+    work["_is_multi"] = truthy_flag_series(
+        work.get("is_multi_reactive", pd.Series(False, index=work.index))
+    )
 
     rows = []
     for clone_id, grp in work.groupby(clone_col, sort=False, observed=True):

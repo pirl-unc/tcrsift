@@ -390,6 +390,69 @@ class OutputConfig:
     baseline_markers: list[str] | None = None
 
 
+_SECTION_CLASSES: dict[str, type] = {
+    "load": LoadConfig,
+    "phenotype": PhenotypeConfig,
+    "clonotype": ClonotypeConfig,
+    "attribution": AttributionConfig,
+    "filter": FilterConfig,
+    "annotate": AnnotateConfig,
+    "til": TILConfig,
+    "sct": SCTConfig,
+    "gex": GEXConfig,
+    "embed": EmbedConfig,
+    "unify": UnifyConfig,
+    "assemble": AssembleConfig,
+    "output": OutputConfig,
+}
+
+_INVERTED_FLAT_ALIASES: frozenset[str] = frozenset(
+    {"skip_plots", "no_pgen_ppost", "no_assemble"}
+)
+
+
+def _build_flat_to_nested() -> dict[str, tuple[str, str]]:
+    """Auto-derive unambiguous flat -> (section, field) mappings from dataclasses,
+    then overlay historical CLI/YAML aliases and shared-field disambiguations."""
+    from collections import Counter
+    from dataclasses import fields as dc_fields
+
+    counts = Counter(
+        f.name for sec_cls in _SECTION_CLASSES.values() for f in dc_fields(sec_cls)
+    )
+    mapping: dict[str, tuple[str, str]] = {
+        f.name: (sec_name, f.name)
+        for sec_name, sec_cls in _SECTION_CLASSES.items()
+        for f in dc_fields(sec_cls)
+        if counts[f.name] == 1
+    }
+    # Explicit aliases & disambiguations for shared field names (enabled, min_cells, match_by)
+    mapping.update(
+        {
+            "min_mito": ("load", "min_mito_pct"),
+            "max_mito": ("load", "max_mito_pct"),
+            "no_pgen_ppost": ("clonotype", "add_pgen_ppost"),
+            "attribution": ("attribution", "enabled"),
+            "enabled": ("attribution", "enabled"),
+            "min_cells": ("filter", "min_cells"),
+            "vdjdb": ("annotate", "vdjdb_path"),
+            "iedb": ("annotate", "iedb_path"),
+            "cedar": ("annotate", "cedar_path"),
+            "iedb_epitope": ("annotate", "iedb_epitope_path"),
+            "match_by": ("annotate", "match_by"),
+            "database_match": ("annotate", "match_strictness"),
+            "til_match_by": ("til", "match_by"),
+            "embed": ("embed", "enabled"),
+            "no_assemble": ("assemble", "enabled"),
+            "skip_plots": ("output", "generate_plots"),
+        }
+    )
+    return mapping
+
+
+_FLAT_TO_NESTED: dict[str, tuple[str, str]] = _build_flat_to_nested()
+
+
 @dataclass
 class TCRsiftConfig:
     """
@@ -475,163 +538,10 @@ class TCRsiftConfig:
         _overrides: dict[str, Any] | None = None,
     ) -> TCRsiftConfig:
         """Create config from a dictionary (with optional flat CLI overrides)."""
-        # Map flat keys to nested structure for convenience
-        flat_to_nested = {
-            # Load
-            "min_genes": ("load", "min_genes"),
-            "max_genes": ("load", "max_genes"),
-            "min_counts": ("load", "min_counts"),
-            "max_counts": ("load", "max_counts"),
-            "min_mito_pct": ("load", "min_mito_pct"),
-            "max_mito_pct": ("load", "max_mito_pct"),
-            "min_mito": ("load", "min_mito_pct"),  # alias
-            "max_mito": ("load", "max_mito_pct"),  # alias
-            # Phenotype
-            "cd4_cd8_ratio": ("phenotype", "cd4_cd8_ratio"),
-            "min_cd3_reads": ("phenotype", "min_cd3_reads"),
-            "allowed_types": ("phenotype", "allowed_types"),
-            "min_subtype_frac": ("phenotype", "min_subtype_frac"),
-            # Clonotype
-            "group_by": ("clonotype", "group_by"),
-            "handle_doublets": ("clonotype", "handle_doublets"),
-            "min_umi": ("clonotype", "min_umi"),
-            "doublet_warn_rate": ("clonotype", "doublet_warn_rate"),
-            "add_pgen_ppost": ("clonotype", "add_pgen_ppost"),
-            "no_pgen_ppost": ("clonotype", "add_pgen_ppost"),  # inverted alias
-            # Attribution (#176).
-            "attribution": ("attribution", "enabled"),  # --attribution / flat bool
-            "enabled": ("attribution", "enabled"),  # legacy flat alias
-            "beta_sharing": ("attribution", "beta_sharing"),
-            "doublet_split": ("attribution", "doublet_split"),
-            "dual_alpha_merge": ("attribution", "dual_alpha_merge"),
-            "dual_alpha_min_cells": ("attribution", "dual_alpha_min_cells"),
-            "dual_alpha_min_fraction": ("attribution", "dual_alpha_min_fraction"),
-            "dual_alpha_max_beta_partners": ("attribution", "dual_alpha_max_beta_partners"),
-            "share_weighting": ("attribution", "share_weighting"),
-            "em_iterations": ("attribution", "em_iterations"),
-            "dual_alpha_split": ("attribution", "dual_alpha_split"),
-            "dual_beta_split": ("attribution", "dual_beta_split"),
-            # Filter
-            "method": ("filter", "method"),
-            "tcell_type": ("filter", "tcell_type"),
-            "min_cells": ("filter", "min_cells"),
-            "min_frequency": ("filter", "min_frequency"),
-            "require_complete": ("filter", "require_complete"),
-            "fdr_tiers": ("filter", "fdr_tiers"),
-            "filter_mode": ("filter", "filter_mode"),
-            "min_donors": ("filter", "min_donors"),
-            "min_methods_per_donor": ("filter", "min_methods_per_donor"),
-            "min_cells_per_method": ("filter", "min_cells_per_method"),
-            "min_frequency_per_method": ("filter", "min_frequency_per_method"),
-            "min_timepoints": ("filter", "min_timepoints"),
-            "min_timepoints_per_donor": ("filter", "min_timepoints_per_donor"),
-            "min_apcs": ("filter", "min_apcs"),
-            "min_apcs_per_donor": ("filter", "min_apcs_per_donor"),
-            "min_til_cells_per_donor": ("filter", "min_til_cells_per_donor"),
-            "fdr_scope": ("filter", "fdr_scope"),
-            "donors_share_antigen": ("filter", "donors_share_antigen"),
-            # Annotate
-            "vdjdb_path": ("annotate", "vdjdb_path"),
-            "iedb_path": ("annotate", "iedb_path"),
-            "cedar_path": ("annotate", "cedar_path"),
-            "iedb_epitope_path": ("annotate", "iedb_epitope_path"),
-            "vdjdb": ("annotate", "vdjdb_path"),  # alias
-            "iedb": ("annotate", "iedb_path"),  # alias
-            "cedar": ("annotate", "cedar_path"),  # alias
-            "iedb_epitope": ("annotate", "iedb_epitope_path"),  # alias
-            "match_by": ("annotate", "match_by"),
-            "match_strictness": ("annotate", "match_strictness"),
-            "database_match": ("annotate", "match_strictness"),
-            "match_mode": ("annotate", "match_mode"),
-            "max_distance": ("annotate", "max_distance"),
-            "exclude_viral": ("annotate", "exclude_viral"),
-            "flag_only": ("annotate", "flag_only"),
-            "host_species_filter": ("annotate", "host_species_filter"),
-            "auto_download": ("annotate", "auto_download"),
-            # TIL
-            "til_match_by": ("til", "match_by"),
-            "min_til_cells": ("til", "min_til_cells"),
-            "til_samples": ("til", "til_samples"),
-            # SCT
-            "min_snr": ("sct", "min_snr"),
-            "min_reads_per_chain": ("sct", "min_reads_per_chain"),
-            "require_mutation_match": ("sct", "require_mutation_match"),
-            "require_compact_match": ("sct", "require_compact_match"),
-            # GEX
-            "gene_list": ("gex", "gene_list"),
-            "gene_groups": ("gex", "gene_groups"),
-            "include_qc": ("gex", "include_qc"),
-            "aggregation_ops": ("gex", "aggregation_ops"),
-            # Embed (#311)
-            "embed": ("embed", "enabled"),  # --embed / flat bool
-            "n_top_genes": ("embed", "n_top_genes"),
-            "n_pcs": ("embed", "n_pcs"),
-            "batch_key": ("embed", "batch_key"),
-            "leiden_resolution": ("embed", "leiden_resolution"),
-            "n_neighbors": ("embed", "n_neighbors"),
-            "informative_genes": ("embed", "informative_genes"),
-            "exclude_receptor_genes": ("embed", "exclude_receptor_genes"),
-            "seed": ("embed", "seed"),
-            # Unify
-            "add_occurrence_flags": ("unify", "add_occurrence_flags"),
-            "add_combined_stats": ("unify", "add_combined_stats"),
-            "add_phenotype_confidence": ("unify", "add_phenotype_confidence"),
-            "phenotype_ratio_threshold": ("unify", "phenotype_ratio_threshold"),
-            # Assemble
-            "no_assemble": ("assemble", "enabled"),  # inverted alias
-            "alpha_leader": ("assemble", "alpha_leader"),
-            "beta_leader": ("assemble", "beta_leader"),
-            "leader_fallback": ("assemble", "leader_fallback"),
-            "force_alpha_leader": ("assemble", "force_alpha_leader"),
-            "force_beta_leader": ("assemble", "force_beta_leader"),
-            "secondary_alpha_leader": ("assemble", "secondary_alpha_leader"),
-            "secondary_beta_leader": ("assemble", "secondary_beta_leader"),
-            "codon_optimization": ("assemble", "codon_optimization"),
-            "max_codon_repeats": ("assemble", "max_codon_repeats"),
-            "avoid_enzymes": ("assemble", "avoid_enzymes"),
-            "include_constant": ("assemble", "include_constant"),
-            "constant_source": ("assemble", "constant_source"),
-            "linker": ("assemble", "linker"),
-            "contigs_dir": ("assemble", "contigs_dir"),
-            "sample_name_from": ("assemble", "sample_name_from"),
-            "cellranger_dir": ("assemble", "cellranger_dir"),
-            "constant_species": ("assemble", "constant_species"),
-            "codon_species": ("assemble", "codon_species"),
-            "trac_allele": ("assemble", "trac_allele"),
-            "trbc1_allele": ("assemble", "trbc1_allele"),
-            "trbc2_allele": ("assemble", "trbc2_allele"),
-            "stop_codons": ("assemble", "stop_codons"),
-            "single_chain": ("assemble", "single_chain"),
-            # Output
-            "generate_plots": ("output", "generate_plots"),
-            "emit_clone_sample_long": ("output", "emit_clone_sample_long"),
-            "per_method_top_n": ("output", "per_method_top_n"),
-            "method_overlap_similarity": ("output", "method_overlap_similarity"),
-            "plot_format": ("output", "plot_format"),
-            "baseline_markers": ("output", "baseline_markers"),
-            "generate_report": ("output", "generate_report"),
-            "report_format": ("output", "report_format"),
-            "output_airr": ("output", "output_airr"),
-            "output_fasta": ("output", "output_fasta"),
-            "skip_plots": ("output", "generate_plots"),  # inverted alias
-        }
+        flat_to_nested = _FLAT_TO_NESTED
 
         # Initialize nested dictionaries
-        nested: dict[str, dict[str, Any]] = {
-            "load": {},
-            "phenotype": {},
-            "clonotype": {},
-            "attribution": {},
-            "filter": {},
-            "annotate": {},
-            "til": {},
-            "sct": {},
-            "gex": {},
-            "embed": {},
-            "unify": {},
-            "assemble": {},
-            "output": {},
-        }
+        nested: dict[str, dict[str, Any]] = {sec: {} for sec in _SECTION_CLASSES}
         global_opts: dict[str, Any] = {}
 
         def _apply_mapping(source: dict[str, Any]) -> None:
@@ -643,12 +553,9 @@ class TCRsiftConfig:
                     nested[key].update(value)
                 elif key in flat_to_nested:
                     section, param = flat_to_nested[key]
-                    if key in ("skip_plots", "no_pgen_ppost", "no_assemble"):
+                    if key in _INVERTED_FLAT_ALIASES:
                         value = not value
                     nested[section][param] = value
-                elif key in nested:
-                    if isinstance(value, dict):
-                        nested[key].update(value)
                 elif key == "verbose":
                     global_opts["verbose"] = value
                 elif key == "species":
@@ -666,22 +573,10 @@ class TCRsiftConfig:
         if _overrides:
             _apply_mapping(_overrides)
 
-        return cls(
-            load=LoadConfig(**nested["load"]),
-            phenotype=PhenotypeConfig(**nested["phenotype"]),
-            clonotype=ClonotypeConfig(**nested["clonotype"]),
-            attribution=AttributionConfig(**nested["attribution"]),
-            filter=FilterConfig(**nested["filter"]),
-            annotate=AnnotateConfig(**nested["annotate"]),
-            til=TILConfig(**nested["til"]),
-            sct=SCTConfig(**nested["sct"]),
-            gex=GEXConfig(**nested["gex"]),
-            embed=EmbedConfig(**nested["embed"]),
-            unify=UnifyConfig(**nested["unify"]),
-            assemble=AssembleConfig(**nested["assemble"]),
-            output=OutputConfig(**nested["output"]),
-            **global_opts,
-        )
+        section_objs = {
+            sec: sec_cls(**nested[sec]) for sec, sec_cls in _SECTION_CLASSES.items()
+        }
+        return cls(**section_objs, **global_opts)
 
     def to_yaml(self, path: str | Path) -> None:
         """

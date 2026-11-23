@@ -44,7 +44,12 @@ from matplotlib.backends.backend_pdf import PdfPages
 from scipy import sparse
 from scipy.sparse import issparse
 
-from .annotate import canonicalize_species
+from ._schema import truthy_flag_series
+from .annotate import (
+    VIRAL_SPECIES_PATTERNS,  # noqa: F401 (back-compat re-export)
+    _flag_viral,
+    canonicalize_species,
+)
 from .signatures import (
     AIM_GENES_HGNC as ACTIVATION_GENES_DEFAULT,
 )
@@ -66,42 +71,6 @@ from .signatures import (  # noqa: F401  (back-compat re-export; #303 retired th
 from .validation import TCRsiftValidationError, validate_file_exists
 
 logger = logging.getLogger(__name__)
-
-VIRAL_SPECIES_PATTERNS = [
-    "cmv",
-    "cytomegalovirus",
-    "mcmv",
-    "epstein-barr",
-    "epstein barr",
-    "ebv",
-    "hiv",
-    "human immunodeficiency",
-    "flu",
-    "influenza",
-    "sars",
-    "coronavirus",
-    "herpes",
-    "hsv",
-    "hpv",
-    "papilloma",
-    "hepatitis",
-    "hbv",
-    "hcv",
-    "dengue",
-    "zika",
-    "yellow fever",
-    "lcmv",
-    "lymphocytic choriomeningitis",
-    "mammarenavirus choriomeningitidis",
-    "sendai",
-    "murine respirovirus",
-    "vesicular stomatitis",
-    "vsv",
-    "murine leukemia",
-    "mulv",
-    "vaccinia",
-    "ectromelia",
-]
 
 TCR_SEGMENTS_AA = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4")
 TCR_SEGMENTS_NT = tuple(f"{segment}_nt" for segment in TCR_SEGMENTS_AA)
@@ -130,10 +99,7 @@ def _timepoint_sort_key(label: str) -> tuple[int, str]:
 
 def _truthy_mask(series: pd.Series) -> pd.Series:
     """Convert a mixed-typed boolean-like series to bool mask."""
-    if series.dtype == bool:
-        return series.fillna(False)
-    lowered = series.astype(str).str.lower()
-    return lowered.isin({"true", "1", "yes", "y", "t"})
+    return truthy_flag_series(series)
 
 
 def _mode_or_nan(series: pd.Series):
@@ -145,17 +111,6 @@ def _mode_or_nan(series: pd.Series):
     if len(mode) == 0:
         return np.nan
     return mode.iloc[0]
-
-
-def _flag_viral(df: pd.DataFrame) -> pd.Series:
-    """Flag likely viral epitopes by species text patterns."""
-    if "species" not in df.columns:
-        return pd.Series(False, index=df.index)
-    species_lower = df["species"].fillna("").str.lower()
-    is_viral = pd.Series(False, index=df.index)
-    for pattern in VIRAL_SPECIES_PATTERNS:
-        is_viral |= species_lower.str.contains(pattern, na=False)
-    return is_viral
 
 
 def load_vdjdb(path: str | Path) -> pd.DataFrame:
@@ -350,8 +305,10 @@ def plot_annotation_summary(df: pd.DataFrame, output_dir: Path) -> None:
     """Write annotation summary plots (pie + top species bar chart)."""
     if "db_match" not in df.columns or len(df) == 0:
         return
-    matched_mask = df["db_match"].fillna(False).astype(bool)
-    viral_mask = matched_mask & df.get("is_viral", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    matched_mask = truthy_flag_series(df["db_match"])
+    viral_mask = matched_mask & truthy_flag_series(
+        df.get("is_viral", pd.Series(False, index=df.index))
+    )
     matched = int(matched_mask.sum())
     viral = int(viral_mask.sum())
     non_viral_matched = max(0, matched - viral)
@@ -1563,7 +1520,7 @@ def run_selection_pipeline(
     df["is_enriched"] = df["is_increasing_nonzero"]
 
     if "is_viral" in df.columns:
-        df["is_non_viral"] = ~df["is_viral"].fillna(False).astype(bool)
+        df["is_non_viral"] = ~truthy_flag_series(df["is_viral"])
     else:
         df["is_non_viral"] = True
 
@@ -2542,9 +2499,8 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
         ]
         if dom_clone_col in dom.columns:
             master_df = master_df.merge(dom[merge_cols], on=dom_clone_col, how="left")
-        master_df["is_dominant_specific"] = (
+        master_df["is_dominant_specific"] = truthy_flag_series(
             master_df.get("is_dominant_specific", pd.Series(False, index=master_df.index))
-            .fillna(False).astype(bool)
         )
         logger.info(
             "til-select dominant-specificity: %s condition-concentrated clones",
@@ -2582,10 +2538,12 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
     count_cols = [f"cell_count_{tp}" for tp in timepoint_order if f"cell_count_{tp}" in plot_source.columns]
     freq_cols = [f"frequency_{tp}" for tp in timepoint_order if f"frequency_{tp}" in plot_source.columns]
 
-    selected_mask = pd.Series(
-        plot_source.get("is_candidate_tumor_reactive", pd.Series(False, index=plot_source.index)),
-        index=plot_source.index,
-    ).fillna(False).astype(bool)
+    selected_mask = truthy_flag_series(
+        pd.Series(
+            plot_source.get("is_candidate_tumor_reactive", pd.Series(False, index=plot_source.index)),
+            index=plot_source.index,
+        )
+    )
     selected_for_report = plot_source[selected_mask].copy()
     create_selected_clone_pdf_report(
         selected_for_report,
@@ -2611,10 +2569,12 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
         )
 
     # Increasing + became-cytotoxic topk artifacts
-    priority_mask = pd.Series(
-        plot_source.get("is_priority_cytotoxic_expander", pd.Series(False, index=plot_source.index)),
-        index=plot_source.index,
-    ).fillna(False).astype(bool)
+    priority_mask = truthy_flag_series(
+        pd.Series(
+            plot_source.get("is_priority_cytotoxic_expander", pd.Series(False, index=plot_source.index)),
+            index=plot_source.index,
+        )
+    )
     priority_df = plot_source[priority_mask].copy()
     priority_top_path = fig_dir / "abTCR_increasing_became_cytotoxic_topk.csv"
     if priority_df.empty:

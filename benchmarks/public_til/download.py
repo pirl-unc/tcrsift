@@ -76,7 +76,7 @@ def fetch(url: str, dest: Path) -> Path:
     tmp = dest.with_suffix(dest.suffix + ".part")
     print(f"  {url}")
     request = urllib.request.Request(url, headers={"User-Agent": "python-urllib"})
-    with urllib.request.urlopen(request) as response, open(tmp, "wb") as out:
+    with urllib.request.urlopen(request, timeout=60) as response, open(tmp, "wb") as out:
         while chunk := response.read(1 << 20):
             out.write(chunk)
     tmp.rename(dest)

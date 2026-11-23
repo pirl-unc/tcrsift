@@ -344,18 +344,20 @@ def load_cellranger_vdj(
     # all_contig_annotations.csv also lists contigs from barcodes that were not
     # called as cells and low-confidence contigs. Apply Cell Ranger's own
     # definition of the filtered table so the fallback means the same thing.
+    from ._schema import clean_cdr3_series, truthy_flag_series
+
     if unfiltered:
         keep = pd.Series(True, index=df.index)
         for flag in ("is_cell", "high_confidence"):
             if flag in df.columns:
-                keep &= df[flag].astype(str).str.strip().str.lower().isin({"true", "t", "1", "yes", "y"})
+                keep &= truthy_flag_series(df[flag])
         if verbose and not keep.all():
             logger.info(f"  Kept {int(keep.sum()):,} of {len(df):,} contigs (called cells, high confidence)")
         df = df[keep]
     # A contig with no chain call (read as missing) cannot be assigned to a
     # receptor chain. Left in, it turned the per-chain entry numbers into
     # floats and produced columns such as ``TRA_1.0_cdr3``.
-    no_chain = df["chain"].isna() | df["chain"].astype(str).str.lower().isin(["none", ""])
+    no_chain = clean_cdr3_series(df, "chain") == ""
     if no_chain.any():
         if verbose:
             logger.info(f"  Dropped {int(no_chain.sum()):,} contigs with no chain call")
@@ -368,15 +370,11 @@ def load_cellranger_vdj(
     # Ranger 2/3 and targeted TCR libraries such as GSE171037).
     if "productive" in df.columns:
         prod_str = df["productive"].astype(str).str.strip().str.lower()
-        productive = prod_str.isin({"true", "t", "1", "yes", "y"})
+        productive = truthy_flag_series(df["productive"])
         undetermined = df["productive"].isna() | prod_str.isin({"none", "", "nan", "<na>"})
         if undetermined.any() and {"v_gene", "j_gene", "cdr3"} <= set(df.columns):
-            v_ok = ~df["v_gene"].isna() & ~df["v_gene"].astype(str).str.strip().str.lower().isin(
-                {"none", "", "nan"}
-            )
-            j_ok = ~df["j_gene"].isna() & ~df["j_gene"].astype(str).str.strip().str.lower().isin(
-                {"none", "", "nan"}
-            )
+            v_ok = clean_cdr3_series(df, "v_gene") != ""
+            j_ok = clean_cdr3_series(df, "j_gene") != ""
             cdr3_ok = (
                 df["cdr3"]
                 .astype("string")
@@ -387,7 +385,7 @@ def load_cellranger_vdj(
             cell_ok = pd.Series(True, index=df.index)
             for flag in ("is_cell", "high_confidence"):
                 if flag in df.columns:
-                    cell_ok &= df[flag].astype(str).str.strip().str.lower().isin({"true", "t", "1", "yes", "y"})
+                    cell_ok &= truthy_flag_series(df[flag])
             partial_rescue = undetermined & v_ok & j_ok & cdr3_ok & cell_ok
         else:
             partial_rescue = pd.Series(False, index=df.index)

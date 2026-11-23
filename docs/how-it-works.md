@@ -111,7 +111,7 @@ each candidate. Full details, CLI flags, and statistical assumptions are in the
 ## Empirical validation
 
 Default cutoffs are fixed operating choices rather than parameters fitted to
-labeled training data. Two empirical evaluations are documented:
+labeled training data. Three empirical evaluations are documented:
 
 - [Benchmark on public TIL data](benchmarks.md): evaluation of `tcrsift
   prioritize --context solid-tumor` across five public tumor cohorts (33
@@ -119,9 +119,15 @@ labeled training data. Two empirical evaluations are documented:
   from non-reactive clones in pancreatic cancer (AUROC 0.81) and melanoma
   (0.78), more weakly in lung cancer (0.69 across 31 labeled clones), and shows
   no enrichment for virus-multimer-binding clones in two virus-driven tumors.
+- [Benchmark on infectious disease and blood](benchmarks-infectious.md):
+  evaluation of `tcrsift prioritize --context blood`, VDJdb specificity matching
+  with study holdouts, pMHC multimer clonal concordance, and paired 16 h peptide
+  restimulation (`score_stimulation_response`) across Influenza, EBV, CMV,
+  SARS-CoV-2, and naive `MART-1` cohorts.
 - [Signature reproducibility map](reproducibility_map.md): cross-donor behavior
   of expression signatures versus TCR sequence probability in an in-vitro
   MART-1 peptide-expansion pilot.
 
-Neither evaluation establishes epitope specificity, and neither tests the
-`blood`, `blood-tumor`, `mpe`, or `heme` context presets.
+Expression signatures measure T-cell transcriptional state rather than cognate
+epitope identity; the `blood-tumor`, `mpe`, and `heme` context presets remain
+untested against ground-truth labels.

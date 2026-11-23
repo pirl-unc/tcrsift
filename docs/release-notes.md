@@ -7,6 +7,33 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.31.0
+
+VDJdb 2026+ relational-archive compatibility, programmatic pipeline/prioritization
+APIs, and regenerated benchmark evaluations with explicit ground-truth provenance:
+
+- **VDJdb 2026-11+ relational release (`chains.tsv.gz` + `records.tsv.gz` and
+  `vdjdb.parquet`) support.** Starting with the `2026-11-06` GitHub release,
+  `antigenomics/vdjdb-db` ships normalized `chains.tsv.gz`, `records.tsv.gz`, and
+  `vdjdb.parquet` inside a versioned `vdjdb-YYYY-MM-DD/` subdirectory rather than
+  root-level `vdjdb_full.txt` / `vdjdb.txt` files. Both `tcrsift data download
+  --db vdjdb` (`cached_path`) and `load_vdjdb` now resolve relational TSV/gzip
+  bundles, `.parquet` tables, and versioned release subdirectories alongside
+  legacy flat TSV files, reconstructing paired α/β receptors (`200,180` paired
+  out of `280,894` `TRB` entries in `vdjdb-2026-11-06`) via `record_id`.
+- **Programmatic `run_pipeline` and `PrioritizeConfig` APIs.** Extracted the
+  end-to-end `tcrsift run` workflow into `tcrsift.pipeline.run_pipeline`
+  (returning `PipelineResult`), added the typed `PrioritizeConfig` dataclass for
+  `run_til_prioritize`, unified CDR3/clone-key/boolean schema normalization in
+  `tcrsift._schema` (fixing single-chain `_beta` / `alpha_` key leakage in
+  `read_donor_clones`), and auto-derived `TCRsiftConfig` flat-key mappings from
+  dataclass definitions.
+- **Regenerated TIL and infectious-disease benchmarks on 3.31.0.** Re-ran both
+  [`benchmarks/public_til/`](benchmarks.md) and
+  [`benchmarks/public_infectious/`](benchmarks-infectious.md) end-to-end with
+  machine-readable `ground_truth_provenance` metadata and default `--context
+  blood` shortlist/cutoff evaluations.
+
 ## 3.30.0
 
 Database-cache, VDJ-loading, and public-deposit compatibility fixes uncovered by

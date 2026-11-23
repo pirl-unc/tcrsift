@@ -162,10 +162,33 @@ def collapse_by_beta(table, any_cols):
     """Labels are beta chains. One labelled beta can appear with several alpha
     chains (dual alphas, dropout): count it once, represented by its largest
     alpha-beta clone, and as selected or passing if any of them was."""
-    labelled = table[table.label.ne("untested")].sort_values("cell_count", ascending=False)
+    labelled = table[table.label.ne("untested")].sort_values(
+        ["cell_count", "CDR3_alpha"], ascending=[False, True], kind="mergesort"
+    )
     grouped = labelled.groupby(["donor", "CDR3_beta"], sort=False)
     collapsed = grouped.head(1).drop(columns=any_cols).merge(
-        grouped[any_cols].any().reset_index(), on=["donor", "CDR3_beta"])
+        grouped[any_cols].any().reset_index(), on=["donor", "CDR3_beta"]
+    )
+    if "selection_rank" in labelled.columns and "selected_signature" in labelled.columns:
+        sel = labelled[labelled["selection_rank"].notna()].sort_values(
+            ["selection_rank", "CDR3_alpha"], ascending=[True, True], kind="mergesort"
+        )
+        if not sel.empty:
+            best_sel = sel.drop_duplicates(["donor", "CDR3_beta"])[
+                ["donor", "CDR3_beta", "selection_rank", "selected_signature"]
+            ].rename(
+                columns={
+                    "selection_rank": "_best_sel_rank",
+                    "selected_signature": "_best_sel_sig",
+                }
+            )
+            collapsed = collapsed.merge(best_sel, on=["donor", "CDR3_beta"], how="left")
+            collapsed["selection_rank"] = collapsed["selection_rank"].combine_first(
+                collapsed.pop("_best_sel_rank")
+            )
+            collapsed["selected_signature"] = collapsed["selected_signature"].combine_first(
+                collapsed.pop("_best_sel_sig")
+            )
     return pd.concat([table[table.label.eq("untested")], collapsed], ignore_index=True)
 
 
@@ -240,7 +263,12 @@ def top_beta_per_cell(contigs_csv):
     """Each cell's productive beta CDR3 with the most UMIs."""
     contigs = pd.read_csv(contigs_csv, keep_default_na=False)
     beta = contigs[contigs.chain.eq("TRB") & contigs.productive.eq("True") & contigs.cdr3.ne("None")]
-    return beta.sort_values("umis", ascending=False).drop_duplicates("barcode").set_index("barcode").cdr3
+    return (
+        beta.sort_values(["umis", "cdr3"], ascending=[False, True], kind="mergesort")
+        .drop_duplicates("barcode")
+        .set_index("barcode")
+        .cdr3
+    )
 
 
 def eberhardt_labels(samples):
@@ -333,10 +361,16 @@ def labelled_clone_table(out, labels, signatures):
     clones = clones.rename(columns={f"{c}_max": c for c in sig_cols}).copy()
     clones["label"] = clones.label.fillna("untested")
     clones["size_percentile"] = clones.groupby("donor").cell_count.rank(pct=True)
+    from tcrsift._schema import truthy_flag_series
+
     cutoff_cols = [c for c in sig_cols if c.endswith("cutoff")]
-    clones["passes_any"] = clones[cutoff_cols].fillna(False).astype(bool).any(axis=1)
-    clones["passes_tumor_signature"] = clones[
-        [f"signature_{n}_passes_cutoff" for n in TUMOR_SIGNATURES]].fillna(False).astype(bool).any(axis=1)
+    clones["passes_any"] = pd.DataFrame(
+        {c: truthy_flag_series(clones[c]) for c in cutoff_cols}, index=clones.index
+    ).any(axis=1)
+    clones["passes_tumor_signature"] = pd.DataFrame(
+        {f"signature_{n}_passes_cutoff": truthy_flag_series(clones[f"signature_{n}_passes_cutoff"]) for n in TUMOR_SIGNATURES},
+        index=clones.index,
+    ).any(axis=1)
     # The simple alternative to the shortlist: a patient's top clones by one score.
     rank = clones[clones.cell_count.ge(2)].groupby("donor")[
         "signature_TumorReactive_percentile"].rank(ascending=False, method="first")
@@ -613,9 +647,12 @@ def run_meng(data_dir):
         methods = {
             "TCRsift round-robin": picked.label,
             "TCRsift round-robin, tumor-reactivity signatures only": narrow[narrow.selected_for_review].label,
-            "largest clones": abundant.sort_values(["frequency", "cells"], ascending=False).head(size).label,
-            "TumorReactive score only": abundant.assign(s=scores.loc[abundant.index, "signature_TumorReactive_percentile"])
-                                                 .sort_values("s", ascending=False).head(size).label,
+            "largest clones": abundant.sort_values(
+                ["frequency", "cells", "CDR3ab"], ascending=[False, False, True], kind="mergesort"
+            ).head(size).label,
+            "TumorReactive score only": abundant.assign(
+                s=scores.loc[abundant.index, "signature_TumorReactive_percentile"]
+            ).sort_values(["s", "CDR3ab"], ascending=[False, True], kind="mergesort").head(size).label,
         }
         rng = np.random.default_rng(0)
         draws = [abundant.label.iloc[rng.choice(len(abundant), min(size, len(abundant)), replace=False)]
@@ -641,6 +678,65 @@ def run_meng(data_dir):
     labelled = scores.loc[scores.label.ne("untested"), keep].rename(columns={"CDR3ab": "clonotype"})
     labelled["passes_any"] = default_pass[scores.label.ne("untested").to_numpy()]
     return aurocs, labelled, facts, pd.DataFrame(per_patient), pd.DataFrame(cutoffs), pd.DataFrame(selection)
+
+
+GROUND_TRUTH_PROVENANCE = {
+    "meng": {
+        "citation": "Meng et al., Science Translational Medicine 2023 (15:eadh9562; DOI:10.1126/scitranslmed.adh9562; PMID:37992152)",
+        "cancer_type": "Pancreatic ductal adenocarcinoma (PDAC)",
+        "gex_vdj_accession": "GEO GSE254250 (7 Cell Ranger filtered_feature_bc_matrix.h5 files across 9 patients)",
+        "label_source": "GEO GSE254250_PDAC_9sample_CD8_RNA_metadata_matrix.csv.gz (columns 0, 1, 5, 8: 'Unnamed: 0', 'orig.ident', 'clonotype_id', 'Reactivity (n=149)')",
+        "experimental_assay": "Cloned TCRs retrovirally/lentivirally expressed in reporter/autologous T cells and co-cultured directly against each patient's autologous PDAC organoids/tumor lines.",
+        "positive_definition": "TR: clonotypes experimentally reactive against autologous tumor cells (94 clonotypes in deposited metadata).",
+        "negative_definition": "NTR: clonotypes from the same tumors experimentally tested against autologous tumor cells with no response (55 clonotypes in deposited metadata).",
+        "chain_matching": "Exact per-cell 'clonotype_id' provided by authors (raw VDJ contig tables not deposited on GEO).",
+        "circular_signatures": [],
+    },
+    "chiffelle": {
+        "citation": "Chiffelle et al., Immunity 2024 (57:2466-2482; DOI:10.1016/j.immuni.2024.08.014; PMID:39321802); scRNA/scTCR deposited with Barras et al., Science Immunology 2024 (DOI:10.1126/sciimmunol.adg7995)",
+        "cancer_type": "Metastatic melanoma (baseline pre-ACT tumor biopsies T0/T01/T02)",
+        "gex_vdj_accession": "GEO GSE222448 (13 baseline tumor CD45+ count matrices and unfiltered contig CSVs across 11 tested patients: Patients 1-5, 7-11, 13 from GSM6885352-GSM6885368 and GSM6930579-GSM6930593)",
+        "label_source": "Immunity Supplementary Table S3 (1-s2.0-S1074761324004138-mmc3.xlsx, sheet 'clonotypes', header row 3, columns 'Patient', 'TCR β chain' in V_CDR3_J format, 'Tumor-reactivity' in {'yes', 'no'}).",
+        "experimental_assay": "TCRs cloned from baseline tumors or TIL infusion products and screened against autologous melanoma cell lines (CD137/4-1BB upregulation and/or IFN-gamma secretion).",
+        "positive_definition": "TR: clonotypes with 'Tumor-reactivity == yes' in Table S3 (123 published; 72 scored in baseline tumor after default cell filters).",
+        "negative_definition": "NTR: clonotypes experimentally tested against autologous tumor with 'Tumor-reactivity == no' (124 published; 94 scored in baseline tumor). Ambiguous beta chains carrying conflicting labels across alpha partners are dropped.",
+        "chain_matching": "Within-patient exact CDR3_beta amino-acid match (stripping the extra trailing J-anchor residue encoded in Table S3's V_CDR3_J notation); collapsed to one row per (donor, CDR3_beta).",
+        "circular_signatures": [],
+    },
+    "caushi": {
+        "citation": "Caushi et al., Nature 2021 (596:126-132; DOI:10.1038/s41586-021-03752-4; PMID:34290408)",
+        "cancer_type": "Resectable non-small-cell lung cancer (NSCLC) post-neoadjuvant anti-PD-1 (nivolumab)",
+        "gex_vdj_accession": "GEO GSE176021 (57 paired Cell Ranger GEX + filtered VDJ samples across 8 antigen-annotated patients: 33 tumor/metastasis, 24 lymph node/adjacent normal lung)",
+        "label_source": "Nature Supplementary Table 8 (41586_2021_3752_MOESM8_ESM.xlsx, sheet 'Supplementary Table 8', header row 3, columns 'Patient', 'TCR clonotype (AA)', 'Type of antigen recognized (viral or MANA)').",
+        "experimental_assay": "MANAFEST (Mutation-Associated Neoantigen Functional Expansion of Specific T cells): 10-day peptide-stimulated PBMC/TIL TCRB sequencing identifying patient-specific neoantigen (MANA) vs CEF viral (Influenza, EBV, CMV) peptide expansion.",
+        "positive_definition": "MANA: CDR3_beta clonotypes expanding specifically to predicted patient neoantigen peptides (74 published; 18 scored in tumor).",
+        "negative_definition": "viral: CDR3_beta clonotypes from the same patients expanding to Influenza, EBV, or CMV epitopes (82 published; 13 scored in tumor). Note: negatives are verified viral bystanders, not tumor-non-reactive random TILs.",
+        "chain_matching": "Within-patient exact CDR3_beta match collapsed across alpha partners.",
+        "circular_signatures": ["MANAscore"],
+    },
+    "eberhardt": {
+        "citation": "Eberhardt et al., Nature 2021 (597:279-284; DOI:10.1038/s41586-021-03862-z; PMID:34471285)",
+        "cancer_type": "HPV-positive head and neck squamous cell carcinoma (HNSCC)",
+        "gex_vdj_accession": "GEO GSE180268 (6 bulk PD-1+ CD8+ libraries [3 primary tumor, 3 metastatic lymph node] paired with HLA-A*01:01 HPV16 E2 tetramer-sorted libraries across 3 patients: HPV7, HPV34, HPV51)",
+        "label_source": "Derived directly from paired GSE180268 HLA-A*01:01 HPV16 E2 (QVDYYGLYY and KSAIVTLTY) tetramer-sorted vs bulk PD-1+ VDJ contig tables.",
+        "experimental_assay": "FACS isolation with HLA-A*01:01 HPV16 E2 peptide-MHC class I tetramers vs paired PD-1+ CD8+ bulk tumor/metLN libraries.",
+        "positive_definition": "HPV: productive CDR3_beta chains observed in >=5 cells in a patient's HPV16 E2 tetramer-sorted libraries and at least as frequent in tetramer sort as in paired bulk PD-1+ libraries (guards against sort carryover).",
+        "negative_definition": "untested: all other expanded (>=2 cells) paired-TCR CD8 clonotypes in bulk PD-1+ libraries (no tested tumor-non-reactive negatives exist; bulk samples were pre-gated on PD-1 and depleted of tetramer+ cells).",
+        "chain_matching": "Within-patient exact CDR3_beta match collapsed across alpha partners.",
+        "circular_signatures": [],
+    },
+    "pulliam": {
+        "citation": "Pulliam et al., Cell Reports Medicine 2024 (5:101412; DOI:10.1016/j.xcrm.2024.101412; PMID:38340726)",
+        "cancer_type": "Merkel cell carcinoma (MCPyV-positive virus-driven skin neuroendocrine carcinoma)",
+        "gex_vdj_accession": "GEO GSE227708 (hashed runs Z1249 and Z1308 demultiplexed to Tumor cells via GSE227708_meta_data.csv.gz: top Hashtag >=10 UMI and >=3x runner-up)",
+        "label_source": "Cell Reports Medicine Table S4 (1-s2.0-S2666379124000351-mmc5.xlsx, sheet 'Table 4', header row 2, columns 'subject', 'cdr3_b_aa', 'virus').",
+        "experimental_assay": "DNA-barcoded and fluorescently labeled MCPyV T-antigen and control viral (CMV/EBV/Flu) peptide-MHC class I multimers.",
+        "positive_definition": "MCPyV: CDR3_beta clonotypes annotated with virus == 'MCPyV' in Table S4 (22 in Z1249 patient; 5 with >=2 cells in demultiplexed tumor).",
+        "negative_definition": "untested: remaining expanded (>=2 cells) paired-TCR CD8 clonotypes in the same demultiplexed tumor (53 clones; Z1249 has no non-MCPyV viral controls in tumor).",
+        "chain_matching": "Within-patient exact CDR3_beta match mapped via specimen Tube -> Patient_id and collapsed across alpha partners.",
+        "circular_signatures": [],
+    },
+}
 
 
 def main():
@@ -671,8 +767,17 @@ def main():
     meng_cutoffs.to_csv(out / "meng_cutoffs.csv", index=False)
     meng_selection.to_csv(out / "meng_selection.csv", index=False)
     (out / "summary.json").write_text(json.dumps(
-        {"tcrsift_version": __version__, "caushi": caushi_facts, "meng": meng_facts,
-         "eberhardt": hpv_facts, "chiffelle": mel_facts, "pulliam": mcc_facts}, indent=2) + "\n")
+        {
+            "tcrsift_version": __version__,
+            "ground_truth_provenance": GROUND_TRUTH_PROVENANCE,
+            "caushi": caushi_facts,
+            "meng": meng_facts,
+            "eberhardt": hpv_facts,
+            "chiffelle": mel_facts,
+            "pulliam": mcc_facts,
+        },
+        indent=2,
+    ) + "\n")
     print(f"wrote {out}")
 
 

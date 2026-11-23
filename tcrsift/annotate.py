@@ -76,6 +76,7 @@ VIRAL_SPECIES_PATTERNS = [
     "mcmv",
     "ebv",
     "epstein-barr",
+    "epstein barr",
     "hiv",
     "human immunodeficiency",
     "htlv",
@@ -100,6 +101,7 @@ VIRAL_SPECIES_PATTERNS = [
     "vesicular stomatitis",
     "vsv",
     "sendai",
+    "murine respirovirus",
     "respirovirus",
     "vaccinia",
     "ectromelia",
@@ -1082,54 +1084,138 @@ def load_vdjdb(path: str | Path, verbose: bool = True) -> pd.DataFrame:
     """
     path = Path(path)
 
+    relational_pair: tuple[Path, Path] | None = None
     if path.is_dir():
-        db_file = _pick_vdjdb_file(path)
+        resolved_source = _pick_vdjdb_source(path)
+        if isinstance(resolved_source, tuple):
+            relational_pair = resolved_source
+            db_file = relational_pair[0]
+        else:
+            db_file = resolved_source
     else:
         db_file = validate_file_exists(path, "VDJdb database file")
+        lower_name = db_file.name.lower()
+        if lower_name in ("chains.tsv.gz", "chains.tsv", "records.tsv.gz", "records.tsv"):
+            parent = db_file.parent
+            chains_cand = next(
+                (parent / n for n in ("chains.tsv.gz", "chains.tsv") if (parent / n).is_file()),
+                None,
+            )
+            records_cand = next(
+                (parent / n for n in ("records.tsv.gz", "records.tsv") if (parent / n).is_file()),
+                None,
+            )
+            if chains_cand is not None and records_cand is not None:
+                relational_pair = (chains_cand, records_cand)
+                db_file = chains_cand
 
     if verbose:
-        logger.info(f"Loading VDJdb from {db_file}")
-
-    try:
-        df = pd.read_csv(db_file, sep="\t", low_memory=False)
-    except Exception as e:
-        raise TCRsiftValidationError(
-            f"Failed to read VDJdb file: {db_file}",
-            hint=f"Error: {e}. Make sure the file is a valid TSV file.",
+        logger.info(
+            f"Loading VDJdb from {relational_pair[0].parent if relational_pair else db_file}"
         )
 
-    if len(df) == 0:
-        raise TCRsiftValidationError(
-            f"VDJdb file is empty: {db_file}",
-            hint="Download a fresh copy from https://vdjdb.cdr3.net/",
-        )
-
-    # Format-specific normalization, dispatched by column presence:
-    # the paired file has ``cdr3.beta``, the long file has
-    # ``cdr3`` + ``gene``. ``cdr3.alpha`` alone (no β) doesn't occur
-    # in real VDJdb files and isn't useful for matching — falls
-    # through to the unrecognized-schema error.
-    if "cdr3.beta" in df.columns:
-        df = _normalize_vdjdb_paired(df)
-    elif "cdr3" in df.columns and "gene" in df.columns:
-        n_total = len(df)
-        df = _normalize_vdjdb_long(df)
-        n_paired = int(df["cdr3_alpha"].notna().sum()) if "cdr3_alpha" in df.columns else 0
+    if relational_pair is not None:
+        chains_path, records_path = relational_pair
+        try:
+            chains_df = pd.read_csv(chains_path, sep="\t", low_memory=False)
+            records_df = pd.read_csv(records_path, sep="\t", low_memory=False)
+        except Exception as e:
+            raise TCRsiftValidationError(
+                f"Failed to read VDJdb relational tables in {chains_path.parent}",
+                hint=f"Error: {e}. Expected valid TSV/TSV.GZ files for chains and records.",
+            ) from e
+        if len(chains_df) == 0 or len(records_df) == 0:
+            raise TCRsiftValidationError(
+                f"VDJdb relational tables are empty in {chains_path.parent}",
+                hint="Re-run `tcrsift data download --db vdjdb --force`.",
+            )
+        df = _normalize_vdjdb_relational(chains_df, records_df)
         if verbose:
+            n_paired = int(df["cdr3_alpha"].notna().sum()) if "cdr3_alpha" in df.columns else 0
             logger.info(
-                f"  Long/slim VDJdb format: kept {len(df):,} TRB rows "
-                f"({n_paired:,} paired αβ via complex.id) out of {n_total:,} total rows."
+                f"  Relational VDJdb format: loaded {len(df):,} TRB entries "
+                f"({n_paired:,} paired αβ via record_id)."
+            )
+    elif db_file.name.lower().endswith(".parquet"):
+        try:
+            pq_df = pd.read_parquet(db_file)
+        except Exception as e:
+            raise TCRsiftValidationError(
+                f"Failed to read VDJdb parquet file: {db_file}",
+                hint=f"Error: {e}. Ensure pyarrow or fastparquet is installed.",
+            ) from e
+        if len(pq_df) == 0:
+            raise TCRsiftValidationError(
+                f"VDJdb file is empty: {db_file}",
+                hint="Download a fresh copy from https://vdjdb.cdr3.net/",
+            )
+        if "cdr3.beta" in pq_df.columns:
+            df = _normalize_vdjdb_paired(pq_df)
+        elif "record_id" in pq_df.columns and "cdr3" in pq_df.columns and "gene" in pq_df.columns:
+            df = _normalize_vdjdb_relational(pq_df, None)
+        elif "cdr3" in pq_df.columns and "gene" in pq_df.columns:
+            df = _normalize_vdjdb_long(pq_df)
+        else:
+            raise TCRsiftValidationError(
+                f"Unrecognized VDJdb schema in {db_file}",
+                hint=(
+                    "Expected paired-chain columns (`cdr3.alpha` + `cdr3.beta`), "
+                    "long-format columns (`cdr3` + `gene`), or relational `record_id` + `cdr3` + `gene`. Got: "
+                    f"{list(pq_df.columns[:10])}"
+                ),
             )
     else:
-        raise TCRsiftValidationError(
-            f"Unrecognized VDJdb schema in {db_file}",
-            hint=(
-                "Expected either paired-chain columns "
-                "(`cdr3.alpha` + `cdr3.beta`) or long-format columns "
-                "(`cdr3` + `gene`). Got: "
-                f"{list(df.columns)[:10]}{'...' if len(df.columns) > 10 else ''}"
-            ),
-        )
+        try:
+            df = pd.read_csv(db_file, sep="\t", low_memory=False)
+        except Exception as e:
+            raise TCRsiftValidationError(
+                f"Failed to read VDJdb file: {db_file}",
+                hint=f"Error: {e}. Make sure the file is a valid TSV file.",
+            )
+
+        if len(df) == 0:
+            raise TCRsiftValidationError(
+                f"VDJdb file is empty: {db_file}",
+                hint="Download a fresh copy from https://vdjdb.cdr3.net/",
+            )
+
+        # Format-specific normalization, dispatched by column presence:
+        # the paired file has ``cdr3.beta``, the long file has
+        # ``cdr3`` + ``gene`` (+ ``record_id`` in 2026+ or ``complex.id`` in legacy).
+        if "cdr3.beta" in df.columns:
+            df = _normalize_vdjdb_paired(df)
+        elif "record_id" in df.columns and "cdr3" in df.columns and "gene" in df.columns:
+            sibling_rec = None
+            if "antigen_epitope" not in df.columns and "antigen.epitope" not in df.columns:
+                rec_cand = next(
+                    (
+                        db_file.parent / n
+                        for n in ("records.tsv.gz", "records.tsv")
+                        if (db_file.parent / n).is_file()
+                    ),
+                    None,
+                )
+                if rec_cand is not None:
+                    sibling_rec = pd.read_csv(rec_cand, sep="\t", low_memory=False)
+            df = _normalize_vdjdb_relational(df, sibling_rec)
+        elif "cdr3" in df.columns and "gene" in df.columns:
+            n_total = len(df)
+            df = _normalize_vdjdb_long(df)
+            n_paired = int(df["cdr3_alpha"].notna().sum()) if "cdr3_alpha" in df.columns else 0
+            if verbose:
+                logger.info(
+                    f"  Long/slim VDJdb format: kept {len(df):,} TRB rows "
+                    f"({n_paired:,} paired αβ via complex.id) out of {n_total:,} total rows."
+                )
+        else:
+            raise TCRsiftValidationError(
+                f"Unrecognized VDJdb schema in {db_file}",
+                hint=(
+                    "Expected paired-chain columns (`cdr3.alpha` + `cdr3.beta`), "
+                    "long-format columns (`cdr3` + `gene`), or relational `chains`/`records` tables. Got: "
+                    f"{list(df.columns)[:10]}{'...' if len(df.columns) > 10 else ''}"
+                ),
+            )
 
     df["database"] = "VDJdb"
     df["is_viral"] = _flag_viral(df)
@@ -1243,22 +1329,140 @@ def _normalize_vdjdb_long(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _normalize_vdjdb_relational(
+    chains_df: pd.DataFrame, records_df: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Standardize the 2026+ VDJdb relational release (``chains.tsv.gz`` + ``records.tsv.gz`` or ``vdjdb.parquet``).
+
+    Each clonotype record is keyed by ``record_id`` with up to one ``TRA`` row
+    and one ``TRB`` row in ``chains``. Output rows correspond to ``TRB`` chains
+    enriched with paired ``TRA`` (``cdr3_alpha``, ``v_alpha``) via ``record_id``
+    and record-level epitope/MHC/species/reference metadata.
+    """
+    has_cdr3 = (
+        chains_df["cdr3"].notna() & (chains_df["cdr3"].astype(str).str.strip() != "")
+        if "cdr3" in chains_df.columns
+        else pd.Series(False, index=chains_df.index)
+    )
+    tra = chains_df[(chains_df["gene"] == "TRA") & has_cdr3 & chains_df["record_id"].notna()].copy()
+    tra = tra.drop_duplicates("record_id", keep="first")
+    tra_cdr3 = dict(zip(tra["record_id"], tra["cdr3"]))
+    v_col = "v_segm" if "v_segm" in tra.columns else ("v.segm" if "v.segm" in tra.columns else None)
+    tra_v = (
+        {
+            rid: val
+            for rid, val in zip(tra["record_id"], tra[v_col])
+            if pd.notna(val) and str(val).strip() != ""
+        }
+        if v_col
+        else {}
+    )
+
+    df = chains_df[chains_df["gene"] == "TRB"].copy()
+    if records_df is not None:
+        rec_dedup = records_df.drop_duplicates("record_id", keep="first")
+        extra_cols = [c for c in rec_dedup.columns if c == "record_id" or c not in df.columns]
+        df = df.merge(rec_dedup[extra_cols], on="record_id", how="left")
+
+    # Normalize empty strings in parquet/TSV string columns to pd.NA
+    for col in (
+        "cdr3",
+        "v_segm",
+        "v.segm",
+        "j_segm",
+        "j.segm",
+        "species",
+        "antigen_epitope",
+        "antigen.epitope",
+        "antigen_gene",
+        "antigen.gene",
+        "antigen_species",
+        "antigen.species",
+        "mhc_a",
+        "mhc.a",
+        "mhc_b",
+        "mhc.b",
+        "mhc_class",
+        "mhc.class",
+        "reference_id",
+        "reference.id",
+    ):
+        if col in df.columns:
+            s = df[col]
+            df[col] = s.mask(s.astype("string").str.strip().eq(""), pd.NA)
+
+    antigen_sp_col = (
+        "antigen_species"
+        if "antigen_species" in df.columns
+        else ("antigen.species" if "antigen.species" in df.columns else None)
+    )
+    if "species" in df.columns:
+        df["host_species"] = df["species"]
+        if antigen_sp_col is not None:
+            df = df.drop(columns=["species"])
+
+    column_mapping = {
+        "cdr3": "cdr3_beta",
+        "v_segm": "v_beta",
+        "v.segm": "v_beta",
+        "j_segm": "j_beta",
+        "j.segm": "j_beta",
+        "antigen_epitope": "epitope",
+        "antigen.epitope": "epitope",
+        "antigen_gene": "antigen_gene",
+        "antigen.gene": "antigen_gene",
+        "mhc_a": "mhc_allele",
+        "mhc.a": "mhc_allele",
+        "mhc_class": "mhc_class",
+        "mhc.class": "mhc_class",
+        "reference_id": "reference",
+        "reference.id": "reference",
+        "vdjdb_score": "vdjdb.score",
+    }
+    for old, new in column_mapping.items():
+        if old in df.columns and new not in df.columns:
+            df[new] = df[old]
+
+    if antigen_sp_col is not None:
+        df["species"] = df[antigen_sp_col]
+
+    if tra_cdr3:
+        df["cdr3_alpha"] = df["record_id"].map(lambda rid: tra_cdr3.get(rid, pd.NA))
+        df["v_alpha"] = (
+            df["record_id"].map(lambda rid: tra_v.get(rid, pd.NA))
+            if tra_v
+            else pd.NA
+        )
+    else:
+        df["cdr3_alpha"] = pd.NA
+        df["v_alpha"] = pd.NA
+    return df
+
+
 # Canonical VDJdb data filenames in resolution priority order. The
 # release zip drops a swarm of processed sidecars (``vdjdb.meta.txt``,
 # ``vdjdb.scored.txt``, ``vdjdb_full_*_broken.txt`` etc.) alongside
-# these, but they have different schemas / are incomplete. We only
-# look for the names below (plus date-stamped ``vdjdb-YYYY-MM-DD.txt``
-# archives when none of the canonical names exist).
+# these, or (2026+ releases) extracts into a ``vdjdb-YYYY-MM-DD/``
+# directory containing ``chains.tsv.gz`` + ``records.tsv.gz`` + ``vdjdb.parquet``.
 _VDJDB_CANONICAL_FILENAMES = ("vdjdb_full.txt", "vdjdb.txt", "vdjdb.slim.txt")
 _VDJDB_SIDECAR_SUFFIXES = (".meta.txt", ".scored.txt", "_broken.txt", ".meta.tsv", ".scored.tsv")
 
 
-def _pick_vdjdb_file(dir_path: Path) -> Path:
-    """Choose the canonical VDJdb data file from an extracted release dir."""
+def _probe_vdjdb_dir_single_level(dir_path: Path) -> Path | tuple[Path, Path] | None:
+    """Probe a single directory (non-recursive) for legacy TSV, relational TSV(.gz), or parquet VDJdb."""
     for name in _VDJDB_CANONICAL_FILENAMES:
         candidate = dir_path / name
         if candidate.is_file():
             return candidate
+
+    for chains_name, records_name in (
+        ("chains.tsv.gz", "records.tsv.gz"),
+        ("chains.tsv", "records.tsv"),
+    ):
+        c_path = dir_path / chains_name
+        r_path = dir_path / records_name
+        if c_path.is_file() and r_path.is_file():
+            return (c_path, r_path)
 
     dated_candidates = sorted(
         p
@@ -1268,16 +1472,39 @@ def _pick_vdjdb_file(dir_path: Path) -> Path:
     if dated_candidates:
         return dated_candidates[-1]
 
+    pq_candidate = dir_path / "vdjdb.parquet"
+    if pq_candidate.is_file():
+        return pq_candidate
+    return None
+
+
+def _pick_vdjdb_source(dir_path: Path) -> Path | tuple[Path, Path]:
+    """Choose the canonical VDJdb file or ``(chains, records)`` pair from a cache/release dir."""
+    direct = _probe_vdjdb_dir_single_level(dir_path)
+    if direct is not None:
+        return direct
+
+    for subdir in reversed(sorted(p for p in dir_path.glob("vdjdb-*") if p.is_dir())):
+        nested = _probe_vdjdb_dir_single_level(subdir)
+        if nested is not None:
+            return nested
+
     available = [f.name for f in dir_path.iterdir()][:15]
     raise TCRsiftValidationError(
         f"No canonical VDJdb data file found in directory: {dir_path}",
         hint=(
-            f"Expected one of {list(_VDJDB_CANONICAL_FILENAMES)}. "
-            f"Available files: {available}. "
+            f"Expected one of {list(_VDJDB_CANONICAL_FILENAMES)} or relational "
+            f"`chains.tsv.gz` + `records.tsv.gz`. Available entries: {available}. "
             "Re-run `tcrsift data download --db vdjdb` to refresh, "
             "or pass the path to your VDJdb file directly with --vdjdb."
         ),
     )
+
+
+def _pick_vdjdb_file(dir_path: Path) -> Path:
+    """Back-compat wrapper returning a single Path (or chains.tsv.gz for relational dirs)."""
+    res = _pick_vdjdb_source(dir_path)
+    return res[0] if isinstance(res, tuple) else res
 
 
 def load_iedb(
@@ -2175,9 +2402,10 @@ def _annotate_match(
     if distance is not None:
         df.loc[idx, "db_match_distance"] = distance
 
-    epitopes = antigen_matches["epitope"].dropna()
-    if len(epitopes) > 0:
-        df.loc[idx, "db_epitope"] = epitopes.mode().iloc[0]
+    if "epitope" in antigen_matches.columns:
+        epitopes = antigen_matches["epitope"].dropna()
+        if len(epitopes) > 0:
+            df.loc[idx, "db_epitope"] = epitopes.mode().iloc[0]
 
     if "species" in antigen_matches.columns:
         species = canonicalize_species_labels(antigen_matches["species"]).dropna()

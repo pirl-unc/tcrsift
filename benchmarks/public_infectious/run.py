@@ -112,6 +112,7 @@ def eval_auroc_block(
 # ------------------------------------------------ 1. 10x Dextramer Donors 1 & 2
 
 def run_tenx_dextramer(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame):
+    from tcrsift._schema import truthy_flag_series
     from tcrsift.annotate import match_clonotypes
     from tcrsift.cli import main as tcrsift_main
     from tcrsift.loader import _pivot_vdj_by_barcode, load_cellranger_vdj
@@ -125,11 +126,31 @@ def run_tenx_dextramer(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame)
     auroc_rows: list[dict] = []
     vdjdb_rows: list[dict] = []
     multimer_rows: list[dict] = []
+    shortlist_rows: list[dict] = []
     facts: dict[str, dict] = {}
 
     db_no_10x = vdjdb_full[
         ~vdjdb_full["reference"].fillna("").astype(str).str.contains("10xgenomics|tenx", case=False)
     ].copy()
+    heldout_10x_tsv = work_dir / "vdjdb_heldout_no_10x.tsv"
+    if not heldout_10x_tsv.exists():
+        # Emit a paired-format TSV so unmodified CLI `prioritize --vdjdb ...` can consume study-held-out VDJdb
+        export_df = pd.DataFrame(
+            {
+                "cdr3.alpha": db_no_10x["cdr3_alpha"],
+                "cdr3.beta": db_no_10x["cdr3_beta"],
+                "v.alpha": db_no_10x.get("v_alpha", pd.NA),
+                "v.beta": db_no_10x.get("v_beta", pd.NA),
+                "species": db_no_10x.get("host_species", "HomoSapiens"),
+                "antigen.epitope": db_no_10x["epitope"],
+                "antigen.gene": db_no_10x["antigen_gene"],
+                "antigen.species": db_no_10x["species"],
+                "mhc.a": db_no_10x.get("mhc_allele", pd.NA),
+                "mhc.class": db_no_10x.get("mhc_class", pd.NA),
+                "reference.id": db_no_10x.get("reference", pd.NA),
+            }
+        )
+        export_df.to_csv(heldout_10x_tsv, sep="\t", index=False)
 
     for donor in ("donor1", "donor2"):
         ddir = data_dir / "tenx_dextramer" / donor
@@ -142,8 +163,9 @@ def run_tenx_dextramer(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame)
         # naive precursors are retained in all_scored_clones.csv; expanded >=2
         # cell clones are evaluated separately below).
         out = work_dir / f"tenx_{donor}_blood"
-        t0 = time.perf_counter()
+        sec_file = out / "benchmark_seconds.txt"
         if not is_current(out):
+            t0 = time.perf_counter()
             tcrsift_main(
                 [
                     "prioritize",
@@ -166,7 +188,10 @@ def run_tenx_dextramer(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame)
                     "1",
                 ]
             )
-        elapsed = round(time.perf_counter() - t0, 1)
+            elapsed = round(time.perf_counter() - t0, 1)
+            sec_file.write_text(f"{elapsed}\n")
+        else:
+            elapsed = float(sec_file.read_text().strip()) if sec_file.exists() else None
         cfg = json.loads((out / "prioritization.json").read_text())
         sigs = cfg["resolved_signatures"]
         clones = pd.read_csv(out / "all_scored_clones.csv", low_memory=False)
@@ -197,7 +222,7 @@ def run_tenx_dextramer(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame)
             .groupby(["CDR3ab", "tenx_call"])
             .size()
             .reset_index(name="tenx_cells")
-            .sort_values("tenx_cells", ascending=False)
+            .sort_values(["tenx_cells", "tenx_call"], ascending=[False, True], kind="mergesort")
             .drop_duplicates("CDR3ab")
             .merge(total_by_clone, on="CDR3ab", how="left")
         )
@@ -377,6 +402,62 @@ def run_tenx_dextramer(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame)
                 }
             )
 
+        # Question 2b: Unmodified default `tcrsift prioritize --context blood` (--min-cells 2, 7-sig blood preset)
+        # evaluated with held-out VDJdb under default, --exclude-known-viral (ab_with_partial), and --exclude-known-viral (strict_ab).
+        label_lookup = cc.set_index("CDR3ab")[["tenx_call", "tenx_cells"]]
+        for run_tag, extra_cli in (
+            ("blood_default", ["--vdjdb", str(heldout_10x_tsv)]),
+            (
+                "blood_exclude_viral_ab_with_partial",
+                ["--vdjdb", str(heldout_10x_tsv), "--exclude-known-viral", "--database-match", "ab_with_partial"],
+            ),
+            (
+                "blood_exclude_viral_strict_ab",
+                ["--vdjdb", str(heldout_10x_tsv), "--exclude-known-viral", "--database-match", "strict_ab"],
+            ),
+        ):
+            out_def = work_dir / f"tenx_{donor}_{run_tag}"
+            if not is_current(out_def):
+                tcrsift_main(["prioritize", str(sheet), "-o", str(out_def), "--context", "blood", *extra_cli])
+            def_clones = pd.read_csv(out_def / "all_scored_clones.csv", low_memory=False)
+            def_clones = def_clones.join(label_lookup, on="CDR3ab", how="left")
+            def_exp = def_clones[def_clones["cell_count"] >= 2].copy()
+            d_viral = def_exp["tenx_call"].fillna("").str.contains(VIRAL_BONA_FIDE_RE) & (
+                def_exp["tenx_cells"].fillna(0) >= 2
+            )
+            d_flu = def_exp["tenx_call"].eq(FLU_EPITOPE) & (def_exp["tenx_cells"].fillna(0) >= 2)
+            d_ebv = def_exp["tenx_call"].fillna("").str.contains("_EBV$") & (
+                def_exp["tenx_cells"].fillna(0) >= 2
+            )
+            d_mart1 = def_exp["tenx_call"].eq(MART1_EPITOPE)
+            d_unlab = def_exp["tenx_call"].isna()
+            elig = truthy_flag_series(def_exp["eligible_for_review"])
+            sel = truthy_flag_series(def_exp["selected_for_review"])
+            shortlist_rows.append(
+                {
+                    "dataset": f"tenx_{donor}",
+                    "run": run_tag,
+                    "expanded_clones_ge2": len(def_exp),
+                    "eligible_total": int(elig.sum()),
+                    "selected_total": int(sel.sum()),
+                    "viral_total": int(d_viral.sum()),
+                    "viral_eligible": int((d_viral & elig).sum()),
+                    "viral_selected": int((d_viral & sel).sum()),
+                    "flu_total": int(d_flu.sum()),
+                    "flu_eligible": int((d_flu & elig).sum()),
+                    "flu_selected": int((d_flu & sel).sum()),
+                    "ebv_total": int(d_ebv.sum()),
+                    "ebv_eligible": int((d_ebv & elig).sum()),
+                    "ebv_selected": int((d_ebv & sel).sum()),
+                    "mart1_expanded_total": int(d_mart1.sum()),
+                    "mart1_expanded_eligible": int((d_mart1 & elig).sum()),
+                    "mart1_expanded_selected": int((d_mart1 & sel).sum()),
+                    "unlabeled_expanded_total": int(d_unlab.sum()),
+                    "unlabeled_expanded_eligible": int((d_unlab & elig).sum()),
+                    "unlabeled_expanded_selected": int((d_unlab & sel).sum()),
+                }
+            )
+
         facts[f"tenx_{donor}"] = {
             "seconds": elapsed,
             "cells_after_gex_qc": cfg["cell_filters"][0]["before"],
@@ -393,12 +474,13 @@ def run_tenx_dextramer(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame)
             "cell_peptide_agreement_vs_10x": round(cell_agreement, 4),
         }
 
-    return auroc_rows, vdjdb_rows, multimer_rows, facts
+    return auroc_rows, vdjdb_rows, multimer_rows, shortlist_rows, facts
 
 
 # ------------------------------------------------ 2. Minervina et al. 2022
 
 def run_minervina(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame):
+    from tcrsift._schema import truthy_flag_series
     from tcrsift.annotate import match_clonotypes
     from tcrsift.cli import main as tcrsift_main
     from tcrsift.loader import combine_gex_and_vdj, load_cellranger_gex, load_cellranger_vdj
@@ -448,7 +530,7 @@ def run_minervina(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame):
         .groupby(["CDR3ab", "epitope"])
         .size()
         .reset_index(name="ep_cells")
-        .sort_values("ep_cells", ascending=False)
+        .sort_values(["ep_cells", "epitope"], ascending=[False, True], kind="mergesort")
         .drop_duplicates("CDR3ab")
     )
     clones = clones.merge(clone_ep, on="CDR3ab", how="left")
@@ -576,6 +658,72 @@ def run_minervina(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame):
                 }
             )
 
+    # Also evaluate unmodified default `prioritize --context blood` viral-exclusion false-drop rate on Minervina SARS-CoV-2 clones
+    heldout_min_tsv = work_dir / "vdjdb_heldout_no_minervina.tsv"
+    if not heldout_min_tsv.exists():
+        pd.DataFrame(
+            {
+                "cdr3.alpha": db_no_minervina["cdr3_alpha"],
+                "cdr3.beta": db_no_minervina["cdr3_beta"],
+                "v.alpha": db_no_minervina.get("v_alpha", pd.NA),
+                "v.beta": db_no_minervina.get("v_beta", pd.NA),
+                "species": db_no_minervina.get("host_species", "HomoSapiens"),
+                "antigen.epitope": db_no_minervina["epitope"],
+                "antigen.gene": db_no_minervina["antigen_gene"],
+                "antigen.species": db_no_minervina["species"],
+                "mhc.a": db_no_minervina.get("mhc_allele", pd.NA),
+                "mhc.class": db_no_minervina.get("mhc_class", pd.NA),
+                "reference.id": db_no_minervina.get("reference", pd.NA),
+            }
+        ).to_csv(heldout_min_tsv, sep="\t", index=False)
+
+    min_shortlist_rows: list[dict] = []
+    min_ep_lookup = clone_ep.set_index("CDR3ab")["epitope"]
+    for run_tag, extra_cli in (
+        ("blood_default", ["--vdjdb", str(heldout_min_tsv)]),
+        (
+            "blood_exclude_viral_ab_with_partial",
+            ["--vdjdb", str(heldout_min_tsv), "--exclude-known-viral", "--database-match", "ab_with_partial"],
+        ),
+        (
+            "blood_exclude_viral_strict_ab",
+            ["--vdjdb", str(heldout_min_tsv), "--exclude-known-viral", "--database-match", "strict_ab"],
+        ),
+    ):
+        out_mdef = work_dir / f"minervina_{run_tag}"
+        if not is_current(out_mdef):
+            tcrsift_main(["prioritize", str(sheet), "-o", str(out_mdef), "--context", "blood", *extra_cli])
+        mdef_clones = pd.read_csv(out_mdef / "all_scored_clones.csv", low_memory=False)
+        mdef_clones["sars_ep"] = mdef_clones["CDR3ab"].map(min_ep_lookup)
+        m_exp = mdef_clones[mdef_clones["cell_count"] >= 2].copy()
+        is_sars = m_exp["sars_ep"].notna()
+        elig = truthy_flag_series(m_exp["eligible_for_review"])
+        sel = truthy_flag_series(m_exp["selected_for_review"])
+        min_shortlist_rows.append(
+            {
+                "dataset": "minervina_2022",
+                "run": run_tag,
+                "expanded_clones_ge2": len(m_exp),
+                "eligible_total": int(elig.sum()),
+                "selected_total": int(sel.sum()),
+                "viral_total": int(is_sars.sum()),
+                "viral_eligible": int((is_sars & elig).sum()),
+                "viral_selected": int((is_sars & sel).sum()),
+                "flu_total": 0,
+                "flu_eligible": 0,
+                "flu_selected": 0,
+                "ebv_total": 0,
+                "ebv_eligible": 0,
+                "ebv_selected": 0,
+                "mart1_expanded_total": 0,
+                "mart1_expanded_eligible": 0,
+                "mart1_expanded_selected": 0,
+                "unlabeled_expanded_total": int((~is_sars).sum()),
+                "unlabeled_expanded_eligible": int(((~is_sars) & elig).sum()),
+                "unlabeled_expanded_selected": int(((~is_sars) & sel).sum()),
+            }
+        )
+
     ep_counts = sars_clones["epitope"].value_counts()
     facts = {
         "cells_after_gex_qc": cfg["cell_filters"][0]["before"],
@@ -588,7 +736,7 @@ def run_minervina(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame):
         "shared_longitudinal_clones_excluded_from_auroc": len(shared_longitudinal),
         "leave_study_out_ab_with_partial_off_target_species": off_target_species,
     }
-    return auroc_rows, exposure_rows, vdjdb_rows, facts
+    return auroc_rows, exposure_rows, vdjdb_rows, min_shortlist_rows, facts
 
 
 # ------------------------------------------------ 3. Fischer et al. 2021
@@ -623,9 +771,7 @@ def run_fischer(data_dir: Path, work_dir: Path):
             ]
             if len(tcr_rows) and "full_length" in tcr_rows.columns:
                 raw_partial_counts.append(
-                    float(~tcr_rows["full_length"].astype(str).str.lower().eq("true"))
-                    if False
-                    else float((~tcr_rows["full_length"].astype(str).str.lower().eq("true")).mean())
+                    float((~tcr_rows["full_length"].astype(str).str.lower().eq("true")).mean())
                 )
 
         sheet = SampleSheet(
@@ -749,6 +895,40 @@ def run_fischer(data_dir: Path, work_dir: Path):
     return stim_rows, facts
 
 
+GROUND_TRUTH_PROVENANCE = {
+    "tenx_dextramer": {
+        "citation": "10x Genomics Application Note (2019): 'A new way of exploring immunity: linking highly multiplexed antigen recognition to immune repertoire and phenotype' (Cell Ranger 3.0.2 Healthy Donors 1 & 2)",
+        "setting": "Resting steady-state peripheral blood CD8+ T cells from healthy HLA-typed donors",
+        "gex_vdj_accession": "https://cf.10xgenomics.com/samples/cell-vdj/3.0.2/vdj_v1_hs_aggregated_donor{1,2}/ (*_sc5p_v2_hs_B_T_all_feature_bc_matrix_filtered.h5, saved locally as filtered_feature_bc_matrix.h5, + *_all_contig_annotations.csv)",
+        "label_source": "10x Genomics published binarized_matrix.csv (44 viral/cancer pMHC dextramer '*_binder' columns) + raw Antibody Capture UMI counts for 6 negative-control ('*_NC') dextramers and TotalSeq-C CD45RO/CD45RA surface antibodies.",
+        "experimental_assay": "Simultaneous staining with 50 DNA-barcoded dCODE MHC class I dextramers (44 viral/self epitopes + 6 negative-control peptides) + CITE-seq TotalSeq-C antibodies + 5' scRNA-seq + scTCR-seq.",
+        "positive_definition": "Paired CDR3ab clonotypes where >=50% of cells in the clone carry the same single-specificity binder call in binarized_matrix.csv (plus >=2 single-binder cells for all expanded >=2-cell evaluations): bona fide viral memory = Influenza A M1 (GILGFVFTL), EBV (BMLF1/BZLF1/EBNA-3A/3B/LMP2A), and CMV pp65 (NLVPMVATV). Sticky reagent A0301_KLGGALQAK_IE-1_CMV is excluded from ground-truth viral positives and evaluated separately as a multimer QC stress test.",
+        "negative_definition": "(A) Naive antigen-specific precursors: HLA-A*02:01 MART-1 (ELAGIGILTV) dextramer+ clones (verified phenotypically naive via TotalSeq-C CLR(CD45RO) - CLR(CD45RA) < -2.9 and >99% singletons). (B) Unlabeled expanded blood clones: paired CD8 clones (>=2 cells) negative for all 44 panel dextramers (representing memory T cells against unpanelled antigens). (C) Memory subtype contrast: Influenza M1 GILGFVFTL vs EBV expanded clones.",
+        "circularity_controls": "10x Genomics dextramer data were ingested into VDJdb (reference containing '10xgenomics'); VDJdb matching reports both unmodified VDJdb (circular) and 10x-study-held-out VDJdb (independent).",
+    },
+    "minervina_2022": {
+        "citation": "Minervina, Pogorelyy, Kirk et al., Nature Immunology 2022 (23:781-790; DOI:10.1038/s41590-022-01184-4; PMID:35383307)",
+        "setting": "Longitudinal human peripheral blood SARS-CoV-2 CD8+ T cells across pre-exposure, convalescence, mRNA vaccination, acute post-dose-2 recall, and breakthrough infection",
+        "gex_vdj_accession": "Zenodo 6232103 (libs_aggregate_rev.zip: aggregated Cell Ranger filtered_feature_bc_matrix.h5 + filtered_contig_annotations.csv)",
+        "label_source": "Curated single-cell dextramer & cohort metadata table pogorely/COVID_vax_CD8 (cd8_only_dextr_rev_clean.tsv; columns 'barcode', 'donor', 'epitope', 'spike', 'donor_category', 'sample_category').",
+        "experimental_assay": "FACS and DNA-barcoded HLA class I dextramer profiling across 18 SARS-CoV-2 Spike and non-Spike (ORF1ab, N, M, ORF3a) epitopes.",
+        "positive_definition": "(1) State recall AUROC: paired-TCR CD8 clones (>=2 cells) sampled during acute post-vaccine dose-2 recall (donor_category == 'inf_after_2'). (2) VDJdb specificity recovery: paired-TCR CD8 clones carrying a curated SARS-CoV-2 epitope call in cd8_only_dextr_rev_clean.tsv.",
+        "negative_definition": "State recall AUROC: disjoint paired-TCR SARS-CoV-2 CD8 clones (>=2 cells) sampled during resting post-infection convalescence (donor_category == 'post_inf'), excluding longitudinal clones observed in both categories.",
+        "circularity_controls": "PMID:35383307 is indexed in VDJdb; VDJdb matching reports both unmodified VDJdb (circular) and PMID:35383307-held-out VDJdb (independent).",
+    },
+    "fischer_2021": {
+        "citation": "Fischer, Ansari, Wagner et al., Nature Communications 2021 (12:4515; DOI:10.1038/s41467-021-25548-w; PMID:34301934)",
+        "setting": "Paired unstimulated control vs 16-hour SARS-CoV-2 Spike peptide-pool-stimulated PBMCs from hospitalized severe COVID-19 patients (Gauting cohort)",
+        "gex_vdj_accession": "GEO GSE171037 (GSM5216975 GT6_unstim, GSM5216976 GT6_covid_stim, GSM5216977 GT_unstim, GSM5216978 GT_covid_stim: Cell Ranger 3 .h5 + .csv.gz + all_contig_annotations.json.gz)",
+        "label_source": "Experimental well assignment from GEO sample metadata (unstimulated control well vs autologous 16 h SARS-CoV-2 Spike overlapping peptide pool well) across persistent CDR3_beta clonotypes (>=2 CD3-gated T cells in both wells).",
+        "experimental_assay": "Ex vivo 16 h overlapping SARS-CoV-2 Spike peptide pool restimulation ('reverse phenotyping') vs parallel unstimulated PBMC control from the same blood draw.",
+        "positive_definition": "Persistent T-cell clones exhibiting paired within-clone effector cytokine transcript induction (delta mean log1p CP10K of IFNG, TNF, IL2, CCL4 > 0.5 and/or AIM/AIMBroad induction) upon Spike peptide stimulation.",
+        "negative_definition": "Persistent bystander T-cell clones present at >=2 cells in both unstimulated and Spike-stimulated wells showing no transcriptional cytokine/AIM induction.",
+        "circularity_controls": "None of TCRsift's signatures (AIM, AIMBroad, AcuteActivation, Differentiated, Cytolytic) were derived from GSE171037.",
+    },
+}
+
+
 def main() -> None:
     warnings.filterwarnings("ignore", message="Variable names are not unique")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -758,7 +938,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from tcrsift import __version__
-    from tcrsift.annotate import load_vdjdb
+    from tcrsift.annotate import _pick_vdjdb_source, load_vdjdb
     from tcrsift.datacache import ensure_cached
 
     args.work_dir.mkdir(parents=True, exist_ok=True)
@@ -770,15 +950,19 @@ def main() -> None:
         raise RuntimeError(
             "VDJdb is required in the TCRsift cache (`tcrsift data download --db vdjdb` or --vdjdb)."
         )
+    vdjdb_src = _pick_vdjdb_source(Path(vdjdb_path)) if Path(vdjdb_path).is_dir() else Path(vdjdb_path)
+    vdjdb_src_label = (
+        vdjdb_src[0].parent.name if isinstance(vdjdb_src, tuple) else vdjdb_src.name
+    )
     vdjdb_full = load_vdjdb(vdjdb_path, verbose=False)
 
     print("Running Cohort 1: 10x Genomics Multiplexed Dextramer Donors 1 & 2 ...")
-    tenx_auroc, tenx_vdjdb, multimer_rows, tenx_facts = run_tenx_dextramer(
+    tenx_auroc, tenx_vdjdb, multimer_rows, tenx_shortlist, tenx_facts = run_tenx_dextramer(
         args.data_dir, args.work_dir, vdjdb_full
     )
 
     print("Running Cohort 2: Minervina et al. 2022 SARS-CoV-2 CD8 Dextramers ...")
-    min_auroc, exposure_rows, min_vdjdb, min_facts = run_minervina(
+    min_auroc, exposure_rows, min_vdjdb, min_shortlist, min_facts = run_minervina(
         args.data_dir, args.work_dir, vdjdb_full
     )
 
@@ -787,6 +971,9 @@ def main() -> None:
 
     pd.DataFrame(tenx_auroc + min_auroc).to_csv(
         results_dir / "blood_signature_auroc.csv", index=False
+    )
+    pd.DataFrame(tenx_shortlist + min_shortlist).to_csv(
+        results_dir / "blood_cutoffs_and_shortlist.csv", index=False
     )
     pd.DataFrame(exposure_rows).to_csv(
         results_dir / "exposure_state_profiles.csv", index=False
@@ -803,8 +990,10 @@ def main() -> None:
 
     summary = {
         "tcrsift_version": __version__,
+        "vdjdb_release": vdjdb_src_label,
         "vdjdb_entries": len(vdjdb_full),
         "vdjdb_paired_ab_entries": int(vdjdb_full["cdr3_alpha"].notna().sum()),
+        "ground_truth_provenance": GROUND_TRUTH_PROVENANCE,
         "tenx_dextramer": tenx_facts,
         "minervina_2022": min_facts,
         "fischer_2021": fischer_facts,

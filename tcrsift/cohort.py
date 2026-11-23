@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ._schema import clean_cdr3_series, clean_str_series, valid_clone_mask
 from .clonotype import compute_sample_overlap_matrices
 
 logger = logging.getLogger(__name__)
@@ -68,8 +69,8 @@ def read_donor_clones(
     if "CDR3ab" not in df.columns:
         raise ValueError(f"{path} has no CDR3ab column")
 
-    raw_ab = df["CDR3ab"].where(df["CDR3ab"].notna(), "").astype(str).str.strip()
-    valid_ab = ~raw_ab.str.lower().isin({"", "_", "nan", "none", "<na>"})
+    raw_ab = clean_str_series(df["CDR3ab"])
+    valid_ab = valid_clone_mask(df["CDR3ab"], clone_col="CDR3ab")
     df = df.loc[valid_ab].reset_index(drop=True)
     out = pd.DataFrame({"CDR3ab": raw_ab.loc[valid_ab].reset_index(drop=True)})
     cells_col = next((c for c in _CELL_COUNT_COLS if c in df.columns), None)
@@ -80,11 +81,12 @@ def read_donor_clones(
     # β-only key: explicit CDR3_beta column, else parse from CDR3ab
     # (``alpha_beta`` convention from build_clone_sample_long).
     if "CDR3_beta" in df.columns:
-        raw_b = df["CDR3_beta"].where(df["CDR3_beta"].notna(), "").astype(str).str.strip()
-        out["CDR3_beta"] = raw_b.where(~raw_b.str.lower().isin({"nan", "none", "<na>"}), "")
+        out["CDR3_beta"] = clean_cdr3_series(df, "CDR3_beta")
     else:
-        parts = out["CDR3ab"].str.split("_", n=1, expand=True)
-        out["CDR3_beta"] = parts[1].fillna("") if parts.shape[1] > 1 else ""
+        parts = out["CDR3ab"].astype("string").str.split("_", n=1, expand=True)
+        out["CDR3_beta"] = (
+            parts[1].fillna("").astype(object) if parts.shape[1] > 1 else ""
+        )
     return out
 
 
