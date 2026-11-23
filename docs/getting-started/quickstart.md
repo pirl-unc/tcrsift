@@ -33,7 +33,7 @@ samples:
 ### Command line
 
 ```bash
-# Optional one-time step: download VDJdb, IEDB, CEDAR, and IMGT V-region references
+# Optional one-time step: download VDJdb, IEDB, CEDAR, and IMGT V- and J-region references
 tcrsift data download
 
 tcrsift run \

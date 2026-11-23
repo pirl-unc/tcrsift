@@ -12,6 +12,7 @@ See [`PROVENANCE.md`](PROVENANCE.md) for complete ground-truth assay description
 
 ```bash
 tcrsift data download --db vdjdb
+tcrsift data download --group germline
 python benchmarks/public_infectious/download.py --data-dir bench_infectious_data
 python benchmarks/public_infectious/run.py \
     --data-dir bench_infectious_data \
@@ -26,4 +27,4 @@ python docs/figures/make_infectious_benchmark_figures.py
 - `exposure_state_profiles.csv` — Mean signature trajectories across SARS-CoV-2 exposure stages (`naive`, `post_inf`, `inf_after_1`, `inf_after_2`, `break`).
 - `vdjdb_matching.csv` — Exact-epitope and virus-species precision and recall across four matching rules (`strict_ab`, `ab_with_partial`, `b_only`, `levenshtein b_only`), comparing unmodified VDJdb (**circular**) against study-held-out VDJdb (**independent**).
 - `multimer_calling.csv` — Per-multimer clonal concordance (`summarize_clone_multimer_specificity`), single-cell agreement with 10x's `binarized_matrix.csv`, sticky-reagent (`KLGGALQAK`) rejection, and CITE-seq `CLR(CD45RO) - CLR(CD45RA)` memory validation.
-- `fischer_stimulation.csv` — Paired unstimulated vs 16 h Spike-stimulated persistent β-clonotypes (`score_stimulation_response`), contrasting Fisher exact count enrichment against within-clone cytokine/AIM transcriptional induction.
+- `fischer_stimulation.csv` — Paired unstimulated vs 16 h Spike-stimulated persistent β-clonotypes (`score_stimulation_response`), contrasting Fisher exact count enrichment against within-clone cytokine/AIM transcriptional induction (`summary.json` also records per-donor and total 5'-truncated contig assembly rescue metrics under `fischer.<patient>.assembly_germline_fallback` and `fischer_totals`).

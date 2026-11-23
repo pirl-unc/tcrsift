@@ -14,12 +14,14 @@ more negative values indicate rarer, more private sequences.
 ## Backends and packaged models
 
 Both backends implement `SequenceProbabilityModel` (`fit`, `log_prob`, `save`,
-`load`) and are included in the standard `pip install tcrsift` installation:
+`load`). `KmerProbabilityModel` is included in the standard `pip install tcrsift`
+installation, while `TCRpegProbabilityModel` uses the optional `tcrpeg` extra
+(`pip install "tcrsift[tcrpeg]"`):
 
 | Backend | Description |
 | --- | --- |
-| `KmerProbabilityModel` (default) | Order-`k` amino-acid Markov model with explicit stop symbol (encoding CDR3 length) and optional V/J marginals |
-| `TCRpegProbabilityModel` | Autoregressive PyTorch model for training on larger custom repertoires |
+| `KmerProbabilityModel` (default) | Order-`k` amino-acid Markov model with explicit stop symbol (encoding CDR3 length) and optional V/J marginals (bundled in core) |
+| `TCRpegProbabilityModel` | Autoregressive PyTorch model for training on larger custom repertoires (`pip install "tcrsift[tcrpeg]"`) |
 
 Packaged k-mer parameter files cover both roles and chains:
 

@@ -8,8 +8,8 @@
 The standard `pip install tcrsift` package includes Scanpy/AnnData, PDF
 sequence reports, packaged human and mouse TCR constant-region FASTAs, human
 IMGT leader references, Excel import/export, cancer-testis-antigen gene panels
-(`oncoref`), and both the k-mer and TCRpeg/PyTorch sequence-probability
-backends.
+(`oncoref`), and the bundled NumPy k-mer `Pgen`/`Ppost` sequence-probability
+backend.
 
 ## Install from PyPI
 
@@ -37,12 +37,13 @@ Individual extras:
 
 | Extra | Packages added | Needed for |
 | --- | --- | --- |
+| `tcrpeg` | `tcrpeg`, `torch` | `TCRpegProbabilityModel` (`tcrsift pgen annotate ... --backend tcrpeg`) |
 | `atlas` | `harmonypy`, `igraph`, `leidenalg` | `tcrsift cells embed` and `embed_cells` |
 | `plots` | `upsetplot` | UpSet set-overlap plots (falls back to an intersection bar chart when absent) |
 | `reports` | `pdfkit` | Legacy HTML-to-PDF conversion (`reportlab` PDF reports are already in core) |
 | `docs` | `mkdocs`, `mkdocs-material`, `mkdocstrings[python]`, `pymdown-extensions` | Building the documentation site |
-| `dev` | `pytest`, `pytest-cov`, `pytest-xdist`, `ruff`, `pylint` | Running tests and linters |
-| `full` | `atlas` + `plots` + `reports` | All runtime extras |
+| `dev` | `pytest`, `pytest-cov`, `pytest-xdist`, `ruff`, `pylint`, `tcrpeg`, `torch` | Running tests and linters |
+| `full` | `tcrpeg` + `atlas` + `plots` + `reports` | All runtime extras |
 
 Constant-region assembly uses packaged canonical FASTA references and does not
 require downloading an Ensembl release via `pyensembl install`.

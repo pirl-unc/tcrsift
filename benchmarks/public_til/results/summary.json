@@ -1,5 +1,8 @@
 {
-  "tcrsift_version": "3.31.0",
+  "tcrsift_version": "3.32.0",
+  "vdjdb_release": "vdjdb-2026-11-06",
+  "vdjdb_entries": 280894,
+  "vdjdb_paired_ab_entries": 200180,
   "ground_truth_provenance": {
     "meng": {
       "citation": "Meng et al., Science Translational Medicine 2023 (15:eadh9562; DOI:10.1126/scitranslmed.adh9562; PMID:37992152)",
@@ -73,7 +76,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 305,
+        "seconds": 186,
         "cells_after_gex_qc": 248332,
         "cells_retained": 46625,
         "cell_filters": [
@@ -110,7 +113,7 @@
         ],
         "clones_scored": 10636,
         "candidates": 200,
-        "eligible_clones": 407,
+        "eligible_clones": 408,
         "labelled_scored": {
           "untested": 10586,
           "MANA": 18,
@@ -122,14 +125,13 @@
           "viral": 10
         },
         "labelled_eligible": {
-          "untested": 400,
+          "untested": 401,
           "MANA": 5,
           "viral": 2
         },
         "labelled_selected": {
           "untested": 196,
-          "MANA": 3,
-          "viral": 1
+          "MANA": 4
         }
       },
       "tumor_cd3_10": {
@@ -143,7 +145,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 204,
+        "seconds": 158,
         "cells_after_gex_qc": 248332,
         "cells_retained": 19739,
         "cell_filters": [
@@ -213,7 +215,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 218,
+        "seconds": 176,
         "cells_after_gex_qc": 248332,
         "cells_retained": 49619,
         "cell_filters": [
@@ -245,7 +247,7 @@
         ],
         "clones_scored": 11234,
         "candidates": 200,
-        "eligible_clones": 429,
+        "eligible_clones": 430,
         "labelled_scored": {
           "untested": 11184,
           "MANA": 18,
@@ -257,14 +259,13 @@
           "viral": 10
         },
         "labelled_eligible": {
-          "untested": 422,
+          "untested": 423,
           "MANA": 5,
           "viral": 2
         },
         "labelled_selected": {
-          "untested": 197,
-          "MANA": 2,
-          "viral": 1
+          "untested": 196,
+          "MANA": 4
         }
       },
       "tumor_depth_gate": {
@@ -280,7 +281,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 177,
+        "seconds": 137,
         "cells_after_gex_qc": 69487,
         "cells_retained": 17934,
         "cell_filters": [
@@ -329,8 +330,8 @@
           "viral": 1
         },
         "labelled_selected": {
-          "untested": 196,
-          "MANA": 3,
+          "untested": 197,
+          "MANA": 2,
           "viral": 1
         }
       },
@@ -342,7 +343,7 @@
           "LN",
           "normal"
         ],
-        "seconds": 144,
+        "seconds": 114,
         "cells_after_gex_qc": 144214,
         "cells_retained": 25714,
         "cell_filters": [
@@ -379,7 +380,7 @@
         ],
         "clones_scored": 8196,
         "candidates": 200,
-        "eligible_clones": 306,
+        "eligible_clones": 307,
         "labelled_scored": {
           "untested": 8129,
           "viral": 30,
@@ -391,14 +392,14 @@
           "MANA": 10
         },
         "labelled_eligible": {
-          "untested": 292,
+          "untested": 293,
           "MANA": 8,
           "viral": 5
         },
         "labelled_selected": {
-          "untested": 191,
-          "MANA": 8,
-          "viral": 1
+          "untested": 190,
+          "MANA": 7,
+          "viral": 2
         }
       },
       "other_tissue_cd3_10": {
@@ -412,7 +413,7 @@
           "LN",
           "normal"
         ],
-        "seconds": 118,
+        "seconds": 103,
         "cells_after_gex_qc": 144214,
         "cells_retained": 8087,
         "cell_filters": [
@@ -667,13 +668,13 @@
         },
         "labelled_eligible": {
           "untested": 181,
-          "TR": 24,
+          "TR": 25,
           "NTR": 19
         },
         "labelled_selected": {
-          "untested": 160,
-          "TR": 21,
-          "NTR": 18
+          "untested": 159,
+          "TR": 24,
+          "NTR": 17
         },
         "labelled_top10_tumor_reactive_per_patient": {
           "untested": 92,
@@ -727,7 +728,7 @@
           }
         ],
         "clones_scored": 3135,
-        "candidates": 116,
+        "candidates": 117,
         "labelled_scored": {
           "untested": 2981,
           "NTR": 66,
@@ -751,12 +752,12 @@
         "labelled_eligible": {
           "untested": 84,
           "NTR": 17,
-          "TR": 14
+          "TR": 15
         },
         "labelled_selected": {
           "untested": 84,
           "NTR": 17,
-          "TR": 14
+          "TR": 15
         },
         "labelled_top10_tumor_reactive_per_patient": {
           "untested": 79,
@@ -828,12 +829,12 @@
         },
         "labelled_eligible": {
           "untested": 173,
-          "TR": 22,
+          "TR": 23,
           "NTR": 19
         },
         "labelled_selected": {
-          "untested": 160,
-          "TR": 21,
+          "untested": 159,
+          "TR": 22,
           "NTR": 18
         },
         "labelled_top10_tumor_reactive_per_patient": {

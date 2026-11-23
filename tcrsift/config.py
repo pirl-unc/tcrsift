@@ -127,6 +127,10 @@ class FilterConfig:
     # may be set explicitly via --donors-share-antigen or read from the YAML
     # sheet root.
     donors_share_antigen: bool = False
+    # Paired stimulation-vs-control filtering thresholds (method="stimulation"):
+    stim_fdr_threshold: float = 0.1
+    stim_log2_fc_threshold: float = 1.0
+    stim_delta_threshold: float = 0.5
 
 
 @dataclass
@@ -198,6 +202,11 @@ class AnnotateConfig:
     flag_only: bool = False
     host_species_filter: str = "all"
     auto_download: bool = False
+    call_multimers: bool = False
+    multimer_min_umi: float = 10.0
+    multimer_min_nc_ratio: float = 5.0
+    multimer_min_concordance: float = 0.5
+    multimer_min_specific_cells: int = 2
 
     def __post_init__(self):
         if self.host_species_filter not in ("all", "same"):
@@ -349,6 +358,8 @@ class AssembleConfig:
     trbc1_allele: str = "auto"
     trbc2_allele: str = "auto"
     stop_codons: list[str] = field(default_factory=lambda: ["TAA", "TGA"])
+    germline_vdj_fallback: bool = False
+    auto_download_germline: bool = False
 
     def __post_init__(self):
         from .species import normalize_species

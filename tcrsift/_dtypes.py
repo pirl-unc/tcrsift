@@ -70,6 +70,14 @@ _STRING_COLS: frozenset[str] = frozenset(
         "TRB_1_c_gene",
         "TRA_1_contig_id",
         "TRB_1_contig_id",
+        "TRA_1_vdj_aa",
+        "TRA_1_vdj_nt",
+        "TRB_1_vdj_aa",
+        "TRB_1_vdj_nt",
+        "TRA_1_partial_vdj_aa",
+        "TRA_1_partial_vdj_nt",
+        "TRB_1_partial_vdj_aa",
+        "TRB_1_partial_vdj_nt",
     }
 )
 

@@ -7,6 +7,49 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.32.0
+
+Priority-tiered round-robin scheduling, single-pass `strict_ab` database matching
+in `prioritize`, IMGT `V-REGION` + `J-REGION` germline fallback for 5'-truncated
+contigs, first-class `--method stimulation` and `--call-multimers` workflows,
+lightweight default installation (`tcrsift[tcrpeg]`), and regenerated `3.32.0`
+benchmarks:
+
+- **Priority-tiered round-robin scheduling (`--round-robin-mode tiered`, default).**
+  Context presets (`solid-tumor`, `mpe`, `blood-tumor`) now place dedicated
+  disease-reactivity signatures (`TumorReactive`, `MANAscore`, `NeoTCR8`,
+  `NeoTCR4`, `NeoTCR_PBL`) first in `CONTEXT_SIGNATURES` and schedule all
+  qualifying clones from those Tier-1 lists before backfilling any remaining
+  `--max-clones` budget from general effector, activation, or proliferation
+  panels (Tier 2). Pass `--round-robin-mode flat` to rotate all preset signatures
+  with equal weight from round 1.
+- **`--database-match` defaults to `strict_ab` in `prioritize` / `til-prioritize`.**
+  Because every clone scored by `prioritize` carries paired α/β chains, database
+  annotations and viral/MART-1 exclusions now default to exact paired α+β
+  matching (`strict_ab`) in a single pass rather than `ab_with_partial`, avoiding
+  false-positive β-only collisions with public viral entries on private
+  repertoires. Pass `--database-match ab_with_partial` or `b_only` to opt into
+  β-only database matching.
+- **IMGT `V-REGION` + `J-REGION` germline fallback (`--germline-vdj-fallback`).**
+  Added cached human and mouse IMGT `TRAJ`/`TRBJ` `J-REGION` references
+  (`tcrsift data download --group germline` / `--group germline_mouse`) and
+  `reconstruct_germline_vdj` for 5'-truncated contigs (`partial_VDJ_*`) and bare
+  `(v_gene, CDR3, j_gene)` tables (`construct_contig_verified = False`, stamped in
+  `{chain}_vdj_source`, `{chain}_vdj_germline_allele`, and `qc_warnings`). Also
+  fixed `_build_full_sequences` so chains missing VDJ sequences never emit
+  `leader + constant` chimeras.
+- **First-class `--method stimulation` and `--call-multimers`.** Added
+  `filter_clonotypes_stimulation` (`tcrsift filter --method stimulation` and
+  `tcrsift run --method stimulation`, combining per-donor expansion `FDR`/`log2FC`
+  with paired within-clone `delta_signature_AIM` / `delta_signature_AcuteActivation`
+  shifts over `source: control`) and `call_multimers_for_adata` (`--call-multimers`
+  in `prioritize` and `run`).
+- **Lightweight core install (`tcrsift[tcrpeg]`) and modularized internals.**
+  Moved `torch` and `tcrpeg` to `pip install "tcrsift[tcrpeg]"` while keeping
+  bundled NumPy k-mer `Pgen`/`Ppost` models in core, adopted PEP 639 SPDX
+  licensing (`setuptools>=77`), and split `assemble.py`, `plots.py`, and `cli.py`
+  into focused internal submodules with full backwards-compatible re-exports.
+
 ## 3.31.0
 
 VDJdb 2026+ relational-archive compatibility, programmatic pipeline/prioritization

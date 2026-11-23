@@ -58,6 +58,7 @@ _MODULE_EXPORTS = {
     ".prioritize": (
         "PrioritizeConfig",
         "CONTEXT_SIGNATURES",
+        "PRIORITY_CONTEXT_SIGNATURES",
         "resolve_signatures",
         "select_round_robin",
         "signature_pass_mask",
@@ -145,6 +146,7 @@ _MODULE_EXPORTS = {
         "DEFAULT_FDR_TIERS",
         "clone_clears_tier",
         "filter_clonotypes",
+        "filter_clonotypes_stimulation",
         "filter_clonotypes_threshold",
         "assign_tiers_threshold",
         "split_by_tier",
@@ -158,6 +160,7 @@ _MODULE_EXPORTS = {
         "classify_feature_columns",
         "call_multimer_specificity",
         "summarize_clone_multimer_specificity",
+        "call_multimers_for_adata",
     ),
     ".annotate": (
         "CATEGORY_BACTERIAL",
@@ -215,6 +218,7 @@ _MODULE_EXPORTS = {
         "assemble_full_sequences",
         "assemble_qc_report",
         "build_assembly_qc_report",
+        "reconstruct_germline_vdj",
         "synthesis_qc_report",
         "translate_dna",
         "validate_sequences",

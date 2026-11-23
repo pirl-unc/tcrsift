@@ -31,7 +31,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ._schema import paired_cdr3ab_key, truthy_flag_series
+from ._schema import paired_cdr3ab_key
 from .config import FilterConfig, TCRsiftConfig
 from .sample_sheet import SampleSheet, load_sample_sheet
 from .validation import TCRsiftValidationError
@@ -81,6 +81,36 @@ def _common_contig_root(vdj_dirs) -> str | None:
     return root
 
 
+def _prepare_signature_expression(adata, genes: list[str]) -> tuple[pd.DataFrame, bool]:
+    """Return ``(expr_df, apply_log1p)`` normalized to CP10K when ``adata.X`` holds raw counts."""
+    from .signature_methods import expression_frame_from_adata
+
+    expr = expression_frame_from_adata(adata, genes, on_missing="ignore")
+    already_log1p = "log1p" in getattr(adata, "uns", {})
+    apply_log1p = not already_log1p
+    if (
+        not already_log1p
+        and getattr(adata, "X", None) is not None
+        and adata.n_obs > 0
+        and adata.n_vars > 0
+    ):
+        x_mat = adata.X
+        x_min, x_max = float(x_mat.min()), float(x_mat.max())
+        x_vals = x_mat.data if hasattr(x_mat, "data") else np.asarray(x_mat).ravel()
+        sample_vals = x_vals[: min(len(x_vals), 10000)]
+        is_int_like = len(sample_vals) == 0 or bool(
+            np.allclose(sample_vals, np.round(sample_vals), atol=1e-4)
+        )
+        if x_min >= 0 and (x_max > 25 or is_int_like):
+            raw_sums = np.asarray(x_mat.sum(axis=1)).ravel().astype(float)
+            if np.nanmax(raw_sums) > 50:
+                lib_safe = np.where(raw_sums > 0, raw_sums, np.nan)
+                expr = expr.div(lib_safe, axis=0).fillna(0.0) * 1e4
+        elif x_min >= 0 and x_max <= 25 and not is_int_like:
+            apply_log1p = False
+    return expr, apply_log1p
+
+
 def run_pipeline(
     sample_sheet: str | Path | SampleSheet,
     output_dir: str | Path,
@@ -121,6 +151,7 @@ def run_pipeline(
     PipelineResult
         Structured summary of output paths, intermediate/final DataFrames, and funnel counts.
     """
+    from ._schema import truthy_flag_series
     from .annotate import annotate_clonotypes
     from .assemble import (
         assemble_full_sequences,
@@ -310,11 +341,65 @@ def run_pipeline(
         try:
             from .filter import score_stimulation_response
 
-            stim_resp_df = score_stimulation_response(adata, clone_col=stim_join_col)
-            stim_resp_df.to_csv(data_dir / "stimulation_response.csv", index=False)
-            print(
-                f"  Scored stimulation vs control ({n_ctrl_cells} control cells) -> stimulation_response.csv"
-            )
+            stim_score_cols: list[str] = []
+            if getattr(adata, "X", None) is not None and adata.n_vars > 0:
+                import scanpy as sc
+
+                from .signature_methods import score_by_name
+
+                stim_adata = adata.copy()
+                sc.pp.normalize_total(stim_adata, target_sum=10_000)
+                sc.pp.log1p(stim_adata)
+                for sig_name in ("AIM", "AcuteActivation"):
+                    try:
+                        vals = score_by_name(
+                            stim_adata,
+                            sig_name,
+                            log1p=False,
+                            on_missing="warn",
+                            species=run_species,
+                        )
+                        col_name = f"signature_{sig_name}"
+                        adata.obs[col_name] = vals.to_numpy(dtype=float)
+                        stim_score_cols.append(col_name)
+                    except Exception as sig_exc:
+                        logger.debug("Skipping stimulation %s score: %s", sig_name, sig_exc)
+                del stim_adata
+
+            if (
+                "patient_id" in adata.obs.columns
+                and adata.obs["patient_id"].dropna().nunique() > 1
+            ):
+                per_donor_resp = []
+                for _, donor_idx in adata.obs.groupby("patient_id", observed=True).indices.items():
+                    donor_adata = adata[donor_idx]
+                    donor_src = donor_adata.obs["source"].astype(str)
+                    if (donor_src == "control").any() and (donor_src != "control").any():
+                        per_donor_resp.append(
+                            score_stimulation_response(
+                                donor_adata,
+                                clone_col=stim_join_col,
+                                score_cols=stim_score_cols or None,
+                            )
+                        )
+                stim_resp_df = (
+                    pd.concat(per_donor_resp, ignore_index=True)
+                    .sort_values(["fisher_pvalue", "stim_cells"], ascending=[True, False], kind="mergesort")
+                    .drop_duplicates(stim_join_col)
+                    if per_donor_resp
+                    else None
+                )
+            else:
+                stim_resp_df = score_stimulation_response(
+                    adata,
+                    clone_col=stim_join_col,
+                    score_cols=stim_score_cols or None,
+                )
+            if stim_resp_df is not None:
+                stim_resp_df.to_csv(data_dir / "stimulation_response.csv", index=False)
+                print(
+                    f"  Scored stimulation vs control ({n_ctrl_cells} control cells) -> stimulation_response.csv"
+                )
         except TCRsiftValidationError as exc:
             print(f"  [stimulation] skipped control comparison: {exc}")
         adata = adata[non_ctrl_mask].copy()
@@ -330,6 +415,11 @@ def run_pipeline(
         doublet_warn_rate=config.clonotype.doublet_warn_rate,
     )
     if stim_resp_df is not None and stim_join_col in clonotypes.columns:
+        extra_stim_cols = [
+            c
+            for c in stim_resp_df.columns
+            if c.startswith(("stim_mean_", "control_mean_", "delta_"))
+        ]
         stim_cols = (
             stim_resp_df[
                 [
@@ -339,6 +429,7 @@ def run_pipeline(
                     "log2_fold_change",
                     "fisher_pvalue",
                     "fisher_fdr",
+                    *extra_stim_cols,
                 ]
             ]
             .rename(
@@ -353,6 +444,32 @@ def run_pipeline(
         clonotypes = clonotypes.merge(stim_cols, on=stim_join_col, how="left")
         clonotypes["control_cells"] = clonotypes["control_cells"].fillna(0).astype(int)
         clonotypes["control_frequency"] = clonotypes["control_frequency"].fillna(0.0)
+
+    if getattr(config.annotate, "call_multimers", False):
+        from .multimer import call_multimers_for_adata
+
+        mm_df = call_multimers_for_adata(
+            adata,
+            sheet_obj,
+            clone_col=stim_join_col,
+            min_umi=config.annotate.multimer_min_umi,
+            min_nc_ratio=config.annotate.multimer_min_nc_ratio,
+            min_specific_cells=config.annotate.multimer_min_specific_cells,
+            min_concordance=config.annotate.multimer_min_concordance,
+        )
+        if not mm_df.empty and stim_join_col in clonotypes.columns:
+            mm_df.to_csv(data_dir / "multimer_specificity.csv", index=False)
+            clonotypes = clonotypes.merge(
+                mm_df.drop(columns=["clone_cells"], errors="ignore"),
+                on=stim_join_col,
+                how="left",
+            )
+            clonotypes["multimer_confident"] = truthy_flag_series(
+                clonotypes.get("multimer_confident", pd.Series(False, index=clonotypes.index))
+            )
+            print(
+                f"  Called pMHC multimers across {int(clonotypes['multimer_confident'].sum())} confident clones -> multimer_specificity.csv"
+            )
     if config.attribution.enabled:
         print("  Attribution ON: weighted fractional clone counts (#176)")
 
@@ -498,6 +615,9 @@ def run_pipeline(
             min_frequency=config.filter.min_frequency,
             require_complete=config.filter.require_complete,
             fdr_tiers=fdr_tiers_arg,
+            stim_fdr_threshold=config.filter.stim_fdr_threshold,
+            stim_log2_fc_threshold=config.filter.stim_log2_fc_threshold,
+            stim_delta_threshold=config.filter.stim_delta_threshold,
             **mode_kwargs,
         )
 
@@ -866,6 +986,14 @@ def run_pipeline(
             species=run_species,
             constant_species=getattr(config.assemble, "constant_species", None),
             codon_species=getattr(config.assemble, "codon_species", None),
+            germline_vdj_fallback=bool(
+                getattr(config.assemble, "germline_vdj_fallback", False)
+            ),
+            data_dir=cache_dir,
+            auto_download_germline=bool(
+                getattr(config.assemble, "auto_download_germline", False)
+                or getattr(config.annotate, "auto_download", False)
+            ),
         )
         assembled.to_csv(data_dir / "full_sequences.csv", index=False)
         print(f"  Assembled {len(assembled)} sequences")
@@ -892,7 +1020,6 @@ def run_pipeline(
             if sig_names:
                 from .signature_methods import (
                     build_signature_methods,
-                    expression_frame_from_adata,
                     signatures_for_species,
                 )
 
@@ -900,30 +1027,7 @@ def run_pipeline(
                 genes = sorted({
                     g for n in sig_names for g in sig_registry[n].all_genes
                 })
-                expr = expression_frame_from_adata(adata, genes, on_missing="ignore")
-                already_log1p = "log1p" in getattr(adata, "uns", {})
-                apply_sig_log1p = not already_log1p
-                if (
-                    not already_log1p
-                    and getattr(adata, "X", None) is not None
-                    and adata.n_obs > 0
-                    and adata.n_vars > 0
-                ):
-                    x_mat = adata.X
-                    x_min = float(x_mat.min())
-                    x_max = float(x_mat.max())
-                    x_vals = x_mat.data if hasattr(x_mat, "data") else np.asarray(x_mat).ravel()
-                    sample_vals = x_vals[: min(len(x_vals), 10000)]
-                    is_int_like = len(sample_vals) == 0 or bool(
-                        np.allclose(sample_vals, np.round(sample_vals), atol=1e-4)
-                    )
-                    if x_min >= 0 and (x_max > 25 or is_int_like):
-                        raw_sums = np.asarray(x_mat.sum(axis=1)).ravel().astype(float)
-                        if np.nanmax(raw_sums) > 50:
-                            lib_safe = np.where(raw_sums > 0, raw_sums, np.nan)
-                            expr = expr.div(lib_safe, axis=0).fillna(0.0) * 1e4
-                    elif x_min >= 0 and x_max <= 25 and not is_int_like:
-                        apply_sig_log1p = False
+                expr, apply_sig_log1p = _prepare_signature_expression(adata, genes)
                 obs_sig = adata.obs
                 if "CDR3ab" not in obs_sig.columns and {
                     "CDR3_alpha", "CDR3_beta"

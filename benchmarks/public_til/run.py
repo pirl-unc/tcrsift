@@ -595,7 +595,12 @@ def rate_row(scores, passed, **tags):
 
 
 def run_meng(data_dir):
-    from tcrsift.prioritize import resolve_signatures, select_round_robin, signature_pass_mask
+    from tcrsift.prioritize import (
+        PRIORITY_CONTEXT_SIGNATURES,
+        resolve_signatures,
+        select_round_robin,
+        signature_pass_mask,
+    )
     from tcrsift.til_prioritize import _score_within_samples
 
     adata = meng_cells(data_dir)
@@ -638,14 +643,25 @@ def run_meng(data_dir):
     abundant = clones[clones.cells.ge(2) & clones.frequency.ge(0.001)]
     selection = []
     for budget in (*BUDGETS, 0):
-        picked = select_round_robin(clones, scores, signatures, max_clones=budget, evidence="either")
+        picked = select_round_robin(
+            clones,
+            scores,
+            signatures,
+            max_clones=budget,
+            evidence="either",
+            priority_signatures=PRIORITY_CONTEXT_SIGNATURES["solid-tumor"],
+        )
         picked = picked[picked.selected_for_review]
         size = len(picked)
+        picked_flat = select_round_robin(
+            clones, scores, signatures, max_clones=size, evidence="either"
+        )
         narrow = clones.assign(eligible_for_review=clones.cells.ge(2) & clones.frequency.ge(0.001)
                                & any_pass(scores, TUMOR_SIGNATURES))
         narrow = select_round_robin(narrow, scores, list(TUMOR_SIGNATURES), max_clones=size, evidence="either")
         methods = {
             "TCRsift round-robin": picked.label,
+            "TCRsift round-robin (flat)": picked_flat[picked_flat.selected_for_review].label,
             "TCRsift round-robin, tumor-reactivity signatures only": narrow[narrow.selected_for_review].label,
             "largest clones": abundant.sort_values(
                 ["frequency", "cells", "CDR3ab"], ascending=[False, False, True], kind="mergesort"
@@ -749,6 +765,26 @@ def main():
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     from tcrsift import __version__
+    from tcrsift.datacache import cached_path
+
+    vdjdb_release = "uncached"
+    vdjdb_entries = 0
+    vdjdb_paired_ab_entries = 0
+    vdj_p = cached_path("vdjdb")
+    if vdj_p is not None:
+        meta_json = (vdj_p if vdj_p.is_dir() else vdj_p.parent) / "_meta.json"
+        if meta_json.exists():
+            meta_obj = json.loads(meta_json.read_text())
+            url = str(meta_obj.get("download_url") or "")
+            if "/releases/download/" in url:
+                vdjdb_release = "vdjdb-" + url.split("/releases/download/")[1].split("/")[0]
+        txt_p = (vdj_p / "vdjdb.txt") if vdj_p.is_dir() else vdj_p
+        if txt_p.exists():
+            vdf = pd.read_csv(txt_p, sep="\t", usecols=["gene", "complex.id"], low_memory=False)
+            trb = vdf[vdf["gene"] == "TRB"]
+            vdjdb_entries = int(len(trb))
+            tra_cids = set(vdf.loc[(vdf["gene"] == "TRA") & (vdf["complex.id"] > 0), "complex.id"])
+            vdjdb_paired_ab_entries = int(trb["complex.id"].isin(tra_cids).sum())
 
     meng_auroc, meng_table, meng_facts, meng_patients, meng_cutoffs, meng_selection = run_meng(args.data_dir)
     caushi_auroc, caushi_table, caushi_facts = run_caushi(args.data_dir, args.work_dir)
@@ -769,6 +805,9 @@ def main():
     (out / "summary.json").write_text(json.dumps(
         {
             "tcrsift_version": __version__,
+            "vdjdb_release": vdjdb_release,
+            "vdjdb_entries": vdjdb_entries,
+            "vdjdb_paired_ab_entries": vdjdb_paired_ab_entries,
             "ground_truth_provenance": GROUND_TRUTH_PROVENANCE,
             "caushi": caushi_facts,
             "meng": meng_facts,

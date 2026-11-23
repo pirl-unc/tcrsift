@@ -29,7 +29,7 @@ interface:
   repertoires (OLGA used *once at build time* to produce training
   sequences — never at runtime, so tcrsift stays Apache-2.0).
 - :class:`TCRpegProbabilityModel` — wraps **TCRpeg** (Jiang & Li 2023), an
-  autoregressive deep model. TCRpeg and PyTorch are core dependencies.
+  autoregressive deep model available via the optional ``tcrsift[tcrpeg]`` extra.
 
 Both are trained on an external reference (not the experiment's own clones)
 so the probability is a genuine background, not circular with the selection
@@ -335,9 +335,8 @@ class TCRpegProbabilityModel(SequenceProbabilityModel):
 
     _INSTALL_HINT = (
         "TCRpeg (+ torch) is required for the TCRpeg sequence-probability "
-        "backend but is not installed. Reinstall tcrsift with its core "
-        "dependencies:\n\n"
-        "    pip install --upgrade tcrsift\n\n"
+        "backend but is not installed. Install the optional extra:\n\n"
+        "    pip install tcrsift[tcrpeg]\n\n"
         "Or use the numpy-only KmerProbabilityModel (the default backend)."
     )
 
@@ -372,10 +371,13 @@ class TCRpegProbabilityModel(SequenceProbabilityModel):
     def available() -> bool:
         import importlib.util
 
-        return (
-            importlib.util.find_spec("tcrpeg") is not None
-            and importlib.util.find_spec("torch") is not None
-        )
+        try:
+            return (
+                importlib.util.find_spec("tcrpeg") is not None
+                and importlib.util.find_spec("torch") is not None
+            )
+        except (ImportError, ValueError):
+            return False
 
     def _require(self) -> None:
         if not self.available():

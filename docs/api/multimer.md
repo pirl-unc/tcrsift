@@ -13,3 +13,4 @@ multimer artifacts.
         - classify_feature_columns
         - call_multimer_specificity
         - summarize_clone_multimer_specificity
+        - call_multimers_for_adata

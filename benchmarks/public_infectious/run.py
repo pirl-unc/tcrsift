@@ -403,17 +403,27 @@ def run_tenx_dextramer(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame)
             )
 
         # Question 2b: Unmodified default `tcrsift prioritize --context blood` (--min-cells 2, 7-sig blood preset)
-        # evaluated with held-out VDJdb under default, --exclude-known-viral (ab_with_partial), and --exclude-known-viral (strict_ab).
+        # evaluated with held-out VDJdb under default, --exclude-known-viral (strict_ab default), and --exclude-known-viral (ab_with_partial).
+        empty_cache = work_dir / "_empty_db_cache"
+        empty_cache.mkdir(parents=True, exist_ok=True)
         label_lookup = cc.set_index("CDR3ab")[["tenx_call", "tenx_cells"]]
         for run_tag, extra_cli in (
-            ("blood_default", ["--vdjdb", str(heldout_10x_tsv)]),
-            (
-                "blood_exclude_viral_ab_with_partial",
-                ["--vdjdb", str(heldout_10x_tsv), "--exclude-known-viral", "--database-match", "ab_with_partial"],
-            ),
+            ("blood_default", ["--vdjdb", str(heldout_10x_tsv), "--cache-dir", str(empty_cache)]),
             (
                 "blood_exclude_viral_strict_ab",
-                ["--vdjdb", str(heldout_10x_tsv), "--exclude-known-viral", "--database-match", "strict_ab"],
+                ["--vdjdb", str(heldout_10x_tsv), "--cache-dir", str(empty_cache), "--exclude-known-viral"],
+            ),
+            (
+                "blood_exclude_viral_ab_with_partial",
+                [
+                    "--vdjdb",
+                    str(heldout_10x_tsv),
+                    "--cache-dir",
+                    str(empty_cache),
+                    "--exclude-known-viral",
+                    "--database-match",
+                    "ab_with_partial",
+                ],
             ),
         ):
             out_def = work_dir / f"tenx_{donor}_{run_tag}"
@@ -677,17 +687,27 @@ def run_minervina(data_dir: Path, work_dir: Path, vdjdb_full: pd.DataFrame):
             }
         ).to_csv(heldout_min_tsv, sep="\t", index=False)
 
+    empty_cache = work_dir / "_empty_db_cache"
+    empty_cache.mkdir(parents=True, exist_ok=True)
     min_shortlist_rows: list[dict] = []
     min_ep_lookup = clone_ep.set_index("CDR3ab")["epitope"]
     for run_tag, extra_cli in (
-        ("blood_default", ["--vdjdb", str(heldout_min_tsv)]),
-        (
-            "blood_exclude_viral_ab_with_partial",
-            ["--vdjdb", str(heldout_min_tsv), "--exclude-known-viral", "--database-match", "ab_with_partial"],
-        ),
+        ("blood_default", ["--vdjdb", str(heldout_min_tsv), "--cache-dir", str(empty_cache)]),
         (
             "blood_exclude_viral_strict_ab",
-            ["--vdjdb", str(heldout_min_tsv), "--exclude-known-viral", "--database-match", "strict_ab"],
+            ["--vdjdb", str(heldout_min_tsv), "--cache-dir", str(empty_cache), "--exclude-known-viral"],
+        ),
+        (
+            "blood_exclude_viral_ab_with_partial",
+            [
+                "--vdjdb",
+                str(heldout_min_tsv),
+                "--cache-dir",
+                str(empty_cache),
+                "--exclude-known-viral",
+                "--database-match",
+                "ab_with_partial",
+            ],
         ),
     ):
         out_mdef = work_dir / f"minervina_{run_tag}"
@@ -871,6 +891,64 @@ def run_fischer(data_dir: Path, work_dir: Path):
             )
             n_contig_verified = int(asm["construct_contig_verified"].sum())
 
+        has_partial_or_full = pd.Series(True, index=clones_ab.index)
+        for ch in ("alpha", "beta"):
+            c_full = (
+                clones_ab[f"VDJ_{ch}_aa"].notna() & (clones_ab[f"VDJ_{ch}_aa"].astype(str) != "")
+                if f"VDJ_{ch}_aa" in clones_ab.columns
+                else pd.Series(False, index=clones_ab.index)
+            )
+            c_part = (
+                clones_ab[f"partial_VDJ_{ch}_aa"].notna()
+                & (clones_ab[f"partial_VDJ_{ch}_aa"].astype(str) != "")
+                if f"partial_VDJ_{ch}_aa" in clones_ab.columns
+                else pd.Series(False, index=clones_ab.index)
+            )
+            has_partial_or_full &= c_full | c_part
+
+        n_germline_rescued = 0
+        n_germline_5prime_both = 0
+        n_germline_junction_contig_both = 0
+        asm_germline = assemble_full_sequences(
+            clones_ab.copy(),
+            contigs_dir=fdir,
+            sample_name_from="parent",
+            alpha_leader="from_contig",
+            beta_leader="from_contig",
+            leader_fallback="germline",
+            include_constant=True,
+            linker="T2A",
+            germline_vdj_fallback=True,
+            show_progress=False,
+            verbose=False,
+        )
+        valid_sc = asm_germline["single_chain_aa"].notna() & ~asm_germline["single_chain_aa"].astype(
+            str
+        ).str.contains(r"\*", regex=True, na=True)
+        n_germline_rescued = int(valid_sc.sum())
+        if {"alpha_vdj_source", "beta_vdj_source"} <= set(asm_germline.columns):
+            n_germline_5prime_both = int(
+                (
+                    valid_sc
+                    & asm_germline["alpha_vdj_source"].isin(
+                        ["contig_full", "contig_5prime_germline_rescued"]
+                    )
+                    & asm_germline["beta_vdj_source"].isin(
+                        ["contig_full", "contig_5prime_germline_rescued"]
+                    )
+                ).sum()
+            )
+        if {"alpha_junction_residue_source", "beta_junction_residue_source"} <= set(
+            asm_germline.columns
+        ):
+            n_germline_junction_contig_both = int(
+                (
+                    valid_sc
+                    & asm_germline["alpha_junction_residue_source"].eq("contig")
+                    & asm_germline["beta_junction_residue_source"].eq("contig")
+                ).sum()
+            )
+
         facts[donor] = {
             "total_pbmc_loaded": int(adata_raw.n_obs),
             "cd3_gated_t_cells": int(adata.n_obs),
@@ -890,6 +968,10 @@ def run_fischer(data_dir: Path, work_dir: Path):
             "json_full_vdj_paired_clones": int(has_vdj.sum()),
             "json_assembled_valid_constructs": n_assembled_ok,
             "json_contig_verified_constructs": n_contig_verified,
+            "partial_or_full_vdj_paired_clones": int(has_partial_or_full.sum()),
+            "germline_fallback_assembled_constructs": n_germline_rescued,
+            "germline_fallback_5prime_contig_rescued_constructs": n_germline_5prime_both,
+            "germline_fallback_contig_junction_verified_constructs": n_germline_junction_contig_both,
         }
 
     return stim_rows, facts

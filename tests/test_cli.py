@@ -191,7 +191,12 @@ class TestDataDownloadParser:
             db=None, group=["germline"], cache_dir=str(tmp_path), force=False
         )
         cmd_data_download(args)
-        assert called == ["imgt_trav_vregion", "imgt_trbv_vregion"]
+        assert called == [
+            "imgt_trav_vregion",
+            "imgt_trbv_vregion",
+            "imgt_traj_jregion",
+            "imgt_trbj_jregion",
+        ]
 
 
 class TestDataDownloadCommand:

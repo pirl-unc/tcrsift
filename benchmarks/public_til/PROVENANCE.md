@@ -43,3 +43,9 @@ This document records the primary data deposits, supplementary label tables, exp
 - **Raw files (`download.py`)**: Downloads Table S4 (`mmc5.xlsx`), `GSE227708_meta_data.csv.gz`, and hashed 10x runs `Z1249` and `Z1308` (the two runs containing labeled clones in a tumor specimen whose hashtags match the deposited metadata sheet).
 - **Hashtag demultiplexing (`run.py:pulliam_tumor_samples`)**: Assigns a cell barcode to its top `Hashtag*` oligo when `top_hashtag_umi >= 10` and `top_hashtag_umi >= 3 * max(second_hashtag_umi, 1)`, retains cells mapped to `tissue == "Tumor"` (`8,475` cells in `Z1249`, `350` in `Z1308`), strips the `GRCh38_` genome prefix from human gene symbols, and subsets `all_contig_annotations.csv.gz` to called, high-confidence contigs of those tumor barcodes.
 - **Ground-truth labels (`run.py:pulliam_labels`)**: Maps Table S4 (sheet `'Table 4'`, `header=1`) `'subject'` tube identifiers to `Patient_id` via `GSE227708_meta_data.csv.gz`, labeling `'virus' == "MCPyV"` as `"MCPyV"` (`22` published in `Z1249`; `5` with `>=2` cells in tumor) and non-MCPyV viral specificities as `"other_virus"` (`13` in `Z1308`), dropping conflicting β labels via `one_label_per_beta` and collapsing across α partners per `(donor, CDR3_beta)` via `collapse_by_beta`.
+
+---
+
+## Reference Database Provenance
+
+- **VDJdb (`vdjdb-2026-11-06`)**: `280,894` `TRB` rows (`200,180` paired α/β entries) cached via `tcrsift data download --db vdjdb` and used under `tcrsift prioritize`'s default `--database-match strict_ab` policy for known MART-1 (`MLANA`) exclusion across `chiffelle`, `caushi`, `eberhardt`, and `pulliam` (`--exclude-known-viral` ablation also evaluated on `caushi`).

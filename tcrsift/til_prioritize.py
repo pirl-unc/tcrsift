@@ -37,6 +37,7 @@ import pandas as pd
 from ._schema import truthy_flag_series
 from .prioritize import (
     CONTEXT_SIGNATURES,
+    PRIORITY_CONTEXT_SIGNATURES,
     QC_DEFAULTS,
     SIGNATURE_LINEAGE,
     PrioritizeConfig,
@@ -207,6 +208,23 @@ def run_til_prioritize(
 
     validate_background_parameters(args.signature_background_quantile,
                                    args.signature_background_draws, args.signature_background_seed)
+    if args.round_robin_mode not in ("tiered", "flat"):
+        raise ValueError(
+            f"--round-robin-mode must be 'tiered' or 'flat'; got {args.round_robin_mode!r}"
+        )
+    if args.database_match not in ("strict_ab", "ab_with_partial", "b_only"):
+        raise ValueError(
+            f"--database-match must be 'strict_ab', 'ab_with_partial', or 'b_only'; got {args.database_match!r}"
+        )
+    if args.call_multimers:
+        if args.multimer_min_umi < 0 or not np.isfinite(args.multimer_min_umi):
+            raise ValueError("--multimer-min-umi must be finite and >= 0")
+        if args.multimer_min_nc_ratio <= 0 or not np.isfinite(args.multimer_min_nc_ratio):
+            raise ValueError("--multimer-min-nc-ratio must be finite and > 0")
+        if not (0 <= args.multimer_min_concordance <= 1):
+            raise ValueError("--multimer-min-concordance must be in [0, 1]")
+        if args.multimer_min_specific_cells < 1:
+            raise ValueError("--multimer-min-specific-cells must be >= 1")
     if args.exclude_public_quantile is not None and not (0 < args.exclude_public_quantile <= 1):
         raise ValueError("--exclude-public-quantile must be in (0, 1]")
     if not 0 <= args.min_frequency <= 1:
@@ -407,9 +425,35 @@ def run_til_prioritize(
         species=resolved_species,
         host_species_filter="same",
     )
-
     clonotypes["known_viral_match"] = truthy_flag_series(clonotypes["is_viral"])
     clonotypes["known_mart1_match"] = _known_mart1_mask(clonotypes)
+
+    if args.call_multimers:
+        from .multimer import call_multimers_for_adata
+
+        adata_for_multimer = adata.copy()
+        adata_for_multimer.obs["donor"] = _analysis_units(adata_for_multimer)
+        mm_summary = call_multimers_for_adata(
+            adata_for_multimer,
+            sheet,
+            clone_col="CDR3ab",
+            group_col="donor",
+            min_umi=args.multimer_min_umi,
+            min_nc_ratio=args.multimer_min_nc_ratio,
+            min_specific_cells=args.multimer_min_specific_cells,
+            min_concordance=args.multimer_min_concordance,
+        )
+        if not mm_summary.empty:
+            mm_summary.to_csv(args.output_dir / "multimer_specificity.csv", index=False)
+            clonotypes = clonotypes.merge(
+                mm_summary.drop(columns=["clone_cells"], errors="ignore"),
+                on=["donor", "CDR3ab"],
+                how="left",
+                validate="one_to_one",
+            )
+            clonotypes["multimer_confident"] = truthy_flag_series(
+                clonotypes.get("multimer_confident", pd.Series(False, index=clonotypes.index))
+            )
     clonotypes["uses_trav12_2"] = (
         _trav12_2_mask(clonotypes)
         if resolved_species == "human"
@@ -479,10 +523,16 @@ def run_til_prioritize(
         & clonotypes["signature_support_count"].ge(args.min_signature_support)
         & ~excluded
     )
+    priority_sigs = (
+        [s for s in PRIORITY_CONTEXT_SIGNATURES.get(args.context, ()) if s in names]
+        if (args.round_robin_mode == "tiered" and args.signatures is None)
+        else []
+    )
     clonotypes = select_round_robin(
         clonotypes, clone_sample, names, args.max_clones, args.signature_quantile,
         args.min_signature_score, args.signature_cutoff,
         evidence, args.min_signature_high_cells, args.min_signature_high_fraction, args.signature_subset_pvalue,
+        priority_signatures=priority_sigs or None,
     )
     candidates = clonotypes[clonotypes["selected_for_review"]].copy()
 
@@ -493,7 +543,11 @@ def run_til_prioritize(
     config = {
         "version": __version__, "arguments": args.to_dict() | {"func": func_name},
         "species": resolved_species,
-        "resolved_signatures": names, "signature_lineages": SIGNATURE_LINEAGE,
+        "resolved_signatures": names,
+        "priority_signatures": priority_sigs,
+        "round_robin_mode": args.round_robin_mode,
+        "database_match": args.database_match,
+        "signature_lineages": SIGNATURE_LINEAGE,
         "cell_filters": cell_filters, "sample_cell_counts": sample_counts,
         "selection": "one total budget; round-robin over signature/evidence/patient/sample/lineage lists",
         "signature_cutoff": {
@@ -548,8 +602,47 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
     parser.add_argument(
         "--database-match",
         choices=("strict_ab", "ab_with_partial", "b_only"),
-        default="ab_with_partial",
-        help="Public-database match strictness (default: ab_with_partial)",
+        default="strict_ab",
+        help="Public-database chain-matching strictness (default: strict_ab for paired α/β clones)",
+    )
+    parser.add_argument(
+        "--round-robin-mode",
+        choices=("tiered", "flat"),
+        default="tiered",
+        help="Round-robin scheduling over signatures: 'tiered' (default) prioritizes "
+        "dedicated tumor/neoantigen reactivity signatures before broader state panels "
+        "when --signatures is not overridden; 'flat' gives equal turns from round 1.",
+    )
+    parser.add_argument(
+        "--call-multimers",
+        action="store_true",
+        default=False,
+        help="Extract 10x Feature Barcode pMHC multimers from each sample's GEX matrix "
+        "and attach per-clone multimer specificity + concordance QC.",
+    )
+    parser.add_argument(
+        "--multimer-min-umi",
+        type=float,
+        default=10.0,
+        help="Minimum top-multimer UMI count for --call-multimers (default: 10.0)",
+    )
+    parser.add_argument(
+        "--multimer-min-nc-ratio",
+        type=float,
+        default=5.0,
+        help="Minimum fold-change over negative-control multimers for --call-multimers (default: 5.0)",
+    )
+    parser.add_argument(
+        "--multimer-min-concordance",
+        type=float,
+        default=0.5,
+        help="Minimum clonal concordance for multimer_confident (default: 0.5)",
+    )
+    parser.add_argument(
+        "--multimer-min-specific-cells",
+        type=int,
+        default=2,
+        help="Minimum specific cells calling the modal multimer for multimer_confident (default: 2)",
     )
     parser.add_argument("--min-cells", type=int, default=2,
                         help="Minimum clone cell count across a patient's samples (default: 2)")

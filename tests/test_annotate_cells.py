@@ -317,7 +317,8 @@ class TestMarkerCountOverride:
             b = {**collagen, "TF1": 6, "TF2": 6}
             if j < 34:
                 b["CTA1"] = 5
-            rows.append(cell(b)); leiden.append("tumor_sparse")
+            rows.append(cell(b))
+            leiden.append("tumor_sparse")
         for _ in range(40):  # a clean CD8 cluster so there is >1 cluster
             rows.append(cell({"CD3D": 6, "CD3E": 6, "CD8A": 6, "CD8B": 6, "GZMB": 6}))
             leiden.append("tcell")
@@ -475,7 +476,8 @@ class TestTumorOverrideFactory:
             b = {**collagen, "TF1": 6, "TF2": 6}
             if j < 34:
                 b["CTA1"] = 5
-            rows.append(cell(b)); leiden.append("tumor_sparse")
+            rows.append(cell(b))
+            leiden.append("tumor_sparse")
         for _ in range(40):
             rows.append(cell({"CD3D": 6, "CD3E": 6, "CD8A": 6, "CD8B": 6, "GZMB": 6}))
             leiden.append("tcell")
