@@ -155,21 +155,22 @@ pip install -e .
 
 ```bash
 pip install "tcrsift[full]"     # All optional extras below
+pip install "tcrsift[tcrpeg]"   # Deep autoregressive TCRpeg/PyTorch sequence probability
 pip install "tcrsift[atlas]"    # Harmony + Leiden clustering (`tcrsift cells embed`)
 pip install "tcrsift[plots]"    # UpSet set-overlap plots
 pip install "tcrsift[reports]"  # Legacy pdfkit HTML-to-PDF helper
 ```
 
 Sequence assembly, Excel support, `reportlab` PDF sequence reports, `oncoref`
-CTA panels, and both k-mer and TCRpeg probability models are included in the
-base package.
+CTA panels, and bundled NumPy k-mer `Pgen`/`Ppost` probability models are
+included in the base package.
 
 ## Quick Start
 
 ### Command Line
 
 ```bash
-# Optional one-time cache download for VDJdb, IEDB, CEDAR, and IMGT V-region references:
+# Optional one-time cache download for VDJdb, IEDB, CEDAR, and IMGT V- and J-region references:
 tcrsift data download
 
 tcrsift run \
@@ -236,15 +237,15 @@ Patient1_TIL,Patient1,/data/patient1_til/vdj,,,til
 | --- | --- | --- |
 | `sample` | Yes | Unique sample identifier |
 | `vdj_dir` | Yes* | Cell Ranger VDJ output directory |
-| `gex_dir` | No* | Cell Ranger GEX output directory |
-| `source` | No | `culture` (default), `til`, `tetramer`, or `sct` |
+| `gex_dir` | No* | Cell Ranger GEX output directory (or `gex_path` for `.h5` / `.h5ad`) |
+| `source` | No | `culture` (default), `control`, `til`, `tetramer`, or `sct` |
 | `patient_id` | No | Donor or patient ID; enables per-donor tiering and sharing tables |
 | `enrichment_method` | No | Sorting or stimulation label (e.g. `AIMpos`, `tetpos`); enables per-method outputs |
 | `timepoint` | No | Longitudinal timepoint label (e.g. `D7`, `D14`, `pre`, `post`) |
 | `apc_type` | No | Antigen-presenting cell label (e.g. `mDC`, `B-LCL`) |
 
-\*At least one data path (`vdj_dir`, `gex_dir`, `sct_path`, `til_csv`, or
-`til_h5ad`) is required; `prioritize` requires both `vdj_dir` and `gex_dir`.
+\*At least one data path (`vdj_dir`, `gex_dir`/`gex_path`, `sct_path`, `til_csv`, or
+`til_h5ad`) is required; `prioritize` requires `vdj_dir` plus `gex_dir` (or `gex_path`).
 
 ### Multi-donor and multi-method studies
 
@@ -369,7 +370,7 @@ When explicit paths are omitted, `run`, `annotate`, `prioritize`,
 ```bash
 tcrsift data list                             # Show cached databases, sizes, and paths
 tcrsift data download                         # Fetch VDJdb, IEDB, CEDAR, and human/mouse IMGT germlines
-tcrsift data download --group germline_mouse  # Fetch mouse IMGT V-REGION and leader references
+tcrsift data download --group germline_mouse  # Fetch mouse IMGT V-REGION, J-REGION, and leader references
 tcrsift data download --db iedb               # Fetch a single database (--force refreshes)
 tcrsift data clear                            # Clear cached files (--db NAME for one)
 ```

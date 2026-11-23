@@ -264,6 +264,7 @@ def bundle_figure_pdf(
 _ALPHA_COL_TO_CELL = {
     "CDR3_alpha": "cdr3", "alpha_v_gene": "v_gene", "alpha_j_gene": "j_gene",
     "alpha_c_gene": "c_gene", "VDJ_alpha_aa": "vdj_aa", "VDJ_alpha_nt": "vdj_nt",
+    "partial_VDJ_alpha_aa": "partial_vdj_aa", "partial_VDJ_alpha_nt": "partial_vdj_nt",
 }
 # ``alpha_contig_ids`` is NOT refreshed from the rep cell here — it's set
 # per-variant from the co-expressing cells' contigs (see expand_dual_alpha_

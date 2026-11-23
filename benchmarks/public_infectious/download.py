@@ -20,6 +20,9 @@ Datasets downloaded (no controlled access required):
 from __future__ import annotations
 
 import argparse
+import contextlib
+import socket
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -44,6 +47,21 @@ MINERVINA_TSV = "https://raw.githubusercontent.com/pogorely/COVID_vax_CD8/master
 MINERVINA_TSV_FALLBACK = "https://raw.githubusercontent.com/pogorely/COVID_vax_CD8/main/cd8_only_dextr_rev_clean.tsv"
 
 
+@contextlib.contextmanager
+def _ipv4_only():
+    """Force AF_INET resolution when a dual-stack mirror (e.g. NCBI GEO IPv6) returns HTTP 403."""
+    orig = socket.getaddrinfo
+
+    def _af_inet(host, port, family=0, type=0, proto=0, flags=0):
+        return orig(host, port, socket.AF_INET, type, proto, flags)
+
+    socket.getaddrinfo = _af_inet
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = orig
+
+
 def fetch(url: str, dest: Path, fallback_url: str | None = None) -> Path:
     if dest.exists() and dest.stat().st_size > 0:
         return dest
@@ -55,9 +73,17 @@ def fetch(url: str, dest: Path, fallback_url: str | None = None) -> Path:
         try:
             print(f"  {candidate}")
             req = urllib.request.Request(candidate, headers={"User-Agent": "tcrsift-benchmark/1.0"})
-            with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as out:
-                while chunk := resp.read(1 << 20):
-                    out.write(chunk)
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as out:
+                    while chunk := resp.read(1 << 20):
+                        out.write(chunk)
+            except urllib.error.HTTPError as http_exc:
+                tmp.unlink(missing_ok=True)
+                if http_exc.code != 403:
+                    raise
+                with _ipv4_only(), urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as out:
+                    while chunk := resp.read(1 << 20):
+                        out.write(chunk)
             tmp.rename(dest)
             return dest
         except Exception as exc:

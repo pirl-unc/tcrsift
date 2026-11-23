@@ -158,40 +158,51 @@ def subset_evidence():
 
 
 def round_robin():
-    """One shared budget, one pick per list per round, duplicates skipped."""
+    """Priority-tiered budget: Tier-1 reactivity lists exhaust before Tier-2 backfill."""
     lists = {
         "NeoTCR8\nmean": ["c1", "c2", "c3", "c4", "c5"],
         "NeoTCR8\nsubset": ["c6", "c1"],
         "MANAscore\nmean": ["c2", "c7", "c8"],
         "Proliferation\nmean": ["c9", "c3", "c10", "c11"],
     }
+    tier1_cols = {0, 1, 2}
     budget = 9
     queues = [deque(v) for v in lists.values()]
     picked, order = {}, {}
-    while len(picked) < budget:
-        before = len(picked)
-        for j, queue in enumerate(queues):
-            while queue and queue[0] in picked:
-                queue.popleft()
-            if not queue:
-                continue
-            clone = queue.popleft()
-            picked[clone] = j
-            order[(j, clone)] = len(picked)
-            if len(picked) == budget:
+    for pool in ([0, 1, 2], [3]):
+        while len(picked) < budget:
+            before = len(picked)
+            for j in pool:
+                queue = queues[j]
+                while queue and queue[0] in picked:
+                    queue.popleft()
+                if not queue:
+                    continue
+                clone = queue.popleft()
+                picked[clone] = j
+                order[(j, clone)] = len(picked)
+                if len(picked) == budget:
+                    break
+            if len(picked) == before:
                 break
-        if len(picked) == before:
-            break
 
-    fig, ax = plt.subplots(figsize=(8.6, 4.3), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(8.6, 4.5), constrained_layout=True)
+    ax.text(1.0, 1.38, "Tier 1: context reactivity lists (exhausted first)",
+            ha="center", va="bottom", fontsize=8.5, color=BLUE, fontweight="bold")
+    ax.plot([-0.38, 2.38], [1.32, 1.32], color=BLUE, lw=1.2)
+    ax.text(3.0, 1.38, "Tier 2: backfill",
+            ha="center", va="bottom", fontsize=8.5, color=INK2, fontweight="bold")
+    ax.plot([2.62, 3.38], [1.32, 1.32], color=NEUTRAL, lw=1.2)
     for j, (name, clones) in enumerate(lists.items()):
-        ax.text(j, 0.75, name, ha="center", va="bottom", fontsize=9.5, fontweight="bold")
+        ax.text(j, 0.72, name, ha="center", va="bottom", fontsize=9.5, fontweight="bold")
+        is_t1 = j in tier1_cols
         for i, clone in enumerate(clones):
             rank = order.get((j, clone))
             taken_elsewhere = rank is None and clone in picked
-            face = BLUE if rank else SURFACE
+            face = (BLUE if is_t1 else "#4B6A88") if rank else SURFACE
+            edge = (BLUE if is_t1 else "#4B6A88") if rank else NEUTRAL
             ax.add_patch(plt.Rectangle((j - 0.4, -i - 0.36), 0.8, 0.72, facecolor=face,
-                                       edgecolor=BLUE if rank else NEUTRAL, lw=1.5,
+                                       edgecolor=edge, lw=1.5,
                                        ls="-" if rank or not taken_elsewhere else (0, (3, 2))))
             label = f"{clone}\npick {rank}" if rank else (
                 f"{clone}\nalready picked" if taken_elsewhere else f"{clone}\nover budget")
@@ -203,9 +214,9 @@ def round_robin():
     ax.text(-1.0, -2.35, "rank within list", rotation=90, ha="right", va="center",
             fontsize=9, color=INK2)
     ax.set_xlim(-1.3, len(lists) - 0.4)
-    ax.set_ylim(-4.6, 1.6)
+    ax.set_ylim(-4.6, 1.8)
     ax.axis("off")
-    ax.set_title(f"Round-robin over qualifying lists (budget = {budget} clones)", pad=4)
+    ax.set_title(f"Priority-tiered round-robin over qualifying lists (budget = {budget} clones)", pad=4)
     save(fig, "round_robin")
 
 

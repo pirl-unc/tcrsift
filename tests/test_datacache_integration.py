@@ -42,10 +42,17 @@ class TestMouseGermlineCacheAndIsolation:
     """Mouse IMGT V-REGION and leader database specs + species isolation."""
 
     def test_germline_groups_preserve_human_and_expose_mouse(self):
-        assert GROUPS["germline"] == ["imgt_trav_vregion", "imgt_trbv_vregion"]
+        assert GROUPS["germline"] == [
+            "imgt_trav_vregion",
+            "imgt_trbv_vregion",
+            "imgt_traj_jregion",
+            "imgt_trbj_jregion",
+        ]
         assert GROUPS["germline_mouse"] == [
             "imgt_trav_vregion_mouse",
             "imgt_trbv_vregion_mouse",
+            "imgt_traj_jregion_mouse",
+            "imgt_trbj_jregion_mouse",
             "imgt_trav_leader_mouse",
             "imgt_trbv_leader_mouse",
         ]

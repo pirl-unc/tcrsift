@@ -43,8 +43,11 @@ tcrsift run \
 | `--til-sample` | Repeatable external TIL source: `NAME=TYPE:PATH` (`TYPE` in `csv`, `h5ad`, `vdj`) |
 | `--til-match-by` | TIL matching key: `CDR3ab` (default) or `CDR3b_only` |
 | `--tcell-type` | Lineage filter: `cd8`, `cd4`, or `both` |
-| `--method` | Tiering method: `threshold` (default) or `logistic` |
+| `--method` | Tiering method: `threshold` (default), `logistic`, or `stimulation` |
 | `--fdr-scope` | Tiering scope: `auto` (default), `global`, `per-donor`, or `per-sample` |
+| `--call-multimers` | Extract 10x Feature Barcode pMHC multimers and attach clonal concordance columns |
+| `--germline-vdj-fallback` | Rescue 5'-truncated contigs and bare `(v_gene, CDR3, j_gene)` rows from cached IMGT V+J germlines |
+| `--auto-download-germline` | Automatically fetch missing IMGT V-REGION and J-REGION references when `--germline-vdj-fallback` is set |
 | `--no-pgen-ppost` | Skip default k-mer `Pgen`/`Ppost` scoring during clonotyping |
 | `--no-report` | Skip PDF summary report generation |
 | `--skip-plots` | Skip PNG plot generation |
@@ -84,9 +87,11 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 | `--vdjdb`, `--iedb`, `--cedar`, `--iedb-epitope` | Reference databases (auto-discovered from `tcrsift data` cache if omitted) |
 | `--cache-dir`, `--auto-download` | Cache directory override and on-demand database download |
 | `--species` | `auto` (default), `human`, or `mouse` |
-| `--database-match` | Chain-matching policy for database annotations and exclusions: `ab_with_partial` (default), `strict_ab`, or `b_only` |
+| `--round-robin-mode` | `tiered` (default when `--signatures` is unset; schedules dedicated tumor/neoantigen signatures ahead of general state panels) or `flat` |
+| `--database-match` | Chain-matching policy for database annotations and exclusions: `strict_ab` (default for paired α/β `prioritize`), `ab_with_partial`, or `b_only` |
 | `--exclude-known-viral` | Exclude clones matching viral entries in VDJdb/IEDB/CEDAR |
 | `--no-exclude-known-mart1` | Retain known MART-1 database matches |
+| `--call-multimers` | Call 10x Feature Barcode pMHC multimers and attach clonal specificity/concordance columns |
 
 See [Clone Prioritization](til-signatures.md) for all QC, VDJ, expression, V/J
 gene, CDR3 length, and subset-evidence options, and `tcrsift prioritize --help`
@@ -211,11 +216,12 @@ tcrsift filter -i clonotypes.csv -o filtered/ \
 | --- | --- |
 | `-i`, `--input` | Input clonotype CSV (required) |
 | `-o`, `--output` | Output directory for tier CSVs (required) |
-| `--method` | `threshold` (default) or `logistic` |
+| `--method` | `threshold` (default), `logistic`, or `stimulation` |
 | `--tcell-type` | `cd8`, `cd4`, or `both` |
 | `--min-cells`, `--min-frequency` | Global abundance floors (default `--min-cells 2`) |
 | `--exclude-viral` | Drop rows with `is_viral=True` |
 | `--fdr-tiers` | Comma-separated FDR cutoffs for `--method logistic` |
+| `--stim-fdr-threshold`, `--stim-log2-fc-threshold`, `--stim-delta-threshold` | Expansion FDR/fold-change and paired transcriptional delta cutoffs for `--method stimulation` (defaults `0.1`, `1.0`, `0.5`) |
 | `--plot-filter` | Generate tier distribution plots (written to `--output`) |
 
 ---
@@ -280,6 +286,8 @@ tcrsift assemble -i annotated.csv -o sequences.csv \
 | `--constant-species`, `--codon-species` | Override constant-region or codon-optimization species (e.g. `--constant-species mouse` for chimeric human-VDJ / murine-constant constructs) |
 | `--single-chain` | Emit β-linker-α single-chain construct (`single_chain_aa`, `single_chain_nt`) |
 | `--linker` | 2A peptide: `T2A` (default), `P2A`, `E2A`, or `F2A` |
+| `--germline-vdj-fallback` | Reconstruct missing 5' V-region prefixes (`partial_VDJ_*`) or bare `(v_gene, CDR3, j_gene)` chains from cached IMGT V-REGION + J-REGION references (`construct_contig_verified=False`) |
+| `--auto-download-germline` | Automatically fetch missing IMGT V-REGION and J-REGION references into the cache when `--germline-vdj-fallback` is set |
 | `--fasta`, `--airr` | Optional FASTA or AIRR output paths |
 
 ---
@@ -289,14 +297,15 @@ tcrsift assemble -i annotated.csv -o sequences.csv \
 ### `tcrsift data`
 
 Inspect, download, or clear cached public reference databases (VDJdb, IEDB,
-CEDAR, and human/mouse IMGT `TRAV`/`TRBV` germline V-REGION and leader
-references). Cache location resolves in order: `--cache-dir`,
+CEDAR, and human/mouse IMGT `TRAV`/`TRBV` V-REGION, `TRAJ`/`TRBJ` J-REGION, and
+leader references). Cache location resolves in order: `--cache-dir`,
 `$TCRSIFT_DATA_DIR`, `$XDG_CACHE_HOME/tcrsift`, `~/.cache/tcrsift`.
 
 ```bash
 tcrsift data list                             # Show database status, sizes, and paths
 tcrsift data download                         # Download all auto-fetchable databases
-tcrsift data download --group germline_mouse  # Download mouse IMGT V-REGION + leader FASTAs
+tcrsift data download --group germline        # Download human IMGT V-REGION + J-REGION FASTAs
+tcrsift data download --group germline_mouse  # Download mouse IMGT V-REGION, J-REGION + leader FASTAs
 tcrsift data download --db iedb               # Download one database (--force refreshes)
 tcrsift data clear --db iedb                  # Remove one database (omit --db for all)
 ```

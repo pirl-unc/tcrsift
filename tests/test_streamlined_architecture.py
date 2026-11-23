@@ -376,7 +376,7 @@ def test_signature_and_viral_registries_share_single_source_of_truth():
     assert SIGNATURES["AcuteActivation"].genes_up == ANTIGEN_RESPONSE_GENES_HGNC
     assert naive_signature().genes_up == NAIVE_STEM_GENES_HGNC
     assert TIL_SELECT_VIRAL_PATTERNS is VIRAL_SPECIES_PATTERNS
-    assert tcrsift.__version__ == "3.31.0"
+    assert tcrsift.__version__ == tcrsift.version.__version__
 
 
 def test_run_pipeline_and_prioritize_config_python_apis(tmp_path):

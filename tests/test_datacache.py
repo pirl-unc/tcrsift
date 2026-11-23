@@ -42,7 +42,10 @@ class TestResolveDbSelection:
 
     def test_germline_group(self):
         assert resolve_db_selection(None, ["germline"]) == [
-            "imgt_trav_vregion", "imgt_trbv_vregion"
+            "imgt_trav_vregion",
+            "imgt_trbv_vregion",
+            "imgt_traj_jregion",
+            "imgt_trbj_jregion",
         ]
 
     def test_annotation_group_includes_cedar_now_downloadable(self):
@@ -65,7 +68,13 @@ class TestResolveDbSelection:
 
     def test_db_and_group_union_dedup(self):
         sel = resolve_db_selection(["vdjdb"], ["germline"])
-        assert sel == ["vdjdb", "imgt_trav_vregion", "imgt_trbv_vregion"]
+        assert sel == [
+            "vdjdb",
+            "imgt_trav_vregion",
+            "imgt_trbv_vregion",
+            "imgt_traj_jregion",
+            "imgt_trbj_jregion",
+        ]
 
     def test_unknown_group_raises(self):
         with pytest.raises(ValueError):

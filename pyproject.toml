@@ -1,15 +1,15 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tcrsift"
 requires-python = ">=3.9"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [ {name="Alex Rubinsteyn", email="alex.rubinsteyn@unc.edu" } ]
 description = "T-cell receptor clonotype prioritization from antigen-enrichment cultures and single-cell VDJ and gene-expression data"
 classifiers = [
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -47,11 +47,6 @@ dependencies = [
     # lookups); openpyxl backs Excel export. Both permissively licensed.
     "pyensembl>=2.0.0,<3.0.0",
     "openpyxl>=3.0.0,<4.0.0",
-    # TCRpeg is a Ppost backend (tcrsift.seqprob), auto-trained on first use —
-    # so it + torch are core, not an extra. (OLGA/SONIA are no longer a
-    # dependency: the shipped k-mer Pgen/Ppost models need nothing at runtime.)
-    "tcrpeg>=1.0.0",
-    "torch>=2.0.0",
     # Cancer-testis-antigen panels for tumor typing. tcrsift owns the counting +
     # relabel MECHANISM (annotate_cells.tumor_override / MarkerCountOverride); the
     # curated, versioned CTA gene sets live in oncoref (#310) and are the default
@@ -62,6 +57,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional deep autoregressive Ppost backend (tcrsift.seqprob.TCRpegProbabilityModel).
+# Default Pgen/Ppost uses the bundled numpy-only k-mer models in tcrsift.refseqs.
+tcrpeg = [
+    "tcrpeg>=1.0.0",
+    "torch>=2.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -70,6 +71,8 @@ dev = [
     "pytest-xdist>=3.0.0",
     "ruff>=0.1.0",
     "pylint>=3.0.0,<4.0.0",
+    "tcrpeg>=1.0.0",
+    "torch>=2.0.0",
 ]
 docs = [
     "mkdocs>=1.5.0",
@@ -106,6 +109,8 @@ full = [
     "harmonypy>=0.0.9",
     "igraph>=0.10",
     "leidenalg>=0.9",
+    "tcrpeg>=1.0.0",
+    "torch>=2.0.0",
 ]
 
 [tool.setuptools.dynamic]

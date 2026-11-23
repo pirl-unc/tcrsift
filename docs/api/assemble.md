@@ -5,9 +5,24 @@ single-chain (`β-2A-α`) protein and DNA sequences from clonotype tables.
 
 ## Overview
 
-Input tables must include assembled V(D)J variable-region sequences from
-`aggregate_clonotypes`; CDR3 sequences and V/J gene names alone are not
-sufficient to reconstruct framework mutations or junctional nucleotides.
+By default, input tables carry full-length V(D)J variable-region sequences
+(`VDJ_alpha_aa`, `VDJ_beta_aa`) from `aggregate_clonotypes`. When working with
+5'-truncated contigs (`partial_VDJ_{chain}_aa`/`_nt`, where sequencing begins
+downstream of the leader start codon) or bare `(v_gene, CDR3, j_gene)` tables,
+pass `germline_vdj_fallback=True` (`--germline-vdj-fallback` on the CLI, after
+`tcrsift data download --group germline` or `--auto-download-germline`):
+
+- **5'-partial contig rescue (`contig_5prime_germline_rescued`):** prepends only
+  the missing N-terminal FR1/CDR1 segment from the best-matching IMGT `V-REGION`
+  allele while preserving all sequenced donor framework SNPs, CDR3 codons, and
+  FR4 codons verbatim.
+- **Bare V+CDR3+J reconstruction (`germline_vj_reconstructed`):** splices IMGT
+  germline `V-REGION` (`FR1–FR3` up to conserved `Cys 104`) + `CDR3` + IMGT
+  germline `J-REGION` (`FR4` past `[FW]GXG`).
+- Every germline-imputed chain records `{chain}_vdj_source`,
+  `{chain}_vdj_germline_allele`, and `qc_warnings` (`{chain}_vdj_germline_reconstructed`)
+  and sets `construct_contig_verified = False` so germline imputation is never
+  conflated with a 5'-to-3' contig-verified sequence.
 
 Assembly configures four components:
 
@@ -111,6 +126,7 @@ across the entire constant region.
     options:
       members:
         - assemble_full_sequences
+        - reconstruct_germline_vdj
         - translate_dna
         - find_longest_orf
         - parse_fasta

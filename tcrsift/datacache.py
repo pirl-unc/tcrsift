@@ -168,8 +168,28 @@ DATABASES: dict[str, DatabaseSpec] = {
         ),
         archive_format="raw",
     ),
-    # Mouse (Mus musculus) IMGT/GENE-DB V-REGION and L-PART1+L-PART2 references
-    # for murine framework and leader germline comparison.
+    "imgt_traj_jregion": DatabaseSpec(
+        name="imgt_traj_jregion",
+        filename="TRAJ_J-REGION.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAJ, IMGTlabel=J-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAJ"
+            "&species=Homo+sapiens&IMGTlabel=J-REGION"
+        ),
+        archive_format="raw",
+    ),
+    "imgt_trbj_jregion": DatabaseSpec(
+        name="imgt_trbj_jregion",
+        filename="TRBJ_J-REGION.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBJ, IMGTlabel=J-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBJ"
+            "&species=Homo+sapiens&IMGTlabel=J-REGION"
+        ),
+        archive_format="raw",
+    ),
+    # Mouse (Mus musculus) IMGT/GENE-DB V-REGION, J-REGION, and L-PART1+L-PART2
+    # references for murine framework/J germline comparison and 5'-partial rescue.
     "imgt_trav_vregion_mouse": DatabaseSpec(
         name="imgt_trav_vregion_mouse",
         filename="TRAV_V-REGION_mouse.html",
@@ -187,6 +207,26 @@ DATABASES: dict[str, DatabaseSpec] = {
         download_url=(
             "https://www.imgt.org/genedb/GENElect?query=8.1+TRBV"
             "&species=Mus+musculus&IMGTlabel=V-REGION"
+        ),
+        archive_format="raw",
+    ),
+    "imgt_traj_jregion_mouse": DatabaseSpec(
+        name="imgt_traj_jregion_mouse",
+        filename="TRAJ_J-REGION_mouse.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRAJ, species=Mus musculus, IMGTlabel=J-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRAJ"
+            "&species=Mus+musculus&IMGTlabel=J-REGION"
+        ),
+        archive_format="raw",
+    ),
+    "imgt_trbj_jregion_mouse": DatabaseSpec(
+        name="imgt_trbj_jregion_mouse",
+        filename="TRBJ_J-REGION_mouse.html",
+        source="https://www.imgt.org/genedb/ (GENElect 8.1 TRBJ, species=Mus musculus, IMGTlabel=J-REGION)",
+        download_url=(
+            "https://www.imgt.org/genedb/GENElect?query=8.1+TRBJ"
+            "&species=Mus+musculus&IMGTlabel=J-REGION"
         ),
         archive_format="raw",
     ),
@@ -215,15 +255,22 @@ DATABASES: dict[str, DatabaseSpec] = {
 
 # Logical groupings for bulk `data download` / `data clear` by workflow, so a
 # user can grab everything one pipeline needs without naming each DB.
-#   germline       → human IMGT V-REGION framework reference (assembly germline QC)
-#   germline_mouse → mouse IMGT V-REGION + leader references
+#   germline       → human IMGT V-REGION + J-REGION references (assembly germline QC & rescue)
+#   germline_mouse → mouse IMGT V-REGION + J-REGION + leader references
 #   annotation     → the epitope-annotation databases (the `annotate` command)
 #   all            → every registered database
 GROUPS: dict[str, list[str]] = {
-    "germline": ["imgt_trav_vregion", "imgt_trbv_vregion"],
+    "germline": [
+        "imgt_trav_vregion",
+        "imgt_trbv_vregion",
+        "imgt_traj_jregion",
+        "imgt_trbj_jregion",
+    ],
     "germline_mouse": [
         "imgt_trav_vregion_mouse",
         "imgt_trbv_vregion_mouse",
+        "imgt_traj_jregion_mouse",
+        "imgt_trbj_jregion_mouse",
         "imgt_trav_leader_mouse",
         "imgt_trbv_leader_mouse",
     ],

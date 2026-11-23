@@ -976,6 +976,47 @@ def _tie_break_sort(cand: pd.DataFrame, tie_break, clone_col: str):
     return cols, asc
 
 
+def _score_and_rank_condition_prism(
+    cand: pd.DataFrame,
+    *,
+    terms: list[dict],
+    freq_col: str,
+    clone_col: str,
+    top_freq: int,
+    top_prism: int,
+    tie_break: Sequence[str] | None,
+) -> tuple[pd.DataFrame, list, list]:
+    """Deduplicate ``cand`` to one best-frequency row per clone, score PRISM, and rank both routes."""
+    cand = (
+        cand.sort_values([freq_col, clone_col], ascending=[False, True])
+        .drop_duplicates(subset=[clone_col], keep="first")
+        .copy()
+    )
+    composite = percentile_rank_score(
+        cand, terms, clone_col=clone_col, require_complete=True
+    )
+    cand["prism_score"] = cand[clone_col].astype(str).map(composite)
+    tb_cols, tb_asc = _tie_break_sort(
+        cand, DEFAULT_TIE_BREAK if tie_break is None else tie_break, clone_col
+    )
+    top_f = list(
+        cand.sort_values([freq_col, *tb_cols], ascending=[False, *tb_asc])[clone_col].head(
+            top_freq
+        )
+    )
+    scorable = cand[cand["prism_score"].notna()]
+    top_p = (
+        list(
+            scorable.sort_values(["prism_score", *tb_cols], ascending=[True, *tb_asc])[
+                clone_col
+            ].head(top_prism)
+        )
+        if top_prism > 0
+        else []
+    )
+    return cand, top_f, top_p
+
+
 def select_freq_prism_per_condition(
     feat: pd.DataFrame,
     *,
@@ -1070,43 +1111,15 @@ def select_freq_prism_per_condition(
             cand = pd.concat([cand, sub], ignore_index=True)
         if cand.empty:
             continue
-        # Collapse to one row per clone within the condition. The input may be
-        # per-(clone, sample) (e.g. condition_col='method' over clone_sample_long),
-        # so a clone present in several samples of one condition would otherwise
-        # occupy multiple top-K slots — undercounting distinct clones, skewing the
-        # within-condition percentile ranks, and producing wrong rank_within_route.
-        # Keep each clone's best (highest-frequency) row.
-        # Deterministic dedup: keep each clone's highest-frequency row, breaking
-        # ties by clone id so which row survives is reproducible (not row-order).
-        cand = (
-            cand.sort_values([freq_col, clone_col], ascending=[False, True])
-            .drop_duplicates(subset=[clone_col], keep="first")
+        cand, top_f, top_p = _score_and_rank_condition_prism(
+            cand,
+            terms=terms,
+            freq_col=freq_col,
+            clone_col=clone_col,
+            top_freq=top_freq,
+            top_prism=top_prism,
+            tie_break=tie_break,
         )
-        # PRISM percentile ranks computed WITHIN this condition's candidates.
-        # require_complete=True: a clone missing any term gets a NaN PRISM score
-        # and sorts last, so it is not PRISM-picked — "don't pick a clone we
-        # can't fully score", matching the validated recipe (a clone scored on a
-        # subset of criteria is not comparable to fully-scored ones).
-        composite = percentile_rank_score(
-            cand, terms, clone_col=clone_col, require_complete=True,
-        )
-        cand["prism_score"] = cand[clone_col].astype(str).map(composite)
-        # Deterministic, principled NON-PRISM tie-break (#221/#223) applied to
-        # BOTH routes so tied boundary picks are reproducible and meaningful.
-        tb_cols, tb_asc = _tie_break_sort(
-            cand, DEFAULT_TIE_BREAK if tie_break is None else tie_break, clone_col,
-        )
-        top_f = list(
-            cand.sort_values([freq_col, *tb_cols], ascending=[False, *tb_asc])[
-                clone_col
-            ].head(top_freq)
-        )
-        scorable = cand[cand["prism_score"].notna()]
-        top_p = list(
-            scorable.sort_values(["prism_score", *tb_cols], ascending=[True, *tb_asc])[
-                clone_col
-            ].head(top_prism)
-        ) if top_prism > 0 else []
         freq_set, prism_set = set(top_f), set(top_p)
         f_rank = {c: i + 1 for i, c in enumerate(top_f)}
         p_rank = {c: i + 1 for i, c in enumerate(top_p)}
@@ -1264,28 +1277,16 @@ def prism_candidates(
         cand = grp[grp[freq_col].fillna(0) > gate].copy()
         if cand.empty:
             continue
-        cand = (
-            cand.sort_values([freq_col, clone_col], ascending=[False, True])
-            .drop_duplicates(subset=[clone_col], keep="first")
+        cand, top_f, top_p = _score_and_rank_condition_prism(
+            cand,
+            terms=terms,
+            freq_col=freq_col,
+            clone_col=clone_col,
+            top_freq=top_freq,
+            top_prism=top_prism,
+            tie_break=tie_break,
         )
-        composite = percentile_rank_score(
-            cand, terms, clone_col=clone_col, require_complete=True,
-        )
-        cand["prism_score"] = cand[clone_col].astype(str).map(composite)
-        tb_cols, tb_asc = _tie_break_sort(
-            cand, DEFAULT_TIE_BREAK if tie_break is None else tie_break, clone_col,
-        )
-        freq_set = set(
-            cand.sort_values([freq_col, *tb_cols], ascending=[False, *tb_asc])[
-                clone_col
-            ].head(top_freq)
-        )
-        scorable = cand[cand["prism_score"].notna()]
-        prism_set = set(
-            scorable.sort_values(["prism_score", *tb_cols], ascending=[True, *tb_asc])[
-                clone_col
-            ].head(top_prism)
-        ) if top_prism > 0 else set()
+        freq_set, prism_set = set(top_f), set(top_p)
         for _, row in cand.iterrows():
             c = row[clone_col]
             in_f, in_p = c in freq_set, c in prism_set

@@ -480,3 +480,93 @@ def summarize_clone_multimer_specificity(
         ["multimer_confident", "multimer_call_cells", "multimer_concordance"],
         ascending=[False, False, False],
     ).reset_index(drop=True)
+
+
+def call_multimers_for_adata(
+    adata,
+    sample_sheet,
+    *,
+    clone_col: str = "CDR3ab",
+    group_col: str | None = None,
+    min_umi: float = 10.0,
+    min_nc_ratio: float = 5.0,
+    nc_pseudocount: float = 1.0,
+    min_dominance_ratio: float = 2.0,
+    min_specific_cells: int = 2,
+    min_concordance: float = 0.5,
+) -> pd.DataFrame:
+    """Extract feature-barcode multimers across a multi-sample ``SampleSheet`` and summarize per clone.
+
+    Aligns each sample's Feature Barcode matrix to ``adata`` rows matching that
+    ``sample`` so shared 10x cell barcodes across samples never collide.
+    """
+    if clone_col not in adata.obs.columns or "sample" not in adata.obs.columns:
+        return pd.DataFrame()
+
+    per_cell_parts: list[pd.DataFrame] = []
+    samples_by_name = {str(s.sample): s for s in sample_sheet}
+    obs_samples = adata.obs["sample"].astype(str)
+
+    for s_name, s_obj in samples_by_name.items():
+        gex_src = getattr(s_obj, "gex_dir", None) or getattr(s_obj, "gex_path", None)
+        if not gex_src:
+            continue
+        mask = (obs_samples == s_name).to_numpy()
+        if not mask.any():
+            continue
+        try:
+            fb = extract_feature_barcodes(gex_src)
+        except Exception as exc:
+            logger.warning("Skipping multimer extraction for sample %s: %s", s_name, exc)
+            continue
+        if fb.empty or fb.shape[1] == 0:
+            continue
+        classified = classify_feature_columns(fb)
+        if not classified["multimers"]:
+            continue
+        sample_barcodes = adata.obs_names[mask].astype(str)
+        fb_aligned = fb.reindex(sample_barcodes).fillna(0.0)
+        fb_aligned.attrs["feature_types"] = fb.attrs.get("feature_types", {})
+        calls = call_multimer_specificity(
+            fb_aligned,
+            multimer_cols=classified["multimers"],
+            nc_cols=classified["negative_controls"],
+            min_umi=min_umi,
+            min_nc_ratio=min_nc_ratio,
+            nc_pseudocount=nc_pseudocount,
+            min_dominance_ratio=min_dominance_ratio,
+        )
+        part = pd.DataFrame(
+            {clone_col: adata.obs[clone_col].to_numpy()[mask]},
+            index=np.arange(len(calls)),
+        )
+        if group_col and group_col in adata.obs.columns:
+            part[group_col] = adata.obs[group_col].to_numpy()[mask]
+        for col in calls.columns:
+            part[col] = calls[col].to_numpy()
+        per_cell_parts.append(part)
+
+    if not per_cell_parts:
+        return pd.DataFrame()
+
+    combined_cells = pd.concat(per_cell_parts, ignore_index=True)
+    if group_col and group_col in combined_cells.columns:
+        summaries: list[pd.DataFrame] = []
+        for g_val, g_df in combined_cells.groupby(group_col, sort=False, observed=True):
+            sub_sum = summarize_clone_multimer_specificity(
+                g_df.reset_index(drop=True),
+                clone_col=clone_col,
+                min_specific_cells=min_specific_cells,
+                min_concordance=min_concordance,
+            )
+            if not sub_sum.empty:
+                sub_sum.insert(0, group_col, g_val)
+                summaries.append(sub_sum)
+        return pd.concat(summaries, ignore_index=True) if summaries else pd.DataFrame()
+
+    return summarize_clone_multimer_specificity(
+        combined_cells,
+        clone_col=clone_col,
+        min_specific_cells=min_specific_cells,
+        min_concordance=min_concordance,
+    )

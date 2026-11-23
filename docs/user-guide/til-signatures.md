@@ -66,12 +66,21 @@ lineages. Within one patient, a clone shared across multiple samples occupies a
 single shortlist slot; an identical CDR3 sequence appearing in two different
 patients is treated as two distinct rows.
 
-Full rounds visit lists by signature order (preset order below, or the order
-given to `--signatures`), then evidence route (`mean`, `subset`), then lexical
-`patient_id`, `sample`, and `lineage`. If `--max-clones` ends partway through a
-round, remaining slots go to the signature (and within it, the sample) with the
-fewest selections so far in that round, preventing signatures listed late in a
-preset from being starved.
+By default (`--round-robin-mode tiered`, active whenever `--signatures` is not
+explicitly overridden), context presets schedule dedicated tumor/neoantigen
+signatures in **Tier 1** (`TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` in
+`solid-tumor`; `MANAscore`, `NeoTCR8`, `NeoTCR4` in `mpe`; `NeoTCR_PBL` in
+`blood-tumor`) until all Tier-1 lists are exhausted or `--max-clones` is
+reached, and then backfill remaining budget slots from the six general state
+panels in **Tier 2**. Pass `--round-robin-mode flat` to give every signature
+equal weight from round 1.
+
+Within each tier, full rounds visit lists by signature order (preset order below,
+or the order given to `--signatures`), then evidence route (`mean`, `subset`),
+then lexical `patient_id`, `sample`, and `lineage`. If `--max-clones` ends
+partway through a round, remaining slots go to the signature (and within it, the
+sample) with the fewest selections so far in that round, preventing signatures
+listed late in a tier from being starved.
 
 ## Two complementary evidence routes
 
@@ -214,17 +223,17 @@ Additional boundary rules:
 
 ## Context presets and lineage rules
 
-Every preset begins with six core state panels (**Differentiated,
-AntigenExperienced, Cytolytic, AcuteActivation, Proliferation, AIM**) and
-appends context-specific signatures:
+Every preset combines the six core state panels (**Differentiated,
+AntigenExperienced, Cytolytic, AcuteActivation, Proliferation, AIM**) with
+context-specific signatures placed **ahead** of the core panels:
 
-| Context | Signatures added to core | Intended setting |
+| Context | Context signatures prepended to core | Intended setting |
 | --- | --- | --- |
 | `generic` (default) | None | Unspecified tissue or exploratory state coverage |
 | `blood` | `CirculatingMemory` | Peripheral blood and vaccine studies (no tumor-derived panels) |
-| `blood-tumor` | `CirculatingMemory`, `NeoTCR_PBL` | Circulating antitumor CD8 T cells in cancer patients |
+| `blood-tumor` | `NeoTCR_PBL`, `CirculatingMemory` | Circulating antitumor CD8 T cells in cancer patients |
 | `solid-tumor` | `TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` | Solid-tumor TIL |
-| `mpe` | `CirculatingMemory`, `MANAscore`, `NeoTCR8`, `NeoTCR4` | Malignant pleural effusions (omits `ITGAE`-containing `TumorReactive`) |
+| `mpe` | `MANAscore`, `NeoTCR8`, `NeoTCR4`, `CirculatingMemory` | Malignant pleural effusions (omits `ITGAE`-containing `TumorReactive`) |
 | `heme` | `CirculatingMemory` | AML and other hematologic malignancies (same gene sets as `blood`) |
 
 Context applies to the entire run and is never inferred from sample names,
@@ -278,7 +287,7 @@ samples:
 ```
 
 YAML and CSV sample sheets are both accepted. Every row must have a unique
-`sample` name plus both `vdj_dir` and `gex_dir`. If `patient_id` is supplied on
+`sample` name plus `vdj_dir` and `gex_dir` (or `gex_path`). If `patient_id` is supplied on
 any row, supply it on every row; if omitted everywhere, all samples are treated
 as a single patient. `tissue` and `timepoint` are recorded as metadata, and
 `source` can be omitted.
@@ -307,6 +316,9 @@ Outputs written to `-o`:
   `(signature, patient, sample, lineage, clone_size)` recording background cell
   count, floor, quantile, draw count, exact vs Monte Carlo method, high-cell
   threshold, and reference high-cell count.
+- `multimer_specificity.csv` (when `--call-multimers` is passed): per-`(donor,
+  CDR3ab)` pMHC multimer specificity calls, binding cell counts, and clonal
+  concordance.
 - `prioritization.json`: package version, CLI arguments, resolved signatures,
   sequential `cell_filters` counts, per-sample retained cell counts, and
   reference-database status.
@@ -351,9 +363,18 @@ tcrsift prioritize samples.yaml -o candidates/ --context blood \
   `prioritize` logs a warning because known MART-1 receptors cannot be flagged.
 - **Known viral matches are retained by default** so vaccine studies and
   virus-driven tumor analyses do not lose target clones. Pass
-  `--exclude-known-viral` to exclude them. Matching strictness is set by
-  `--database-match strict_ab|ab_with_partial|b_only` (default
-  `ab_with_partial`).
+  `--exclude-known-viral` to exclude them. Because every clone scored by
+  `prioritize` has paired α/β chains, `--database-match` defaults to **`strict_ab`**
+  (exact paired α+β matching) so private tumor-reactive clones sharing only a
+  public β-chain CDR3 with a viral entry are neither mislabeled nor discarded;
+  pass `--database-match ab_with_partial` or `b_only` to include β-only matches.
+- **Optional pMHC multimer feature-barcode calling (`--call-multimers`).** When
+  10x `Antibody Capture` / `Antigen Capture` libraries contain DNA-barcoded pMHC
+  dextramers/tetramers alongside `*_NC` negative controls, `--call-multimers`
+  calls single-cell binding and summarizes clonal concordance
+  (`multimer_call`, `multimer_concordance`, `multimer_confident`, also written
+  to `multimer_specificity.csv`) onto `all_scored_clones.csv` and
+  `candidate_clones.csv`.
 - **Heuristic sequence exclusions are opt-in.** `--exclude-trav12-2` drops all
   `TRAV12-2` clones (an aggressive proxy for germline-biased MART-1 binders),
   and `--exclude-public-quantile 0.90` drops the top decile of k-mer sequence

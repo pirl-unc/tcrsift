@@ -39,23 +39,34 @@ CORE_SIGNATURES = (
 )
 CONTEXT_SIGNATURES = {
     "generic": CORE_SIGNATURES,
-    "blood": (*CORE_SIGNATURES, "CirculatingMemory"),
-    "blood-tumor": (*CORE_SIGNATURES, "CirculatingMemory", "NeoTCR_PBL"),
-    "solid-tumor": (*CORE_SIGNATURES, "TumorReactive", "MANAscore", "NeoTCR8", "NeoTCR4"),
+    "blood": ("CirculatingMemory", *CORE_SIGNATURES),
+    "blood-tumor": ("NeoTCR_PBL", "CirculatingMemory", *CORE_SIGNATURES),
+    "solid-tumor": ("TumorReactive", "MANAscore", "NeoTCR8", "NeoTCR4", *CORE_SIGNATURES),
     # Avoid the epithelial-residency component of TumorReactive in effusions.
-    "mpe": (*CORE_SIGNATURES, "CirculatingMemory", "MANAscore", "NeoTCR8", "NeoTCR4"),
+    "mpe": ("MANAscore", "NeoTCR8", "NeoTCR4", "CirculatingMemory", *CORE_SIGNATURES),
     # No leukemia-specific predictor is shipped. Use broad state coverage.
-    "heme": (*CORE_SIGNATURES, "CirculatingMemory"),
+    "heme": ("CirculatingMemory", *CORE_SIGNATURES),
 }
 # Human neoantigen-reactivity signatures (NeoTCR4/8/PBL, MANAscore) contain
 # primate-restricted genes and human lncRNAs, so default mouse presets omit them.
 CONTEXT_SIGNATURES_MOUSE = {
     "generic": CORE_SIGNATURES,
-    "blood": (*CORE_SIGNATURES, "CirculatingMemory"),
-    "blood-tumor": (*CORE_SIGNATURES, "CirculatingMemory"),
-    "solid-tumor": (*CORE_SIGNATURES, "TumorReactive"),
-    "mpe": (*CORE_SIGNATURES, "CirculatingMemory"),
-    "heme": (*CORE_SIGNATURES, "CirculatingMemory"),
+    "blood": ("CirculatingMemory", *CORE_SIGNATURES),
+    "blood-tumor": ("CirculatingMemory", *CORE_SIGNATURES),
+    "solid-tumor": ("TumorReactive", *CORE_SIGNATURES),
+    "mpe": ("CirculatingMemory", *CORE_SIGNATURES),
+    "heme": ("CirculatingMemory", *CORE_SIGNATURES),
+}
+# Dedicated tumor/neoantigen-reactivity programs receive Tier-1 round-robin
+# priority under round_robin_mode="tiered" (default when --signatures is unset)
+# before broader state panels backfill any remaining budget.
+PRIORITY_CONTEXT_SIGNATURES = {
+    "generic": (),
+    "blood": (),
+    "blood-tumor": ("NeoTCR_PBL",),
+    "solid-tumor": ("TumorReactive", "MANAscore", "NeoTCR8", "NeoTCR4"),
+    "mpe": ("MANAscore", "NeoTCR8", "NeoTCR4"),
+    "heme": (),
 }
 SIGNATURE_LINEAGE = {
     "NeoTCR4": "cd4", "NeoTCR8": "cd8", "NeoTCR_PBL": "cd8", "MANAscore": "cd8",
@@ -99,11 +110,17 @@ class PrioritizeConfig:
     cedar: Path | None = None
     cache_dir: Path | None = None
     auto_download: bool = False
-    database_match: str = "ab_with_partial"
+    database_match: str = "strict_ab"
+    round_robin_mode: str = "tiered"
     exclude_known_viral: bool = False
     exclude_known_mart1: bool = True
     exclude_trav12_2: bool = False
     exclude_public_quantile: float | None = None
+    call_multimers: bool = False
+    multimer_min_umi: float = 10.0
+    multimer_min_nc_ratio: float = 5.0
+    multimer_min_concordance: float = 0.5
+    multimer_min_specific_cells: int = 2
     min_genes: int = 250
     max_genes: int = 15000
     min_counts: int = 500
@@ -338,13 +355,17 @@ def signature_pass_mask(scores, signature, quantile=0.9, min_score=None, cutoff=
 
 def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
                        min_score=None, cutoff="background", evidence="mean",
-                       min_high_cells=5, min_high_fraction=0.0, max_subset_p=0.01):
+                       min_high_cells=5, min_high_fraction=0.0, max_subset_p=0.01,
+                       *, priority_signatures=None):
     """Take one unseen clone per (signature, sample, lineage) list each round.
 
     One budget covers the entire run. Clone identity includes the donor;
     shared sequences in different patients remain separate candidate rows.
     Only the qualifying head of each list participates. Exhausted lists
     contribute no more turns; other lists continue without quota limits.
+    When ``priority_signatures`` is non-empty, those dedicated context
+    signatures exhaust their qualifying lists first (Tier 1) before the
+    remaining signatures backfill any leftover budget (Tier 2).
     When the budget ends inside a round, each remaining turn goes to the
     signature, then the sample, with the fewest turns in that round.
     """
@@ -376,8 +397,6 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
                 if queue:
                     lists.append((signature, sample, lineage, route, queue))
     selected = set()
-    # No cap means no budget to share: a finite stand-in equal to the eligible
-    # count made the last rounds look like a budget running out.
     limit = max_clones or float("inf")
 
     def unseen(entry):
@@ -402,32 +421,39 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
             row.get(f"signature_{signature}_high_fraction", np.nan),
         ]
 
-    while len(selected) < limit:
-        before = len(selected)
-        live = [entry for entry in lists if unseen(entry)]
-        if limit - len(selected) >= len(live):
-            for entry in live:
-                if unseen(entry):
+    def _run_pool(pool_lists):
+        while len(selected) < limit:
+            before = len(selected)
+            live = [entry for entry in pool_lists if unseen(entry)]
+            if limit - len(selected) >= len(live):
+                for entry in live:
+                    if unseen(entry):
+                        take(entry)
+            else:
+                turns, pending = Counter(), live
+                while len(selected) < limit:
+                    pending = [entry for entry in pending if unseen(entry)]
+                    if not pending:
+                        break
+                    entry = min(pending, key=lambda item: (
+                        turns[item[0]], turns[(item[-1][0][0], item[1], item[2])]))
+                    pending = [item for item in pending if item is not entry]
+                    turns[entry[0]] += 1
+                    turns[(entry[-1][0][0], entry[1], entry[2])] += 1
                     take(entry)
-        else:
-            # The budget ends inside this round. Taking a prefix would starve
-            # the signatures listed last, so each turn goes to the signature,
-            # then the sample, with the fewest turns so far in this round.
-            # Lists are re-checked before every turn: a list whose only clone
-            # was just taken by another list must not use up a turn.
-            turns, pending = Counter(), live
-            while len(selected) < limit:
-                pending = [entry for entry in pending if unseen(entry)]
-                if not pending:
-                    break
-                entry = min(pending, key=lambda item: (
-                    turns[item[0]], turns[(item[-1][0][0], item[1], item[2])]))  # donor, sample, lineage
-                pending = [item for item in pending if item is not entry]
-                turns[entry[0]] += 1
-                turns[(entry[-1][0][0], entry[1], entry[2])] += 1
-                take(entry)
-        if len(selected) == before:
-            break
+            if len(selected) == before:
+                break
+
+    priority_set = set(priority_signatures or ())
+    pools = (
+        ([e for e in lists if e[0] in priority_set], [e for e in lists if e[0] not in priority_set])
+        if priority_set
+        else (lists,)
+    )
+    for pool in pools:
+        if pool and len(selected) < limit:
+            _run_pool(pool)
+
     result["selected_for_review"] = result.selection_rank.notna()
     for col in ("selected_cells", "selected_high_cells"):
         result[col] = result[col].astype("Int64")

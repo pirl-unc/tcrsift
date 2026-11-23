@@ -1,7 +1,7 @@
 # Filtering API
 
 Assign clonotypes to confidence tiers (`tier1`–`tier5`) using fixed abundance
-thresholds or logistic FDR estimation.
+thresholds, logistic FDR estimation, or paired peptide-stimulation response.
 
 ::: tcrsift.filter
     options:
@@ -9,6 +9,7 @@ thresholds or logistic FDR estimation.
         - filter_clonotypes
         - filter_clonotypes_threshold
         - filter_clonotypes_logistic
+        - filter_clonotypes_stimulation
         - assign_tiers_threshold
         - split_by_tier
         - clone_clears_tier

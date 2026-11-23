@@ -24,10 +24,13 @@ About 3 GB. Nothing here needs controlled access:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import gzip
 import io
 import re
+import socket
 import tarfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -69,6 +72,21 @@ PULLIAM_FILE = re.compile(
 PULLIAM_LABELS = "https://ars.els-cdn.com/content/image/1-s2.0-S2666379124000351-mmc5.xlsx"
 
 
+@contextlib.contextmanager
+def _ipv4_only():
+    """Force AF_INET resolution when a dual-stack mirror (e.g. NCBI GEO IPv6) returns HTTP 403."""
+    orig = socket.getaddrinfo
+
+    def _af_inet(host, port, family=0, type=0, proto=0, flags=0):
+        return orig(host, port, socket.AF_INET, type, proto, flags)
+
+    socket.getaddrinfo = _af_inet
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = orig
+
+
 def fetch(url: str, dest: Path) -> Path:
     if dest.exists() and dest.stat().st_size:
         return dest
@@ -76,9 +94,17 @@ def fetch(url: str, dest: Path) -> Path:
     tmp = dest.with_suffix(dest.suffix + ".part")
     print(f"  {url}")
     request = urllib.request.Request(url, headers={"User-Agent": "python-urllib"})
-    with urllib.request.urlopen(request, timeout=60) as response, open(tmp, "wb") as out:
-        while chunk := response.read(1 << 20):
-            out.write(chunk)
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, open(tmp, "wb") as out:
+            while chunk := response.read(1 << 20):
+                out.write(chunk)
+    except urllib.error.HTTPError as exc:
+        tmp.unlink(missing_ok=True)
+        if exc.code != 403:
+            raise
+        with _ipv4_only(), urllib.request.urlopen(request, timeout=60) as response, open(tmp, "wb") as out:
+            while chunk := response.read(1 << 20):
+                out.write(chunk)
     tmp.rename(dest)
     return dest
 

@@ -185,31 +185,41 @@ def _enrich_vdj_from_json(
 
     vdj_aa_map: dict[str, str] = {}
     vdj_nt_map: dict[str, str] = {}
+    partial_vdj_aa_map: dict[str, str] = {}
+    partial_vdj_nt_map: dict[str, str] = {}
     for rec in records:
         cid = rec.get("contig_name")
         if not cid or cid not in needed_ids:
             continue
         seq = str(rec.get("sequence") or "").upper()
-        start_pos = rec.get("start_codon_pos")
-        if not seq or not isinstance(start_pos, int) or start_pos < 0:
+        if not seq:
             continue
         anns = rec.get("annotations") or []
         j_ends: list[int] = []
         v_start_explicit = None
+        v_cstart_vonly = None
+        v_cstart_lv = None
         v_gene = None
+        start_pos = rec.get("start_codon_pos")
+        has_start = isinstance(start_pos, int) and start_pos >= 0
         for ann in anns:
             feat = ann.get("feature") or {}
             rtype = feat.get("region_type")
             if rtype == "J-REGION":
                 cend = ann.get("contig_match_end")
-                if isinstance(cend, int) and start_pos < cend <= len(seq):
-                    j_ends.append(cend)
+                if isinstance(cend, int) and 0 < cend <= len(seq):
+                    if not has_start or cend > start_pos:
+                        j_ends.append(cend)
             elif rtype == "V-REGION":
                 v_gene = v_gene or feat.get("gene_name")
                 cstart = ann.get("contig_match_start")
                 amatch = ann.get("annotation_match_start", 0)
+                if isinstance(cstart, int) and 0 <= cstart < len(seq):
+                    if v_cstart_vonly is None or cstart < v_cstart_vonly:
+                        v_cstart_vonly = cstart
                 if (
-                    v_start_explicit is None
+                    has_start
+                    and v_start_explicit is None
                     and isinstance(cstart, int)
                     and cstart >= start_pos
                     and amatch == 0
@@ -218,55 +228,96 @@ def _enrich_vdj_from_json(
                     v_start_explicit = cstart
             elif rtype == "L-REGION+V-REGION":
                 v_gene = v_gene or feat.get("gene_name")
+                cstart = ann.get("contig_match_start")
+                if isinstance(cstart, int) and 0 <= cstart < len(seq):
+                    if v_cstart_lv is None or cstart < v_cstart_lv:
+                        v_cstart_lv = cstart
+        v_cstart_any = v_cstart_vonly if v_cstart_vonly is not None else v_cstart_lv
         if not j_ends:
             continue
         j_end = max(j_ends)
-        raw_len = j_end - start_pos
-        full_nt = seq[start_pos : j_end - (raw_len % 3)]
-        if len(full_nt) < 240:
-            continue
-        full_aa, _ = translate_dna(full_nt)
-        if not full_aa or "*" in full_aa:
-            continue
-
-        vdj_start_aa: int | None = None
-        if isinstance(v_start_explicit, int) and v_start_explicit >= start_pos:
-            vdj_start_aa = (v_start_explicit - start_pos) // 3
-        elif v_gene:
-            best_score = -1.0
-            for _allele, _func, g_leader in germline_vgene_leaders(v_gene, species=sp):
-                glen = len(g_leader)
-                max_k = min(15, max(0, len(full_aa) - glen - 60))
-                for k in range(max_k + 1):
-                    if full_aa[k] != "M":
-                        continue
-                    window = full_aa[k : k + glen]
-                    if len(window) != glen:
-                        continue
-                    ident = sum(a == b for a, b in zip(window, g_leader)) / glen
-                    if ident >= GERMLINE_MIN_IDENTITY and ident > best_score:
-                        best_score = ident
-                        vdj_start_aa = k + glen
-
-        if vdj_start_aa is None or vdj_start_aa >= len(full_aa):
-            continue
-        cand_aa = full_aa[vdj_start_aa:]
-        cand_nt = full_nt[3 * vdj_start_aa :]
         cdr3 = str(rec.get("cdr3") or "")
-        if cdr3 and cdr3 not in cand_aa:
-            continue
-        vdj_aa_map[str(cid)] = cand_aa
-        vdj_nt_map[str(cid)] = cand_nt.lower()
 
-    if vdj_aa_map:
+        # Full-length path when leader start codon is present on the contig.
+        if has_start and j_end > start_pos:
+            raw_len = j_end - start_pos
+            full_nt = seq[start_pos : j_end - (raw_len % 3)]
+            if len(full_nt) >= 240:
+                full_aa, _ = translate_dna(full_nt)
+                if full_aa and "*" not in full_aa:
+                    vdj_start_aa: int | None = None
+                    if isinstance(v_start_explicit, int) and v_start_explicit >= start_pos:
+                        vdj_start_aa = (v_start_explicit - start_pos) // 3
+                    elif v_gene:
+                        best_score = -1.0
+                        for _allele, _func, g_leader in germline_vgene_leaders(v_gene, species=sp):
+                            glen = len(g_leader)
+                            max_k = min(15, max(0, len(full_aa) - glen - 60))
+                            for k in range(max_k + 1):
+                                if full_aa[k] != "M":
+                                    continue
+                                window = full_aa[k : k + glen]
+                                if len(window) != glen:
+                                    continue
+                                ident = sum(a == b for a, b in zip(window, g_leader)) / glen
+                                if ident >= GERMLINE_MIN_IDENTITY and ident > best_score:
+                                    best_score = ident
+                                    vdj_start_aa = k + glen
+
+                    if vdj_start_aa is not None and vdj_start_aa < len(full_aa):
+                        cand_aa = full_aa[vdj_start_aa:]
+                        cand_nt = full_nt[3 * vdj_start_aa :]
+                        if not cdr3 or cdr3 in cand_aa:
+                            vdj_aa_map[str(cid)] = cand_aa
+                            vdj_nt_map[str(cid)] = cand_nt.lower()
+                            continue
+
+        # 5'-partial contig path: extract in-frame 3' V-suffix + CDR3 + FR4 up to J-end.
+        if cdr3 and isinstance(v_cstart_any, int) and j_end - v_cstart_any >= 3 * (len(cdr3) + 8):
+            best_partial: tuple[tuple[int, int], str, str] | None = None
+            for end_trim in (1, 0, 2):
+                eff_end = j_end - end_trim
+                if eff_end <= v_cstart_any:
+                    continue
+                for shift in (0, 1, 2):
+                    c_start = v_cstart_any + shift
+                    if eff_end <= c_start or (eff_end - c_start) % 3 != 0:
+                        continue
+                    p_nt = seq[c_start:eff_end]
+                    p_aa, _ = translate_dna(p_nt)
+                    if not p_aa or "*" in p_aa or "X" in p_aa or cdr3 not in p_aa:
+                        continue
+                    post_cdr3 = p_aa[p_aa.rindex(cdr3) + len(cdr3) :]
+                    if not (8 <= len(post_cdr3) <= 12):
+                        continue
+                    if len(post_cdr3) >= 3 and not (
+                        post_cdr3[0] in ("G", "A") and post_cdr3[2] == "G"
+                    ):
+                        continue
+                    rank = (1 if end_trim == 1 else 0, len(p_aa))
+                    if best_partial is None or rank > best_partial[0]:
+                        best_partial = (rank, p_aa, p_nt.lower())
+            if best_partial is not None:
+                partial_vdj_aa_map[str(cid)] = best_partial[1]
+                partial_vdj_nt_map[str(cid)] = best_partial[2]
+
+    if vdj_aa_map or partial_vdj_aa_map:
         df = df.copy()
         cids = df["contig_id"].astype(str)
-        df["vdj_aa"] = cids.map(vdj_aa_map)
-        df["vdj_nt"] = cids.map(vdj_nt_map)
-        if verbose:
-            logger.info(
-                f"  Extracted full-length VDJ sequences for {len(vdj_aa_map):,} contigs from {json_path.name}"
-            )
+        if vdj_aa_map:
+            df["vdj_aa"] = cids.map(vdj_aa_map)
+            df["vdj_nt"] = cids.map(vdj_nt_map)
+            if verbose:
+                logger.info(
+                    f"  Extracted full-length VDJ sequences for {len(vdj_aa_map):,} contigs from {json_path.name}"
+                )
+        if partial_vdj_aa_map:
+            df["partial_vdj_aa"] = cids.map(partial_vdj_aa_map)
+            df["partial_vdj_nt"] = cids.map(partial_vdj_nt_map)
+            if verbose:
+                logger.info(
+                    f"  Extracted 5'-partial VDJ suffixes for {len(partial_vdj_aa_map):,} contigs from {json_path.name}"
+                )
     return df
 
 
@@ -476,13 +527,50 @@ def load_cellranger_vdj(
             )
         joined_aa = df[VDJ_SEGMENT_COLS].fillna("").agg("".join, axis=1)
         df["vdj_aa"] = joined_aa.where(seg_complete, other=None)
-        if all(col in df.columns for col in VDJ_SEGMENT_NT_COLS):
+        has_nt_segs = all(col in df.columns for col in VDJ_SEGMENT_NT_COLS)
+        if has_nt_segs:
             nt_complete = seg_complete.copy()
             for col in VDJ_SEGMENT_NT_COLS:
                 s_nt = df[col].astype("string").str.strip()
                 nt_complete &= df[col].notna() & ~s_nt.str.lower().isin({"", "none", "nan", "<na>"})
             joined_nt = df[VDJ_SEGMENT_NT_COLS].fillna("").agg("".join, axis=1)
             df["vdj_nt"] = joined_nt.where(nt_complete, other=None)
+
+        # Retain contiguous stop-free 3' segment suffixes (at least cdr3+fwr4) on
+        # 5'-partial contigs so opt-in --germline-vdj-fallback can rescue only the
+        # missing N-terminal framework prefix while keeping sequenced donor codons.
+        if (~seg_complete).any():
+            partial_aa_vals: list[str | None] = [None] * len(df)
+            partial_nt_vals: list[str | None] = [None] * len(df)
+            has_any_partial = False
+            for row_pos, idx in enumerate(df.index):
+                if bool(seg_complete.loc[idx]):
+                    continue
+                row_s = df.loc[idx]
+                suffix_cols: list[str] = []
+                for col in reversed(VDJ_SEGMENT_COLS):
+                    val = row_s[col]
+                    sval = str(val).strip() if pd.notna(val) else ""
+                    if not sval or sval.lower() in {"none", "nan", "<na>"} or "*" in sval:
+                        break
+                    suffix_cols.append(col)
+                if len(suffix_cols) >= 2:  # at least cdr3 + fwr4
+                    suffix_cols.reverse()
+                    p_aa = "".join(str(row_s[c]).strip() for c in suffix_cols)
+                    partial_aa_vals[row_pos] = p_aa
+                    has_any_partial = True
+                    if has_nt_segs:
+                        nt_cols = [c + "_nt" for c in suffix_cols]
+                        nt_parts = [
+                            str(row_s[c]).strip() if pd.notna(row_s[c]) else ""
+                            for c in nt_cols
+                        ]
+                        if all(p and p.lower() not in {"none", "nan", "<na>"} for p in nt_parts):
+                            partial_nt_vals[row_pos] = "".join(nt_parts).lower()
+            if has_any_partial:
+                df["partial_vdj_aa"] = partial_aa_vals
+                if any(v is not None for v in partial_nt_vals):
+                    df["partial_vdj_nt"] = partial_nt_vals
     if "vdj_aa" not in df.columns:
         df = _enrich_vdj_from_json(
             df, vdj_base_dir, sample_prefix=sample_prefix, verbose=verbose
@@ -876,8 +964,15 @@ def _pivot_vdj_by_barcode(vdj_df: pd.DataFrame) -> pd.DataFrame:
         if seg_col in vdj_df.columns and seg_col not in pivot_cols:
             pivot_cols.append(seg_col)
 
-    # Add combined VDJ sequences and clonotype innate-T evidence
-    for extra_col in ("vdj_aa", "vdj_nt", "mait_evidence", "inkt_evidence"):
+    # Add combined VDJ sequences (including 5'-partial suffixes) and clonotype innate-T evidence
+    for extra_col in (
+        "vdj_aa",
+        "vdj_nt",
+        "partial_vdj_aa",
+        "partial_vdj_nt",
+        "mait_evidence",
+        "inkt_evidence",
+    ):
         if extra_col in vdj_df.columns and extra_col not in pivot_cols:
             pivot_cols.append(extra_col)
 

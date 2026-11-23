@@ -83,6 +83,32 @@ computes separate tierings per donor (`filtered_tier{1..5}_<donor>.csv`) unless
 `donors_share_antigen: true` is set on the sample sheet or `--fdr-scope global`
 is passed explicitly.
 
+## Paired stimulation response (`--method stimulation`)
+
+When a study pairs peptide-stimulated samples (`source: culture`) against
+unstimulated or DMSO negative-control wells (`source: control`) from the same
+donor, `tcrsift run` automatically computes per-clone count enrichment
+(`stim_fisher_fdr`, `stim_log2_fc`) and within-clone transcriptional
+upregulation (`delta_signature_AIM`, `delta_signature_AcuteActivation`) via
+`score_stimulation_response`. Passing `--method stimulation` selects and tiers
+clonotypes that clear **either** significant clonal expansion **or** strong
+paired transcriptional activation (capturing both multi-week expansion cultures
+and 16–24 h overnight AIM/restimulation assays where reactive T cells transcribe
+effector mRNAs without dividing):
+
+```bash
+tcrsift run --sample-sheet samples.yaml -o results/ --method stimulation \
+    --stim-fdr-threshold 0.1 --stim-log2-fc-threshold 1.0 --stim-delta-threshold 0.5
+```
+
+| Tier | Expansion route (`FDR` & `log2FC`) | Overnight delta route (`max Δ signature`) |
+| --- | --- | --- |
+| `tier1` | `FDR <= 0.001` and `log2FC >= 2.5` | `Δ >= 1.0` (`2.0 × stim_delta_threshold`) |
+| `tier2` | `FDR <= 0.005` and `log2FC >= 2.0` | `Δ >= 0.875` (`1.75 × stim_delta_threshold`) |
+| `tier3` | `FDR <= 0.01` and `log2FC >= 1.5` | `Δ >= 0.75` (`1.5 × stim_delta_threshold`) |
+| `tier4` | `FDR <= 0.05` and `log2FC >= 1.0` | `Δ >= 0.625` (`1.25 × stim_delta_threshold`) |
+| `tier5` | `FDR <= stim_fdr_threshold` (`0.10`) and `log2FC >= stim_log2_fc_threshold` (`1.0`) | `Δ >= stim_delta_threshold` (`0.50`) |
+
 ## Multi-method overlap and recovery (`enrichment_method`)
 
 When `enrichment_method` (such as `AIMpos`, `tetpos`, or `CTYneg`) is populated

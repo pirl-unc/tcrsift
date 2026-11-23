@@ -851,6 +851,130 @@ def resolve_fdr_tiers_for_method(
     return None, customized
 
 
+def filter_clonotypes_stimulation(
+    clonotypes: pd.DataFrame,
+    *,
+    stim_fdr_threshold: float = 0.1,
+    stim_log2_fc_threshold: float = 1.0,
+    stim_delta_threshold: float = 0.5,
+) -> pd.DataFrame:
+    """Filter and tier clonotypes using paired peptide-stimulation vs control metrics.
+
+    Supports both multi-day clonal-expansion assays (via ``stim_fisher_fdr`` and
+    ``stim_log2_fc``) and short-term / overnight AIM restimulation assays where
+    reactive T cells have not yet divided (via within-clone ``delta_*``
+    transcriptional activation shifts such as ``delta_signature_AIM``).
+    """
+    if not (np.isfinite(stim_fdr_threshold) and 0 < stim_fdr_threshold <= 1.0):
+        raise TCRsiftValidationError(
+            f"stim_fdr_threshold must be in (0, 1], got {stim_fdr_threshold!r}"
+        )
+    if not np.isfinite(stim_log2_fc_threshold):
+        raise TCRsiftValidationError(
+            f"stim_log2_fc_threshold must be finite, got {stim_log2_fc_threshold!r}"
+        )
+    if not (np.isfinite(stim_delta_threshold) and stim_delta_threshold > 0):
+        raise TCRsiftValidationError(
+            f"stim_delta_threshold must be > 0, got {stim_delta_threshold!r}"
+        )
+
+    df = clonotypes.copy()
+    fdr_col = (
+        "stim_fisher_fdr"
+        if "stim_fisher_fdr" in df.columns
+        else ("fisher_fdr" if "fisher_fdr" in df.columns else None)
+    )
+    lfc_col = (
+        "stim_log2_fc"
+        if "stim_log2_fc" in df.columns
+        else ("log2_fold_change" if "log2_fold_change" in df.columns else None)
+    )
+    sig_delta_cols = [c for c in df.columns if c.startswith("delta_signature_")]
+    delta_cols = sig_delta_cols or [c for c in df.columns if c.startswith("delta_")]
+
+    if fdr_col is None and lfc_col is None and not delta_cols:
+        raise TCRsiftValidationError(
+            "method='stimulation' requires paired stimulation-vs-control columns "
+            "(e.g. stim_fisher_fdr / stim_log2_fc or delta_signature_AIM)",
+            hint="Mark unstimulated/DMSO baseline samples with source='control' in the "
+            "sample sheet or run score_stimulation_response() before filtering.",
+        )
+
+    fdr_s = (
+        pd.to_numeric(df[fdr_col], errors="coerce").fillna(1.0)
+        if fdr_col is not None
+        else pd.Series(1.0, index=df.index)
+    )
+    lfc_s = (
+        pd.to_numeric(df[lfc_col], errors="coerce").fillna(-np.inf)
+        if lfc_col is not None
+        else pd.Series(-np.inf, index=df.index)
+    )
+    if delta_cols:
+        max_delta = (
+            df[delta_cols]
+            .apply(pd.to_numeric, errors="coerce")
+            .max(axis=1, skipna=True)
+            .fillna(-np.inf)
+        )
+    else:
+        max_delta = pd.Series(-np.inf, index=df.index)
+
+    def _exp_gate(
+        fdr_series: pd.Series, lfc_series: pd.Series, fdr_cap: float, lfc_floor: float
+    ) -> pd.Series:
+        if fdr_col is not None and lfc_col is not None:
+            return (fdr_series <= fdr_cap) & (lfc_series >= lfc_floor)
+        if lfc_col is not None:
+            return lfc_series >= lfc_floor
+        if fdr_col is not None:
+            return fdr_series <= fdr_cap
+        return pd.Series(False, index=fdr_series.index)
+
+    exp_pass = _exp_gate(fdr_s, lfc_s, stim_fdr_threshold, stim_log2_fc_threshold)
+    aim_pass = max_delta >= stim_delta_threshold
+    keep = exp_pass | aim_pass
+    df = df[keep].copy()
+    if len(df) == 0:
+        raise TCRsiftValidationError(
+            "No clonotypes remain after stimulation response filtering",
+            hint=f"Try relaxing thresholds: stim_fdr_threshold={stim_fdr_threshold}, "
+            f"stim_log2_fc_threshold={stim_log2_fc_threshold}, "
+            f"stim_delta_threshold={stim_delta_threshold}",
+        )
+
+    fdr_kept = fdr_s.loc[df.index]
+    lfc_kept = lfc_s.loc[df.index]
+    delta_kept = max_delta.loc[df.index]
+    df["stim_max_delta"] = delta_kept.where(np.isfinite(delta_kept), np.nan)
+    df["tier"] = "tier5"
+    tier_rules = [
+        (
+            "tier4",
+            _exp_gate(fdr_kept, lfc_kept, min(0.05, stim_fdr_threshold), max(1.0, stim_log2_fc_threshold))
+            | (delta_kept >= 1.25 * stim_delta_threshold),
+        ),
+        (
+            "tier3",
+            _exp_gate(fdr_kept, lfc_kept, min(0.01, stim_fdr_threshold), max(1.5, stim_log2_fc_threshold))
+            | (delta_kept >= 1.5 * stim_delta_threshold),
+        ),
+        (
+            "tier2",
+            _exp_gate(fdr_kept, lfc_kept, min(0.005, stim_fdr_threshold), max(2.0, stim_log2_fc_threshold))
+            | (delta_kept >= 1.75 * stim_delta_threshold),
+        ),
+        (
+            "tier1",
+            _exp_gate(fdr_kept, lfc_kept, min(0.001, stim_fdr_threshold), max(2.5, stim_log2_fc_threshold))
+            | (delta_kept >= 2.0 * stim_delta_threshold),
+        ),
+    ]
+    for tier_name, mask in tier_rules:
+        df.loc[mask, "tier"] = tier_name
+    return df
+
+
 def filter_clonotypes(
     clonotypes: pd.DataFrame,
     method: str = "threshold",
@@ -870,6 +994,9 @@ def filter_clonotypes(
     min_apcs: int = 0,
     min_apcs_per_donor: int = 0,
     min_til_cells_per_donor: int = 0,
+    stim_fdr_threshold: float = 0.1,
+    stim_log2_fc_threshold: float = 1.0,
+    stim_delta_threshold: float = 0.5,
     verbose: bool = True,
     show_progress: bool = True,
 ) -> pd.DataFrame:
@@ -881,7 +1008,7 @@ def filter_clonotypes(
     clonotypes : pd.DataFrame
         Clonotype DataFrame
     method : str
-        Filtering method: "threshold" or "logistic"
+        Filtering method: "threshold", "logistic", or "stimulation"
     tcell_type : str
         T cell type filter: "cd8", "cd4", or "both"
     min_cells : int
@@ -907,7 +1034,7 @@ def filter_clonotypes(
         Filtered and tiered clonotypes
     """
     # Validate method
-    valid_methods = ["threshold", "logistic"]
+    valid_methods = ["threshold", "logistic", "stimulation"]
     if method not in valid_methods:
         raise TCRsiftValidationError(
             f"Invalid filtering method: '{method}'",
@@ -962,6 +1089,13 @@ def filter_clonotypes(
 
     if method == "logistic":
         df = filter_clonotypes_logistic(df, fdr_tiers=fdr_tiers)
+    elif method == "stimulation":
+        df = filter_clonotypes_stimulation(
+            df,
+            stim_fdr_threshold=stim_fdr_threshold,
+            stim_log2_fc_threshold=stim_log2_fc_threshold,
+            stim_delta_threshold=stim_delta_threshold,
+        )
     else:
         df = assign_tiers_threshold(
             df,

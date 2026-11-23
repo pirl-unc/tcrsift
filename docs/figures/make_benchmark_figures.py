@@ -167,7 +167,8 @@ def selection_by_budget():
     table = pd.read_csv(RESULTS / "meng_selection.csv")
     table = table[table.budget.astype(str).isin(["25", "50", "100", "200"])].assign(
         budget=lambda d: d.budget.astype(int))
-    methods = [("TCRsift round-robin", "Round-robin, solid-tumor preset", BLUE, "-"),
+    methods = [("TCRsift round-robin", "Round-robin, tiered solid-tumor preset", BLUE, "-"),
+               ("TCRsift round-robin (flat)", "Round-robin, flat 9-signature preset", BLUE, ":"),
                ("TCRsift round-robin, tumor-reactivity signatures only", "Round-robin, 3 tumor signatures", BLUE, "--"),
                ("TumorReactive score only", "Top TumorReactive score", ORANGE, "-"),
                ("largest clones", "Largest clones", INK2, "-"),

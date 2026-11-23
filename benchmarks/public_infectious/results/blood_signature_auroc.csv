@@ -59,12 +59,12 @@ tenx_donor2,influenza_m1_vs_ebv_expanded,2,AIM,244,185,0.4347,0.389,0.4795
 tenx_donor2,influenza_m1_vs_ebv_expanded,2,NeoTCR_PBL,244,185,0.8616,0.8246,0.8975
 tenx_donor2,influenza_m1_vs_ebv_expanded,2,TumorReactive,244,185,0.6492,0.5945,0.6994
 tenx_donor2,influenza_m1_vs_ebv_expanded,2,clone_size,244,185,0.3807,0.327,0.4338
+minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,CirculatingMemory,46,603,0.3405,0.275,0.4118
 minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,Differentiated,46,603,0.6303,0.5402,0.7101
 minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,AntigenExperienced,46,603,0.523,0.4382,0.6008
 minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,Cytolytic,46,603,0.6138,0.5243,0.6953
 minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,AcuteActivation,46,603,0.6367,0.5725,0.7078
 minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,Proliferation,46,603,0.6185,0.5528,0.6917
 minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,AIM,46,603,0.5433,0.4859,0.6114
-minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,CirculatingMemory,46,603,0.3405,0.275,0.4118
 minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,TumorReactive,46,603,0.7351,0.6484,0.8124
 minervina_2022,acute_post_vax_dose2_vs_resting_convalescent,2,clone_size,46,603,0.5635,0.484,0.6444

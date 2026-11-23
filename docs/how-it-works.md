@@ -41,13 +41,13 @@ study design:
 | Lineage | Per-cell `CD4`, `CD8A`, and `CD8B` (human) or `Cd4`, `Cd8a`, and `Cd8b1` (mouse) counts | Restricts signature scoring and abundance ranking to the intended T-cell compartment. |
 | Expression state | Gene signatures scored per cell and summarized per clone | Captures transcriptional state (activated, cytolytic, exhausted, proliferating) using species-matched HGNC or MGI symbols. See the [reproducibility map](reproducibility_map.md) for cross-donor behavior in stimulated cultures. |
 | Database matches | VDJdb, IEDB, CEDAR | Flags receptors matching cataloged viral or MART-1 (`MLANA`/`Mlana`-encoded) specificities, recording both canonical protein labels (`db_protein_canonical`) and endogenous encoding gene symbols (`db_antigen_gene`). Absence of a match means uncataloged, not tumor-specific. |
-| Sequence publicness | Bundled k-mer and TCRpeg probability models | Estimates how readily a CDR3 sequence is generated and shared across donors; useful for deprioritizing common bystander sequences, not for calling antigen specificity. |
+| Sequence publicness | Bundled NumPy k-mer (and optional `tcrsift[tcrpeg]`) probability models | Estimates how readily a CDR3 sequence is generated and shared across donors; useful for deprioritizing common bystander sequences, not for calling antigen specificity. |
 
 ## How `prioritize` selects clones
 
 Unlike culture experiments with unstimulated controls, fresh tissue or blood
 cohorts must rank clones within each sample and lineage without pooling raw
-scores across samples. The four figures below use **simulated cell scores**
+scores across samples. The five figures below use **simulated cell scores**
 (`docs/figures/make_figures.py`) to illustrate the exact resampling and
 enrichment rules implemented in `tcrsift prioritize`.
 
@@ -94,11 +94,18 @@ so the mean route rejects it. However, 10 of its 25 cells are high-scoring
 
 Each combination of signature, evidence route (mean or subset), sample, and
 lineage produces its own ranked list of clones that cleared both cutoffs.
-TCRsift steps through those lists in rounds, taking the highest-ranked unused
-clone from each list and skipping clones already chosen by an earlier list. If
-the clone budget ends partway through a round, the remaining slots go to the
-signatures and samples with the fewest picks in that round. Exhausted lists drop
-out, and the shortlist is never padded with clones that missed the cutoffs.
+When a context preset includes dedicated disease-reactivity signatures
+(`TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` in `solid-tumor`;
+`NeoTCR_PBL` in `blood-tumor`; `MANAscore`, `NeoTCR8`, `NeoTCR4` in `mpe`),
+TCRsift visits those Tier-1 lists first until all qualifying Tier-1 candidates
+are selected or the budget is spent, and then backfills any remaining budget
+from general state panels in Tier 2 (`--round-robin-mode tiered`). Within each
+tier, TCRsift steps through active lists in rounds, taking the highest-ranked
+unused clone from each list and skipping clones already chosen by an earlier
+list. If the clone budget ends partway through a round, the remaining slots go
+to the signatures and samples with the fewest picks in that round. Exhausted
+lists drop out, and the shortlist is never padded with clones that missed the
+cutoffs.
 
 ![Round-robin selection](assets/figures/round_robin.svg)
 

@@ -31,7 +31,7 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          ruff check tcrsift/
+          ruff check tcrsift/ tests/ benchmarks/ docs/figures/
 
       - name: Run tests
         # Parallel via pytest-xdist (-n auto). Coverage is collected on a single
@@ -74,7 +74,7 @@ jobs:
           pip install -e .[dev,atlas]
 
       - name: Run ruff
-        run: ruff check tcrsift/
+        run: ruff check tcrsift/ tests/ benchmarks/ docs/figures/
 
       - name: Run pylint
         run: |

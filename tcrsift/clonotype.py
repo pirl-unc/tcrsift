@@ -264,10 +264,18 @@ def _pick_chain_representative(df: pd.DataFrame, tr: str, target_cdr3):
     """
     def _best_row(sub: pd.DataFrame, prefix: str):
         vdj_col = f"{prefix}_vdj_aa"
+        has_full = False
         if vdj_col in sub.columns:
             has_vdj = sub[vdj_col].notna() & (sub[vdj_col].astype(str) != "")
             if has_vdj.any():
                 sub = sub[has_vdj]
+                has_full = True
+        if not has_full:
+            p_col = f"{prefix}_partial_vdj_aa"
+            if p_col in sub.columns:
+                has_partial = sub[p_col].notna() & (sub[p_col].astype(str) != "")
+                if has_partial.any():
+                    sub = sub[has_partial]
         return pick_representative_cell(sub, umi_cols=(f"{prefix}_umis",))
 
     has_target = target_cdr3 is not None and not (
@@ -716,6 +724,16 @@ def _aggregate_clone_data(
             if vdj_nt_col in clone_df.columns:
                 record[f"VDJ_{chain}_nt"] = (
                     rep.get(vdj_nt_col) if rep is not None else None
+                )
+            p_vdj_col = f"{prefix}_partial_vdj_aa"
+            if p_vdj_col in clone_df.columns:
+                record[f"partial_VDJ_{chain}_aa"] = (
+                    rep.get(p_vdj_col) if rep is not None else None
+                )
+            p_vdj_nt_col = f"{prefix}_partial_vdj_nt"
+            if p_vdj_nt_col in clone_df.columns:
+                record[f"partial_VDJ_{chain}_nt"] = (
+                    rep.get(p_vdj_nt_col) if rep is not None else None
                 )
 
         # Quality metrics
