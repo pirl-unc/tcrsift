@@ -1,5 +1,11 @@
 # Benchmark on murine models (`--species mouse`)
 
+!!! tip "See also: Benchmark Overview & Head-to-Head Comparisons"
+    For the unified **8-failure-mode scorecard** across all 15 cohorts and
+    head-to-head comparisons of `--species mouse` against `stitchr` (`thimble
+    v1.3.1 -s MOUSE`) and `OLGA v1.3.0` (`mouse_T_beta` / `mouse_T_alpha`), see
+    **[Benchmark Overview & Failure Modes](benchmarks-overview.md)**.
+
 This page evaluates TCRsift's murine (`--species mouse`) workflow across three
 open-access 10x Genomics single-cell RNA + paired α/β TCR cohorts (19 paired
 GEX + VDJ libraries) covering syngeneic solid-tumor and multi-organ clonal

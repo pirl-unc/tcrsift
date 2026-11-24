@@ -742,7 +742,7 @@ GROUND_TRUTH_PROVENANCE = {
         "circular_signatures": [],
     },
     "pulliam": {
-        "citation": "Pulliam et al., Cell Reports Medicine 2024 (5:101412; DOI:10.1016/j.xcrm.2024.101412; PMID:38340726)",
+        "citation": "Pulliam et al., Cell Reports Medicine 2024 (5:101412; DOI:10.1016/j.xcrm.2024.101412; PMID:38340723)",
         "cancer_type": "Merkel cell carcinoma (MCPyV-positive virus-driven skin neuroendocrine carcinoma)",
         "gex_vdj_accession": "GEO GSE227708 (hashed runs Z1249 and Z1308 demultiplexed to Tumor cells via GSE227708_meta_data.csv.gz: top Hashtag >=10 UMI and >=3x runner-up)",
         "label_source": "Cell Reports Medicine Table S4 (1-s2.0-S2666379124000351-mmc5.xlsx, sheet 'Table 4', header row 2, columns 'subject', 'cdr3_b_aa', 'virus').",

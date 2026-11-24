@@ -118,6 +118,9 @@ class PrioritizeConfig:
     exclude_public_quantile: float | None = None
     exclude_treg: bool = False
     treg_foxp3_fraction: float = 0.5
+    assemble: bool = False
+    germline_vdj_fallback: bool = False
+    single_chain_linker: str | None = "T2A"
     call_multimers: bool = False
     multimer_min_umi: float = 10.0
     multimer_min_nc_ratio: float = 5.0

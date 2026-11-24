@@ -180,6 +180,7 @@ from .leaders import (
     germline_anchor_leader,
     germline_compare_leader,
     germline_leader_nt,
+    germline_vgene_leaders,
     normalize_vgene,
 )
 from .sigpep import signal_peptide_features, sp_features_summary
@@ -821,6 +822,8 @@ def _assemble_clone(
             _extract_leader_from_contigs_single(
                 row, sample_contigs, result, chain, species=vdj_species
             )
+            if not result.get(f"{chain}_leader_aa"):
+                result[f"{chain}_leader_source"] = "missing_from_contig"
         elif isinstance(chain_leader, dict):
             _record_leader(
                 result, chain, chain_leader["aa"], chain_leader["dna"],
@@ -1408,14 +1411,24 @@ def _extract_c_region_nt_from_contig(
     # so the donor's real J→C junction and C-region codons are still recovered.
     search_nts = [vdj_nt.upper()]
     p_nt = row.get(f"partial_VDJ_{chain}_nt")
-    if (
-        row.get(f"{chain}_vdj_source") == VDJ_SOURCE_5PRIME_RESCUED
-        and isinstance(p_nt, str)
-        and len(p_nt.strip()) >= 45
-    ):
-        p_nt_u = p_nt.strip().upper()
-        if p_nt_u not in search_nts:
-            search_nts.append(p_nt_u)
+    p_aa = row.get(f"partial_VDJ_{chain}_aa")
+    if row.get(f"{chain}_vdj_source") == VDJ_SOURCE_5PRIME_RESCUED:
+        if isinstance(p_aa, str) and len(p_aa.strip()) >= 15:
+            p_aa_clean = p_aa.strip()
+            target_len = 3 * len(p_aa_clean)
+            if len(vdj_nt) >= target_len:
+                suffix_nt = vdj_nt[-target_len:].upper()
+                if suffix_nt not in search_nts:
+                    search_nts.append(suffix_nt)
+            if isinstance(p_nt, str) and len(p_nt.strip()) >= target_len:
+                p_nt_u = p_nt.strip().upper()
+                for off in (0, 1, 2):
+                    if off + target_len <= len(p_nt_u):
+                        cand = p_nt_u[off : off + target_len]
+                        tr_cand, _ = translate_dna(cand)
+                        if tr_cand == p_aa_clean and cand not in search_nts:
+                            search_nts.append(cand)
+                            break
     candidates: Counter = Counter()
     for sample in samples:
         if sample not in sample_contigs:
@@ -1968,14 +1981,24 @@ def _resolve_named_leader(
     if name == "germline":
         g_aa = row.get(f"{chain}_germline_leader_aa")
         g_allele = row.get(f"{chain}_germline_allele")
-        if not isinstance(g_aa, str) or not isinstance(g_allele, str):
-            return None
-        gene, _, allele = g_allele.partition("*")
-        return (
-            g_aa,
-            germline_leader_nt(gene, allele, species=species),
-            "germline_reference_leader",
-        )
+        if isinstance(g_aa, str) and g_aa and isinstance(g_allele, str) and g_allele:
+            gene, _, allele = g_allele.partition("*")
+            return (
+                g_aa,
+                germline_leader_nt(gene, allele, species=species),
+                "germline_reference_leader",
+            )
+        v_gene = row.get(f"{chain}_v_gene")
+        cands = germline_vgene_leaders(v_gene, species=species)
+        if cands:
+            allele, _func, cand_aa = cands[0]
+            gene_norm = normalize_vgene(v_gene) or str(v_gene)
+            return (
+                cand_aa,
+                germline_leader_nt(gene_norm, allele, species=species),
+                "germline_reference_leader",
+            )
+        return None
     hit = _lookup_default_leader(name)
     if hit is not None:
         canon_key, info = hit
@@ -2274,6 +2297,32 @@ def apply_leader_policy(
                     n_forced += 1
                 continue
             if not has_leader:
+                if (
+                    work.get(f"{chain}_leader_source") == "missing_from_contig"
+                    and isinstance(work.get(f"full_{chain}_aa"), str)
+                    and work.get(f"full_{chain}_aa")
+                    and leader_fallback != "keep"
+                ):
+                    res = _resolve_named_leader(
+                        leader_fallback, work, chain, species=species
+                    )
+                    if res is None:
+                        curated_fb = (
+                            ("mCD28" if chain == "alpha" else "mCD8B")
+                            if species == "mouse"
+                            else ("CD28" if chain == "alpha" else "CD8A")
+                        )
+                        res = _resolve_named_leader(
+                            curated_fb, work, chain, species=species
+                        )
+                    if res is not None:
+                        new_aa, new_nt, src = res
+                        _substitute_chain_leader(
+                            work, work, chain, new_aa, new_nt, src,
+                            species=species, recode=recode,
+                        )
+                        changed = True
+                        n_switched += 1
                 continue
             if work.get(f"{chain}_leader_source") not in _FROM_CONTIG_SOURCES:
                 continue

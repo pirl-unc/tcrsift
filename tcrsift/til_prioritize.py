@@ -229,6 +229,11 @@ def run_til_prioritize(
         raise ValueError("--exclude-public-quantile must be in (0, 1]")
     if not np.isfinite(args.treg_foxp3_fraction) or not (0 < args.treg_foxp3_fraction <= 1):
         raise ValueError("--treg-foxp3-fraction must be in (0, 1]")
+    valid_linkers = {"T2A", "P2A", "E2A", "F2A", "NONE"}
+    if args.single_chain_linker is not None and str(args.single_chain_linker).strip().upper() not in valid_linkers:
+        raise ValueError(
+            f"--single-chain-linker must be one of T2A, P2A, E2A, F2A, or none; got {args.single_chain_linker!r}"
+        )
     if not 0 <= args.min_frequency <= 1:
         raise ValueError("--min-frequency must be in [0, 1]")
     if args.min_cells < 1:
@@ -581,6 +586,162 @@ def run_til_prioritize(
 
     clonotypes.to_csv(args.output_dir / "all_scored_clones.csv", index=False)
     candidates.to_csv(args.output_dir / "candidate_clones.csv", index=False)
+
+    assembly_meta: dict[str, object] = {"enabled": bool(args.assemble)}
+    constructs_csv = args.output_dir / "candidate_constructs.csv"
+    constructs_fasta = args.output_dir / "candidate_constructs.fasta"
+    if not args.assemble:
+        constructs_csv.unlink(missing_ok=True)
+        constructs_fasta.unlink(missing_ok=True)
+    else:
+        from ._assemble_qc import (
+            assemble_fidelity_summary,
+            enforce_contig_fidelity,
+            export_fasta,
+        )
+        from .assemble import assemble_full_sequences, validate_sequences
+        from .pipeline import _common_contig_root
+
+        def _has_contig_source(path_str: str) -> bool:
+            p = Path(path_str)
+            if not p.exists():
+                return False
+            if p.is_file():
+                low = p.name.lower()
+                if low.endswith((".fasta", ".fasta.gz", ".json", ".json.gz")):
+                    return True
+                p = p.parent
+            return any(
+                any(p.rglob(pat))
+                for pat in (
+                    "*contig*.fasta",
+                    "*contig*.fasta.gz",
+                    "*contig_annotations*.json",
+                    "*contig_annotations*.json.gz",
+                )
+            )
+
+        raw_linker = (
+            str(args.single_chain_linker).strip().upper()
+            if args.single_chain_linker is not None
+            else None
+        )
+        linker_arg = None if raw_linker in (None, "", "NONE") else raw_linker
+
+        if len(candidates) > 0:
+            existing_vdj_dirs = [
+                str(s.vdj_dir)
+                for s in sheet
+                if s.vdj_dir and Path(s.vdj_dir).exists()
+            ]
+            has_contigs = any(_has_contig_source(d) for d in existing_vdj_dirs)
+            contig_root = _common_contig_root(existing_vdj_dirs) if has_contigs else None
+            contig_sheet = (
+                pd.DataFrame(
+                    [
+                        {"sample": s.sample, "vdj_dir": s.vdj_dir}
+                        for s in sheet
+                        if s.vdj_dir and Path(s.vdj_dir).exists()
+                    ]
+                )
+                if contig_root
+                else None
+            )
+            leader_kwargs = (
+                {"alpha_leader": "from_contig", "beta_leader": "from_contig"}
+                if contig_root
+                else {}
+            )
+            constructs = assemble_full_sequences(
+                candidates,
+                contigs_dir=contig_root,
+                sample_name_from="sheet" if contig_root else "parent",
+                sample_sheet=contig_sheet,
+                **leader_kwargs,
+                include_constant=True,
+                linker=linker_arg,
+                species=resolved_species,
+                germline_vdj_fallback=bool(args.germline_vdj_fallback),
+                data_dir=cache_dir,
+                auto_download_germline=auto_dl,
+                verbose=args.verbose,
+                show_progress=False,
+            )
+            fidelity = assemble_fidelity_summary(constructs)
+            fidelity_note = enforce_contig_fidelity(
+                constructs,
+                allow_canonical_fallback=True,
+                context="prioritize",
+            )
+            if fidelity_note:
+                logger.warning("%s", fidelity_note)
+            val_errors = [
+                m for m in validate_sequences(constructs, species=resolved_species)
+                if m.severity == "load_bearing"
+            ]
+            constructs.to_csv(constructs_csv, index=False)
+            if linker_arg:
+                export_fasta(constructs, constructs_fasta, sequence_col="single_chain_aa")
+                n_complete = (
+                    int(constructs["single_chain_aa"].notna().sum())
+                    if "single_chain_aa" in constructs.columns
+                    else 0
+                )
+            else:
+                with open(constructs_fasta, "w") as fh:
+                    for idx_r, row_r in constructs.iterrows():
+                        cab = row_r.get("CDR3ab", idx_r)
+                        ca = row_r.get("CDR3_alpha", "")
+                        cb = row_r.get("CDR3_beta", "")
+                        fb = row_r.get("full_beta_aa", "")
+                        fa = row_r.get("full_alpha_aa", "")
+                        if isinstance(fb, str) and fb.strip():
+                            fh.write(f">{cab}|beta CDR3b={cb}\n{fb}\n")
+                        if isinstance(fa, str) and fa.strip():
+                            fh.write(f">{cab}|alpha CDR3a={ca}\n{fa}\n")
+                has_a = (
+                    constructs["full_alpha_aa"].notna()
+                    if "full_alpha_aa" in constructs.columns
+                    else pd.Series(False, index=constructs.index)
+                )
+                has_b = (
+                    constructs["full_beta_aa"].notna()
+                    if "full_beta_aa" in constructs.columns
+                    else pd.Series(False, index=constructs.index)
+                )
+                n_complete = int((has_a & has_b).sum())
+            n_verified = int(fidelity["n_verified"])
+            n_err = len(val_errors)
+        else:
+            empty_constructs = candidates.copy()
+            for col in (
+                "full_alpha_aa",
+                "full_beta_aa",
+                "single_chain_aa",
+                "single_chain_nt",
+                "construct_contig_verified",
+                "qc_warnings",
+            ):
+                if col not in empty_constructs.columns:
+                    empty_constructs[col] = pd.Series(dtype=object)
+            empty_constructs.to_csv(constructs_csv, index=False)
+            constructs_fasta.write_text("")
+            n_complete = 0
+            n_verified = 0
+            n_err = 0
+
+        assembly_meta = {
+            "enabled": True,
+            "candidate_count": len(candidates),
+            "complete_constructs": n_complete,
+            "contig_verified_constructs": n_verified,
+            "load_bearing_validation_errors": n_err,
+            "germline_vdj_fallback": bool(args.germline_vdj_fallback),
+            "single_chain_linker": linker_arg,
+            "constructs_csv": str(constructs_csv.name),
+            "constructs_fasta": str(constructs_fasta.name),
+        }
+
     from .version import __version__
 
     config = {
@@ -606,7 +767,9 @@ def run_til_prioritize(
             "interpretation": "competitive expression enrichment; not technical-noise estimation, antigen specificity, or FDR control",
         },
         "database_annotation_available": bool(vdjdb_path or iedb_path or cedar_path),
+        "foxp3_detected_in_matrix": bool(foxp3_detected_in_matrix),
         "candidate_count": len(candidates),
+        "assembly": assembly_meta,
     }
     (args.output_dir / "prioritization.json").write_text(json.dumps(config, indent=2, default=str) + "\n")
     if args.exclude_known_mart1 and not config["database_annotation_available"]:
@@ -750,6 +913,25 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
         type=float,
         default=0.5,
         help="Minimum fraction of clone cells with FOXP3/Foxp3 > 0 to flag is_treg_like (default: 0.5)",
+    )
+    parser.add_argument(
+        "--assemble",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Assemble validated full-length TCR constructs for shortlisted clones (writes candidate_constructs.csv/.fasta)",
+    )
+    parser.add_argument(
+        "--germline-vdj-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Impute missing 5' framework/J residues from cached IMGT V/J-REGION references when --assemble is enabled",
+    )
+    parser.add_argument(
+        "--single-chain-linker",
+        type=lambda s: "none" if s.strip().lower() == "none" else s.strip().upper(),
+        choices=("T2A", "P2A", "E2A", "F2A", "none"),
+        default="T2A",
+        help="2A self-cleaving linker for --assemble single-chain constructs (default: T2A; 'none' omits linker)",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose logging and error tracebacks")
     parser.add_argument("--context", choices=CONTEXT_SIGNATURES, default=context,

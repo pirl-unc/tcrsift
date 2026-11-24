@@ -1,5 +1,11 @@
 # Benchmark on paired blood-tumor, post-ACT, and CD4+ TILs
 
+!!! tip "See also: Benchmark Overview & Head-to-Head Comparisons"
+    For the unified **8-failure-mode scorecard** across all 15 cohorts and
+    head-to-head comparisons against `Scanpy score_genes` (`NeoTCR_PBL` /
+    `NeoTCR4`) and single-gene `CXCL13` (including `FOXP3+` Treg contamination
+    rates), see **[Benchmark Overview & Failure Modes](benchmarks-overview.md)**.
+
 This page evaluates three capabilities that the [solid-tumor CD8 TIL
 benchmark](benchmarks.md) and [infectious-disease blood
 benchmark](benchmarks-infectious.md) left open:

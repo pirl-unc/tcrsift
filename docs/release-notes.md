@@ -7,6 +7,48 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.34.0
+
+Streamlined workflow UX (`tcrsift prioritize --assemble` and tiered `tcrsift --help`),
+`from_contig` germline leader fallback on 5'-truncated contigs, unified
+8-failure-mode benchmark overview, and head-to-head external comparator
+evaluations:
+
+- **One-command construct assembly in `prioritize` / `til-prioritize` (`--assemble`)
+  and `from_contig` leader fallback.** Added `--assemble`,
+  `--germline-vdj-fallback`, and `--single-chain-linker` (`T2A` default, `P2A`,
+  `E2A`, `F2A`, or `none`) to `tcrsift prioritize`, `tcrsift til-prioritize`,
+  and `PrioritizeConfig`. When `--assemble` is passed, shortlisted candidates
+  are assembled directly into full-length α, β, and single-chain constructs
+  (`candidate_constructs.csv` and `candidate_constructs.fasta`, plus `assembly`
+  and `contig_verified_constructs` metrics in `prioritization.json`),
+  automatically detecting sample `*contig*.fasta(.gz)` and
+  `*contig_annotations*.json(.gz)` files. Also fixed `apply_leader_policy` and
+  `_resolve_named_leader` in `tcrsift/assemble.py` so `from_contig` chains whose
+  contigs are 5'-truncated or absent receive their V-gene's `M...` germline
+  (or species default) signal peptide under `leader_fallback` rather than
+  emitting leaderless chains. Shortlist selection logic and default cutoffs are
+  unchanged.
+- **Tiered `tcrsift --help` CLI organization.** Grouped all 25 top-level
+  subcommands into **Primary workflows** (`prioritize`, `run`, `assemble`,
+  `data`), **Exploration & annotation** (`cells`, `annotate`, `report`), and
+  **Modular pipeline steps & legacy commands** while preserving 100% backwards
+  compatibility across all subcommands and arguments.
+- **Unified failure-mode scorecard & head-to-head external benchmarks.** Added
+  [Benchmark Overview: 8 Focal Failure Modes & Head-to-Head Comparisons](benchmarks-overview.md)
+  and `benchmarks/head_to_head/`, comparing `tcrsift` directly against
+  `scanpy.tl.score_genes` (`NeoTCR8` / `NeoTCR4` / `NeoTCR_PBL`) and single-gene
+  `CXCL13` across 5 human TIL and cancer-blood cohorts, **`stitchr` / `thimble
+  v1.3.1`** across human Cell Ranger 6 donor contigs (`9/46 = 19.6%` donor
+  V-framework variants preserved), 5'-truncated human deposits (`160/160 = 100%`
+  complete `M...` constructs vs `135/160 = 84.4%` in `stitchr`), and murine Cell
+  Ranger shortlists (`101/101 = 100%` with `52` `Trbc1`/`Trbc2` miscalls
+  corrected vs `78/101 = 77.2%` in `stitchr`), **`OLGA v1.3.0`** exact V(D)J
+  dynamic programming ($r = 0.954$, `451x` faster on human blood), and per-cell /
+  CLR `z >= 3` / bimodal GMM pMHC multimer callers (`96.3%` sticky `KLGGALQAK`
+  FP reduction and `100.0%` [`109/109`] cognate epitope precision on
+  10x-held-out `strict_ab` VDJdb).
+
 ## 3.33.0
 
 Empirical validation and real-data fixes across human `--context blood-tumor`

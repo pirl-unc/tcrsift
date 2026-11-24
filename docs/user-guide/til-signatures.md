@@ -17,6 +17,9 @@ tcrsift prioritize samples.yaml -o candidates/ --context heme
 # Solid-tumor TIL (these two commands are identical)
 tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 tcrsift til-prioritize samples.yaml -o candidates/
+
+# Go straight from sample sheet to synthesis-ready β-T2A-α constructs in one pass
+tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor --assemble
 ```
 
 `til-prioritize` and `examples/multi_sample_til.py` run the same workflow with
@@ -27,9 +30,10 @@ file layout.
 !!! note "What expression prioritization measures"
     Signatures rank transcriptional states associated with activation, memory,
     or tumor reactivity; they do not predict epitope specificity or prove that
-    a clone was induced by vaccination. Empirical performance on five public
-    solid-tumor cohorts is reported in [Benchmark on public TIL
-    data](../benchmarks.md).
+    a clone was induced by vaccination. Empirical performance across 15 public
+    human and murine cohorts and head-to-head baselines is summarized in
+    [Benchmark Overview & Failure Modes](../benchmarks-overview.md) and
+    [Benchmark on public TIL data](../benchmarks.md).
 
 ## Selection algorithm
 
@@ -322,9 +326,18 @@ Outputs written to `-o`:
 - `multimer_specificity.csv` (when `--call-multimers` is passed): per-`(donor,
   CDR3ab)` pMHC multimer specificity calls, binding cell counts, and clonal
   concordance.
+- `candidate_constructs.csv` and `candidate_constructs.fasta` (when
+  `--assemble` is passed): validated full-length α, β, and single-chain
+  (`β-linker-α`, default `--single-chain-linker T2A`) protein and codon-optimized
+  DNA constructs for every shortlisted candidate. When `vdj_dir` entries on the
+  sample sheet contain Cell Ranger `*contig*.fasta` files, native V-gene leader
+  peptides (`from_contig`) and J→C junction checks are used automatically; pass
+  `--germline-vdj-fallback` (with cached IMGT `germline` / `germline_mouse`
+  references) when 5' V-regions are truncated or contig FASTAs were not
+  deposited.
 - `prioritization.json`: package version, CLI arguments, resolved signatures,
-  sequential `cell_filters` counts, per-sample retained cell counts, and
-  reference-database status.
+  sequential `cell_filters` counts, per-sample retained cell counts,
+  reference-database status, and `assembly` summary statistics.
 
 ## Cell and clone filters
 

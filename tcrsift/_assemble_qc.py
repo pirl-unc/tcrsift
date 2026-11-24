@@ -376,6 +376,10 @@ def validate_sequences(
                 _lb(idx,
                     f"full_{chain}_aa doesn't start with M "
                     f"(starts with {seq[:5]!r}; leader present)")
+            elif row.get(f"{chain}_leader_source") == "missing_from_contig":
+                _lb(idx,
+                    f"full_{chain}_aa is missing its requested from_contig "
+                    f"signal peptide (starts with {seq[:5]!r})")
 
             # Surface a from_contig signal-peptide QC flag (#263) as an
             # informational note — the extracted leader is kept (it's the best

@@ -21,21 +21,26 @@ Standard 10x Genomics Cell Ranger directories serve as input:
   matrices for CD4/CD8 phenotyping, signature scoring, and cell-type annotation
   (optional for VDJ-only workflows).
 
-For an overview of the data flow and selection algorithms, see
-[How TCRsift works](how-it-works.md). For empirical evaluations on public
-human and murine cohorts, see [Benchmark on public TIL data](benchmarks.md),
-[Benchmark on infectious disease and blood](benchmarks-infectious.md),
-[Benchmark on paired blood-tumor, post-ACT, and CD4+ TILs](benchmarks-blood-cd4.md),
-and [Benchmark on murine models (`--species mouse`)](benchmarks-mouse.md).
+For an overview of the unified 5-stage data flow and selection algorithms, see
+[How TCRsift works](how-it-works.md). For a unified digest of all **15 public
+cohorts** organized around **8 focal failure modes** and **head-to-head
+comparisons** against `Scanpy score_genes`, `stitchr` (`thimble`), `OLGA`, and
+CLR/GMM multimer callers, start with
+**[Benchmark Overview & Failure Modes](benchmarks-overview.md)**, then see the
+cohort deep-dives on [public CD8+ TIL data](benchmarks.md),
+[infectious disease and blood](benchmarks-infectious.md),
+[paired blood-tumor, post-ACT, and CD4+ TILs](benchmarks-blood-cd4.md), and
+[murine models (`--species mouse`)](benchmarks-mouse.md).
 
 ## Choose a workflow
 
 | Study design | Command | Guide |
 | --- | --- | --- |
-| Antigen-stimulated T-cell culture (with optional matched TIL) | `tcrsift run` | [Quick Start](getting-started/quickstart.md), [Culture Pipeline](user-guide/pipeline.md) |
-| Fresh TIL, blood, pleural effusion, or marrow (paired VDJ + GEX) | `tcrsift prioritize --context ...` | [Clone Prioritization](user-guide/til-signatures.md) |
+| Fresh TIL, blood, pleural effusion, or marrow (paired VDJ + GEX) | `tcrsift prioritize samples.yaml -o out/ --context ... [--assemble]` | [Clone Prioritization](user-guide/til-signatures.md) |
+| Antigen-stimulated T-cell culture or short restimulation (with optional matched TIL) | `tcrsift run -s samples.yaml -o out/ [--method stimulation]` | [Quick Start](getting-started/quickstart.md), [Culture Pipeline](user-guide/pipeline.md) |
+| Standalone full-length TCR construct assembly from a clone CSV | `tcrsift assemble -i clones.csv -o seqs.csv` | [CLI Reference](user-guide/cli.md#tcrsift-assemble) |
+| Single-cell GEX QC, batch-integrated embedding, and cell typing | `tcrsift cells {qc,embed,annotate}` | [Single-Cell Atlas](user-guide/atlas.md) |
 | Longitudinal TIL samples in the legacy v2 file layout | `tcrsift til-select` | [CLI Reference](user-guide/cli.md#tcrsift-til-select) |
-| Single-cell GEX QC, batch-integrated embedding, and cell typing | `tcrsift cells` | [Single-Cell Atlas](user-guide/atlas.md) |
 
 ## Quick example
 
@@ -60,10 +65,11 @@ Run the culture expansion pipeline:
 tcrsift run --sample-sheet samples.yaml --output-dir results/
 ```
 
-Or prioritize clones by expression state in a fresh tumor sample sheet:
+Or prioritize clones by expression state in a fresh tumor sample sheet and
+assemble synthesis-ready `β-T2A-α` constructs in one command:
 
 ```bash
-tcrsift prioritize til_samples.yaml -o candidates/ --context solid-tumor
+tcrsift prioritize til_samples.yaml -o candidates/ --context solid-tumor --assemble
 ```
 
 See [Installation](getting-started/installation.md) for optional extras,

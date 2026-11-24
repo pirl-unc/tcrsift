@@ -7,8 +7,16 @@ complete flag list.
 
 ```bash
 tcrsift --version      # Print version (short form: -v)
-tcrsift --help         # List all subcommands
+tcrsift --help         # Tiered command overview (Primary workflows / Exploration / Modular steps)
 ```
+
+`tcrsift --help` groups all 25 commands into three tiers so common workflows
+stay immediately discoverable while keeping every modular step and legacy v2
+command available:
+
+1. **Primary workflows:** `prioritize`, `run`, `assemble`, `data`
+2. **Exploration & annotation:** `cells`, `annotate`, `report`
+3. **Modular pipeline steps & legacy commands:** `load`, `phenotype`, `clonotype`, `filter`, `select`, `pgen`, `log-pgen`, `match-til`, `til-clonotype`, `til-prioritize`, `til-select`, `annotate-gex`, `load-sct`, `audit-alleles`, `cohort`, `unify`, `mnemonic`, `generate-config`
 
 ---
 
@@ -93,6 +101,9 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 | `--no-exclude-known-mart1` | Retain known MART-1 database matches |
 | `--exclude-treg`, `--treg-foxp3-fraction` | Opt-in exclusion of `FOXP3`/`Foxp3`+ Treg-like clones (audited in `risk_flags` as `treg_FOXP3`; default fraction threshold `0.5`) |
 | `--call-multimers` | Call 10x Feature Barcode pMHC multimers and attach clonal specificity/concordance columns |
+| `--assemble` | Assemble validated full-length `β-2A-α` TCR constructs for shortlisted candidates (`candidate_constructs.csv` + `candidate_constructs.fasta`; auto-detects sample `*contig*.fasta` leaders) |
+| `--germline-vdj-fallback` | Reconstruct 5'-truncated or bare `(v_gene, CDR3, j_gene)` chains from cached IMGT V-REGION + J-REGION references when `--assemble` is enabled |
+| `--single-chain-linker` | 2A linker for `--assemble` constructs: `T2A` (default), `P2A`, `E2A`, `F2A`, or `none` |
 
 See [Clone Prioritization](til-signatures.md) for all QC, VDJ, expression, V/J
 gene, CDR3 length, and subset-evidence options, and `tcrsift prioritize --help`
