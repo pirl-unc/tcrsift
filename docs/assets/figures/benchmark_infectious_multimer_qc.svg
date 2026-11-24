@@ -325,8 +325,13 @@ z
      <use xlink:href="#mc164ff128b" x="523.577258" y="193.566997" style="fill: #2a78d6; fill-opacity: 0.92; stroke: #fcfcfb; stroke-opacity: 0.92; stroke-width: 1.3"/>
     </g>
    </g>
+   <g id="patch_5">
+    <path d="M 495.365912 187.199233 
+Q 508.009705 190.053145 520.653499 192.907057 
+" style="fill: none; stroke: #52514e; stroke-width: 0.5; stroke-linecap: round"/>
+   </g>
    <g id="text_16">
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="515.577258" y="185.566997" transform="rotate(-0 515.577258 185.566997)">GILGFVFTL (D1, n=171)</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="513.577258" y="183.566997" transform="rotate(-0 513.577258 183.566997)">GILGFVFTL (D1, n=171)</text>
    </g>
    <g id="PathCollection_4">
     <defs>
@@ -364,8 +369,13 @@ z
      <use xlink:href="#m8eeaf6066a" x="519.151335" y="105.96598" style="fill: #2a78d6; fill-opacity: 0.92; stroke: #fcfcfb; stroke-opacity: 0.92; stroke-width: 1.3"/>
     </g>
    </g>
+   <g id="patch_6">
+    <path d="M 485.335964 95.599253 
+Q 500.809221 100.342865 516.282478 105.086478 
+" style="fill: none; stroke: #52514e; stroke-width: 0.5; stroke-linecap: round"/>
+   </g>
    <g id="text_17">
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="511.151335" y="99.96598" transform="rotate(-0 511.151335 99.96598)">IVTDFSVIK (D1, n=29)</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="507.151335" y="91.96598" transform="rotate(-0 507.151335 91.96598)">IVTDFSVIK (D1, n=29)</text>
    </g>
    <g id="PathCollection_6">
     <defs>
@@ -385,8 +395,13 @@ z
      <use xlink:href="#m868afc0b51" x="115.906646" y="176.860153" style="fill: #eb6834; fill-opacity: 0.92; stroke: #fcfcfb; stroke-opacity: 0.92; stroke-width: 1.3"/>
     </g>
    </g>
+   <g id="patch_7">
+    <path d="M 145.592501 170.492389 
+Q 132.215385 173.361847 118.838269 176.231306 
+" style="fill: none; stroke: #52514e; stroke-width: 0.5; stroke-linecap: round"/>
+   </g>
    <g id="text_18">
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="123.906646" y="167.860153" transform="rotate(-0 123.906646 167.860153)">KLGGALQAK (D1, n=284)</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="125.906646" y="166.860153" transform="rotate(-0 125.906646 166.860153)">KLGGALQAK (D1, n=284)</text>
    </g>
    <g id="PathCollection_7">
     <defs>
@@ -432,8 +447,13 @@ z
      <use xlink:href="#m5b39c6fd44" x="523.577258" y="106.185807" style="fill: #2a78d6; fill-opacity: 0.92; stroke: #fcfcfb; stroke-opacity: 0.92; stroke-width: 1.3"/>
     </g>
    </g>
+   <g id="patch_8">
+    <path d="M 497.81966 112.185525 
+Q 509.237961 109.52586 520.656261 106.866195 
+" style="fill: none; stroke: #52514e; stroke-width: 0.5; stroke-linecap: round"/>
+   </g>
    <g id="text_19">
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="515.577258" y="100.185807" transform="rotate(-0 515.577258 100.185807)">FLYALALLL (D2, n=9)</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="511.577258" y="120.185807" transform="rotate(-0 511.577258 120.185807)">FLYALALLL (D2, n=9)</text>
    </g>
    <g id="PathCollection_10">
     <defs>
@@ -448,8 +468,13 @@ z
      <use xlink:href="#m86298afa55" x="523.577258" y="245.446145" style="fill: #2a78d6; fill-opacity: 0.92; stroke: #fcfcfb; stroke-opacity: 0.92; stroke-width: 1.3"/>
     </g>
    </g>
+   <g id="patch_9">
+    <path d="M 487.719688 235.079418 
+Q 504.206204 239.845809 520.692719 244.6122 
+" style="fill: none; stroke: #52514e; stroke-width: 0.5; stroke-linecap: round"/>
+   </g>
    <g id="text_20">
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="515.577258" y="257.446145" transform="rotate(-0 515.577258 257.446145)">GILGFVFTL (D2, n=327)</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="511.577258" y="231.446145" transform="rotate(-0 511.577258 231.446145)">GILGFVFTL (D2, n=327)</text>
    </g>
    <g id="PathCollection_11">
     <defs>
@@ -464,8 +489,13 @@ z
      <use xlink:href="#m7befa031df" x="508.248454" y="282.633528" style="fill: #2a78d6; fill-opacity: 0.92; stroke: #fcfcfb; stroke-opacity: 0.92; stroke-width: 1.3"/>
     </g>
    </g>
+   <g id="patch_10">
+    <path d="M 483.673124 287.633006 
+Q 494.492329 285.432003 505.311534 283.231 
+" style="fill: none; stroke: #52514e; stroke-width: 0.5; stroke-linecap: round"/>
+   </g>
    <g id="text_21">
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="500.248454" y="294.633528" transform="rotate(-0 500.248454 294.633528)">GLCTLVAML (D2, n=37)</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="498.248454" y="295.633528" transform="rotate(-0 498.248454 295.633528)">GLCTLVAML (D2, n=37)</text>
    </g>
    <g id="PathCollection_12">
     <defs>
@@ -493,16 +523,26 @@ z
      <use xlink:href="#me646cf6c9d" x="118.767303" y="229.655246" style="fill: #eb6834; fill-opacity: 0.92; stroke: #fcfcfb; stroke-opacity: 0.92; stroke-width: 1.3"/>
     </g>
    </g>
+   <g id="patch_11">
+    <path d="M 145.021067 234.654725 
+Q 133.366793 232.435413 121.712519 230.216101 
+" style="fill: none; stroke: #52514e; stroke-width: 0.5; stroke-linecap: round"/>
+   </g>
    <g id="text_22">
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="126.767303" y="242.655246" transform="rotate(-0 126.767303 242.655246)">KLGGALQAK (D2, n=739)</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="128.767303" y="242.655246" transform="rotate(-0 128.767303 242.655246)">KLGGALQAK (D2, n=739)</text>
    </g>
    <g id="PathCollection_14">
     <g clip-path="url(#p2b5f269830)">
      <use xlink:href="#m86298afa55" x="523.577258" y="267.209007" style="fill: #2a78d6; fill-opacity: 0.92; stroke: #fcfcfb; stroke-opacity: 0.92; stroke-width: 1.3"/>
     </g>
    </g>
+   <g id="patch_12">
+    <path d="M 491.675382 275.209176 
+Q 506.171809 271.573845 520.668236 267.938515 
+" style="fill: none; stroke: #52514e; stroke-width: 0.5; stroke-linecap: round"/>
+   </g>
    <g id="text_23">
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="515.577258" y="260.209007" transform="rotate(-0 515.577258 260.209007)">RAKFKQLL (D2, n=265)</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="511.577258" y="283.209007" transform="rotate(-0 511.577258 283.209007)">RAKFKQLL (D2, n=265)</text>
    </g>
    <g id="PathCollection_15">
     <defs>

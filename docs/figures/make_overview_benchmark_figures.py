@@ -112,7 +112,13 @@ def h2h_prioritize_figures() -> None:
     ax1.set_axisbelow(True)
     ax1.spines["left"].set_visible(False)
     ax1.tick_params(axis="y", length=0)
-    ax1.legend(frameon=False, fontsize=8.4, loc="lower right")
+    ax1.legend(
+        frameon=False,
+        fontsize=8.3,
+        loc="upper center",
+        bbox_to_anchor=(0.45, -0.14),
+        ncol=3,
+    )
     save_tight(fig1, "h2h_prioritize_auroc")
 
     # Figure 2: CD4 Treg shortlist contamination on Veatch 2022 & Oh 2020
@@ -284,7 +290,13 @@ def h2h_assembly_and_pgen_figures() -> None:
     ax2.set_title("Publicness AUROC and throughput: TCRsift k-mer vs OLGA 1.3.0", fontsize=10.2)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
-    ax2.legend(frameon=False, fontsize=8.4, loc="lower right")
+    ax2.legend(
+        frameon=False,
+        fontsize=8.3,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.16),
+        ncol=3,
+    )
     save_tight(fig2, "h2h_pgen_olga")
 
 

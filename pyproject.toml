@@ -80,16 +80,13 @@ docs = [
     "mkdocstrings[python]>=0.24.0",
     "pymdown-extensions>=10.0.0",
 ]
-reports = [
-    "reportlab>=4.0.0,<6.0.0; python_version >= '3.10'",
-    # reportlab 5.1 raises at import on Python 3.9 despite declaring support.
-    "reportlab>=4.0.0,<5.1.0; python_version < '3.10'",
-    "pdfkit",
-]
-# Optional N-way set-overlap (UpSet) plots (#208). Without it, plot_set_overlap
-# falls back to a top-intersections bar chart, so this is purely a nicer view.
+# Retained as an empty backward-compatible extra now that reportlab is a core dependency.
+reports = []
+# Optional N-way set-overlap (UpSet) and Venn plots (#208). Without them,
+# plot_set_overlap and plot_cross_donor_venn fall back to bar charts.
 plots = [
     "upsetplot>=0.8",
+    "matplotlib-venn>=0.11",
 ]
 # Single-cell atlas embedding (#311): Harmony batch integration + Leiden
 # clustering. scanpy (core) already brings umap-learn; these are the extra
@@ -101,11 +98,8 @@ atlas = [
     "leidenalg>=0.9",
 ]
 full = [
-    "reportlab>=4.0.0,<6.0.0; python_version >= '3.10'",
-    # reportlab 5.1 raises at import on Python 3.9 despite declaring support.
-    "reportlab>=4.0.0,<5.1.0; python_version < '3.10'",
-    "pdfkit",
     "upsetplot>=0.8",
+    "matplotlib-venn>=0.11",
     "harmonypy>=0.0.9",
     "igraph>=0.10",
     "leidenalg>=0.9",
@@ -124,7 +118,7 @@ packages = ["tcrsift", "tcrsift.assemble", "tcrsift.cli", "tcrsift.plots", "tcrs
 
 [project.urls]
 "Homepage" = "https://github.com/pirl-unc/tcrsift"
-"Documentation" = "https://pirl-unc.github.io/tcrsift/"
+"Documentation" = "https://pirl.unc.edu/tcrsift/"
 "Bug Tracker" = "https://github.com/pirl-unc/tcrsift/issues"
 
 [project.scripts]

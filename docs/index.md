@@ -22,8 +22,8 @@ Standard 10x Genomics Cell Ranger directories serve as input:
   (optional for VDJ-only workflows).
 
 For an overview of the data flow and selection algorithms, see
-[How TCRsift works](how-it-works.md). For evaluations across 15 public human and
-mouse cohorts and head-to-head comparisons against `Scanpy score_genes`,
+[How TCRsift works](how-it-works.md). For evaluations across 13 public human and
+mouse datasets (15 cohort evaluations) and head-to-head comparisons against `Scanpy score_genes`,
 `stitchr`, `OLGA`, and per-cell/CLR/GMM multimer callers, see the
 [Benchmark overview](benchmarks-overview.md) and the cohort pages on
 [public CD8 TIL data](benchmarks.md),

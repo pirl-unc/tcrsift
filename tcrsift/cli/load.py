@@ -79,7 +79,12 @@ def cmd_phenotype(args):
     """Classify T cells as CD4/CD8."""
     import anndata as ad
 
-    from ..phenotype import get_phenotype_summary, phenotype_cells, validate_phenotype_vs_expected
+    from ..phenotype import (
+        apply_cd3_gate,
+        get_phenotype_summary,
+        phenotype_cells,
+        validate_phenotype_vs_expected,
+    )
     from ..plots import plot_phenotype
 
     setup_logging(args.verbose)
@@ -92,6 +97,11 @@ def cmd_phenotype(args):
         cd4_cd8_ratio=args.cd4_cd8_ratio,
         min_cd3_reads=args.min_cd3_reads,
     )
+
+    n_before_cd3 = len(adata)
+    adata = apply_cd3_gate(adata, args.min_cd3_reads)
+    if len(adata) != n_before_cd3:
+        print(f"CD3 gate (>={args.min_cd3_reads} reads): {len(adata)}/{n_before_cd3} cells pass")
 
     warnings = validate_phenotype_vs_expected(adata)
     for w in warnings:

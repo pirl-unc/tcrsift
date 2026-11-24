@@ -375,6 +375,21 @@ def register(subparsers) -> None:
         metavar="ENZYME",
         help="Restriction enzyme name(s) or ACGT site(s) to recode out of constructs",
     )
+    ps.add_argument(
+        "--germline-vdj-fallback",
+        action="store_true",
+        help="Reconstruct missing or 5'-truncated VDJ chains from cached IMGT V+J germlines",
+    )
+    ps.add_argument(
+        "--auto-download-germline",
+        action="store_true",
+        help="Automatically fetch missing IMGT germline V/J references when --germline-vdj-fallback is set",
+    )
+    ps.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Override local reference-data cache directory (default: ~/.cache/tcrsift)",
+    )
     ps.add_argument("--output-dir", "-o", required=True, help="Output directory")
     ps.add_argument(
         "--no-cover",

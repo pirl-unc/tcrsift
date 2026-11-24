@@ -18,8 +18,11 @@ reflect chronic antigen exposure in fresh TIL.
 
 Human signatures follow HGNC nomenclature (`T_CELL_SIGNATURES`); mouse
 counterparts (`MOUSE_T_CELL_SIGNATURES`, retrieved via
-`t_cell_signatures_for_species("mouse")`) use MGI orthologs (dropping `GNLY` and
-`CXCL13`, which lack 1:1 murine T-cell orthologs).
+`t_cell_signatures_for_species("mouse")`) adapt markers without 1:1 murine
+T-cell orthologs (dropping primate-restricted `GNLY` and replacing `CXCL13`
+with `PDCD1, HAVCR2, ITGAE` in `tumor_reactive` and `ENTPD1` in
+`expansion_core`; in `MOUSE_SIGNATURES`, `GNLY` is replaced by `GZMA` and
+`CXCL13` by `CCL3, CCL4`).
 
 | Name | Genes | Intended readout |
 | --- | --- | --- |
@@ -50,13 +53,14 @@ genes minus negative genes:
 | `AcuteActivation` | `TNFRSF9, MKI67` | — | 4-1BB and Ki-67, separated from `AntigenExperienced` after the MART-1 pilot |
 | `Proliferation` | `MKI67` | — | Ki-67 alone |
 | `AIM` | `TNFRSF9, TNFRSF4` | — | 4-1BB and OX40 mRNAs corresponding to surface AIM sorting |
+| `CirculatingMemory` | `GZMK, IL7R` | `CCR7` | Antigen-experienced circulating memory CD8/CD4 readout used by `blood`, `blood-tumor`, `mpe`, and `heme` presets |
 | `TumorReactive` | `CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE` | — | CD39 and CD103 ([Simoni 2018](https://doi.org/10.1038/s41586-018-0130-2), [Duhen 2018](https://doi.org/10.1038/s41467-018-05072-0)) plus `CXCL13` and six TIL exhaustion markers |
 
-`Broad` variants and `CirculatingMemory` are also registered in `SIGNATURES`.
+`Broad` variants are also registered in `SIGNATURES`.
 Note that nine-gene `TumorReactive` above is broader than the two-gene
-`tumor_reactive` entry in `T_CELL_SIGNATURES`. Empirical AUROCs across five
-public tumor datasets are reported in [Benchmark on public TIL
-data](../benchmarks.md).
+`tumor_reactive` entry in `T_CELL_SIGNATURES`. Empirical AUROCs across human
+and murine cohorts are reported in the [Benchmark overview](../benchmarks-overview.md)
+and cohort pages.
 
 ## Published neoantigen-reactivity registry (`NEOANTIGEN_SIGNATURES`)
 

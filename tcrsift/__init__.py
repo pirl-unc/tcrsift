@@ -175,6 +175,7 @@ _MODULE_EXPORTS = {
         "load_vdjdb",
         "load_iedb",
         "load_cedar",
+        "match_clonotypes",
         "annotate_clonotypes",
         "get_annotation_summary",
     ),
@@ -191,7 +192,6 @@ _MODULE_EXPORTS = {
         "build_harmonized_table",
         "run_selection_pipeline",
         "run_til_select",
-        "match_clonotypes",
         "viral_cdr3b_set",
     ),
     ".selection": (

@@ -439,14 +439,14 @@ def multimer_concordance_qc() -> None:
 
     fig, ax = plt.subplots(figsize=(7.8, 4.6), constrained_layout=True)
     custom_labels = {
-        ("tenx_donor1", "KLGGALQAK"): ("KLGGALQAK (D1, n={n})", (8, 9), "left"),
-        ("tenx_donor2", "KLGGALQAK"): ("KLGGALQAK (D2, n={n})", (8, -13), "left"),
-        ("tenx_donor1", "GILGFVFTL"): ("GILGFVFTL (D1, n={n})", (-8, 8), "right"),
-        ("tenx_donor2", "GILGFVFTL"): ("GILGFVFTL (D2, n={n})", (-8, -12), "right"),
-        ("tenx_donor2", "RAKFKQLL"): ("RAKFKQLL (D2, n={n})", (-8, 7), "right"),
-        ("tenx_donor1", "IVTDFSVIK"): ("IVTDFSVIK (D1, n={n})", (-8, 6), "right"),
-        ("tenx_donor2", "GLCTLVAML"): ("GLCTLVAML (D2, n={n})", (-8, -12), "right"),
-        ("tenx_donor2", "FLYALALLL"): ("FLYALALLL (D2, n={n})", (-8, 6), "right"),
+        ("tenx_donor1", "KLGGALQAK"): ("KLGGALQAK (D1, n={n})", (10, 10), "left"),
+        ("tenx_donor2", "KLGGALQAK"): ("KLGGALQAK (D2, n={n})", (10, -13), "left"),
+        ("tenx_donor1", "GILGFVFTL"): ("GILGFVFTL (D1, n={n})", (-10, 10), "right"),
+        ("tenx_donor2", "GILGFVFTL"): ("GILGFVFTL (D2, n={n})", (-12, 14), "right"),
+        ("tenx_donor2", "RAKFKQLL"): ("RAKFKQLL (D2, n={n})", (-12, -16), "right"),
+        ("tenx_donor1", "IVTDFSVIK"): ("IVTDFSVIK (D1, n={n})", (-12, 14), "right"),
+        ("tenx_donor2", "GLCTLVAML"): ("GLCTLVAML (D2, n={n})", (-10, -13), "right"),
+        ("tenx_donor2", "FLYALALLL"): ("FLYALALLL (D2, n={n})", (-12, -14), "right"),
     }
 
     for row in df.itertuples():
@@ -479,6 +479,7 @@ def multimer_concordance_qc() -> None:
                 ha=ha,
                 fontsize=8.0,
                 color=INK,
+                arrowprops={"arrowstyle": "-", "color": INK2, "lw": 0.5, "shrinkA": 0, "shrinkB": 3},
             )
 
     ax.axvline(0.5, color=INK2, lw=1.1, ls=(0, (4, 3)))

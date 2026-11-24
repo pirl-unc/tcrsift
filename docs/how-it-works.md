@@ -121,7 +121,7 @@ Default cutoffs are fixed operating choices rather than parameters fitted to
 labeled training data. Six empirical evaluations are documented:
 
 - [Benchmark overview and head-to-head comparisons](benchmarks-overview.md):
-  summary across 15 public human and mouse cohorts and direct comparisons
+  summary across 13 public human and mouse datasets (15 cohort evaluations) and direct comparisons
   against `Scanpy score_genes`, single-gene `CXCL13`, `stitchr` (`thimble
   1.3.1`), `OLGA 1.3.0`, and per-cell/CLR/GMM multimer callers.
 - [Benchmark on public TIL data](benchmarks.md): evaluation of `tcrsift

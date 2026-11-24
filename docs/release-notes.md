@@ -1,11 +1,49 @@
-# Prioritization release notes
+# Release notes
 
-Behavior changes in `tcrsift prioritize` and `til-prioritize` that can alter a
-shortlist. Record the package version alongside every analysis; the
+Release changelog for `tcrsift`, including behavior changes in `tcrsift
+prioritize`, `tcrsift run`, and construct assembly that can alter results.
+Record the package version alongside every analysis; the
 [prioritization guide](user-guide/til-signatures.md) documents the current
 release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
+
+## 3.36.1
+
+Targeted bug fixes, documentation rendering fixes, and benchmark figure polish
+from the holistic post-3.36.0 repository audit:
+
+- **Top-level API & CLI fixes:**
+  - Fixed `tcrsift.match_clonotypes` to export `tcrsift.annotate.match_clonotypes`
+    rather than the stripped-down legacy copy in `tcrsift.til_select`.
+  - Wired `apply_cd3_gate` into standalone `tcrsift phenotype` so it matches
+    `tcrsift run` and its CLI documentation.
+  - Normalized string `"none"` to `None` in `AssembleConfig.__post_init__` so
+    YAML `alpha_leader: none` / `beta_leader: none` no longer crashes at Step 7.
+  - Registered `--germline-vdj-fallback`, `--auto-download-germline`, and
+    `--cache-dir` on `tcrsift report selected`; fixed `validate_run_args` and
+    `validate_assemble_args` when `--no-assemble` / `--no-leaders` or YAML
+    `from_contig` settings are used.
+  - Fixed `reconstruct_germline_vdj_chain(..., species="mouse")` to inherit
+    `codon_species` from `species` when unspecified; moved `tcrsift.mnemonic`'s
+    module docstring ahead of `from __future__ import annotations`; added
+    `python -m tcrsift` (`tcrsift/__main__.py`) and `oncoref` to run provenance.
+- **Scripts, packaging & CI:**
+  - Fixed `deploy.sh --dry-run <version>` so it no longer mutates `version.py`,
+    commits, or pushes during dry runs; guarded `set -e` in `develop.sh` so
+    sourcing it cannot kill interactive shells; aligned `lint.sh` targets with CI.
+  - Scoped `.github/workflows/docs.yml` concurrency per-PR so PR doc builds
+    cannot cancel live `main` GitHub Pages deploys.
+  - Cleaned `pyproject.toml` extras (dropped unused `pdfkit` and duplicate
+    `reportlab`, added `matplotlib-venn` to `plots`/`full`, aligned docs URL).
+- **Docs & benchmark figures:**
+  - Enabled `pymdownx.arithmatex` + MathJax 3 in `mkdocs.yml` so equations in
+    `methods-section.md` and `benchmarks-overview.md` render properly.
+  - Updated `docs/methods-section.md`, `docs/user-guide/atlas.md`,
+    `docs/api/insilico_filter.md`, `docs/api/signatures.md`, and
+    `docs/benchmarks-overview.md` to match current `3.36` code behavior.
+  - Regenerated benchmark SVGs to eliminate legend-over-bar collisions, label
+    overlaps on `benchmark_infectious_multimer_qc.svg`, and right-edge clipping.
 
 ## 3.36.0
 

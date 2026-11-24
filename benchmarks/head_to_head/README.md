@@ -7,15 +7,16 @@ Reproducible head-to-head evaluation of `tcrsift` against open-source baselines 
 3. **TCR generation probability & publicness**: `tcrsift` bundled k-mer `Pgen`/`Ppost` vs `OLGA` (`v1.3.0`, Sethna et al. *Bioinformatics* 2019) across human (`n = 1,500`) and murine (`n = 1,781`) repertoires.
 4. **Multiplexed pMHC multimer calling**: `tcrsift --call-multimers` clonal concordance vs 10x per-cell threshold, CLR `z >= 3`, and bimodal GMM callers on 10x Healthy Donors 1 & 2.
 
-See [`PROVENANCE.md`](PROVENANCE.md) for methodological details and [`docs/benchmarks-overview.md`](../../docs/benchmarks-overview.md) for the master Failure-Mode Scorecard and figures.
+See [`PROVENANCE.md`](PROVENANCE.md) for methodological details and [`docs/benchmarks-overview.md`](../../docs/benchmarks-overview.md) for the summary tables and head-to-head figures.
 
 ## Reproducing
 
-```bash
-.venv/bin/python -m venv --system-site-packages /tmp/h2h_venv
-/tmp/h2h_venv/bin/pip install stitchr==1.3.1 olga==1.3.0
-/tmp/h2h_venv/bin/stitchrdl -s HUMAN && /tmp/h2h_venv/bin/stitchrdl -s MOUSE
+Run the four cohort benchmark suites (`public_til`, `public_infectious`, `public_blood_cd4`, `public_mouse`) first so their cached inputs and scored clone tables are available, then install the external comparators and run:
 
-MPLCONFIGDIR=/tmp/mpl_cache /tmp/h2h_venv/bin/python benchmarks/head_to_head/run.py
-MPLCONFIGDIR=/tmp/mpl_cache .venv/bin/python docs/figures/make_overview_benchmark_figures.py
+```bash
+pip install stitchr==1.3.1 olga==1.3.0
+stitchrdl -s HUMAN && stitchrdl -s MOUSE
+
+python benchmarks/head_to_head/run.py
+python docs/figures/make_overview_benchmark_figures.py
 ```
