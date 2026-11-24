@@ -1,5 +1,12 @@
 # Benchmark on public TIL data
 
+!!! tip "Start with the unified overview & head-to-head comparisons"
+    For a cross-cohort digest of all **15 public human and murine benchmarks**
+    organized around **8 focal failure modes**, plus direct head-to-head
+    comparisons against `Scanpy score_genes`, single-gene `CXCL13`, `stitchr`
+    (`thimble v1.3.1`), `OLGA v1.3.0`, and CLR/GMM multimer callers, see
+    **[Benchmark Overview & Failure Modes](benchmarks-overview.md)**.
+
 This page evaluates whether `tcrsift prioritize --context solid-tumor` finds
 clones that experiments showed to be tumor-reactive. It covers five public
 datasets across 33 patients and reports both where the method works and where

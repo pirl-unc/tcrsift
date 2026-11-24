@@ -1,6 +1,6 @@
 site_name: TCRsift
 site_description: T-cell receptor clonotype prioritization from antigen-enrichment cultures and single-cell VDJ and gene-expression data
-site_url: https://pirl-unc.github.io/tcrsift/
+site_url: https://pirl.unc.edu/tcrsift/
 repo_url: https://github.com/pirl-unc/tcrsift
 repo_name: pirl-unc/tcrsift
 
@@ -71,6 +71,7 @@ nav:
     - Sample Sheets: getting-started/sample-sheets.md
   - How It Works: how-it-works.md
   - Benchmarks:
+    - Overview & Failure Modes: benchmarks-overview.md
     - TIL Prioritization: benchmarks.md
     - Infectious Disease & Blood: benchmarks-infectious.md
     - Blood-Tumor, Post-ACT & CD4+ TIL: benchmarks-blood-cd4.md

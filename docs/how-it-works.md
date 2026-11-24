@@ -7,31 +7,31 @@ expression programs, public TCR database matches, and sequence generation
 probability. None of these signals predicts which epitope a receptor binds;
 confirming specificity still requires a functional assay.
 
-## From Cell Ranger output to candidates
+## Unified five-stage architecture
+
+Every workflow in TCRsift follows one five-stage sequence — `1. Load & QC → 2. Phenotype & Clonotype → 3. Score Evidence → 4. Auditable Selection → 5. Construct Assembly` — differing only in which experimental evidence drives Stage 3:
 
 ```mermaid
 flowchart LR
     VDJ["cellranger vdj<br/>TCR contigs"] --> LOAD
     GEX["cellranger count<br/>gene expression"] --> LOAD
     SHEET["Sample sheet"] --> LOAD
-    LOAD["Load + cell QC<br/>paired α/β cells"] --> PHENO["CD4 / CD8<br/>phenotype"]
-    PHENO --> CLONE["Clonotypes<br/>cells grouped by CDR3α+β"]
-    CLONE --> RUN["<b>run</b><br/>culture expansion tiers"]
-    CLONE --> PRI["<b>prioritize</b><br/>expression-state lists"]
+    LOAD["1. Load & QC<br/>paired α/β + CD3/mito"] --> PHENO["2. Phenotype & Clonotype<br/>CD4/CD8 + Pgen/Ppost"]
+    PHENO --> RUN["3a. <b>run</b><br/>expansion / Δstim tiers"]
+    PHENO --> PRI["3b. <b>prioritize</b><br/>calibrated state signatures"]
     LOAD --> ATLAS["<b>cells</b><br/>QC, embedding, cell types"]
-    RUN --> ANN["Annotate<br/>VDJdb / IEDB / CEDAR, publicness"]
+    RUN --> ANN["4. Annotate & Audit<br/>strict_ab DB, FOXP3, multimers"]
     PRI --> ANN
-    ANN --> OUT["Candidate tables<br/>+ full-length sequences"]
+    ANN --> OUT["5. Assemble<br/>candidate CSV + β-2A-α FASTA"]
 ```
 
-All three primary commands share loading and cell QC, then branch according to
-study design:
+All primary commands share loading, species harmonization (`human` HGNC/GRCh38/hg19 and `mouse` MGI), and cell QC, then branch according to study design:
 
-| Command | Question answered | Primary evidence | Guide |
-| --- | --- | --- | --- |
-| `tcrsift run` | Which clones expanded in an antigen-stimulated culture? | Clone cell count and frequency, CD4/CD8 match to the stimulus, optional overlap with matched TIL | [Culture pipeline](user-guide/pipeline.md), [Filtering](user-guide/filtering.md) |
-| `tcrsift prioritize` | Which clones in blood, TIL, pleural effusion, or marrow express an activation or tumor-reactivity program? | Per-clone gene-signature scores calibrated against random cell groups from the same sample | [Clone prioritization](user-guide/til-signatures.md) |
-| `tcrsift cells` | What cell types and states make up this sample? | Per-cell QC, Harmony/UMAP/Leiden embedding, cluster-level marker scoring | [Single-cell atlas](user-guide/atlas.md) |
+| Command | Question answered | Primary evidence | Outputs | Guide |
+| --- | --- | --- | --- | --- |
+| `tcrsift prioritize` | Which clones in fresh TIL, blood, pleural effusion, or marrow express an activation or tumor-reactivity program? | Per-clone gene-signature scores calibrated against size-matched random cell groups and hypergeometric high-cell tails within each sample | `candidate_clones.csv`, `all_scored_clones.csv`, and (with `--assemble`) `candidate_constructs.{csv,fasta}` | [Clone prioritization](user-guide/til-signatures.md) |
+| `tcrsift run` | Which clones expanded or transcriptionally responded in an antigen-stimulated culture? | Clone cell count/frequency (or paired control `ΔAIM` under `--method stimulation`), CD4/CD8 match to stimulus, optional TIL overlap | `data/clonotypes.csv`, `data/filtered_tier*.csv`, `data/full_sequences.{csv,fasta}`, PDF report | [Culture pipeline](user-guide/pipeline.md), [Filtering](user-guide/filtering.md) |
+| `tcrsift cells` | What cell types and states make up this sample? | Per-cell QC, Harmony/UMAP/Leiden embedding, cluster-level marker scoring | Annotated `.h5ad` + QC waterfall CSV | [Single-cell atlas](user-guide/atlas.md) |
 
 ## Evidence sources and their limits
 
@@ -118,8 +118,13 @@ each candidate. Full details, CLI flags, and statistical assumptions are in the
 ## Empirical validation
 
 Default cutoffs are fixed operating choices rather than parameters fitted to
-labeled training data. Five empirical evaluations are documented:
+labeled training data. Six empirical evaluations are documented:
 
+- **[Benchmark overview: 8 focal failure modes & head-to-head comparisons](benchmarks-overview.md)**:
+  unified scorecard across all 15 public human and murine cohorts plus direct
+  head-to-head comparisons against `Scanpy score_genes`, single-gene `CXCL13`,
+  `stitchr` (`thimble v1.3.1`), `OLGA v1.3.0`, and per-cell/CLR/GMM multimer
+  callers.
 - [Benchmark on public TIL data](benchmarks.md): evaluation of `tcrsift
   prioritize --context solid-tumor` across five public human CD8+ tumor cohorts
   (33 patients) with experimentally tested clones. TumorReactive separates

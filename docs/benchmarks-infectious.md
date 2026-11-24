@@ -1,5 +1,11 @@
 # Benchmark on infectious disease and blood
 
+!!! tip "See also: Benchmark Overview & Head-to-Head Comparisons"
+    For the unified **8-failure-mode scorecard** across all 15 cohorts and
+    direct comparisons against `stitchr` (`thimble v1.3.1`), `OLGA v1.3.0`, and
+    per-cell/CLR/GMM dextramer callers, see
+    **[Benchmark Overview & Failure Modes](benchmarks-overview.md)**.
+
 This page evaluates TCRsift outside solid tumors: peripheral-blood signature
 ranking and shortlisting (`tcrsift prioritize --context blood`), public TCR
 database matching (`tcrsift annotate`), pMHC multimer feature-barcode calling

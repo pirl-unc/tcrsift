@@ -77,6 +77,42 @@ from .version import __version__
 # Main Parser
 # =============================================================================
 
+_PRIMARY_WORKFLOW_COMMANDS = ("prioritize", "run", "assemble", "data")
+_EXPLORE_ANNOTATE_COMMANDS = ("cells", "annotate", "report")
+
+
+class _TieredHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Group top-level ``tcrsift --help`` subcommands by workflow role."""
+
+    def _format_action(self, action):
+        if not (isinstance(action, argparse._SubParsersAction) and action.dest == "command"):
+            return super()._format_action(action)
+
+        help_by_cmd = {
+            sub.dest.split(" (", 1)[0]: (sub.help or "")
+            for sub in action._get_subactions()
+        }
+        shown: set[str] = set()
+        sections = [
+            ("Primary workflows", [c for c in _PRIMARY_WORKFLOW_COMMANDS if c in help_by_cmd]),
+            ("Exploration & annotation", [c for c in _EXPLORE_ANNOTATE_COMMANDS if c in help_by_cmd]),
+        ]
+        shown.update(c for _, cmds in sections for c in cmds)
+        plumbing = [c for c in help_by_cmd if c not in shown]
+        if plumbing:
+            sections.append(("Modular pipeline steps & legacy commands", plumbing))
+
+        lines: list[str] = []
+        for idx, (heading, cmds) in enumerate(sections):
+            if idx > 0:
+                lines.append("")
+            lines.append(f"{heading}:")
+            for cmd in cmds:
+                desc = " ".join(help_by_cmd[cmd].split())
+                lines.append(f"  {cmd:<18} {desc}")
+        lines.append("")
+        return "\n".join(lines)
+
 
 def create_parser():
     """Create the argument parser."""
@@ -85,14 +121,23 @@ def create_parser():
 
     parser = argparse.ArgumentParser(
         prog="tcrsift",
+        formatter_class=_TieredHelpFormatter,
         description=(
-            "TCRsift: prioritize TCR clonotypes from antigen-enrichment "
-            "cultures and single-cell VDJ and gene-expression data"
+            "TCRsift: prioritize TCR clonotypes from fresh tissue/blood or "
+            "antigen-enrichment cultures and assemble synthesis-ready constructs."
+        ),
+        epilog=(
+            "Run 'tcrsift <command> --help' for command-specific flags.\n"
+            "Quick start:\n"
+            "  Ex vivo TIL / blood:  tcrsift prioritize samples.yaml -o out/ --context solid-tumor --assemble\n"
+            "  Peptide / culture:    tcrsift run --sample-sheet samples.yaml -o out/\n"
+            "  Reference cache:      tcrsift data download --db vdjdb --group germline"
         ),
     )
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
+    parser._positionals.title = None
 
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    subparsers = parser.add_subparsers(dest="command", metavar="<command>")
 
     # -------------------------------------------------------------------------
     # Load command
@@ -972,14 +1017,20 @@ TIL DATA SOURCE (provide ONE of the following):
     # Sample-sheet clone prioritization commands share one implementation.
     # -------------------------------------------------------------------------
     for command, context in (("prioritize", "generic"), ("til-prioritize", "solid-tumor")):
+        cmd_help = (
+            "Prioritize ex vivo tissue or blood clonotypes across expression signatures"
+            if command == "prioritize"
+            else "Alias for 'prioritize --context solid-tumor'"
+        )
         p_prioritize = subparsers.add_parser(
             command,
-            help=f"Select clones across expression signatures (default context: {context})",
+            help=cmd_help,
             description=(
                 "Prioritize paired CellRanger VDJ + GEX clones. Score within sample and "
                 "CD4/CD8 lineage, then select round-robin from each signature/sample list "
                 "with one total clone budget and per-list score cutoffs. Writes candidate_clones.csv, "
-                "all_scored_clones.csv, clone_sample_scores.csv, and prioritization.json."
+                "all_scored_clones.csv, clone_sample_scores.csv, prioritization.json, and "
+                "(with --assemble) candidate_constructs.csv + candidate_constructs.fasta."
             ),
         )
         add_til_prioritize_args(p_prioritize, context=context)

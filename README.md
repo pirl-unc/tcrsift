@@ -1,7 +1,7 @@
 # TCRsift
 
 [![Tests](https://github.com/pirl-unc/tcrsift/actions/workflows/tests.yml/badge.svg)](https://github.com/pirl-unc/tcrsift/actions/workflows/tests.yml)
-[![Documentation](https://github.com/pirl-unc/tcrsift/actions/workflows/docs.yml/badge.svg)](https://pirl-unc.github.io/tcrsift/)
+[![Documentation](https://github.com/pirl-unc/tcrsift/actions/workflows/docs.yml/badge.svg)](https://pirl.unc.edu/tcrsift/)
 [![Coverage Status](https://coveralls.io/repos/github/pirl-unc/tcrsift/badge.svg)](https://coveralls.io/github/pirl-unc/tcrsift)
 [![PyPI version](https://badge.fury.io/py/tcrsift.svg)](https://pypi.org/project/tcrsift/)
 
@@ -19,12 +19,13 @@ auditable shortlists and synthesis-ready full-length constructs. None of these
 signals predicts epitope specificity on its own; functional testing is still
 required.
 
-- **Documentation:** [pirl-unc.github.io/tcrsift](https://pirl-unc.github.io/tcrsift/)
-- **Method overview:** [How TCRsift works](https://pirl-unc.github.io/tcrsift/how-it-works/)
-- **Empirical evaluation (solid-tumor CD8 TIL, 5 cohorts / 33 patients):** [Benchmark on public TIL data](https://pirl-unc.github.io/tcrsift/benchmarks/)
-- **Empirical evaluation (infectious disease & blood, 3 cohorts):** [Benchmark on infectious disease and blood](https://pirl-unc.github.io/tcrsift/benchmarks-infectious/)
-- **Empirical evaluation (paired blood-tumor, post-ACT & CD4+ TIL, 4 cohorts):** [Benchmark on paired blood-tumor, post-ACT, and CD4+ TILs](https://pirl-unc.github.io/tcrsift/benchmarks-blood-cd4/)
-- **Empirical evaluation (murine `--species mouse`, 3 cohorts / 19 libraries):** [Benchmark on murine models](https://pirl-unc.github.io/tcrsift/benchmarks-mouse/)
+- **Documentation:** [pirl.unc.edu/tcrsift](https://pirl.unc.edu/tcrsift/)
+- **Method overview:** [How TCRsift works](https://pirl.unc.edu/tcrsift/how-it-works/)
+- **Benchmark overview (8 focal failure modes & head-to-head vs Scanpy, Stitchr, OLGA, CLR/GMM):** [Benchmarks Overview & Failure Modes](https://pirl.unc.edu/tcrsift/benchmarks-overview/)
+- **Empirical evaluation (solid-tumor CD8 TIL, 5 cohorts / 33 patients):** [Benchmark on public TIL data](https://pirl.unc.edu/tcrsift/benchmarks/)
+- **Empirical evaluation (infectious disease & blood, 3 cohorts):** [Benchmark on infectious disease and blood](https://pirl.unc.edu/tcrsift/benchmarks-infectious/)
+- **Empirical evaluation (paired blood-tumor, post-ACT & CD4+ TIL, 4 cohorts):** [Benchmark on paired blood-tumor, post-ACT, and CD4+ TILs](https://pirl.unc.edu/tcrsift/benchmarks-blood-cd4/)
+- **Empirical evaluation (murine `--species mouse`, 3 cohorts / 19 libraries):** [Benchmark on murine models](https://pirl.unc.edu/tcrsift/benchmarks-mouse/)
 
 ## Quick example
 
@@ -48,14 +49,15 @@ tcrsift run --sample-sheet samples.yaml --output-dir results/
 ```
 
 Or rank clones by expression state in fresh TIL, blood, pleural effusion, or
-marrow:
+marrow — and optionally assemble synthesis-ready `β-T2A-α` constructs in the
+same pass:
 
 ```bash
-tcrsift prioritize til_samples.yaml -o candidates/ --context solid-tumor
+tcrsift prioritize til_samples.yaml -o candidates/ --context solid-tumor --assemble
 ```
 
 See [Cell Ranger Requirements](#cell-ranger-requirements) for expected input
-files and the [Clone Prioritization guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/)
+files and the [Clone Prioritization guide](https://pirl.unc.edu/tcrsift/user-guide/til-signatures/)
 for context presets and cutoff rules.
 
 ## Contents
@@ -74,23 +76,42 @@ for context presets and cutoff rules.
 
 ## Choose a Workflow
 
-| Study design | Command |
-| --- | --- |
-| Antigen-stimulated culture, optionally with matched TIL | `tcrsift run` |
-| Fresh TIL, blood, MPE, or hematologic samples (paired VDJ + GEX) | `tcrsift prioritize --context ...` ([guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/)) |
-| Longitudinal TIL samples in the legacy v2 per-timepoint layout | `tcrsift til-select` |
-| Single-cell GEX QC, Harmony/UMAP/Leiden embedding, and cell typing | `tcrsift cells` ([guide](https://pirl-unc.github.io/tcrsift/user-guide/atlas/)) |
+Every TCRsift workflow executes the same **five-stage architecture** (`Load & QC → Phenotype & Clonotype → Score Evidence → Auditable Selection → Construct Assembly`); only the **evidence source** in Stage 3 changes with your experimental design:
+
+| Study design | Command | Key options |
+| --- | --- | --- |
+| Fresh TIL, blood, MPE, or marrow (paired VDJ + GEX, human or mouse) | `tcrsift prioritize samples.yaml -o out/` | `--context {solid-tumor,blood-tumor,blood,mpe,heme}` `--tcell-type {cd8,cd4,both}` `--exclude-treg` `--call-multimers` `--assemble` ([guide](https://pirl.unc.edu/tcrsift/user-guide/til-signatures/)) |
+| Antigen-stimulated culture or 16 h peptide restimulation (with optional matched TIL) | `tcrsift run -s samples.yaml -o out/` | `--method {threshold,logistic,stimulation}` `--call-multimers` `--germline-vdj-fallback` ([guide](https://pirl.unc.edu/tcrsift/user-guide/pipeline/)) |
+| Standalone full-length TCR construct assembly from a clone CSV | `tcrsift assemble -i clones.csv -o seqs.csv` | `--contigs-dir ...` `--germline-vdj-fallback` `--linker T2A` `--fasta seqs.fasta` |
+| Single-cell GEX QC, Harmony/UMAP/Leiden embedding, and cell typing | `tcrsift cells {qc,embed,annotate}` | `--solid-tumor` `--batch-key sample` ([guide](https://pirl.unc.edu/tcrsift/user-guide/atlas/)) |
+| Reference database & IMGT germline cache management | `tcrsift data {list,download,clear}` | `--group {germline,germline_mouse}` `--db {vdjdb,iedb,cedar}` |
 
 ## Architecture
 
 ```
-Cell Ranger VDJ + GEX  -->  tcrsift run  -->  clonotypes.csv + full_sequences.csv
-                                 |
-          load -> phenotype -> clonotype -> filter -> annotate -> assemble
-
-Additional workflows: prioritize / til-prioritize, cells, data, pgen,
-                      load-sct, annotate-gex, match-til, til-clonotype, til-select, unify
+Cell Ranger VDJ + GEX
+  │
+  ▼
+1. Load & QC           (tcrsift load)       Paired α/β productive chains + GEX mito/UMI/CD3 QC
+  │
+  ▼
+2. Phenotype & Clone   (phenotype/clonotype) CD4/CD8 lineage (FACS pre_sorted aware) + k-mer Pgen/Ppost
+  │
+  ├──► Ex vivo tissue/blood (`tcrsift prioritize`):
+  │      3. Per-stratum signature scoring + size-matched random-group & hypergeometric calibration
+  │      4. Priority-tiered round-robin shortlist + strict_ab DB / FOXP3 Treg / multimer audit
+  │
+  └──► Stimulated culture (`tcrsift run`):
+         3. Expansion tiers (`threshold`/`logistic`) or paired control ΔAIM (`stimulation`) + TIL match
+         4. Per-donor / per-method shortlist + VDJdb/IEDB/CEDAR specificity annotation
+  │
+  ▼
+5. Construct Assembly  (`--assemble` / `tcrsift assemble`)
+                       Donor-contig V(D)J + native leaders + canonical human/mouse TRAC/TRBC1/2
+                       (with optional `--germline-vdj-fallback` + J->C parity correction)
 ```
+
+`tcrsift --help` organizes all 25 CLI commands into **Primary workflows** (`prioritize`, `run`, `assemble`, `data`), **Exploration & annotation** (`cells`, `annotate`, `report`), and **Modular pipeline steps & legacy commands**.
 
 ### Key Data Structures
 
@@ -415,7 +436,7 @@ cache (`--auto-download` fetches missing tables automatically).
 Writes `candidate_clones.csv`, `all_scored_clones.csv`,
 `clone_sample_scores.csv`, `signature_background.csv`, and
 `prioritization.json`. See the
-[Clone Prioritization guide](https://pirl-unc.github.io/tcrsift/user-guide/til-signatures/).
+[Clone Prioritization guide](https://pirl.unc.edu/tcrsift/user-guide/til-signatures/).
 
 ### Single-Cell Atlas Commands (`cells`)
 
@@ -425,7 +446,7 @@ tcrsift cells embed    -i qc.h5ad    -o embed.h5ad --batch-key sample --resoluti
 tcrsift cells annotate -i embed.h5ad -o atlas.h5ad --solid-tumor
 ```
 
-See the [Single-Cell Atlas guide](https://pirl-unc.github.io/tcrsift/user-guide/atlas/).
+See the [Single-Cell Atlas guide](https://pirl.unc.edu/tcrsift/user-guide/atlas/).
 
 ### Automatic and Cross-Run TIL Matching
 
