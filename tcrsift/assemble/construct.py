@@ -20,7 +20,6 @@ from pathlib import Path
 import pandas as pd
 from tqdm.auto import tqdm
 
-from ..leaders import normalize_vgene
 from ..validation import (
     TCRsiftValidationError,
     validate_clonotype_df,
@@ -59,6 +58,7 @@ from .leader_policy import (
     _extract_leader_from_contigs_single,
     apply_leader_policy,
 )
+from .leaders import normalize_vgene
 from .qc import _unverified_chains, add_synthesis_qc
 
 logger = logging.getLogger(__name__)
@@ -591,7 +591,7 @@ def annotate_vregion_divergence(
 ) -> pd.DataFrame:
     """Add ``{chain}_vregion_*`` framework-divergence columns (#286 follow-up)."""
     from ..species import resolve_species
-    from ..vregion import germline_compare_vregion, reference_is_available
+    from .vregion import germline_compare_vregion, reference_is_available
 
     sp = resolve_species(species, df=df, warn_mismatch=False)
     if not len(df) or not reference_is_available(data_dir, species=sp):

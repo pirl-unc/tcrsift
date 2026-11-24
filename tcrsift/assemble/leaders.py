@@ -110,7 +110,7 @@ def _parse_imgt_leader_html(
     text: str,
 ) -> tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]]:
     """Parse an IMGT GENElect ``L-PART1+L-PART2`` HTML/FASTA dump."""
-    from .assemble import translate_dna
+    from .codons import translate_dna
 
     pres = re.findall(r"<pre>(.*?)</pre>", text, re.DOTALL | re.IGNORECASE)
     fasta = (
@@ -167,7 +167,7 @@ def _load_mouse_leaders(
     except (FileNotFoundError, ModuleNotFoundError, OSError):
         pass
 
-    from .datacache import cached_path
+    from ..datacache import cached_path
 
     by_gene: dict[str, list[tuple[str, str, str]]] = {}
     nt_index: dict[tuple[str, str], str] = {}
@@ -220,7 +220,7 @@ def _load_reference(species: str = "human") -> dict[str, list[tuple[str, str, st
     ``species`` so mouse TCRs never cross-anchor against human leaders.
     """
     global _MOUSE_LEADER_CACHE
-    from .species import normalize_species
+    from ..species import normalize_species
 
     sp = normalize_species(species)
     if sp == "mouse":
@@ -237,7 +237,7 @@ def _load_reference(species: str = "human") -> dict[str, list[tuple[str, str, st
 def _leader_nt_index(species: str = "human") -> dict[tuple[str, str], str]:
     """``{(gene, allele): leader_nt}`` from the reference for ``species``."""
     global _MOUSE_LEADER_CACHE
-    from .species import normalize_species
+    from ..species import normalize_species
 
     sp = normalize_species(species)
     if sp == "mouse":
@@ -263,7 +263,7 @@ def germline_leader_nt(
     data_dir=None,
 ) -> str | None:
     """Germline leader nucleotides for a (gene, allele), or None if absent."""
-    from .species import normalize_species
+    from ..species import normalize_species
 
     gene = normalize_vgene(v_gene)
     if gene is None:
@@ -302,7 +302,7 @@ def germline_vgene_leaders(
     (``TRAV14``). Empty when the gene isn't in the species reference (caller
     falls back to the heuristic).
     """
-    from .species import normalize_species
+    from ..species import normalize_species
 
     gene = normalize_vgene(v_gene)
     if gene is None:

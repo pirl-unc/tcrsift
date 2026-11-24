@@ -45,14 +45,14 @@ import re
 
 import pandas as pd
 
-from ..leaders import GERMLINE_MIN_IDENTITY, normalize_vgene
 from ..species import normalize_species
-from ..vregion import (
+from .codons import back_translate, translate_dna
+from .leaders import GERMLINE_MIN_IDENTITY, normalize_vgene
+from .vregion import (
     germline_jregion_sequences,
     germline_vregion_sequences,
     normalize_jgene,
 )
-from .codons import back_translate, translate_dna
 
 logger = logging.getLogger(__name__)
 

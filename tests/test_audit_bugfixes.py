@@ -908,6 +908,7 @@ class TestAnnotateTilSelectAtlasAndPlots:
         assert (tmp_path / "phenotype_composition.png").exists()
         assert plot_funnel_variants({}, tmp_path) == []
 
-        # `tcrsift report` with no subcommand prints help cleanly instead of crashing
-        rc = main(["report"])
-        assert rc is None or rc == 0
+        # `tcrsift report` with no subcommand prints help and exits non-zero (1)
+        with pytest.raises(SystemExit) as exc_info:
+            main(["report"])
+        assert exc_info.value.code == 1

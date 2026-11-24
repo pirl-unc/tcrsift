@@ -31,8 +31,9 @@ import pandas as pd
 import pytest
 import scipy.sparse as sp
 
-from tcrsift import datacache, vregion
+from tcrsift import datacache
 from tcrsift.annotate import match_clonotypes
+from tcrsift.assemble import vregion
 from tcrsift.cli import main as cli_main
 from tcrsift.genes import GENE_SYNONYMS, harmonize_gene_symbols
 from tcrsift.phenotype import phenotype_cells
@@ -109,8 +110,8 @@ class TestDatacacheIpv4FallbackAndGappedFasta:
         vregion.clear_reference_cache()
 
     def test_cellranger_mouse_hyphen_dv_genes_normalize_to_imgt_slash(self):
+        from tcrsift.assemble.leaders import normalize_vgene
         from tcrsift.genes import canonicalize_gene
-        from tcrsift.leaders import normalize_vgene
 
         assert normalize_vgene("TRAV13-4-dv7") == "TRAV13-4/DV7"
         assert normalize_vgene("TRAV6-7-dv9") == "TRAV6-7/DV9"

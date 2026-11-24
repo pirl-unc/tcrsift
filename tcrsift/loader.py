@@ -166,7 +166,7 @@ def _enrich_vdj_from_json(
     import json
 
     from .assemble import translate_dna
-    from .leaders import GERMLINE_MIN_IDENTITY, germline_vgene_leaders
+    from .assemble.leaders import GERMLINE_MIN_IDENTITY, germline_vgene_leaders
     from .species import detect_vdj_species
 
     json_path = json_candidates[0]

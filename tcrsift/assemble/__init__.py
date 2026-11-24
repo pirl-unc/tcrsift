@@ -18,15 +18,6 @@ faithful or germline-rescued V(D)J regions, constant regions, self-cleaving
 
 from __future__ import annotations
 
-from ..leaders import (  # noqa: F401
-    characterize_divergence,
-    germline_anchor_leader,
-    germline_compare_leader,
-    germline_leader_nt,
-    germline_vgene_leaders,
-    normalize_vgene,
-)
-from ..sigpep import signal_peptide_features, sp_features_summary  # noqa: F401
 from .alleles import (  # noqa: F401
     _NOVEL_ALLELE_EMPTY_COLUMNS,
     _candidate_allele_label,
@@ -184,6 +175,14 @@ from .leader_policy import (  # noqa: F401
     _validate_leader_directive,
     apply_leader_policy,
 )
+from .leaders import (  # noqa: F401
+    characterize_divergence,
+    germline_anchor_leader,
+    germline_compare_leader,
+    germline_leader_nt,
+    germline_vgene_leaders,
+    normalize_vgene,
+)
 from .qc import (  # noqa: F401
     AssemblyQCCheck,
     AssemblyQCReport,
@@ -209,6 +208,7 @@ from .qc import (  # noqa: F401
     synthesis_qc_report,
     validate_sequences,
 )
+from .sigpep import signal_peptide_features, sp_features_summary  # noqa: F401
 
 __all__ = [
     "ALLELE_REASON_AUTO_DETECTED",

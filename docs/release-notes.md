@@ -8,6 +8,41 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.37.0
+
+Dead-code removal, assembly subpackage consolidation, and CLI/config/CI cleanup:
+
+- **Dead & duplicated code removed:**
+  - Removed extinct pre-v1 `tcrsift/data.py` (`annotate_combined_df`) and unused
+    legacy plotting/threshold helpers (and eager `matplotlib` import) from
+    `tcrsift/model.py`, retaining `LogisticFrequencyModel`,
+    `fit_frequency_logistic_model`, and `analytical_logistic_threshold`.
+  - Deduplicated `tcrsift/til_select.py` IEDB/CEDAR loaders by delegating
+    directly to `tcrsift.annotate.load_iedb` and `tcrsift.annotate.load_cedar`.
+  - Renamed `tcrsift.qc_battery.QCResult` to `BatteryCheckResult` to eliminate
+    the class-name collision with `tcrsift.qc.QCResult`.
+- **Assembly subpackage consolidation:**
+  - Moved `leaders.py`, `sigpep.py`, and `vregion.py` into `tcrsift/assemble/`
+    (preserving all public re-exports on `tcrsift.assemble` and maintaining a
+    strict acyclic import DAG).
+  - Moved offline reference-regeneration helper `_regen_canonical_constants.py`
+    out of the installed wheel into `scripts/regen_canonical_constants.py`.
+- **CLI, config & CI polish:**
+  - `tcrsift report` and `tcrsift pgen` without a subcommand now exit non-zero
+    (`1`) instead of silently succeeding with `0`.
+  - `TCRsiftConfig._from_dict` treats empty YAML sections (`load:`) as defaults
+    and raises `TCRsiftValidationError` (instead of raw `TypeError`) for unknown
+    nested keys; `cmd_generate_config` streams YAML directly to stdout without a
+    temp file; `tcrsift prioritize --assemble` now exposes
+    `--allow-canonical-fallback` / `--no-allow-canonical-fallback`; `cells qc`
+    displays actual default thresholds in `--help`; `data download` respects
+    `--verbose` instead of forcing debug logging.
+  - Added a `build` (`python -m build` + `twine check`) CI job to
+    `.github/workflows/tests.yml`, removed redundant `ruff` runs across test
+    matrix legs, and dropped `torch`/`tcrpeg` from the `lint` job; removed
+    obsolete `pylintrc` and `requirements-dev.txt` and aligned `CONTRIBUTING.md`
+    and `RELEASING.md`.
+
 ## 3.36.1
 
 Targeted bug fixes, documentation rendering fixes, and benchmark figure polish

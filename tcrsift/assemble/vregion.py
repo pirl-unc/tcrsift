@@ -154,7 +154,7 @@ def _parse_vregion_fasta_with_nt(
     text: str,
 ) -> tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]]:
     """Parse an IMGT GENElect V-REGION HTML/FASTA dump into AA 3-tuples + NT map."""
-    from .assemble import translate_dna
+    from .codons import translate_dna
 
     fasta = _extract_imgt_fasta(text)
     ref: dict[str, list[tuple[str, str, str]]] = {}
@@ -215,7 +215,7 @@ def _parse_jregion_fasta_with_nt(
     ``[FW]GXG`` C-terminal FR4 anchor selects the exact in-frame codons up to the
     end of FR4 (excluding the 1-nt J→C splice overhang).
     """
-    from .assemble import translate_dna
+    from .codons import translate_dna
 
     fasta = _extract_imgt_fasta(text)
     ref: dict[str, list[tuple[str, str, str, str]]] = {}
@@ -285,8 +285,8 @@ def _load_vregion_bundle(
     data_dir=None, *, force: bool = False, species: str = "human"
 ) -> tuple[dict[str, list[tuple[str, str, str]]], dict[tuple[str, str], str]]:
     global _REFERENCE, _MOUSE_REFERENCE, _VREGION_NT, _MOUSE_VREGION_NT
-    from .datacache import cached_path
-    from .species import normalize_species
+    from ..datacache import cached_path
+    from ..species import normalize_species
 
     sp = normalize_species(species)
     cached_ref = _MOUSE_REFERENCE if sp == "mouse" else _REFERENCE
@@ -329,8 +329,8 @@ def _load_jregion_reference(
 ) -> dict[str, list[tuple[str, str, str, str]]]:
     """Load + memoize the J-REGION reference from the data cache."""
     global _JREGION_REFERENCE, _MOUSE_JREGION_REFERENCE
-    from .datacache import cached_path
-    from .species import normalize_species
+    from ..datacache import cached_path
+    from ..species import normalize_species
 
     sp = normalize_species(species)
     cached_memo = _MOUSE_JREGION_REFERENCE if sp == "mouse" else _JREGION_REFERENCE

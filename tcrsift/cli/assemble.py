@@ -435,14 +435,13 @@ CONDITIONALLY REQUIRED:
     asm_out.add_argument(
         "--output-dir", metavar="DIR", help="Output directory for plots (default: next to output)"
     )
-    asm_out.add_argument("--verbose", action="store_true", help="Verbose output")
-    p_asm.add_argument(
+    asm_out.add_argument(
         "--allow-canonical-fallback",
         action="store_true",
         help="Permit constructs assembled from canonical/reference constants when "
-        "no contig verifies the donor's junction/allele (fail-closed otherwise) "
-        "(#243).",
+        "no contig verifies the donor's junction/allele (fail-closed otherwise).",
     )
+    asm_out.add_argument("--verbose", action="store_true", help="Verbose output")
     p_asm.set_defaults(func=cmd_assemble)
 
 

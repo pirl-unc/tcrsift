@@ -36,8 +36,9 @@
 #     in public databases without IMGT access. Users carrying *05
 #     donors should add the entry manually.
 #
-# To regenerate this file:
-#   python -m tcrsift._regen_canonical_constants --alleles
+# To regenerate canonical constant sequences (TRAC/TRBC1/TRBC2):
+#   python scripts/regen_canonical_constants.py --species human
+# (Multi-allele entries below are curated from Ensembl/UniProt/NCBI.)
 #
 # To extend with additional alleles (e.g. TRBC2*02 / *04 / *05, or
 # TRBC1*02), append a new FASTA entry with the convention

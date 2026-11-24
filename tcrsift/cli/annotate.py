@@ -660,4 +660,4 @@ def register_pgen(subparsers) -> None:
     )
     ps.set_defaults(func=cmd_pgen_status)
 
-    p_pgen.set_defaults(func=lambda _a: p_pgen.print_help())
+    p_pgen.set_defaults(func=lambda _a: (p_pgen.print_help(), 1)[1])

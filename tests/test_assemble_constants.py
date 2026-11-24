@@ -500,7 +500,7 @@ class TestCanonicalMatchesPyensembl:
             prot = prot[1:]
         assert prot == expected_aa, (
             f"{gene}: packaged FASTA differs from pyensembl ENST {tx_id}. "
-            f"Regenerate with `python -m tcrsift._regen_canonical_constants` "
+            f"Regenerate with `python scripts/regen_canonical_constants.py` "
             f"and verify against UniProt before committing."
         )
 

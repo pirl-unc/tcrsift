@@ -24,7 +24,7 @@ import pandas as pd
 import pytest
 
 import tcrsift
-import tcrsift.vregion as vr
+import tcrsift.assemble.vregion as vr
 from tcrsift.assemble import (
     HUMAN_CONSTANT_REGIONS_AA,
     VDJ_SOURCE_5PRIME_RESCUED,
@@ -36,10 +36,10 @@ from tcrsift.assemble import (
     reconstruct_germline_vdj,
     translate_dna,
 )
+from tcrsift.assemble.leaders import germline_vgene_leaders
 from tcrsift.cli import create_parser, main
 from tcrsift.clonotype import aggregate_clonotypes
 from tcrsift.filter import filter_clonotypes, filter_clonotypes_stimulation
-from tcrsift.leaders import germline_vgene_leaders
 from tcrsift.loader import load_cellranger_vdj, load_sample
 from tcrsift.multimer import call_multimers_for_adata
 from tcrsift.prioritize import (

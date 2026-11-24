@@ -2,7 +2,7 @@
 
 Run as::
 
-    python -m tcrsift._regen_canonical_constants [--species human|mouse] [--release 112] [--out PATH]
+    python scripts/regen_canonical_constants.py [--species human|mouse] [--release 112] [--out PATH]
 
 Fetches each canonical TCR-constant transcript's ``protein_sequence`` from
 pyensembl, strips the leading ``X`` splice-boundary placeholder, and writes a
@@ -16,7 +16,7 @@ import logging
 import sys
 from pathlib import Path
 
-from .species import normalize_species, species_to_pyensembl
+from tcrsift.species import normalize_species, species_to_pyensembl
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ def write_fasta(
         "# All sequences are BARE MATURE protein (leading splice-boundary 'X' stripped).",
         "#",
         "# To regenerate this file:",
-        f"#   python -m tcrsift._regen_canonical_constants --species {sp} --release {release}",
+        f"#   python scripts/regen_canonical_constants.py --species {sp} --release {release}",
     ]
     for gene, seq in constants.items():
         ids = transcripts[gene]
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         if sp == "human"
         else "canonical_constants_mouse.fasta"
     )
-    out_path = args.out or (Path(__file__).parent / "refseqs" / default_name)
+    out_path = args.out or (Path(__file__).resolve().parents[1] / "tcrsift" / "refseqs" / default_name)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     constants = fetch_canonical_constants(release=release, species=sp)

@@ -148,8 +148,8 @@ DATABASES: dict[str, DatabaseSpec] = {
     ),
     # IMGT V-QUEST reference directory FASTAs (one per locus and species). Backs
     # framework (FR1–FR3) and J-region (FR4) germline comparison and 5'-partial
-    # contig rescue in tcrsift.vregion and tcrsift.assemble.germline. Cached
-    # rather than vendored; tcrsift.vregion parses both raw gapped FASTA and
+    # contig rescue in tcrsift.assemble.vregion and tcrsift.assemble.germline. Cached
+    # rather than vendored; tcrsift.assemble.vregion parses both raw gapped FASTA and
     # legacy GENElect <pre> HTML.
     "imgt_trav_vregion": DatabaseSpec(
         name="imgt_trav_vregion",
@@ -467,7 +467,7 @@ def _path_size(path: Path) -> int:
 def _invalidate_germline_memo_caches() -> None:
     """Reset in-memory leader/V-REGION caches after germline cache updates."""
     try:
-        from . import leaders, vregion
+        from .assemble import leaders, vregion
 
         leaders.clear_reference_cache()
         vregion.clear_reference_cache()

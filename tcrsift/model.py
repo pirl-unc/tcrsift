@@ -10,30 +10,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""One-parameter ridge-regularized logistic frequency model for FDR tiers."""
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_FDRS = (0.15, 0.1, 0.01, 0.001, 0.0001)
-DEFAULT_THRESHOLD_COLORS = (
-    "grey",
-    "pink",
-    "orange",
-    "red",
-    "purple",
-    "blue",
-    "green",
-    "brown",
-    "cyan",
-    "magenta",
-)
 
 
 @dataclass(frozen=True)
@@ -64,7 +51,6 @@ def fit_frequency_logistic_model(
     intercept. This local implementation matches that functional form without
     requiring an additional dependency stack.
     """
-
     x_values = np.asarray(x, dtype=float).reshape(-1)
     y_values = np.asarray(y, dtype=float).reshape(-1)
 
@@ -116,31 +102,6 @@ def fit_frequency_logistic_model(
     )
 
 
-def count_at_threshold(df: pd.DataFrame, freq_threshold: float) -> int:
-    return int(
-        (
-            (df["specificity_description"] == "Single-culture")
-            & (df["max_freq"] >= freq_threshold)
-        ).sum()
-    )
-
-
-def calc_threshold(
-    df: pd.DataFrame,
-    x_plot: np.ndarray,
-    y_plot: np.ndarray,
-    fdr: float = 0.1,
-    min_value: float = 0.0,
-) -> tuple[float, int]:
-    y_target = 1.0 - fdr
-    if len(y_plot) == 0 or float(np.nanmax(y_plot)) < y_target:
-        return float("inf"), 0
-    threshold_idx = int(np.argmin(np.abs(y_plot - y_target)))
-    freq_threshold = max(float(min_value), float(x_plot[threshold_idx]))
-    n = count_at_threshold(df, freq_threshold)
-    return freq_threshold, n
-
-
 def analytical_logistic_threshold(
     weight: float,
     fdr: float,
@@ -161,86 +122,3 @@ def analytical_logistic_threshold(
     if x_star > max_frequency:
         return float("inf")
     return max(float(min_value), x_star)
-
-
-def calc_thresholds_and_counts(
-    df: pd.DataFrame,
-    fdrs: tuple[float, ...] | list[float] = DEFAULT_FDRS,
-    min_freq_threshold: float = 0.09,
-    default_freq_threshold: float = 0.5,
-    only_avoid_viral: bool = True,
-) -> tuple[dict[float, float], dict[float, int], LogisticFrequencyModel]:
-    fdr_values = tuple(fdrs)
-    fdr_to_threshold: dict[float, float] = {}
-    threshold_to_count: dict[float, int] = {}
-
-    target_above_min_freq = (df["max_freq"] > min_freq_threshold).values
-
-    if only_avoid_viral:
-        target = target_above_min_freq & (df["specificity_description"] != "Viral").values
-    else:
-        target = target_above_min_freq & (df["specificity_description"] == "Single-culture").values
-
-    try:
-        model = fit_frequency_logistic_model(df["max_freq"].values, target.astype(float))
-    except ValueError:
-        model = LogisticFrequencyModel(
-            params=np.asarray([0.0], dtype=float),
-            converged=False,
-            n_iter=0,
-        )
-        weight = float(model.params[0])
-    else:
-        weight = float(model.params[0])
-
-    if weight <= 0:
-        for fdr in fdr_values:
-            fdr_to_threshold[fdr] = float(default_freq_threshold)
-        threshold_to_count[float(default_freq_threshold)] = count_at_threshold(
-            df, float(default_freq_threshold)
-        )
-        return fdr_to_threshold, threshold_to_count, model
-
-    for fdr in fdr_values:
-        threshold = analytical_logistic_threshold(
-            weight, float(fdr), min_value=min_freq_threshold
-        )
-        n = count_at_threshold(df, threshold) if np.isfinite(threshold) else 0
-        fdr_to_threshold[fdr] = threshold
-        threshold_to_count[threshold] = n
-
-    return fdr_to_threshold, threshold_to_count, model
-
-
-def annotate_plot_with_thresholds_and_counts(
-    df: pd.DataFrame,
-    ax: plt.Axes,
-    model: LogisticFrequencyModel,
-    fdr_to_threshold: dict[float, float],
-    threshold_to_count: dict[float, int],
-    preferred_fdr: float = 0.15,
-    colors: tuple[str, ...] | list[str] = DEFAULT_THRESHOLD_COLORS,
-) -> None:
-    x_plot = np.linspace(df["max_freq"].min(), df["max_freq"].max(), 10000)
-    y_plot = model.predict(x_plot)
-    ax.plot(x_plot, y_plot, color="green", linewidth=1, linestyle=":")
-
-    fdrs = reversed(sorted(fdr_to_threshold))
-    for i, (fdr, color) in enumerate(zip(fdrs, colors)):
-        threshold = fdr_to_threshold[fdr]
-        if not np.isfinite(threshold):
-            continue
-        n = threshold_to_count[threshold]
-        ax.axvline(
-            threshold,
-            color=color,
-            linestyle="--",
-            alpha=0.6 if fdr == preferred_fdr else 0.4,
-        )
-        ax.text(
-            x=threshold + 0.03,
-            y=0.3 + i * 0.12,
-            s=f"{100 * fdr:g}% FDR\nthreshold\n= {100 * threshold:0.2f}%\n(n={n})",
-            fontweight="bold" if fdr == preferred_fdr else "medium",
-            alpha=0.9 if fdr == preferred_fdr else 0.8,
-        )

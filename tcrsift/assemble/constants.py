@@ -20,17 +20,17 @@ from importlib.resources import files as _pkg_files
 
 import pandas as pd
 
-from ..leaders import (
-    germline_compare_leader,
-    normalize_vgene,
-)
-from ..sigpep import signal_peptide_features, sp_features_summary
 from .codons import (
     CODON_TABLE,
     back_translate,
     optimize_codons,
     stop_codons_nt,
 )
+from .leaders import (
+    germline_compare_leader,
+    normalize_vgene,
+)
+from .sigpep import signal_peptide_features, sp_features_summary
 
 logger = logging.getLogger(__name__)
 
