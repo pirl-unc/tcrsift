@@ -1,7 +1,7 @@
 {
-  "tcrsift_version": "3.33.0",
+  "tcrsift_version": "3.37.1",
   "vdjdb_release": "vdjdb-2026-11-06",
-  "elapsed_seconds": 28.7,
+  "elapsed_seconds": 752.2,
   "ground_truth_provenance": {
     "pulliam_blood": {
       "study": "Pulliam et al., Cell Reports Medicine 2024 (PMID:38340723)",

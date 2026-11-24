@@ -1,5 +1,5 @@
 {
-  "tcrsift_version": "3.32.0",
+  "tcrsift_version": "3.37.1",
   "vdjdb_release": "vdjdb-2026-11-06",
   "vdjdb_entries": 280894,
   "vdjdb_paired_ab_entries": 200180,
@@ -76,7 +76,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 186,
+        "seconds": 332,
         "cells_after_gex_qc": 248332,
         "cells_retained": 46625,
         "cell_filters": [
@@ -145,7 +145,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 158,
+        "seconds": 286,
         "cells_after_gex_qc": 248332,
         "cells_retained": 19739,
         "cell_filters": [
@@ -215,7 +215,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 176,
+        "seconds": 260,
         "cells_after_gex_qc": 248332,
         "cells_retained": 49619,
         "cell_filters": [
@@ -281,7 +281,7 @@
           "tumor",
           "mettumor"
         ],
-        "seconds": 137,
+        "seconds": 165,
         "cells_after_gex_qc": 69487,
         "cells_retained": 17934,
         "cell_filters": [
@@ -343,7 +343,7 @@
           "LN",
           "normal"
         ],
-        "seconds": 114,
+        "seconds": 151,
         "cells_after_gex_qc": 144214,
         "cells_retained": 25714,
         "cell_filters": [
@@ -413,7 +413,7 @@
           "LN",
           "normal"
         ],
-        "seconds": 103,
+        "seconds": 102,
         "cells_after_gex_qc": 144214,
         "cells_retained": 8087,
         "cell_filters": [

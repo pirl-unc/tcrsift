@@ -56,7 +56,7 @@ it fails (for cross-cohort and external-tool comparisons, see the
     marked **circular** and should be ignored when judging performance. No
     other signature was derived from any dataset on this page.
 
-All results are from TCRsift 3.32.0 and VDJdb `2026-11-06` (used for default
+All results are from TCRsift 3.37.1 and VDJdb `2026-11-06` (used for default
 `--exclude-known-mart1` filtering under `--database-match strict_ab`), generated
 by `benchmarks/public_til/`
 ([how to reproduce](#reproducing); full ground-truth file, sheet, and assay

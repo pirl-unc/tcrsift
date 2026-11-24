@@ -772,13 +772,24 @@ def main():
     vdjdb_paired_ab_entries = 0
     vdj_p = cached_path("vdjdb")
     if vdj_p is not None:
-        meta_json = (vdj_p if vdj_p.is_dir() else vdj_p.parent) / "_meta.json"
-        if meta_json.exists():
-            meta_obj = json.loads(meta_json.read_text())
-            url = str(meta_obj.get("download_url") or "")
-            if "/releases/download/" in url:
-                vdjdb_release = "vdjdb-" + url.split("/releases/download/")[1].split("/")[0]
-        txt_p = (vdj_p / "vdjdb.txt") if vdj_p.is_dir() else vdj_p
+        meta_candidates = [
+            (vdj_p if vdj_p.is_dir() else vdj_p.parent) / "_meta.json",
+            vdj_p.parent / "_meta.json",
+        ]
+        for meta_json in meta_candidates:
+            if meta_json.exists():
+                meta_obj = json.loads(meta_json.read_text())
+                url = str(meta_obj.get("download_url") or "")
+                if "/releases/download/" in url:
+                    vdjdb_release = "vdjdb-" + url.split("/releases/download/")[1].split("/")[0]
+                break
+        if vdj_p.is_dir():
+            txt_hits = sorted(vdj_p.rglob("vdjdb.txt"))
+            txt_p = txt_hits[0] if txt_hits else vdj_p / "vdjdb.txt"
+            if vdjdb_release == "uncached" and txt_hits:
+                vdjdb_release = txt_hits[0].parent.name
+        else:
+            txt_p = vdj_p
         if txt_p.exists():
             vdf = pd.read_csv(txt_p, sep="\t", usecols=["gene", "complex.id"], low_memory=False)
             trb = vdf[vdf["gene"] == "TRB"]

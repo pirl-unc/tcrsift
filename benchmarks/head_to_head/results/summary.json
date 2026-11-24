@@ -1,9 +1,9 @@
 {
-  "tcrsift_version": "3.34.0",
+  "tcrsift_version": "3.37.1",
   "stitchr_version": "1.3.1",
   "olga_version": "1.3.0",
   "scanpy_version": "1.12.3",
-  "elapsed_seconds": 157.8,
+  "elapsed_seconds": 167.1,
   "tables": [
     "h2h_prioritize_baselines.csv",
     "h2h_assembly_vs_stitchr.csv",

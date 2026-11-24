@@ -8,6 +8,23 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.37.1
+
+Re-ran all five empirical benchmark suites (`public_til`, `public_infectious`,
+`public_blood_cd4`, `public_mouse`, and `head_to_head`) end-to-end on the
+post-3.35/3.37 codebase and refreshed all benchmark figures and documentation:
+
+- All TIL (`public_til`), blood/post-ACT/CD4 (`public_blood_cd4`), murine
+  (`public_mouse`), and head-to-head prioritization / multimer-caller CSVs
+  reproduced identically to prior releases.
+- Updated Fischer 2021 5'-partial contig rescue counts (`33 → 32` rescued
+  partial contigs, `25 → 23` J→C verified, `160/160` complete constructs)
+  reflecting the `3.35.0` FR4-tail guard, and updated 10x multimer summary
+  counts (`multimer_calling.csv`: `1,019 → 39` sticky `KLGGALQAK` clones, `0`
+  confident HIV Gag false positives) reflecting deterministic tie-breaking.
+- Fixed nested `vdjdb.txt` discovery in `benchmarks/public_til/run.py` so
+  VDJdb provenance stamps reliably into `summary.json`.
+
 ## 3.37.0
 
 Dead-code removal, assembly subpackage consolidation, and CLI/config/CI cleanup:
