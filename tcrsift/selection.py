@@ -1152,11 +1152,12 @@ def select_freq_prism_per_condition(
             )
     out_rows: list[dict] = []
     for cond, grp in feat.groupby(condition_col, observed=True):
-        cand = grp[grp[freq_col].fillna(0) > gate].copy()
+        valid_grp = grp[grp[clone_col].notna()]
+        cand = valid_grp[valid_grp[freq_col].fillna(0) > gate].copy()
         rescued_clones: set[str] = set()
-        if rescue_target and len(cand) < rescue_target and rescue_rank_col in grp.columns:
+        if rescue_target and len(cand) < rescue_target and rescue_rank_col in valid_grp.columns:
             need = rescue_target - len(cand)
-            sub = grp[grp[freq_col].fillna(0) <= gate].copy()
+            sub = valid_grp[valid_grp[freq_col].fillna(0) <= gate].copy()
             # Deterministic: break rescue-rank ties by clone id so which thin
             # clones are rescued is reproducible, not input-row-order dependent.
             sub = sub.sort_values(

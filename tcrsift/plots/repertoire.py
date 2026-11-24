@@ -90,6 +90,33 @@ def plot_pgen_distribution(
                 label=str(g), color=color, edgecolor="white",
             )
         ax.legend(title=group_col, frameon=False, fontsize=9)
+    elif publicness_col and publicness_col in df.columns:
+        pub_series = pd.to_numeric(df.loc[values.index, publicness_col], errors="coerce")
+        counts, bin_edges, patches = ax.hist(
+            values, bins=bins, color="#3b82f6", edgecolor="white", alpha=0.85
+        )
+        valid_pub = pub_series.dropna()
+        if not valid_pub.empty:
+            vmin = float(min(0.0, valid_pub.min()))
+            vmax = float(max(1.0, valid_pub.max()))
+            if vmax <= vmin:
+                vmax = vmin + 1.0
+            norm = plt.Normalize(vmin=vmin, vmax=vmax)
+            cmap = plt.cm.coolwarm
+            vals_arr = values.to_numpy(dtype=float)
+            pub_arr = pub_series.to_numpy(dtype=float)
+            bin_idx = np.clip(
+                np.digitize(vals_arr, bin_edges[:-1]) - 1, 0, len(patches) - 1
+            )
+            for idx_b, patch in enumerate(patches):
+                in_bin = pub_arr[bin_idx == idx_b]
+                in_bin = in_bin[np.isfinite(in_bin)]
+                if len(in_bin) > 0:
+                    patch.set_facecolor(cmap(norm(float(np.mean(in_bin)))))
+            sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+            sm.set_array([])
+            cbar = fig.colorbar(sm, ax=ax, pad=0.02)
+            cbar.set_label(publicness_col, fontsize=9)
     else:
         ax.hist(values, bins=bins, color="#3b82f6", edgecolor="white", alpha=0.85)
 

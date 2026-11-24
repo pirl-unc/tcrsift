@@ -71,6 +71,7 @@ def cmd_assemble(args):
         contigs_dir=args.contigs_dir,
         cellranger_dir=getattr(args, "cellranger_dir", None),
         sample_name_from=getattr(args, "sample_name_from", None) or "parent",
+        sample_sheet=getattr(args, "sample_sheet", None),
         alpha_leader=alpha_leader,
         beta_leader=beta_leader,
         include_constant=args.include_constant,
@@ -332,7 +333,15 @@ CONDITIONALLY REQUIRED:
         choices=["parent", "grandparent", "sheet"],
         default=None,
         help="How to derive each contig's sample name from its FASTA path "
-        "(default: parent). 'grandparent' for per_sample_outs/{sample}/vdj_t/.",
+        "(default: parent). 'grandparent' for per_sample_outs/{sample}/vdj_t/; "
+        "'sheet' requires --sample-sheet.",
+    )
+    asm_leaders.add_argument(
+        "--sample-sheet",
+        metavar="FILE",
+        default=None,
+        help="Sample sheet CSV/YAML mapping vdj_dir paths to sample names "
+        "(required when --sample-name-from sheet).",
     )
 
     asm_seq = p_asm.add_argument_group("sequence options")

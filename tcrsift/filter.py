@@ -576,6 +576,13 @@ def filter_clonotypes_threshold(
 
     # Complete TCR filter
     if require_complete:
+        missing_chains = [c for c in ("CDR3_alpha", "CDR3_beta") if c not in df.columns]
+        if missing_chains:
+            raise TCRsiftValidationError(
+                f"require_complete=True requires both 'CDR3_alpha' and 'CDR3_beta' columns "
+                f"(missing: {', '.join(missing_chains)})",
+                hint="Pass require_complete=False when filtering single-chain (e.g. beta-only) clonotype tables.",
+            )
         before = len(df)
         has_alpha = df["CDR3_alpha"].notna() & (df["CDR3_alpha"] != "")
         has_beta = df["CDR3_beta"].notna() & (df["CDR3_beta"] != "")
@@ -962,10 +969,10 @@ def filter_clonotypes_stimulation(
             f"stim_delta_threshold={stim_delta_threshold}",
         )
 
-    fdr_kept = fdr_s.loc[df.index]
-    lfc_kept = lfc_s.loc[df.index]
-    delta_kept = max_delta.loc[df.index]
-    df["stim_max_delta"] = delta_kept.where(np.isfinite(delta_kept), np.nan)
+    fdr_kept = fdr_s[keep]
+    lfc_kept = lfc_s[keep]
+    delta_kept = max_delta[keep]
+    df["stim_max_delta"] = delta_kept.where(np.isfinite(delta_kept), np.nan).to_numpy()
     df["tier"] = "tier5"
     tier_rules = [
         (
@@ -990,7 +997,7 @@ def filter_clonotypes_stimulation(
         ),
     ]
     for tier_name, mask in tier_rules:
-        df.loc[mask, "tier"] = tier_name
+        df.loc[mask.to_numpy(dtype=bool), "tier"] = tier_name
     return df
 
 

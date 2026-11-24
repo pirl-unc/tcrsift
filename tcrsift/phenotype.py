@@ -341,23 +341,27 @@ def filter_by_tcell_type(
         if "is_CD4" in adata.obs.columns
         else adata.obs["Tcell_type"].astype(str).str.contains("CD4", na=False).to_numpy(dtype=bool)
     )
+    n_total = len(adata)
     if tcell_type.lower() == "cd8":
         mask = is_cd8
         if verbose:
+            pct = (mask.sum() / n_total * 100) if n_total > 0 else 0.0
             logger.info(
-                f"Filtering to CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum() / len(adata) * 100:.1f}%)"
+                f"Filtering to CD8+ cells: {mask.sum():,} of {n_total:,} ({pct:.1f}%)"
             )
     elif tcell_type.lower() == "cd4":
         mask = is_cd4
         if verbose:
+            pct = (mask.sum() / n_total * 100) if n_total > 0 else 0.0
             logger.info(
-                f"Filtering to CD4+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum() / len(adata) * 100:.1f}%)"
+                f"Filtering to CD4+ cells: {mask.sum():,} of {n_total:,} ({pct:.1f}%)"
             )
     else:  # both
         mask = is_cd8 | is_cd4
         if verbose:
+            pct = (mask.sum() / n_total * 100) if n_total > 0 else 0.0
             logger.info(
-                f"Keeping both CD4+ and CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum() / len(adata) * 100:.1f}%)"
+                f"Keeping both CD4+ and CD8+ cells: {mask.sum():,} of {n_total:,} ({pct:.1f}%)"
             )
 
     if mask.sum() == 0:
@@ -423,7 +427,9 @@ def get_phenotype_summary(adata: ad.AnnData) -> pd.DataFrame:
 
         # Add expected type if available
         if "expected_tcell_type" in sample_data.columns:
-            row["expected_type"] = sample_data["expected_tcell_type"].iloc[0]
+            row["expected_type"] = (
+                sample_data["expected_tcell_type"].iloc[0] if total > 0 else None
+            )
 
         summary_data.append(row)
 

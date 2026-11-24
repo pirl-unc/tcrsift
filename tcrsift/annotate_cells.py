@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .genes import resolve_adata_var_map
+from .genes import adata_symbol_array, resolve_adata_var_map
 from .signatures import (
     PROTECTED_SUBTYPES,
     b_state_signatures_for_species,
@@ -722,12 +722,21 @@ def top_markers(adata, leiden_col: str = "leiden", *, n_genes: int = 30) -> dict
             method="wilcoxon",
             n_genes=min(n_genes, max(1, work.n_vars)),
         )
+        sym_arr = adata_symbol_array(work)
+        var_to_symbol = {
+            str(vn): (str(sym).strip() if sym and str(sym).strip() else str(vn))
+            for vn, sym in zip(work.var_names, sym_arr)
+        }
         names = work.uns["rank_genes_groups"]["names"]
         for cl_s in names.dtype.names:
             orig_key = orig_by_str.get(str(cl_s), cl_s)
             for gene in names[cl_s]:
-                if gene and not _TOP_GENE_EXCLUDE.match(str(gene)):
-                    out[orig_key] = str(gene)
+                if not gene:
+                    continue
+                gene_s = str(gene)
+                sym = var_to_symbol.get(gene_s, gene_s)
+                if not _TOP_GENE_EXCLUDE.match(sym) and not _TOP_GENE_EXCLUDE.match(gene_s):
+                    out[orig_key] = sym
                     break
     except (ValueError, ZeroDivisionError, KeyError):
         return out

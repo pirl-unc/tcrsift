@@ -1137,7 +1137,10 @@ def score_by_name(
                 data, sig.all_genes, layer=layer, on_missing=on_missing
             )
             # Match geneset_enrichment: CP10K-normalize raw counts before log1p
-            # when scoring AnnData without a caller-provided background frame.
+            # when scoring AnnData without a caller-provided background frame,
+            # and skip implicit log1p on matrices that already look log-normalized
+            # (x_max <= 25 without uns["log1p"]) unless log1p=True was passed.
+            frame_log1p = apply_log1p
             if apply_log1p and background is None and not expr.empty and data.n_obs and data.n_vars:
                 src_mat = data.layers[layer] if (layer is not None and layer in data.layers) else data.X
                 x_min = float(src_mat.min())
@@ -1146,8 +1149,10 @@ def score_by_name(
                     totals = np.asarray(src_mat.sum(axis=1)).ravel().astype(float)
                     scale = np.where(totals > 0, 1e4 / totals, 0.0)
                     expr = expr.mul(scale, axis=0)
+                elif log1p is None:
+                    frame_log1p = False
             series = _score_frame(
-                expr, sig, log1p=apply_log1p, background=background,
+                expr, sig, log1p=frame_log1p, background=background,
                 groups=groups, on_missing=on_missing,
             )
         series = pd.Series(series.to_numpy(), index=index)
