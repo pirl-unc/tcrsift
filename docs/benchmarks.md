@@ -1,16 +1,10 @@
 # Benchmark on public TIL data
 
-!!! tip "Start with the unified overview & head-to-head comparisons"
-    For a cross-cohort digest of all **15 public human and murine benchmarks**
-    organized around **8 focal failure modes**, plus direct head-to-head
-    comparisons against `Scanpy score_genes`, single-gene `CXCL13`, `stitchr`
-    (`thimble v1.3.1`), `OLGA v1.3.0`, and CLR/GMM multimer callers, see
-    **[Benchmark Overview & Failure Modes](benchmarks-overview.md)**.
-
 This page evaluates whether `tcrsift prioritize --context solid-tumor` finds
 clones that experiments showed to be tumor-reactive. It covers five public
 datasets across 33 patients and reports both where the method works and where
-it fails.
+it fails (for cross-cohort and external-tool comparisons, see the
+[Benchmark overview](benchmarks-overview.md)).
 
 ## Summary
 
@@ -34,25 +28,25 @@ it fails.
   the two virus-driven tumors, virus-multimer-binding clones are larger than
   unlabeled ones (0.74 and 0.73).
 - **Default cutoffs enrich for reactive clones in both datasets with tested
-  negatives, strongly in pancreatic cancer and modestly in melanoma.** In
+  negatives.** In
   pancreatic cancer, 73% of reactive clones and 31% of non-reactive clones pass
   at least one default cutoff; in melanoma, the rates are 44% and 25%.
 - **Priority-tiered round-robin scheduling prevents small-budget signature
   dilution while preserving broad recall at larger budgets.** Scheduling the
   three tumor-reactivity signatures (`TumorReactive`, `MANAscore`, `NeoTCR8`) in
   Tier 1 ahead of Tier-2 general state backfill (`--round-robin-mode tiered`,
-  default since 3.32.0) picks **27** reactive and **2** non-reactive clones at a
+  default since 3.32.0) picks 27 reactive and 2 non-reactive clones at a
   50-clone budget in pancreatic cancer (matching the three tumor-reactivity
-  signatures alone, versus **11** reactive and **3** non-reactive under
-  `--round-robin-mode flat`), and reaches **58** reactive clones (`12`
-  non-reactive) at a 200-clone budget versus **50** (`4` non-reactive) when
-  general state panels are omitted (`123` qualify).
+  signatures alone, versus 11 reactive and 3 non-reactive under
+  `--round-robin-mode flat`), and reaches 58 reactive clones (12
+  non-reactive) at a 200-clone budget versus 50 (4 non-reactive) when
+  general state panels are omitted (123 qualify).
 - **The default CD3 count floor is 3 (lowered from 10 in 3.27.0).** A floor of
   10 discarded 65% to 92% of CD8 cells without ranking surviving clones more
   accurately. Lowering it recovers reactive clones on the shortlist in
-  melanoma (`24` vs `15`), Merkel cell carcinoma (`2` vs `0`), and non-tumor
-  lung tissue (`7` vs `4`), while reducing the lung tumor shortlist from `5`
-  neoantigen-specific clones (`1` viral) to `4` (`0` viral)
+  melanoma (24 vs 15), Merkel cell carcinoma (2 vs 0), and non-tumor
+  lung tissue (7 vs 4), while reducing the lung tumor shortlist from 5
+  neoantigen-specific clones (1 viral) to 4 (0 viral)
   ([section 4](#4-what-do-the-cell-filters-drop)).
 
 !!! warning "One result is circular"
@@ -159,8 +153,8 @@ cancers](https://doi.org/10.1038/s41586-021-03752-4), *Nature* 596:126–132
   outputs.
 - **Limitations.** Negatives are virus-specific clones rather than clones
   tested for lack of tumor reactivity. Only 31 labeled clones appear in the
-  tumor samples, labels provide beta chains only, and **MANAscore was derived
-  from this dataset**, making its lung score circular. In addition, several
+  tumor samples, labels provide beta chains only, and MANAscore was derived
+  from this dataset, making its lung score circular. In addition, several
   neoantigen-specific receptors were originally chosen for testing based on
   their transcriptional profile.
 
@@ -236,7 +230,7 @@ determines which evaluations are independent:
 | Signature | Genes | Provenance | Independent of these datasets? |
 | --- | --- | --- | --- |
 | TumorReactive | CXCL13, ENTPD1, PDCD1, LAG3, HAVCR2, TIGIT, TOX, CTLA4, ITGAE | Assembled by TCRsift's authors; not a single published gene set. CD39 (ENTPD1) and CD103 (ITGAE) follow [Simoni et al. 2018](https://doi.org/10.1038/s41586-018-0130-2) and [Duhen et al. 2018](https://doi.org/10.1038/s41467-018-05072-0); CXCL13 and the six exhaustion genes are standard TIL exhaustion markers. | Yes |
-| MANAscore proxy | CXCL13, ENTPD1 up; IL7R down | Unweighted signed z-score over the three genes of MANAscore, which was trained on the **Caushi 2021** lung cohort ([Zeng et al. 2025](https://doi.org/10.1038/s41467-024-55059-3)). | **No for lung (circular).** Yes for the other four. |
+| MANAscore proxy | CXCL13, ENTPD1 up; IL7R down | Unweighted signed z-score over the three genes of MANAscore, which was trained on the Caushi 2021 lung cohort ([Zeng et al. 2025](https://doi.org/10.1038/s41467-024-55059-3)). | No for lung (circular). Yes for the other four. |
 | NeoTCR8 | 243 genes (including GZMB, ENTPD1, KIR2DL4) | Published CD8 gene set from metastatic gastrointestinal cancers ([Lowery et al. 2022](https://doi.org/10.1126/science.abl5447)), scored with Scanpy `score_genes`. | Yes |
 | Differentiated | IFNG, GZMB, PRF1, GNLY, NKG7 up; TCF7, LEF1, CCR7, SELL down | Canonical effector minus naive/stem markers, fixed on TCRsift's in-vitro MART-1 expansion pilot ([reproducibility map](reproducibility_map.md)) rather than tumor data. | Yes |
 | AntigenExperienced | IFNG, GZMB, PRF1, GNLY, NKG7 | Positive arm of Differentiated, fixed on the same pilot. | Yes |
@@ -249,8 +243,8 @@ Only NeoTCR8 is a published multi-gene set used verbatim; MANAscore is an
 unweighted proxy for a published three-gene model; and the remaining seven are
 compact marker panels defined without fitting to any cohort evaluated here.
 
-Throughout this page, the first three are called the **tumor-reactivity
-signatures** and the other six the **general state signatures**. Because
+Throughout this page, the first three are called the *tumor-reactivity
+signatures* and the other six the *general state signatures*. Because
 CXCL13 and ENTPD1 appear in all three tumor-reactivity signatures and GZMB and
 PRF1 recur across the state panels, the nine lists are correlated views rather
 than independent votes. Exact gene lists and scoring formulas are in the
@@ -276,7 +270,7 @@ MANAscore row is drawn hollow in orange and marked with an asterisk.
 | Signature | Pancreatic (94 vs 55) | Melanoma (72 vs 94) | Lung tumor (18 vs 13) | Head and neck (56 vs 710 unlabeled) |
 | --- | --- | --- | --- | --- |
 | TumorReactive | 0.81 (0.74 to 0.89) | 0.78 (0.70 to 0.84) | 0.69 (0.50 to 0.86) | 0.47 (0.40 to 0.53) |
-| MANAscore proxy | 0.80 (0.72 to 0.87) | 0.69 (0.61 to 0.77) | **circular** (0.78) | 0.41 (0.34 to 0.47) |
+| MANAscore proxy | 0.80 (0.72 to 0.87) | 0.69 (0.61 to 0.77) | circular (0.78) | 0.41 (0.34 to 0.47) |
 | NeoTCR8 | 0.79 (0.71 to 0.87) | 0.73 (0.66 to 0.80) | 0.60 (0.39 to 0.80) | 0.40 (0.34 to 0.46) |
 | AcuteActivation | 0.70 (0.62 to 0.79) | 0.61 (0.53 to 0.70) | 0.72 (0.52 to 0.90) | 0.51 (0.44 to 0.57) |
 | Differentiated | 0.70 (0.61 to 0.80) | 0.62 (0.53 to 0.71) | 0.57 (0.37 to 0.76) | 0.34 (0.28 to 0.40) |
@@ -392,8 +386,8 @@ more than in pancreatic cancer.
 
 Passing a cutoff makes a clone eligible, not selected. By default
 (`--round-robin-mode tiered`), `solid-tumor` visits qualifying lists for the
-three dedicated tumor-reactivity signatures (`TumorReactive`, `MANAscore`,
-`NeoTCR8`) in Tier 1 until all Tier-1 candidates (`123` in pancreatic cancer) are chosen or the budget
+three tumor-reactivity signatures (`TumorReactive`, `MANAscore`,
+`NeoTCR8`) in Tier 1 until all Tier-1 candidates (123 in pancreatic cancer) are chosen or the budget
 is spent, and then backfills remaining budget slots from the six general state
 signatures in Tier 2. Below, default tiered round-robin is compared against flat
 9-signature round-robin (`--round-robin-mode flat`), the three tumor-reactivity
@@ -406,25 +400,25 @@ least two cells:
 
 | Budget (clones) | Preset round-robin, tiered (reactive, non-reactive) | Flat round-robin (`--round-robin-mode flat`) | Three tumor signatures only | Top TumorReactive score | Largest clones |
 | --- | --- | --- | --- | --- | --- |
-| 25 | **13, 0** | 6, 1 | 13, 0 | 19, 0 | 6, 16 |
-| 50 | **27, 2** | 11, 3 | 27, 2 | 27, 1 | 16, 23 |
-| 100 | **42, 4** | 35, 8 | 42, 4 | 39, 1 | 32, 33 |
-| 200 | **58, 12** | 55, 13 | 50, 4 (123 qualify) | 53, 2 | 45, 41 |
+| 25 | 13, 0 | 6, 1 | 13, 0 | 19, 0 | 6, 16 |
+| 50 | 27, 2 | 11, 3 | 27, 2 | 27, 1 | 16, 23 |
+| 100 | 42, 4 | 35, 8 | 42, 4 | 39, 1 | 32, 33 |
+| 200 | 58, 12 | 55, 13 | 50, 4 (123 qualify) | 53, 2 | 45, 41 |
 
-- **Tiered scheduling eliminates small-budget dilution.** Under flat 9-signature
+- **Tiered scheduling prevents small-budget dilution.** Under flat 9-signature
   rotation, two-thirds of early turns go to general effector, activation, or
-  proliferation panels (`6, 1` at budget 25; `11, 3` at budget 50). Scheduling
+  proliferation panels (6 reactive and 1 non-reactive at budget 25; 11 and 3 at budget 50). Scheduling
   the three tumor-reactivity panels in Tier 1 matches tumor-signatures-only
-  selection identically through 123 clones (`13, 0` at 25; `27, 2` at 50;
-  `42, 4` at 100).
+  selection through 123 clones (13 and 0 at 25; 27 and 2 at 50;
+  42 and 4 at 100).
 - **At a 200-clone budget**, Tier-2 backfill after the 123 Tier-1 clones
-  recovers 8 additional non-canonical tumor-reactive clones (`58` vs `50`) at
-  the cost of 8 additional non-reactive clones (`12` vs `4`).
+  recovers 8 additional tumor-reactive clones (58 vs 50) at
+  the cost of 8 additional non-reactive clones (12 vs 4).
 - **Selecting the largest clones** picks roughly equal numbers of non-reactive
   and reactive clones at every budget.
 
 When experimental screening capacity exceeds the Tier-1 pool and higher
-precision is preferred over non-canonical state recall, omit the Tier-2 panels
+precision is preferred over broader state recall, omit the Tier-2 panels
 explicitly:
 
 ```bash
@@ -435,22 +429,22 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor \
 **Shortlists in the other four cohorts (200-clone default cap):**
 
 - **Melanoma.** The default preset shortlisted 200 clones (out of 225 eligible),
-  capturing **24 of 61** reactive and **17 of 80** non-reactive clones (with
+  capturing 24 of 61 reactive and 17 of 80 non-reactive clones (with
   default `--exclude-known-mart1` under `--database-match strict_ab` against
   VDJdb `2026-11-06`). Restricting to the three tumor-reactivity signatures
-  yielded 119 qualifying clones (`18` reactive and `12` non-reactive) — those
-  exact 119 clones form Tier 1 of the default shortlist before Tier-2 state
-  panels backfill 81 additional clones (`+6` reactive, `+5` non-reactive);
-  taking each patient's top ten TumorReactive clones gave 10 reactive and 8
+  yielded 119 qualifying clones (18 reactive and 12 non-reactive); those
+  119 clones form Tier 1 of the default shortlist before Tier-2 state
+  panels backfill 81 additional clones (+6 reactive, +5 non-reactive).
+  Taking each patient's top ten TumorReactive clones gave 10 reactive and 8
   non-reactive.
 - **Lung.** Across the 33 lung tumor samples, 408 clones qualified for 200
-  places; the shortlist captured **4 of 18** neoantigen-specific clonotypes (`3`
-  via `TumorReactive` and `1` via the circular `MANAscore` list) and **0 of 13**
+  places; the shortlist captured 4 of 18 neoantigen-specific clonotypes (3
+  via `TumorReactive` and 1 via the circular `MANAscore` list) and 0 of 13
   virus-specific ones. At `--min-cd3 10`, only 222 clones qualified and the
   shortlist held 5 of 11 neoantigen-specific and 1 of 9 virus-specific
-  clonotypes. In lymph node and normal lung (`307` qualifying), default settings
-  shortlisted **7 of 16** neoantigen-specific (`1` via circular `MANAscore`) and
-  **2 of 30** virus-specific clonotypes.
+  clonotypes. In lymph node and normal lung (307 qualifying), default settings
+  shortlisted 7 of 16 neoantigen-specific (1 via circular `MANAscore`) and
+  2 of 30 virus-specific clonotypes.
 - **Head and neck.** Default settings shortlisted 8 of 56 HPV-tetramer-positive
   clonotypes with ≥2 cells (14%), matching the rate among unlabeled clones (106
   of 710, 15%).
@@ -483,7 +477,7 @@ defaulted to 3). Because raw UMI counts scale with sequencing depth, a floor of
 10 acted as a strict depth filter and discarded 65% to 92% of CD8 cells across
 these cohorts.
 
-In the 33 **lung tumor** samples:
+In the 33 lung tumor samples:
 
 ![Cells kept by CD3 floor](assets/figures/benchmark_cd3_cells.svg)
 
@@ -496,7 +490,7 @@ In the 33 **lung tumor** samples:
 | 10 | 19,739 | 11, 9 | 0.96 | 0.81 | 5, 1 |
 | 0, with `--min-counts 4000` | 17,934 | 9, 4 | 0.81 | 0.67 | 2, 1 |
 
-In **melanoma**, which has five times as many labeled clones:
+In melanoma, which has five times as many labeled clones:
 
 ![Cells kept by CD3 floor, melanoma](assets/figures/benchmark_cd3_cells_melanoma.svg)
 
@@ -520,13 +514,13 @@ attrition:
 | Clones dropped at `--min-cd3 10` | 0.32 (7 vs 4) | 0.25 | 0.72 (7 vs 28) | 0.64 |
 | Surviving subset, scored at `--min-cd3 10` | 0.96 | 0.81 | 0.75 | 0.66 |
 
-- In **lung**, most of the apparent AUROC jump comes from excluding 11 tiny
+- **Lung.** Most of the apparent AUROC jump comes from excluding 11 small
   clones (median one cell) that score below chance. On the 20 clones scored
   under both settings, TumorReactive moves from 0.87 to 0.96, within the
   11-vs-9 bootstrap interval (0.68 to 1.00), and NeoTCR8 barely changes (0.83
   vs 0.81).
-- In **melanoma**, the shared 131 clones rank as well or better at `--min-cd3
-  3` than at `10`, and the 35 clones dropped at `10` still rank well above
+- **Melanoma.** The shared 131 clones rank as well or better at `--min-cd3
+  3` than at 10, and the 35 clones dropped at 10 still rank above
   chance (0.72).
 
 A floor of 10 therefore does not make individual clone scores cleaner; it
@@ -590,10 +584,10 @@ seconds on a laptop with 32 GB of RAM.
   the 33-sample lung run).
 - **Tier-2 state backfill vs strict Tier-1 cutoff.** Scheduling `TumorReactive`,
   `MANAscore`, and `NeoTCR8` in Tier 1 (`--round-robin-mode tiered`, default in
-  3.32.0) eliminates small-budget dilution, while Tier-2 general state panels
-  still backfill budgets beyond the Tier-1 pool (`58` vs `50` reactive clones at
-  budget 200 in pancreatic cancer; `24` vs `18` in melanoma) at lower precision
-  among tested clones (`83%` vs `93%` in pancreatic cancer; `59%` vs `60%` in
+  3.32.0) prevents small-budget dilution, while Tier-2 general state panels
+  still backfill budgets beyond the Tier-1 pool (58 vs 50 reactive clones at
+  budget 200 in pancreatic cancer; 24 vs 18 in melanoma) at lower precision
+  among tested clones (83% vs 93% in pancreatic cancer; 59% vs 60% in
   melanoma).
 - **Sample-adaptive rank gates.** Reactive melanoma clones cluster around the
   79th percentile rather than the 90th+, yet relaxing `--signature-quantile`

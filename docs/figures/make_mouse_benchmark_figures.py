@@ -12,7 +12,6 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.lines
 import matplotlib.patches
 import matplotlib.pyplot as plt
 import matplotlib.ticker
@@ -145,23 +144,22 @@ def dataset_designs() -> None:
     save_tight(fig, "mouse_benchmark_datasets")
 
 
-def mouse_auroc_forest() -> None:
+def mouse_auroc_forests() -> None:
     df = pd.read_csv(RESULTS / "auroc_mouse.csv")
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.7), constrained_layout=True)
-
-    panels = [
+    specs = [
         (
-            ax1,
             df[df["dataset"].eq("mc38") & df["contrast"].eq("tumor_til_vs_dln_spleen_nontumor")],
             "MC38: tumor TILs vs matched dLN & spleen",
+            "mouse_auroc_mc38",
         ),
         (
-            ax2,
             df[df["dataset"].eq("kasmani") & df["contrast"].eq("islet_tet_pos_vs_spleen_tet_pos")],
             "Kasmani IGRP Tet+: pancreatic islet vs spleen",
+            "mouse_auroc_kasmani",
         ),
     ]
-    for ax, sub, title in panels:
+    for sub, title, out_name in specs:
+        fig, ax = plt.subplots(figsize=(7.2, 4.6), constrained_layout=True)
         sub = sub.sort_values("auroc").reset_index(drop=True)
         y_trans = ax.get_yaxis_transform()
         for i, row in sub.iterrows():
@@ -178,35 +176,33 @@ def mouse_auroc_forest() -> None:
                 linewidth=1.6 if is_hcx else 1.3,
                 zorder=3,
             )
-            ax.text(1.02, i, f"{row['auroc']:.2f}", transform=y_trans, va="center", fontsize=8.5, color=INK)
+            ax.text(1.02, i, f"{row['auroc']:.2f}", transform=y_trans, va="center", fontsize=8.8, color=INK)
         ax.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))
-        ax.text(0.49, len(sub) - 0.4, "chance", ha="right", va="center", fontsize=8.2, color=INK2)
+        ax.text(0.49, len(sub) - 0.4, "chance", ha="right", va="center", fontsize=8.4, color=INK2)
         r0 = sub.iloc[0]
         ax.set_yticks(range(len(sub)), [SIG_LABELS.get(s, s) for s in sub["signature"]])
         ax.set_xlim(0.04, 1.02)
         ax.set_ylim(-0.6, len(sub) - 0.3)
         ax.set_xlabel("AUROC (95% bootstrap interval)")
-        ax.set_title(f"{title}\n({int(r0['n_positive'])} vs {int(r0['n_negative'])} clones)", fontsize=9.8)
+        ax.set_title(f"{title} ({int(r0['n_positive'])} vs {int(r0['n_negative'])} clones)", fontsize=10.2)
         ax.grid(axis="x", lw=0.6)
         ax.set_axisbelow(True)
         ax.tick_params(axis="y", length=0)
         ax.spines["left"].set_visible(False)
-
-    save_tight(fig, "mouse_auroc_mc38_kasmani")
+        save_tight(fig, out_name)
 
 
 def mouse_vdjdb_recovery() -> None:
     df = pd.read_csv(RESULTS / "vdjdb_mouse_recovery.csv")
     rules = ["strict_ab", "ab_with_partial", "b_only", "b_only_lev1"]
     rule_labels = ["strict_ab", "ab_with_partial", "b_only", "levenshtein\nb_only"]
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.8, 4.4), constrained_layout=True)
-
-    # Panel A: Kasmani IGRP circular vs held-out recall
-    kas_circ = df[df["cohort"].eq("kasmani_igrp_nod") & df["database"].eq("vdjdb_full_circular")].set_index("strictness")
-    kas_held = df[df["cohort"].eq("kasmani_igrp_nod") & df["database"].eq("vdjdb_heldout_no_kasmani")].set_index("strictness")
     xs = np.arange(len(rules))
     w = 0.34
+
+    # Kasmani IGRP circular vs held-out recall
+    fig1, ax1 = plt.subplots(figsize=(6.8, 4.4), constrained_layout=True)
+    kas_circ = df[df["cohort"].eq("kasmani_igrp_nod") & df["database"].eq("vdjdb_full_circular")].set_index("strictness")
+    kas_held = df[df["cohort"].eq("kasmani_igrp_nod") & df["database"].eq("vdjdb_heldout_no_kasmani")].set_index("strictness")
     c_vals = [float(kas_circ.loc[r, "igrp_recall"]) for r in rules]
     h_vals = [float(kas_held.loc[r, "igrp_recall"]) for r in rules]
 
@@ -230,20 +226,22 @@ def mouse_vdjdb_recovery() -> None:
         label="Study held out (independent)",
     )
     for x, cv, hv in zip(xs, c_vals, h_vals):
-        ax1.text(x - w / 2, cv + 0.015, f"{cv:.0%}", ha="center", va="bottom", fontsize=8.0, color=ORANGE)
-        ax1.text(x + w / 2, hv + 0.015, f"{hv:.0%}", ha="center", va="bottom", fontsize=8.0, color=INK)
+        ax1.text(x - w / 2, cv + 0.015, f"{cv:.0%}", ha="center", va="bottom", fontsize=8.4, color=ORANGE)
+        ax1.text(x + w / 2, hv + 0.015, f"{hv:.0%}", ha="center", va="bottom", fontsize=8.4, color=INK)
 
     percent_axis(ax1, "y", decimals=0)
     ax1.set_xticks(xs, rule_labels)
-    ax1.set_ylim(0, max(max(c_vals), 0.25) * 1.22)
+    ax1.set_ylim(0, max(max(c_vals), 0.25) * 1.24)
     ax1.set_ylabel("IGRP (KYNKANVFL) recall")
     n_q = int(kas_held.iloc[0]["n_query_clones"])
-    ax1.set_title(f"Kasmani NOD IGRP CD8 clones (n={n_q})")
+    ax1.set_title(f"Kasmani NOD IGRP CD8 clones (n={n_q}): full vs held-out VDJdb", fontsize=10.2)
     ax1.grid(axis="y", lw=0.6)
     ax1.set_axisbelow(True)
-    ax1.legend(frameon=False, fontsize=8.1, loc="upper left")
+    ax1.legend(frameon=False, fontsize=8.4, loc="upper left")
+    save_tight(fig1, "mouse_vdjdb_kasmani")
 
-    # Panel B: Khatun GP66 CD4 LCMV recall vs precision (independent)
+    # Khatun GP66 CD4 LCMV recall vs precision (independent)
+    fig2, ax2 = plt.subplots(figsize=(6.8, 4.4), constrained_layout=True)
     kha = df[df["cohort"].eq("khatun_gp66_cd4")].set_index("strictness")
     r_vals = [float(kha.loc[r, "igrp_recall"]) for r in rules]
     p_vals = [
@@ -255,23 +253,22 @@ def mouse_vdjdb_recovery() -> None:
     ax2.bar(xs - w / 2, r_vals, width=w, color=BLUE, label="LCMV recall")
     ax2.bar(xs + w / 2, p_vals, width=w, color=AQUA, label="LCMV precision among matched")
     for x, rv, pv, r in zip(xs, r_vals, p_vals, rules):
-        ax2.text(x - w / 2, rv + 0.018, f"{rv:.1%}", ha="center", va="bottom", fontsize=7.9, color=INK)
+        ax2.text(x - w / 2, rv + 0.018, f"{rv:.1%}", ha="center", va="bottom", fontsize=8.3, color=INK)
         if int(kha.loc[r, "n_matched"]) > 0:
-            ax2.text(x + w / 2, pv + 0.018, f"{pv:.0%}", ha="center", va="bottom", fontsize=7.9, color=INK)
+            ax2.text(x + w / 2, pv + 0.018, f"{pv:.0%}", ha="center", va="bottom", fontsize=8.3, color=INK)
         else:
-            ax2.text(x + w / 2, 0.02, "0 hits", ha="center", va="bottom", fontsize=7.8, color=INK2)
+            ax2.text(x + w / 2, 0.02, "0 hits", ha="center", va="bottom", fontsize=8.1, color=INK2)
 
     percent_axis(ax2, "y", decimals=0)
     ax2.set_xticks(xs, rule_labels)
     ax2.set_ylim(0, 1.15)
     ax2.set_ylabel("rate across unique GP66 CD4 clones")
     n_k = int(kha.iloc[0]["n_query_clones"])
-    ax2.set_title(f"Khatun LCMV GP66 CD4 clones (n={n_k}, independent)")
+    ax2.set_title(f"Khatun LCMV GP66 CD4 clones (n={n_k}, independent VDJdb)", fontsize=10.2)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
-    ax2.legend(frameon=False, fontsize=8.1, loc="upper left")
-
-    save_tight(fig, "mouse_vdjdb_recovery")
+    ax2.legend(frameon=False, fontsize=8.4, loc="upper left")
+    save_tight(fig2, "mouse_vdjdb_khatun")
 
 
 def mouse_assembly_and_shortlist() -> None:
@@ -279,9 +276,8 @@ def mouse_assembly_and_shortlist() -> None:
     asm = pd.read_csv(RESULTS / "mouse_assembly.csv")
     summary = json.loads((RESULTS / "summary.json").read_text())
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.6, 4.2), constrained_layout=True)
-
-    # Panel A: Shortlist capture rates in MC38 Tumor & Blood
+    # MC38 shortlist selectivity
+    fig1, ax1 = plt.subplots(figsize=(6.4, 4.3), constrained_layout=True)
     cats = ["MC38 Tumor\n(--context solid-tumor)", "MC38 Blood\n(--context blood)"]
     keys = ["mc38_tumor", "mc38_blood"]
     pos_rates = [
@@ -304,7 +300,7 @@ def mouse_assembly_and_shortlist() -> None:
             f"{int(r['tumor_enriched_shortlisted'])}/{int(r['tumor_enriched_total'])}",
             ha="center",
             va="bottom",
-            fontsize=8.2,
+            fontsize=8.6,
             color=INK,
         )
         ax1.text(
@@ -313,19 +309,21 @@ def mouse_assembly_and_shortlist() -> None:
             f"{int(r['lymphoid_shared_shortlisted'])}/{int(r['lymphoid_shared_total'])}",
             ha="center",
             va="bottom",
-            fontsize=8.2,
+            fontsize=8.6,
             color=INK2,
         )
     percent_axis(ax1, "y", decimals=0)
     ax1.set_xticks(xs, cats)
-    ax1.set_ylim(0, max(max(pos_rates), max(neg_rates), 0.25) * 1.25)
+    ax1.set_ylim(0, max(max(pos_rates), max(neg_rates), 0.25) * 1.28)
     ax1.set_ylabel("fraction shortlisted by default prioritize")
-    ax1.set_title("MC38 multi-organ shortlist selectivity")
+    ax1.set_title("MC38 multi-organ shortlist selectivity", fontsize=10.2)
     ax1.grid(axis="y", lw=0.6)
     ax1.set_axisbelow(True)
-    ax1.legend(frameon=False, fontsize=8.2, loc="upper right")
+    ax1.legend(frameon=False, fontsize=8.4, loc="upper left")
+    save_tight(fig1, "mouse_shortlist_mc38")
 
-    # Panel B: Murine Trac + Trbc1/Trbc2 construct assembly breakdown
+    # Murine Trac + Trbc1/Trbc2 construct assembly breakdown
+    fig2, ax2 = plt.subplots(figsize=(6.4, 4.3), constrained_layout=True)
     labels_b = [
         f"MC38 CD8\n(n={int(asm.loc[0, 'n_candidates'])})",
         f"Khatun GP66 CD4\n(n={int(asm.loc[1, 'n_candidates'])})",
@@ -343,25 +341,24 @@ def mouse_assembly_and_shortlist() -> None:
             f"{row.n_complete_single_chain}/{row.n_candidates} (100%)\n{row.median_single_chain_aa_len} aa median",
             ha="center",
             va="bottom",
-            fontsize=8.1,
+            fontsize=8.5,
             color=INK,
         )
     percent_axis(ax2, "y", decimals=0)
     ax2.set_xticks(xb, labels_b)
-    ax2.set_ylim(0, 1.22)
-    ax2.set_ylabel("assembled synthesis-ready constructs")
+    ax2.set_ylim(0, 1.24)
+    ax2.set_ylabel("assembled full-length constructs")
     n_err = summary["mc38"]["assembly_validation_errors"] + summary["khatun"]["assembled_cd4_validation_errors"]
-    ax2.set_title(f"Murine germline V+J + C assembly ({n_err} validation errors)")
+    ax2.set_title(f"Murine germline V+J + C assembly ({n_err} validation errors)", fontsize=10.2)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
-    ax2.legend(frameon=False, fontsize=8.2, loc="lower right")
-
-    save_tight(fig, "mouse_assembly_and_compartments")
+    ax2.legend(frameon=False, fontsize=8.4, loc="lower right")
+    save_tight(fig2, "mouse_assembly_breakdown")
 
 
 if __name__ == "__main__":
     dataset_designs()
-    mouse_auroc_forest()
+    mouse_auroc_forests()
     mouse_vdjdb_recovery()
     mouse_assembly_and_shortlist()
     print("wrote mouse benchmark figures")

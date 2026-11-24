@@ -156,11 +156,51 @@ def dataset_designs() -> None:
     save_tight(fig, "blood_cd4_benchmark_datasets")
 
 
+def _paired_forest(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    order: list[str],
+    title: str,
+    label1: str,
+    label2: str,
+    out_name: str,
+    color2: str = AQUA,
+    xlim: tuple[float, float] = (0.04, 1.02),
+) -> None:
+    fig, ax = plt.subplots(figsize=(7.4, 4.8), constrained_layout=True)
+    off = 0.15
+    y_t = ax.get_yaxis_transform()
+    for i, sig in enumerate(order):
+        r1, r2 = df1.loc[sig], df2.loc[sig]
+        c1 = NEUTRAL if sig == "clone_size" else BLUE
+        c2 = INK2 if sig == "clone_size" else color2
+        ax.plot([r1.auroc_low, r1.auroc_high], [i + off, i + off], color=c1, lw=2, solid_capstyle="round")
+        ax.scatter([r1.auroc], [i + off], s=48, color=c1, edgecolor=SURFACE, linewidth=1.2, zorder=3)
+        ax.plot([r2.auroc_low, r2.auroc_high], [i - off, i - off], color=c2, lw=2, solid_capstyle="round")
+        ax.scatter([r2.auroc], [i - off], s=48, marker="s", color=c2, edgecolor=SURFACE, linewidth=1.2, zorder=3)
+        ax.text(1.02, i, f"{r1.auroc:.2f} / {r2.auroc:.2f}", transform=y_t, va="center", fontsize=8.6, color=INK)
+
+    ax.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))
+    ax.set_yticks(range(len(order)), [SIG_LABELS.get(s, s) for s in order])
+    ax.set_xlim(*xlim)
+    ax.set_ylim(-0.6, len(order) - 0.3)
+    ax.set_xlabel("AUROC (95% bootstrap interval)")
+    ax.set_title(title, fontsize=10.2)
+    ax.grid(axis="x", lw=0.6)
+    ax.set_axisbelow(True)
+    ax.tick_params(axis="y", length=0)
+    ax.spines["left"].set_visible(False)
+    handles = [
+        matplotlib.lines.Line2D([0], [0], color=BLUE, marker="o", lw=2, ms=5.8, label=label1),
+        matplotlib.lines.Line2D([0], [0], color=color2, marker="s", lw=2, ms=5.8, label=label2),
+    ]
+    ax.legend(handles=handles, frameon=False, fontsize=8.4, loc="lower right")
+    save_tight(fig, out_name)
+
+
 def pulliam_and_act_aurocs() -> None:
     df = pd.read_csv(RESULTS / "auroc_blood_cd4.csv")
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.5, 4.9), constrained_layout=True)
 
-    # Panel A: Pulliam peripheral blood (MCPyV vs CMV/EBV/Flu and tumor-infiltrating vs blood-only)
     p_vir = df[
         df["dataset"].eq("pulliam_blood")
         & df["subset"].eq("all_clones_ge1")
@@ -173,41 +213,18 @@ def pulliam_and_act_aurocs() -> None:
     ].set_index("signature")
     sigs_p = [s for s in p_vir.index if s in p_tum.index]
     order_p = sorted(sigs_p, key=lambda s: float(p_vir.loc[s, "auroc"]))
-    off = 0.15
-    y_t1 = ax1.get_yaxis_transform()
-    for i, sig in enumerate(order_p):
-        r1, r2 = p_vir.loc[sig], p_tum.loc[sig]
-        c1 = NEUTRAL if sig == "clone_size" else BLUE
-        c2 = INK2 if sig == "clone_size" else AQUA
-        ax1.plot([r1.auroc_low, r1.auroc_high], [i + off, i + off], color=c1, lw=2, solid_capstyle="round")
-        ax1.scatter([r1.auroc], [i + off], s=46, color=c1, edgecolor=SURFACE, linewidth=1.2, zorder=3)
-        ax1.plot([r2.auroc_low, r2.auroc_high], [i - off, i - off], color=c2, lw=2, solid_capstyle="round")
-        ax1.scatter([r2.auroc], [i - off], s=46, marker="s", color=c2, edgecolor=SURFACE, linewidth=1.2, zorder=3)
-        ax1.text(1.02, i, f"{r1.auroc:.2f} / {r2.auroc:.2f}", transform=y_t1, va="center", fontsize=8.3, color=INK)
+    _paired_forest(
+        p_vir,
+        p_tum,
+        order_p,
+        "Pulliam MCC peripheral blood (--context blood-tumor)",
+        f"MCPyV vs CMV/EBV/Flu ({int(p_vir.iloc[0]['n_positive'])} vs {int(p_vir.iloc[0]['n_negative'])})",
+        f"In matched tumor vs blood-only ({int(p_tum.iloc[0]['n_positive'])} vs {int(p_tum.iloc[0]['n_negative'])})",
+        "blood_cd4_auroc_pulliam",
+        color2=AQUA,
+        xlim=(0.04, 1.02),
+    )
 
-    ax1.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))
-    ax1.set_yticks(range(len(order_p)), [SIG_LABELS.get(s, s) for s in order_p])
-    ax1.set_xlim(0.04, 1.02)
-    ax1.set_ylim(-0.6, len(order_p) - 0.3)
-    ax1.set_xlabel("AUROC (95% bootstrap interval)")
-    ax1.set_title("Pulliam MCC peripheral blood (--context blood-tumor)", fontsize=9.8)
-    ax1.grid(axis="x", lw=0.6)
-    ax1.set_axisbelow(True)
-    ax1.tick_params(axis="y", length=0)
-    ax1.spines["left"].set_visible(False)
-    h1 = [
-        matplotlib.lines.Line2D(
-            [0], [0], color=BLUE, marker="o", lw=2, ms=5.5,
-            label=f"MCPyV vs CMV/EBV/Flu ({int(p_vir.iloc[0]['n_positive'])} vs {int(p_vir.iloc[0]['n_negative'])})",
-        ),
-        matplotlib.lines.Line2D(
-            [0], [0], color=AQUA, marker="s", lw=2, ms=5.5,
-            label=f"In matched tumor vs blood-only ({int(p_tum.iloc[0]['n_positive'])} vs {int(p_tum.iloc[0]['n_negative'])})",
-        ),
-    ]
-    ax1.legend(handles=h1, frameon=False, fontsize=8.0, loc="lower right")
-
-    # Panel B: Chiffelle T0 pre-ACT vs T30 Day-30 post-ACT (TR vs NTR)
     c_t0 = df[
         df["dataset"].eq("chiffelle_act_6patients")
         & df["subset"].eq("T0_pre_ACT")
@@ -220,47 +237,22 @@ def pulliam_and_act_aurocs() -> None:
     ].set_index("signature")
     sigs_c = [s for s in c_t0.index if s in c_t30.index]
     order_c = sorted(sigs_c, key=lambda s: 0.5 * (float(c_t0.loc[s, "auroc"]) + float(c_t30.loc[s, "auroc"])))
-    y_t2 = ax2.get_yaxis_transform()
-    for i, sig in enumerate(order_c):
-        r1, r2 = c_t0.loc[sig], c_t30.loc[sig]
-        c1 = NEUTRAL if sig == "clone_size" else BLUE
-        c2 = INK2 if sig == "clone_size" else AQUA
-        ax2.plot([r1.auroc_low, r1.auroc_high], [i + off, i + off], color=c1, lw=2, solid_capstyle="round")
-        ax2.scatter([r1.auroc], [i + off], s=46, color=c1, edgecolor=SURFACE, linewidth=1.2, zorder=3)
-        ax2.plot([r2.auroc_low, r2.auroc_high], [i - off, i - off], color=c2, lw=2, solid_capstyle="round")
-        ax2.scatter([r2.auroc], [i - off], s=46, marker="s", color=c2, edgecolor=SURFACE, linewidth=1.2, zorder=3)
-        ax2.text(1.02, i, f"{r1.auroc:.2f} / {r2.auroc:.2f}", transform=y_t2, va="center", fontsize=8.3, color=INK)
-
-    ax2.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))
-    ax2.set_yticks(range(len(order_c)), [SIG_LABELS.get(s, s) for s in order_c])
-    ax2.set_xlim(0.04, 1.02)
-    ax2.set_ylim(-0.6, len(order_c) - 0.3)
-    ax2.set_xlabel("AUROC (95% bootstrap interval)")
-    ax2.set_title("Chiffelle melanoma: Pre-ACT T0 vs Day-30 Post-ACT T30", fontsize=9.8)
-    ax2.grid(axis="x", lw=0.6)
-    ax2.set_axisbelow(True)
-    ax2.tick_params(axis="y", length=0)
-    ax2.spines["left"].set_visible(False)
-    h2 = [
-        matplotlib.lines.Line2D(
-            [0], [0], color=BLUE, marker="o", lw=2, ms=5.5,
-            label=f"Pre-ACT T0 ({int(c_t0.iloc[0]['n_positive'])} TR vs {int(c_t0.iloc[0]['n_negative'])} NTR)",
-        ),
-        matplotlib.lines.Line2D(
-            [0], [0], color=AQUA, marker="s", lw=2, ms=5.5,
-            label=f"Post-ACT T30 ({int(c_t30.iloc[0]['n_positive'])} TR vs {int(c_t30.iloc[0]['n_negative'])} NTR)",
-        ),
-    ]
-    ax2.legend(handles=h2, frameon=False, fontsize=8.0, loc="lower right")
-
-    save_tight(fig, "blood_cd4_auroc_pulliam_act")
+    _paired_forest(
+        c_t0,
+        c_t30,
+        order_c,
+        "Chiffelle melanoma: Pre-ACT T0 vs Day-30 Post-ACT T30",
+        f"Pre-ACT T0 ({int(c_t0.iloc[0]['n_positive'])} TR vs {int(c_t0.iloc[0]['n_negative'])} NTR)",
+        f"Post-ACT T30 ({int(c_t30.iloc[0]['n_positive'])} TR vs {int(c_t30.iloc[0]['n_negative'])} NTR)",
+        "blood_cd4_auroc_chiffelle_act",
+        color2=AQUA,
+        xlim=(0.04, 1.02),
+    )
 
 
 def cd4_til_aurocs() -> None:
     df = pd.read_csv(RESULTS / "auroc_blood_cd4.csv")
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.5, 4.8), constrained_layout=True)
 
-    # Panel A: Veatch melanoma CD4_neo vs all untested vs non-Treg untested
     v_all = df[
         df["dataset"].eq("veatch_melanoma_cd4") & df["contrast"].eq("CD4_neo_vs_untested_cd4")
     ].set_index("signature")
@@ -269,41 +261,18 @@ def cd4_til_aurocs() -> None:
     ].set_index("signature")
     sigs_v = [s for s in v_all.index if s in v_nt.index]
     order_v = sorted(sigs_v, key=lambda s: float(v_nt.loc[s, "auroc"]))
-    off = 0.15
-    y_t1 = ax1.get_yaxis_transform()
-    for i, sig in enumerate(order_v):
-        r1, r2 = v_all.loc[sig], v_nt.loc[sig]
-        c1 = NEUTRAL if sig == "clone_size" else BLUE
-        c2 = INK2 if sig == "clone_size" else AQUA
-        ax1.plot([r1.auroc_low, r1.auroc_high], [i + off, i + off], color=c1, lw=2, solid_capstyle="round")
-        ax1.scatter([r1.auroc], [i + off], s=46, color=c1, edgecolor=SURFACE, linewidth=1.2, zorder=3)
-        ax1.plot([r2.auroc_low, r2.auroc_high], [i - off, i - off], color=c2, lw=2, solid_capstyle="round")
-        ax1.scatter([r2.auroc], [i - off], s=46, marker="s", color=c2, edgecolor=SURFACE, linewidth=1.2, zorder=3)
-        ax1.text(1.02, i, f"{r1.auroc:.2f} / {r2.auroc:.2f}", transform=y_t1, va="center", fontsize=8.3, color=INK)
+    _paired_forest(
+        v_all,
+        v_nt,
+        order_v,
+        "Veatch melanoma CD4+ TIL: verified CD4_neo clones",
+        f"vs all untested CD4 ({int(v_all.iloc[0]['n_positive'])} vs {int(v_all.iloc[0]['n_negative'])})",
+        f"vs non-Treg CD4 ({int(v_nt.iloc[0]['n_positive'])} vs {int(v_nt.iloc[0]['n_negative'])})",
+        "blood_cd4_auroc_veatch",
+        color2=AQUA,
+        xlim=(0.2, 1.02),
+    )
 
-    ax1.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))
-    ax1.set_yticks(range(len(order_v)), [SIG_LABELS.get(s, s) for s in order_v])
-    ax1.set_xlim(0.2, 1.02)
-    ax1.set_ylim(-0.6, len(order_v) - 0.3)
-    ax1.set_xlabel("AUROC (95% bootstrap interval)")
-    ax1.set_title("Veatch melanoma CD4+ TIL: verified CD4_neo clones", fontsize=9.8)
-    ax1.grid(axis="x", lw=0.6)
-    ax1.set_axisbelow(True)
-    ax1.tick_params(axis="y", length=0)
-    ax1.spines["left"].set_visible(False)
-    h1 = [
-        matplotlib.lines.Line2D(
-            [0], [0], color=BLUE, marker="o", lw=2, ms=5.5,
-            label=f"vs all untested CD4 ({int(v_all.iloc[0]['n_positive'])} vs {int(v_all.iloc[0]['n_negative'])})",
-        ),
-        matplotlib.lines.Line2D(
-            [0], [0], color=AQUA, marker="s", lw=2, ms=5.5,
-            label=f"vs non-Treg CD4 ({int(v_nt.iloc[0]['n_positive'])} vs {int(v_nt.iloc[0]['n_negative'])})",
-        ),
-    ]
-    ax1.legend(handles=h1, frameon=False, fontsize=8.0, loc="lower right")
-
-    # Panel B: Oh 2020 whole-transcriptome bladder CD4+ TILs
     o_cm = df[
         df["dataset"].eq("oh_bladder_cd4") & df["contrast"].eq("CD4CXCL13_GZMB_GZMK_vs_CD4CM_TH17")
     ].set_index("signature")
@@ -312,49 +281,25 @@ def cd4_til_aurocs() -> None:
     ].set_index("signature")
     sigs_o = [s for s in o_cm.index if s in o_tr.index]
     order_o = sorted(sigs_o, key=lambda s: float(o_cm.loc[s, "auroc"]))
-    y_t2 = ax2.get_yaxis_transform()
-    for i, sig in enumerate(order_o):
-        r1, r2 = o_cm.loc[sig], o_tr.loc[sig]
-        c1 = NEUTRAL if sig == "clone_size" else BLUE
-        c2 = INK2 if sig == "clone_size" else ORANGE
-        ax2.plot([r1.auroc_low, r1.auroc_high], [i + off, i + off], color=c1, lw=2, solid_capstyle="round")
-        ax2.scatter([r1.auroc], [i + off], s=46, color=c1, edgecolor=SURFACE, linewidth=1.2, zorder=3)
-        ax2.plot([r2.auroc_low, r2.auroc_high], [i - off, i - off], color=c2, lw=2, solid_capstyle="round")
-        ax2.scatter([r2.auroc], [i - off], s=46, marker="s", color=c2, edgecolor=SURFACE, linewidth=1.2, zorder=3)
-        ax2.text(1.02, i, f"{r1.auroc:.2f} / {r2.auroc:.2f}", transform=y_t2, va="center", fontsize=8.3, color=INK)
-
-    ax2.axvline(0.5, color=INK2, lw=1, ls=(0, (4, 3)))
-    ax2.set_yticks(range(len(order_o)), [SIG_LABELS.get(s, s) for s in order_o])
-    ax2.set_xlim(0.05, 1.02)
-    ax2.set_ylim(-0.6, len(order_o) - 0.3)
-    ax2.set_xlabel("AUROC (95% bootstrap interval)")
-    ax2.set_title("Oh bladder CD4+ TIL: CD4CXCL13 + cytotoxic effectors", fontsize=9.8)
-    ax2.grid(axis="x", lw=0.6)
-    ax2.set_axisbelow(True)
-    ax2.tick_params(axis="y", length=0)
-    ax2.spines["left"].set_visible(False)
-    h2 = [
-        matplotlib.lines.Line2D(
-            [0], [0], color=BLUE, marker="o", lw=2, ms=5.5,
-            label=f"vs CD4CM/TH17 bystanders ({int(o_cm.iloc[0]['n_positive'])} vs {int(o_cm.iloc[0]['n_negative'])})",
-        ),
-        matplotlib.lines.Line2D(
-            [0], [0], color=ORANGE, marker="s", lw=2, ms=5.5,
-            label=f"vs FOXP3+ CD4IL2RAHI Treg ({int(o_tr.iloc[0]['n_positive'])} vs {int(o_tr.iloc[0]['n_negative'])})",
-        ),
-    ]
-    ax2.legend(handles=h2, frameon=False, fontsize=8.0, loc="lower right")
-
-    save_tight(fig, "blood_cd4_auroc_veatch_oh")
+    _paired_forest(
+        o_cm,
+        o_tr,
+        order_o,
+        "Oh bladder CD4+ TIL: CD4CXCL13 + cytotoxic effectors",
+        f"vs CD4CM/TH17 bystanders ({int(o_cm.iloc[0]['n_positive'])} vs {int(o_cm.iloc[0]['n_negative'])})",
+        f"vs FOXP3+ CD4IL2RAHI Treg ({int(o_tr.iloc[0]['n_positive'])} vs {int(o_tr.iloc[0]['n_negative'])})",
+        "blood_cd4_auroc_oh",
+        color2=ORANGE,
+        xlim=(0.05, 1.02),
+    )
 
 
 def treg_and_presorted_ablation() -> None:
     oh = pd.read_csv(RESULTS / "shortlist_oh_cd4.csv").set_index("run")
     ve = pd.read_csv(RESULTS / "shortlist_veatch_cd4.csv").set_index("run")
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.8, 4.3), constrained_layout=True)
-
-    # Panel A: Oh 2020 shortlist counts across pre_sorted & --exclude-treg settings
+    # Figure: Oh 2020 shortlist counts across pre_sorted & --exclude-treg settings
+    fig1, ax1 = plt.subplots(figsize=(7.0, 4.4), constrained_layout=True)
     runs_oh = [
         ("no_presorted_cd4_mrna_only", "No pre_sorted\n(CD4 mRNA > 0)"),
         ("presorted_default", "pre_sorted=CD4\n(default)"),
@@ -368,17 +313,19 @@ def treg_and_presorted_ablation() -> None:
     ax1.bar(xs - w / 2, eff_c, width=w, color=BLUE, label="CD4CXCL13 + cytotoxic GZMB/GZMK")
     ax1.bar(xs + w / 2, treg_c, width=w, color=ORANGE, label="CD4IL2RAHI (FOXP3+ Treg)")
     for x, ev, tv in zip(xs, eff_c, treg_c):
-        ax1.text(x - w / 2, ev + 0.6, str(ev), ha="center", va="bottom", fontsize=8.2, color=INK)
-        ax1.text(x + w / 2, tv + 0.6, str(tv), ha="center", va="bottom", fontsize=8.2, color=ORANGE)
-    ax1.set_xticks(xs, [lbl for _, lbl in runs_oh], fontsize=8.2)
+        ax1.text(x - w / 2, ev + 0.6, str(ev), ha="center", va="bottom", fontsize=8.5, color=INK)
+        ax1.text(x + w / 2, tv + 0.6, str(tv), ha="center", va="bottom", fontsize=8.5, color=ORANGE)
+    ax1.set_xticks(xs, [lbl for _, lbl in runs_oh], fontsize=8.5)
     ax1.set_ylim(0, max(max(eff_c), max(treg_c), 10) * 1.25)
     ax1.set_ylabel("shortlisted CD4 clones across 7 bladder tumors")
-    ax1.set_title("Oh 2020: pre_sorted=CD4 rescue & --exclude-treg")
+    ax1.set_title("Oh 2020: pre_sorted=CD4 rescue and --exclude-treg", fontsize=10.2)
     ax1.grid(axis="y", lw=0.6)
     ax1.set_axisbelow(True)
-    ax1.legend(frameon=False, fontsize=8.1, loc="upper left")
+    ax1.legend(frameon=False, fontsize=8.4, loc="upper left")
+    save_tight(fig1, "blood_cd4_oh_presorted_treg")
 
-    # Panel B: Veatch 2022 CD4_neo & CD4_self vs FOXP3+ Treg shortlist counts
+    # Figure: Veatch 2022 CD4_neo vs FOXP3+ Treg shortlist counts
+    fig2, ax2 = plt.subplots(figsize=(6.2, 4.3), constrained_layout=True)
     runs_ve = [
         ("default_keep_treg", "Default\n(--no-exclude-treg)"),
         ("exclude_treg_0.50", "With --exclude-treg\n(FOXP3 >= 50%)"),
@@ -386,20 +333,25 @@ def treg_and_presorted_ablation() -> None:
     xv = np.arange(len(runs_ve))
     neo_v = [int(ve.loc[k, "cd4_neo_shortlisted"]) for k, _ in runs_ve]
     treg_v = [int(ve.loc[k, "treg_shortlisted"]) for k, _ in runs_ve]
-    ax2.bar(xv - w / 2, neo_v, width=w, color=BLUE, label=f"Verified CD4_neo (of {int(ve.iloc[0]['cd4_neo_ge2'])} >=2-cell)")
+    ax2.bar(
+        xv - w / 2,
+        neo_v,
+        width=w,
+        color=BLUE,
+        label=f"Verified CD4_neo (of {int(ve.iloc[0]['cd4_neo_ge2'])} >=2-cell)",
+    )
     ax2.bar(xv + w / 2, treg_v, width=w, color=ORANGE, label="FOXP3+ Treg-like clones")
     for x, nv, tv in zip(xv, neo_v, treg_v):
-        ax2.text(x - w / 2, nv + 1.0, str(nv), ha="center", va="bottom", fontsize=8.4, color=INK)
-        ax2.text(x + w / 2, tv + 1.0, str(tv), ha="center", va="bottom", fontsize=8.4, color=ORANGE)
+        ax2.text(x - w / 2, nv + 1.0, str(nv), ha="center", va="bottom", fontsize=8.6, color=INK)
+        ax2.text(x + w / 2, tv + 1.0, str(tv), ha="center", va="bottom", fontsize=8.6, color=ORANGE)
     ax2.set_xticks(xv, [lbl for _, lbl in runs_ve])
     ax2.set_ylim(0, max(max(neo_v), max(treg_v), 15) * 1.25)
     ax2.set_ylabel("shortlisted qualifying clones")
-    ax2.set_title("Veatch 2022: --exclude-treg removes Treg picks")
+    ax2.set_title("Veatch 2022: --exclude-treg removes FOXP3+ Treg picks", fontsize=10.2)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
-    ax2.legend(frameon=False, fontsize=8.1, loc="upper right")
-
-    save_tight(fig, "blood_cd4_treg_and_presorted")
+    ax2.legend(frameon=False, fontsize=8.4, loc="upper right")
+    save_tight(fig2, "blood_cd4_veatch_treg")
 
 
 if __name__ == "__main__":
