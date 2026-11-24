@@ -245,29 +245,29 @@ L 489.35952 265.61513
    </g>
    <g id="text_11">
     <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(78.988585 117.811697)">0.73</text>
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(77.21296 126.339978)">43k/s</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(77.21296 126.339978)">40k/s</text>
     <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(72.65671 134.113885)">(r=0.95)</text>
    </g>
    <g id="text_12">
     <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(319.654869 160.831112)">0.62</text>
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(317.879244 169.351268)">49k/s</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(317.879244 169.351268)">50k/s</text>
     <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(313.322994 177.125175)">(r=0.20)</text>
    </g>
    <g id="text_13">
     <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(136.748493 124.787201)">0.74</text>
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(134.972868 133.311107)">43k/s</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(134.972868 133.311107)">40k/s</text>
    </g>
    <g id="text_14">
     <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(377.414777 171.756445)">0.61</text>
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(375.639152 180.276601)">49k/s</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(375.639152 180.276601)">50k/s</text>
    </g>
    <g id="text_15">
     <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(194.508401 123.033922)">0.74</text>
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(194.732776 131.557828)">96/s</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(194.732776 131.557828)">97/s</text>
    </g>
    <g id="text_16">
     <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(435.174685 170.152381)">0.62</text>
-    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(433.174685 178.672537)">159/s</text>
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(433.174685 178.672537)">160/s</text>
    </g>
    <g id="text_17">
     <text style="font-weight: 700; font-size: 10.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="40.3725" y="13.41" transform="rotate(-0 40.3725 13.41)">Publicness AUROC and throughput: TCRsift k-mer vs OLGA 1.3.0</text>

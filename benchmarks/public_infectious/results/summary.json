@@ -1,5 +1,5 @@
 {
-  "tcrsift_version": "3.32.0",
+  "tcrsift_version": "3.37.1",
   "vdjdb_release": "vdjdb-2026-11-06",
   "vdjdb_entries": 280894,
   "vdjdb_paired_ab_entries": 200180,
@@ -37,7 +37,7 @@
   },
   "tenx_dextramer": {
     "tenx_donor1": {
-      "seconds": 88.2,
+      "seconds": 141.6,
       "cells_after_gex_qc": 34220,
       "cells_retained": 24887,
       "clones_scored": 15132,
@@ -52,7 +52,7 @@
       "cell_peptide_agreement_vs_10x": 1.0
     },
     "tenx_donor2": {
-      "seconds": 62.5,
+      "seconds": 116.9,
       "cells_after_gex_qc": 67789,
       "cells_retained": 38314,
       "clones_scored": 7741,
@@ -102,8 +102,8 @@
       "json_contig_verified_constructs": 0,
       "partial_or_full_vdj_paired_clones": 81,
       "germline_fallback_assembled_constructs": 137,
-      "germline_fallback_5prime_contig_rescued_constructs": 31,
-      "germline_fallback_contig_junction_verified_constructs": 23
+      "germline_fallback_5prime_contig_rescued_constructs": 30,
+      "germline_fallback_contig_junction_verified_constructs": 21
     },
     "GT_2": {
       "total_pbmc_loaded": 16799,

@@ -1,6 +1,6 @@
 # Benchmark overview and head-to-head comparisons
 
-This page summarizes TCRsift's evaluation across 13 public human and mouse single-cell datasets (15 cohort evaluations, with Pulliam `GSE227708` and Chiffelle `GSE222448` each evaluated in two distinct clinical contexts; recorded on `tcrsift 3.32.0–3.34.0`) and compares each pipeline stage against open-source baselines (`Scanpy score_genes`, single-gene `CXCL13`, `stitchr`, `OLGA`, and per-cell, CLR, and Gaussian-mixture multimer callers). Per-patient tables and sensitivity analyses are on the cohort pages for [solid-tumor CD8 TILs](benchmarks.md), [infectious disease and blood](benchmarks-infectious.md), [paired blood-tumor, post-ACT, and CD4 TILs](benchmarks-blood-cd4.md), and [murine models](benchmarks-mouse.md).
+This page summarizes TCRsift's evaluation across 13 public human and mouse single-cell datasets (15 cohort evaluations, with Pulliam `GSE227708` and Chiffelle `GSE222448` each evaluated in two distinct clinical contexts; all five benchmark suites regenerated on `tcrsift 3.37.1`) and compares each pipeline stage against open-source baselines (`Scanpy score_genes`, single-gene `CXCL13`, `stitchr`, `OLGA`, and per-cell, CLR, and Gaussian-mixture multimer callers). Per-patient tables and sensitivity analyses are on the cohort pages for [solid-tumor CD8 TILs](benchmarks.md), [infectious disease and blood](benchmarks-infectious.md), [paired blood-tumor, post-ACT, and CD4 TILs](benchmarks-blood-cd4.md), and [murine models](benchmarks-mouse.md).
 
 ## Choosing a command and flags
 
@@ -25,7 +25,7 @@ All workflows load Cell Ranger VDJ and GEX inputs, classify CD4/CD8 lineage, sco
 | Human and mouse CD4+ TILs, *CD4* dropout, and Tregs | Veatch 2022 melanoma CD4, Oh 2020 bladder CD4, Khatun 2021 mouse GP66 CD4 | Droplet scRNA-seq misses *CD4* mRNA in 88.5% of FACS-sorted human CD4 T cells; setting `pre_sorted: CD4` increases retention from 708 to 6,144 cells (8.7x; shortlist 103 vs 7 clones) in Oh 2020 and from 9,046 to 11,413 cells (+26.2%) in Khatun 2021, while `hg19` symbol aliases resolve all 40 `NeoTCR4` genes. Because intratumoral `FOXP3+` Tregs express `ENTPD1`, `CTLA4`, `TIGIT`, and `TNFRSF9` (`AIM` AUROC 0.16 for effectors vs `CD4IL2RAHI` Tregs), `--exclude-treg` removes all 61 `FOXP3+` Treg picks on Veatch 2022 (38.1% to 0.0% of shortlist) while keeping 9 of 9 `CD4_neo` and 5 of 5 `CD4_self` picks. | [Blood & CD4](benchmarks-blood-cd4.md), [Mouse](benchmarks-mouse.md) |
 | Public TCR databases and VDJdb circularity | 10x Donors 1 & 2, Minervina SARS-CoV-2, Kasmani NOD, Khatun LCMV, MC38 | On study-held-out Minervina SARS-CoV-2 (4,212 clones), paired `strict_ab` gives 92.1% virus and 78.9% epitope precision vs 49.9% and 44.0% under `ab_with_partial` (237 off-target β-chain hits out of 473 matches). On held-out 10x Donors 1 and 2, `strict_ab` gives 100.0% epitope precision (44/44 and 65/65). On Kasmani NOD IGRP, recall is 91.4% on full VDJdb (circular) and 0.0% once `PMID:35667687` is held out; `strict_ab` cuts false matches on C57BL/6 MC38 TILs from 135/1,763 (7.7%) to 1/1,763 (0.06%). | [Infectious](benchmarks-infectious.md), [Mouse](benchmarks-mouse.md) |
 | Multiplexed pMHC multimer calling | 10x Healthy Donors 1 & 2 (44 pMHC + 6 negative controls) | Requiring `UMI >= 10`, `>=5x max(NC, 1)`, at least 2 binding cells, and at least 50% clonal concordance cuts sticky `KLGGALQAK` CMV clones from 837 to 31 (-96.3%), removes HIV Gag false positives (8 to 0), and reaches 100.0% (109/109) cognate precision on 10x-held-out `strict_ab` VDJdb. | [Infectious](benchmarks-infectious.md), [Multimer calling](#multiplexed-pmhc-multimer-calling) |
-| Construct assembly (human and mouse) | Minervina CR6 (46), Fischer 5'-truncated (160), MC38 + Khatun mouse (101) | Donor-contig assembly keeps 9 of 46 (19.6%) polymorphic donor V-regions on Minervina CR6 contigs (46/46 built); `--germline-vdj-fallback` builds 160 of 160 5'-truncated Fischer clones with `M...` leaders (33 partial 5' contigs rescued); `--species mouse` normalizes `-dv` V-gene names and corrects 52 Cell Ranger `Trbc1`/`Trbc2` miscalls across 101 mouse clones with 0 validation errors. | [Infectious](benchmarks-infectious.md), [Mouse](benchmarks-mouse.md), [Construct assembly](#construct-assembly-and-generation-probability) |
+| Construct assembly (human and mouse) | Minervina CR6 (46), Fischer 5'-truncated (160), MC38 + Khatun mouse (101) | Donor-contig assembly keeps 9 of 46 (19.6%) polymorphic donor V-regions on Minervina CR6 contigs (46/46 built); `--germline-vdj-fallback` builds 160 of 160 5'-truncated Fischer clones with `M...` leaders (32 partial 5' contigs rescued); `--species mouse` normalizes `-dv` V-gene names and corrects 52 Cell Ranger `Trbc1`/`Trbc2` miscalls across 101 mouse clones with 0 validation errors. | [Infectious](benchmarks-infectious.md), [Mouse](benchmarks-mouse.md), [Construct assembly](#construct-assembly-and-generation-probability) |
 
 ## Comparisons against open-source baselines
 
@@ -94,17 +94,17 @@ Because `select_round_robin` produces a discrete shortlist rather than a single 
 
 | Cohort | Tool / mode | Clones ($n$) | Complete `M...` constructs | Donor V-framework variants kept | Mismatched `Trbc` shipped | Contig / build QC flags | Runtime (s) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minervina 2022 human CR6 shortlist | `tcrsift_donor_contig` | 46 | 46 (100.0%) | 9 (19.6%) | 0 | 0 | 0.90 |
-| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 46 | 46 (100.0%) | 0 (uses `*01`) | 0 | 0 | 0.09 |
-| Fischer 2021 human 5'-truncated | `tcrsift_donor_contig_only` (strict default) | 160 | 0 (0.0%) | 0 | 0 | 0 | 0.94 |
-| | `tcrsift_germline_vdj_fallback` | 160 | 160 (100.0%) | 33 (partial 5' contigs) | 0 | 28 (raw JSON C-tail flags) | 9.67 |
-| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 160 | 135 (84.4%) | 0 | 0 | 25 (unbuilt) | 0.16 |
-| Mouse Cell Ranger shortlists (MC38 + Khatun) | `tcrsift_mouse_germline_fallback` (`--species mouse`) | 101 | 101 (100.0%) | 0 | 0 (52 `Trbc` fixed) | 0 | 2.91 |
-| | `stitchr / thimble 1.3.1` (`-s MOUSE` default) | 101 | 78 (77.2%) | 0 | 0 | 23 (unbuilt) | 0.11 |
-| | `stitchr / thimble 1.3.1` (`-s MOUSE -sc` skip C check) | 101 | 78 (77.2%) | 0 | 37 (47.4% of built) | 23 (unbuilt) | 0.10 |
+| Minervina 2022 human CR6 shortlist | `tcrsift_donor_contig` | 46 | 46 (100.0%) | 9 (19.6%) | 0 | 0 | 1.03 |
+| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 46 | 46 (100.0%) | 0 (uses `*01`) | 0 | 0 | 0.15 |
+| Fischer 2021 human 5'-truncated | `tcrsift_donor_contig_only` (strict default) | 160 | 0 (0.0%) | 0 | 0 | 0 | 0.44 |
+| | `tcrsift_germline_vdj_fallback` | 160 | 160 (100.0%) | 32 (partial 5' contigs) | 0 | 29 (raw JSON C-tail flags) | 10.77 |
+| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 160 | 135 (84.4%) | 0 | 0 | 25 (unbuilt) | 0.19 |
+| Mouse Cell Ranger shortlists (MC38 + Khatun) | `tcrsift_mouse_germline_fallback` (`--species mouse`) | 101 | 101 (100.0%) | 0 | 0 (52 `Trbc` fixed) | 0 | 3.28 |
+| | `stitchr / thimble 1.3.1` (`-s MOUSE` default) | 101 | 78 (77.2%) | 0 | 0 | 23 (unbuilt) | 0.13 |
+| | `stitchr / thimble 1.3.1` (`-s MOUSE -sc` skip C check) | 101 | 78 (77.2%) | 0 | 37 (47.4% of built) | 23 (unbuilt) | 0.12 |
 
 - **Donor V-region alleles on Cell Ranger 6+ human contigs.** Nine of 46 (19.6%) shortlisted human clones in Minervina 2022 carry donor V-region amino-acid differences from IMGT `*01`; `tcrsift` retains the sequenced donor VDJ, whereas `stitchr` substitutes `*01` framework residues.
-- **5'-truncated deposits (Fischer 2021).** Strict `tcrsift` refuses to build incomplete contigs (0/160). Adding `--germline-vdj-fallback` builds 160 of 160 complete `M...` single-chain constructs (vs 135/160 = 84.4% in `stitchr`), rescuing 33 partial 5' donor contigs, logging 16 germline and constant-allele variants (including 3 donor constant-allele divergences), and flagging 28 clones where unfiltered `all_contig_annotations.json.gz` reads carry 3' C-region primer or junction errors (`single_chain_nt_optimized` remains in-frame for all 160).
+- **5'-truncated deposits (Fischer 2021).** Strict `tcrsift` refuses to build incomplete contigs (0/160). Adding `--germline-vdj-fallback` builds 160 of 160 complete `M...` single-chain constructs (vs 135/160 = 84.4% in `stitchr`), rescuing 32 partial 5' donor contigs, logging 15 germline and constant-allele variants (including 3 donor constant-allele divergences), and flagging 29 clones where unfiltered `all_contig_annotations.json.gz` reads carry 3' C-region primer or junction errors (`single_chain_nt_optimized` remains in-frame for all 160).
 - **Mouse Cell Ranger outputs (`-dv` names and `Trbc` parity).** Default `stitchr -s MOUSE` fails on 23 of 101 (22.8%) mouse candidates due to Ensembl `-dv` V-gene names (`TRAV13-4-dv7`, `TRAV16d-dv11`) and C-gene checks; adding `-sc` (`--skip_c_checks`) still fails on the 23 `-dv` clones and ships 37 `Trbj2+Trbc1` or `Trbj1+Trbc2` chimeras. `tcrsift --species mouse` normalizes `-dv` names and enforces `Trbj1->Trbc1` / `Trbj2->Trbc2` parity (52 Cell Ranger miscalls corrected), building 101 of 101 constructs with 0 validation errors.
 
 #### Generation probability and publicness: `tcrsift` k-mer vs `OLGA 1.3.0`
@@ -117,19 +117,19 @@ Because `select_round_robin` produces a discrete shortlist rather than a single 
 
 | Repertoire (`public >=2 donors`) | Model | Pearson $r$ vs `OLGA` ($\beta$ / $\alpha$) | Spearman $\rho$ vs `OLGA` ($\beta$ / $\alpha$) | Public sharing AUROC (95% CI) | Throughput (clones/s) | Speedup vs `OLGA` |
 | --- | --- | --- | --- | --- | ---: | ---: |
-| Human blood ($n = 1{,}500$; 420 public) | `tcrsift` k-mer `pgen_beta` | 0.954 / 0.763 | 0.957 / 0.755 | 0.735 (0.704–0.766) | 43,038 / s | 451x |
-| | `tcrsift` k-mer `ppost_beta` | — | — | 0.739 (0.708–0.770) | 43,038 / s | 451x |
-| | `OLGA 1.3.0` exact VDJ `pgen_beta` | 1.000 | 1.000 | 0.744 (0.712–0.774) | 95.5 / s | 1.0x |
-| Mouse GP66 CD4 ($n = 1{,}781$; 72 public) | `tcrsift` AA-Markov fallback `pgen_beta` | 0.198 / 0.224 | 0.235 / 0.208 | 0.620 (0.555–0.680) | 49,069 / s | 308x |
-| | `tcrsift` AA-Markov fallback `ppost_beta` | — | — | 0.613 (0.550–0.674) | 49,069 / s | 308x |
-| | `OLGA 1.3.0` `mouse_T_beta` exact DP | 1.000 | 1.000 | 0.617 (0.542–0.686) | 159.1 / s | 1.0x |
+| Human blood ($n = 1{,}500$; 420 public) | `tcrsift` k-mer `pgen_beta` | 0.954 / 0.763 | 0.957 / 0.755 | 0.735 (0.704–0.766) | 40,057 / s | 412x |
+| | `tcrsift` k-mer `ppost_beta` | — | — | 0.739 (0.708–0.770) | 40,057 / s | 412x |
+| | `OLGA 1.3.0` exact VDJ `pgen_beta` | 1.000 | 1.000 | 0.744 (0.712–0.774) | 97.2 / s | 1.0x |
+| Mouse GP66 CD4 ($n = 1{,}781$; 72 public) | `tcrsift` AA-Markov fallback `pgen_beta` | 0.198 / 0.224 | 0.235 / 0.208 | 0.620 (0.555–0.680) | 50,050 / s | 312x |
+| | `tcrsift` AA-Markov fallback `ppost_beta` | — | — | 0.613 (0.550–0.674) | 50,050 / s | 312x |
+| | `OLGA 1.3.0` `mouse_T_beta` exact DP | 1.000 | 1.000 | 0.617 (0.542–0.686) | 160.5 / s | 1.0x |
 
-- **Human blood.** `tcrsift` k-mer `pgen_beta` correlates with `OLGA` at $r = 0.954$ ($\rho = 0.957$), reaches similar cross-donor public sharing AUROC (0.735 `Pgen` and 0.739 `Ppost` vs 0.744 `OLGA`), and runs 451x faster (0.035 s vs 15.71 s).
+- **Human blood.** `tcrsift` k-mer `pgen_beta` correlates with `OLGA` at $r = 0.954$ ($\rho = 0.957$), reaches similar cross-donor public sharing AUROC (0.735 `Pgen` and 0.739 `Ppost` vs 0.744 `OLGA`), and runs 412x faster (0.037 s vs 15.44 s).
 - **Mouse fallback.** Because `tcrsift` does not ship a pre-trained mouse V(D)J k-mer table (`tcrsift pgen train --species mouse` fits one from repertoire data), it logs a fallback notice and scores mouse chains with the bundled human-fitted amino-acid Markov table. Correlation with `OLGA mouse_T_beta` is low ($r = 0.198$), though empirical cross-mouse public sharing AUROC across the five Khatun C57BL/6 mice is similar (0.620 vs 0.617).
 
 ### Multiplexed pMHC multimer calling
 
-On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD8 clones passing `CD3 >= 3` and `UMI >= 2` stained with 44 viral/cancer dextramers and 6 negative-control dextramers), four callers are compared. Note that the [infectious-disease page](benchmarks-infectious.md) evaluates all paired VDJ clones prior to CD8/CD3/UMI filtering (reporting 1,023 → 39 sticky `KLGGALQAK` clones), whereas the head-to-head table below evaluates the CD8/CD3/UMI-filtered expanded repertoire with modal per-cell calls (837 → 31 sticky `KLGGALQAK` clones).
+On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD8 clones passing `CD3 >= 3` and `UMI >= 2` stained with 44 viral/cancer dextramers and 6 negative-control dextramers), four callers are compared. Note that the [infectious-disease page](benchmarks-infectious.md) evaluates all paired VDJ clones prior to CD8/CD3/UMI filtering (reporting 1,019 → 39 sticky `KLGGALQAK` clones), whereas the head-to-head table below evaluates the CD8/CD3/UMI-filtered expanded repertoire with modal per-cell calls (837 → 31 sticky `KLGGALQAK` clones).
 
 ![Sticky KLGGALQAK and HIV Gag false positives vs canonical viral clones](assets/figures/h2h_multimer_counts.svg)
 
