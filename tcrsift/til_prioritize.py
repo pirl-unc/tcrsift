@@ -594,12 +594,13 @@ def run_til_prioritize(
         constructs_csv.unlink(missing_ok=True)
         constructs_fasta.unlink(missing_ok=True)
     else:
-        from ._assemble_qc import (
+        from .assemble import (
             assemble_fidelity_summary,
+            assemble_full_sequences,
             enforce_contig_fidelity,
             export_fasta,
+            validate_sequences,
         )
-        from .assemble import assemble_full_sequences, validate_sequences
         from .pipeline import _common_contig_root
 
         def _has_contig_source(path_str: str) -> bool:

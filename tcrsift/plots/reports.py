@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from ._plots_state import save_figure
+from .state import save_figure
 
 logger = logging.getLogger(__name__)
 
@@ -543,7 +543,7 @@ def create_pipeline_funnel(
 # constituent parts, duplicating the chain content. All three are
 # fixed here (#65).
 #
-# The canonical column names ``assemble.py`` writes to
+# The canonical column names ``tcrsift.assemble`` writes to
 # ``full_sequences.csv`` are all lowercase ``vdj_*_aa``. The
 # ``full_*_aa`` summary columns are intentionally not rendered: their
 # content equals leader + VDJ + constant, which are already shown.
@@ -587,7 +587,7 @@ def _expand_annotation_lines(lines, *, max_lines: int = 18) -> list[str]:
     indented ``a`` / ``b`` / ``c``. Capped at ``max_lines`` with an explicit
     ``... (+N more)`` marker rather than a silent truncation.
     """
-    from .format import pdf_safe
+    from ..format import pdf_safe
 
     out: list[str] = []
     for raw in lines:
@@ -672,7 +672,7 @@ def create_tcr_sequence_pdf(
     # iterating over were biologically valid (#68). With #66 and #67
     # fixed, this is the last line of defense against future
     # construction regressions silently producing broken figures.
-    from .assemble import validate_sequences
+    from ..assemble import validate_sequences
 
     apply_fix = strict is True or strict == "skip"
     qc_messages = validate_sequences(df, strict=False, fix=apply_fix, species=species)
@@ -703,7 +703,7 @@ def create_tcr_sequence_pdf(
                 n_before - len(df), n_before, len(df), msg,
             )
             if df.empty:
-                from .validation import TCRsiftValidationError
+                from ..validation import TCRsiftValidationError
 
                 raise TCRsiftValidationError(
                     "create_tcr_sequence_pdf: every clone failed "
@@ -714,7 +714,7 @@ def create_tcr_sequence_pdf(
                     "banner, or fix the upstream assembly.",
                 )
         elif strict:
-            from .validation import TCRsiftValidationError
+            from ..validation import TCRsiftValidationError
 
             raise TCRsiftValidationError(
                 msg,
@@ -766,7 +766,7 @@ def create_tcr_sequence_pdf(
     c = canvas.Canvas(str(output_path), pagesize=letter)
     width, height = letter
 
-    from .format import pdf_safe
+    from ..format import pdf_safe
 
     # Ensure Courier is available
     pdfmetrics.getFont("Courier")

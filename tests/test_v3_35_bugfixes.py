@@ -399,8 +399,8 @@ def test_cohort_overlap_ignores_empty_cdr3_beta():
 
 def test_assemble_qc_catches_premature_stop_and_bare_mature_offset():
     """_nt_contig_in_frame_no_premature_stop catches internal stops; validate_sequences handles bare mature."""
-    from tcrsift._assemble_constants import HUMAN_TRAC_AA
-    from tcrsift._assemble_qc import _nt_contig_in_frame_no_premature_stop, validate_sequences
+    from tcrsift.assemble.constants import HUMAN_TRAC_AA
+    from tcrsift.assemble.qc import _nt_contig_in_frame_no_premature_stop, validate_sequences
 
     # ATG (M) + GCT (A) + TAA (*) + GCT (A) -> internal stop at codon 3
     assert not _nt_contig_in_frame_no_premature_stop("ATGGCTTAAGCT", "MAGA")
@@ -424,7 +424,7 @@ def test_assemble_qc_catches_premature_stop_and_bare_mature_offset():
 
 def test_assemble_codons_forbids_golden_gate_and_ncoi():
     """DEFAULT_FORBIDDEN_MOTIFS includes NcoI, BsaI, and BsmBI."""
-    from tcrsift._assemble_codons import DEFAULT_FORBIDDEN_MOTIFS
+    from tcrsift.assemble.codons import DEFAULT_FORBIDDEN_MOTIFS
 
     for motif in ("CCATGG", "GGTCTC", "GAGACC", "CGTCTC", "GAGACG"):
         assert motif in DEFAULT_FORBIDDEN_MOTIFS
@@ -467,7 +467,7 @@ def test_assemble_skips_missing_chain_on_unpaired_clone():
 
 def test_beta_c_base_unpads_zero_padded_trbc():
     """_beta_c_base maps TRBC01/TRBC02 to TRBC1/TRBC2."""
-    from tcrsift._assemble_constants import _beta_c_base
+    from tcrsift.assemble.constants import _beta_c_base
 
     assert _beta_c_base("TRBC01*01") == "TRBC1"
     assert _beta_c_base("TRBC02") == "TRBC2"
@@ -502,8 +502,8 @@ def test_pretty_sample_and_method_preserve_non_marker_names():
 
 def test_plots_handle_stringified_sample_frequencies_and_duplicate_var_names():
     """Plots parse CSV-round-tripped sample_frequencies and duplicate var_names cleanly."""
-    from tcrsift._plots_state import _per_cell_signature
     from tcrsift.plots import _derive_n_methods, _expand_sample_frequencies
+    from tcrsift.plots.state import _per_cell_signature
 
     df = pd.DataFrame(
         {
@@ -527,7 +527,7 @@ def test_plots_handle_stringified_sample_frequencies_and_duplicate_var_names():
 
 def test_generate_report_html_escapes_report_name(tmp_path):
     """HTML figure report must escape report_name."""
-    from tcrsift._plots_reports import generate_report
+    from tcrsift.plots.reports import generate_report
 
     generate_report(tmp_path, format="html", report_name='<script>alert(1)</script>')
     html_text = (tmp_path / "all-figures.html").read_text()

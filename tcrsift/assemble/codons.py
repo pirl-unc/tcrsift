@@ -10,13 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Codon tables, synonymous recoding, DNA translation, and Cell Ranger contig loading."""
+"""Codon tables, synonymous recoding, DNA translation, and 2A single-chain linking."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 
 import pandas as pd
 
@@ -627,212 +626,89 @@ def find_longest_orf(dna_seq: str) -> tuple[str, int, str]:
     return longest_aa, longest_offset, longest_ragged
 
 
-def parse_fasta(path: str | Path) -> dict[str, str]:
+def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
+    """Add single-chain construct (β-linker-α) including the NT triad.
+
+    Emits four columns:
+
+    * ``single_chain_aa``
+    * ``single_chain_nt`` — built from the blend ``full_*_nt``. The
+      column most callers reach for; donor-faithful at the J→C
+      boundary, codon-optimized canonical otherwise.
+    * ``single_chain_nt_optimized`` — built from
+      ``full_*_nt_optimized``. The ready-to-order synthesis construct;
+      same bytes for every donor with the same picked allele.
+
+    No ``single_chain_nt_contig`` is emitted: the stitched contig construct is
+    truncated at contig coverage (not a CDS, not synthesis-ready) and carries no
+    QC signal beyond the per-chain ``{chain}_constant_nt_contig`` /
+    ``full_{chain}_nt_contig`` provenance columns it was built from. Inspect
+    those for the donor's raw bytes / contig backing.
+
+    The β CDS in each variant has ALL trailing stops stripped before
+    the linker — the 2A construct requires a continuous ORF across
+    β → linker → α. The dual-stop default (``TAATGA``) made the
+    one-codon-strip in 2.3 incorrect; the loop here is the fix.
     """
-    Parse a FASTA (or ``.fasta.gz``) file.
+    if linker.upper() in LINKERS:
+        linker_info = LINKERS[linker.upper()]
+        linker_aa = linker_info["aa"]
+        linker_nt = linker_info["dna"]
+    else:
+        # Custom linker sequence provided as amino acids; no NT.
+        linker_aa = linker
+        linker_nt = ""
 
-    Returns
-    -------
-    dict
-        Mapping from sequence ID to sequence
-    """
-    import gzip
+    def strip_stop(seq):
+        if not isinstance(seq, str):
+            return None
+        return seq.rstrip("*")
 
-    path = Path(path)
-    results = {}
-    curr_id = None
-    lines = []
+    beta_aa = df["full_beta_aa"].apply(strip_stop)
+    alpha_aa = df["full_alpha_aa"].where(df["full_alpha_aa"].apply(lambda x: isinstance(x, str)))
 
-    opener = gzip.open if path.name.lower().endswith(".gz") else open
-    with opener(path, "rt", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith(">"):
-                if curr_id and lines:
-                    results[curr_id] = "".join(lines)
-                    lines = []
-                curr_id = line[1:].split()[0]  # Take first word after >
-            else:
-                lines.append(line)
+    single_chain = beta_aa.fillna("") + linker_aa + alpha_aa.fillna("")
+    missing_mask = df["full_beta_aa"].isna() | df["full_alpha_aa"].isna()
+    df["single_chain_aa"] = single_chain.where(~missing_mask, pd.NA)
 
-        # Don't forget last entry
-        if curr_id and lines:
-            results[curr_id] = "".join(lines)
+    def strip_stop_codon_dna(seq):
+        if not isinstance(seq, str):
+            return None
+        # Strip ALL trailing stops. Single-stop strip pre-2.4 broke
+        # frame across the linker once dual-stop became the default.
+        while len(seq) >= 3 and seq[-3:] in {"TAA", "TAG", "TGA"}:
+            seq = seq[:-3]
+        return seq
 
-    return results
-
-
-def parse_contig_json(path: str | Path) -> dict[str, str]:
-    """Parse a CellRanger ``*contig_annotations*.json(.gz)`` file into ``{contig_id: sequence}``."""
-    import gzip
-    import json
-
-    path = Path(path)
-    opener = gzip.open if path.name.lower().endswith(".gz") else open
-    with opener(path, "rt", encoding="utf-8") as fh:
-        records = json.load(fh)
-    results: dict[str, str] = {}
-    if isinstance(records, list):
-        for rec in records:
-            if not isinstance(rec, dict):
+    if linker_nt:
+        # Build the triad. Each variant uses its matching beta/alpha
+        # input column; if either input is missing or contains None
+        # (contig view when contig didn't cover the C region) the
+        # output is None — splicing a None into a 2A construct would
+        # be silently wrong.
+        # No ``_contig`` single-chain variant: the stitched contig construct is
+        # truncated at contig coverage (not a CDS, not synthesis-ready) and adds
+        # nothing over the per-chain ``{chain}_constant_nt_contig`` /
+        # ``full_{chain}_nt_contig`` provenance columns it's built from.
+        for suffix, out_col in (
+            ("", "single_chain_nt"),
+            ("_optimized", "single_chain_nt_optimized"),
+        ):
+            beta_col = f"full_beta_nt{suffix}"
+            alpha_col = f"full_alpha_nt{suffix}"
+            if beta_col not in df.columns or alpha_col not in df.columns:
                 continue
-            cid = rec.get("contig_name") or rec.get("contig_id")
-            seq = rec.get("sequence")
-            if cid and isinstance(seq, str) and seq:
-                results[str(cid)] = seq.strip().upper()
-    return results
 
+            def _build_row(row, b=beta_col, a=alpha_col):
+                bv = row.get(b)
+                av = row.get(a)
+                if not isinstance(bv, str) or not isinstance(av, str):
+                    return None
+                return strip_stop_codon_dna(bv) + linker_nt + av
 
-SAMPLE_NAME_FROM_CHOICES = ("parent", "grandparent", "sheet")
+            df[out_col] = df.apply(_build_row, axis=1)
 
+    df["linker"] = linker_aa
 
-def load_contigs(
-    contig_dir: str | Path | None = None,
-    *,
-    sample_name_from: str = "parent",
-    cellranger_dir: str | Path | None = None,
-    sample_sheet: pd.DataFrame | None = None,
-) -> dict[str, dict[str, str]]:
-    """
-    Load contig sequences from a CellRanger-style output tree (#124).
-
-    Parameters
-    ----------
-    contig_dir : str or Path, optional
-        Root directory to scan for ``*contig*.fasta``. Mutually exclusive
-        with ``cellranger_dir``.
-    sample_name_from : {'parent', 'grandparent', 'sheet'}, default 'parent'
-        How to derive the sample name from each discovered FASTA's path:
-
-        - ``'parent'`` (default, backward-compat) — sample = FASTA's
-          immediate parent directory name. Matches the symlinked layout
-          ``contig_dir/{sample}/filtered_contig.fasta``.
-        - ``'grandparent'`` — sample = FASTA's grandparent directory name.
-          Matches CellRanger ``multi`` output:
-          ``per_sample_outs/{sample}/vdj_t/filtered_contig.fasta``.
-        - ``'sheet'`` — match each FASTA against ``sample_sheet['vdj_dir']``
-          and take the corresponding ``sample`` column. Most explicit;
-          useful for non-standard layouts.
-    cellranger_dir : str or Path, optional
-        Shorthand for ``contig_dir=cellranger_dir, sample_name_from='grandparent'``.
-        Pass a raw CellRanger ``per_sample_outs/`` directory and the sample
-        names will resolve correctly without a symlink tree. Mutually
-        exclusive with ``contig_dir``.
-    sample_sheet : pandas.DataFrame, optional
-        Required when ``sample_name_from='sheet'``. Must have columns
-        ``sample`` and ``vdj_dir``; each FASTA's path must be inside one of
-        the listed ``vdj_dir`` paths.
-
-    Returns
-    -------
-    dict
-        Nested dict: ``sample -> contig_id -> sequence``.
-    """
-    if cellranger_dir is not None:
-        if contig_dir is not None:
-            raise ValueError(
-                "load_contigs: pass exactly one of contig_dir or cellranger_dir, not both."
-            )
-        contig_dir = cellranger_dir
-        sample_name_from = "grandparent"
-    if contig_dir is None:
-        raise ValueError(
-            "load_contigs: must pass either contig_dir or cellranger_dir."
-        )
-    if sample_name_from not in SAMPLE_NAME_FROM_CHOICES:
-        raise ValueError(
-            f"load_contigs: sample_name_from={sample_name_from!r} not in "
-            f"{SAMPLE_NAME_FROM_CHOICES}"
-        )
-    if sample_name_from == "sheet" and sample_sheet is None:
-        raise ValueError(
-            "load_contigs: sample_name_from='sheet' requires sample_sheet=..."
-        )
-
-    contig_dir = Path(contig_dir)
-    sample_contigs: dict[str, dict[str, str]] = {}
-
-    sheet_dir_to_sample: dict[Path, str] = {}
-    if sample_name_from == "sheet":
-        missing = {"sample", "vdj_dir"} - set(sample_sheet.columns)
-        if missing:
-            raise ValueError(
-                f"load_contigs: sample_sheet is missing required columns {sorted(missing)}"
-            )
-        sheet_dir_to_sample = {}
-        for row in sample_sheet.itertuples(index=False):
-            p = Path(row.vdj_dir).resolve()
-            sheet_dir_to_sample[p.parent if p.is_file() else p] = row.sample
-
-    def _sample_for(fasta_path: Path) -> str | None:
-        if sample_name_from == "parent":
-            return fasta_path.parent.name
-        if sample_name_from == "grandparent":
-            return fasta_path.parent.parent.name
-        # sheet
-        resolved = fasta_path.resolve()
-        for sheet_path, sample in sheet_dir_to_sample.items():
-            try:
-                resolved.relative_to(sheet_path)
-            except ValueError:
-                continue
-            return sample
-        return None
-
-    fasta_candidates = sorted(
-        {
-            *contig_dir.rglob("*contig*.fasta"),
-            *contig_dir.rglob("*contig*.fasta.gz"),
-        }
-    )
-    for fasta_path in fasta_candidates:
-        if not fasta_path.is_file():
-            continue
-        sample_name = _sample_for(fasta_path)
-        if sample_name is None:
-            logger.warning(
-                "load_contigs: %s did not match any sample_sheet vdj_dir; skipping",
-                fasta_path,
-            )
-            continue
-        sample_contigs.setdefault(sample_name, {}).update(parse_fasta(fasta_path))
-
-    # Flat-layout fallback: bare ``*.fasta(.gz)`` files directly in contig_dir
-    # that were not already matched above by ``*contig*.fasta(.gz)``.
-    if sample_name_from == "parent":
-        seen_fastas = {p.resolve() for p in fasta_candidates}
-        for fasta_path in sorted({*contig_dir.glob("*.fasta"), *contig_dir.glob("*.fasta.gz")}):
-            if not fasta_path.is_file() or fasta_path.resolve() in seen_fastas:
-                continue
-            stem = fasta_path.name[:-9] if fasta_path.name.lower().endswith(".fasta.gz") else fasta_path.stem
-            sample_name = stem.split("_")[0]
-            sample_contigs.setdefault(sample_name, {}).update(parse_fasta(fasta_path))
-
-    # CellRanger JSON fallback: GEO deposits frequently ship
-    # ``all_contig_annotations.json(.gz)`` instead of ``filtered_contig.fasta``.
-    # Supplement any sample lacking FASTA coverage (or missing contig IDs) from JSON.
-    json_candidates = sorted(
-        {
-            *contig_dir.rglob("*contig_annotations*.json"),
-            *contig_dir.rglob("*contig_annotations*.json.gz"),
-        }
-    )
-    for json_path in json_candidates:
-        if not json_path.is_file():
-            continue
-        sample_name = _sample_for(json_path)
-        if sample_name is None:
-            continue
-        try:
-            parsed_json = parse_contig_json(json_path)
-        except Exception as exc:
-            logger.warning("load_contigs: could not parse %s: %s", json_path, exc)
-            continue
-        if parsed_json:
-            target = sample_contigs.setdefault(sample_name, {})
-            for cid, seq in parsed_json.items():
-                target.setdefault(cid, seq)
-
-    logger.info(f"Loaded contigs from {len(sample_contigs)} samples")
-    return sample_contigs
+    return df
 
