@@ -8,6 +8,15 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.37.2
+
+- Fixed `qc_battery._is_mouse_row` misclassifying every assembled human TCR as
+  mouse because the shared `LLMTLRLWSS` TRAC C-terminal tail matched both human
+  and murine `TRAC`. Now uses mouse-specific constant signatures
+  (`MGLRILLLKVAGFNLLMTLRLWSS` / `VKRKNS` / `VKKKNS`) and respects explicit
+  species and chimeric constant-source metadata so human constructs enforce
+  `NONCANON_J_END_HUMAN`.
+
 ## 3.37.1
 
 Re-ran all five empirical benchmark suites (`public_til`, `public_infectious`,

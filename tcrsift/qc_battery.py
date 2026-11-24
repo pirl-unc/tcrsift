@@ -75,7 +75,23 @@ NONCANON_J_END = NONCANON_J_END_MOUSE  # backward-compatible union constant
 
 
 def _is_mouse_row(r: pd.Series) -> bool:
-    """Detect whether an assembled row has murine VDJ / constant provenance."""
+    """Detect whether an assembled row has murine VDJ provenance."""
+    for sp_col in ("vdj_species", "species"):
+        raw_sp = r.get(sp_col)
+        if raw_sp is not None and pd.notna(raw_sp):
+            sp = str(raw_sp).strip().lower()
+            if sp in ("mouse", "mus_musculus", "mm", "mm10", "mm39"):
+                return True
+            if sp in ("human", "homo_sapiens", "hs", "hg38", "grch38"):
+                return False
+    for src_col in ("alpha_constant_source", "beta_constant_source"):
+        raw_src = r.get(src_col)
+        if raw_src is not None and pd.notna(raw_src):
+            src = str(raw_src).strip().lower()
+            if src.startswith("chimeric:mouse:"):
+                return False
+            if src.startswith("chimeric:human:"):
+                return True
     for c_col in ("alpha_c_gene", "beta_c_gene"):
         val = str(r.get(c_col, "")).strip()
         if val in ("Trac", "Trbc1", "Trbc2"):
@@ -84,9 +100,13 @@ def _is_mouse_row(r: pd.Series) -> bool:
         val = str(r.get(v_col, "")).strip()
         if val.startswith(("Trav", "Trbv", "Traj", "Trbj")) or "D-" in val.upper():
             return True
+    # Fallback for uppercased mouse gene tables: require species-unique constant
+    # tails (mouse TRAC ends in MGLRILLLKVAGFNLLMTLRLWSS vs human
+    # IGFRILLLKVAGFNLLMTLRLWSS; mouse TRBC ends in VKRKNS/VKKKNS vs human
+    # VKRKDF/VKRKDSRG). Do not match the shared LLMTLRLWSS tail alone.
     fa = _nz(r.get("full_alpha_aa", ""))
     fb = _nz(r.get("full_beta_aa", ""))
-    if fa.endswith("LLMTLRLWSS") or fb.endswith(("VKRKNS", "VKKKNS")):
+    if fa.endswith("MGLRILLLKVAGFNLLMTLRLWSS") or fb.endswith(("VKRKNS", "VKKKNS")):
         return True
     return False
 

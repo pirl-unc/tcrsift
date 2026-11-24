@@ -292,3 +292,44 @@ def test_contig_cdr3_map_reads_annotations(tmp_path):
 
 def test_contig_cdr3_map_empty_without_dir():
     assert contig_cdr3_map() == {}
+
+
+def test_is_mouse_row_does_not_misclassify_human_trac_tail():
+    """Human TRAC ends in LLMTLRLWSS too; human rows must use NONCANON_J_END_HUMAN."""
+    from tcrsift.assemble import (
+        HUMAN_TRAC_AA,
+        HUMAN_TRBC1_AA,
+        MOUSE_TRAC_AA,
+        MOUSE_TRBC1_AA,
+    )
+    from tcrsift.qc_battery import _is_mouse_row
+
+    # 1. Assembled human construct with canonical human TRAC/TRBC1 must NOT be mouse,
+    #    and mouse-only non-canonical J endings (TRAJ7 -> L, TRBJ2-6 -> Y) must FAIL.
+    d_human = _good_df()
+    d_human.loc[0, "full_alpha_aa"] = "MALPVCAVRDL" + HUMAN_TRAC_AA
+    d_human.loc[0, "full_beta_aa"] = "MGTRLCASSLF" + HUMAN_TRBC1_AA
+    d_human.loc[0, "CDR3_alpha"] = "CAVRDL"
+    d_human.loc[0, "VDJ_alpha_aa"] = "MALPVCAVRDL"
+    d_human.loc[0, "alpha_j_gene"] = "TRAJ7"
+    assert not _is_mouse_row(d_human.iloc[0])
+    assert check_cdr3_ref(d_human).status == "FAIL"
+
+    # 2. Chimeric human VDJ + mouse constant still has human J genes -> NOT mouse.
+    d_chimeric = d_human.copy()
+    d_chimeric.loc[0, "full_alpha_aa"] = "MALPVCAVRDL" + MOUSE_TRAC_AA
+    d_chimeric.loc[0, "full_beta_aa"] = "MGTRLCASSLF" + MOUSE_TRBC1_AA
+    d_chimeric.loc[0, "alpha_constant_source"] = "chimeric:mouse:TRAC [canonical]"
+    d_chimeric.loc[0, "beta_constant_source"] = "chimeric:mouse:TRBC1 [canonical]"
+    assert not _is_mouse_row(d_chimeric.iloc[0])
+    assert check_cdr3_ref(d_chimeric).status == "FAIL"
+
+    # 3. Uppercased mouse row with mouse TRAC/TRBC1 IS mouse -> TRAJ7 ending in L PASSes.
+    d_mouse = _good_df()
+    d_mouse.loc[0, "full_alpha_aa"] = "MALPVCAVRDL" + MOUSE_TRAC_AA
+    d_mouse.loc[0, "full_beta_aa"] = "MGTRLCASSLF" + MOUSE_TRBC1_AA
+    d_mouse.loc[0, "CDR3_alpha"] = "CAVRDL"
+    d_mouse.loc[0, "VDJ_alpha_aa"] = "MALPVCAVRDL"
+    d_mouse.loc[0, "alpha_j_gene"] = "TRAJ7"
+    assert _is_mouse_row(d_mouse.iloc[0])
+    assert check_cdr3_ref(d_mouse).status == "PASS"
