@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Draw the Benchmark Overview & Head-to-Head SVG figures from ``benchmarks/head_to_head/results``.
+"""Draw the head-to-head comparison SVG figures from ``benchmarks/head_to_head/results``.
 
     python docs/figures/make_overview_benchmark_figures.py
 
-Produces four publication-grade SVGs in ``docs/assets/figures/``:
-1. ``benchmark_failure_modes_map.svg`` — 8 focal failure modes mapped across pipeline stages & 15 cohorts.
-2. ``h2h_prioritize_auroc_and_treg.svg`` — ``tcrsift`` vs ``clone_size``, ``raw_CXCL13``,
-   ``Scanpy score_genes (NeoTCR)``, and ``Scanpy composite top-K`` (AUROC + Treg contamination).
-3. ``h2h_assembly_stitchr_and_pgen_olga.svg`` — ``tcrsift assemble`` vs ``stitchr/thimble v1.3.1``
-   and ``tcrsift`` k-mer ``Pgen``/``Ppost`` vs ``OLGA v1.3.0``.
-4. ``h2h_multimer_callers.svg`` — ``tcrsift --call-multimers`` clonal concordance vs 10x per-cell,
-   CLR ``z >= 3``, and bimodal GMM callers.
+Produces six single-panel SVGs in ``docs/assets/figures/``:
+1. ``h2h_prioritize_auroc.svg`` — clone-level AUROC across 5 human ex vivo cohorts.
+2. ``h2h_prioritize_cd4_treg.svg`` — CD4 shortlist Treg fraction on Veatch 2022 and Oh 2020.
+3. ``h2h_assembly_stitchr.svg`` — construct assembly completion vs ``stitchr`` / ``thimble 1.3.1``.
+4. ``h2h_pgen_olga.svg`` — cross-donor public sharing AUROC and speed vs ``OLGA 1.3.0``.
+5. ``h2h_multimer_counts.svg`` — sticky ``KLGGALQAK`` / HIV Gag false positives vs canonical viral clones.
+6. ``h2h_multimer_precision.svg`` — cognate epitope precision on 10x-held-out ``strict_ab`` VDJdb.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.patches
 import matplotlib.pyplot as plt
 import matplotlib.ticker
 import numpy as np
@@ -47,132 +45,8 @@ def percent_axis(ax, axis: str = "x", decimals: int = 0) -> None:
     )
 
 
-def failure_modes_map() -> None:
-    """Visual architecture mapping 8 focal failure modes to pipeline stages, safeguards, and cohorts."""
-    columns = [
-        "Focal failure mode",
-        "Pipeline stage",
-        "TCRsift safeguard",
-        "Empirical stress-test cohorts",
-    ]
-    rows = [
-        (
-            "FM1. Expanded viral /\nself-antigen bystanders",
-            "3. Score Evidence &\n4. Selection",
-            "Size-matched random-group\n& subset floors + tiered\nround-robin + MART-1 gate",
-            "Meng PDAC, Chiffelle Mel,\nCaushi NSCLC, Eberhardt HPV,\n10x naive MART-1 (7 cohorts)",
-        ),
-        (
-            "FM2. Tissue-context\nmismatch (blood / T30)",
-            "3. Score Evidence\n(--context)",
-            "--context blood-tumor\n(NeoTCR_PBL) & blood;\nnon-circular state scoring",
-            "Pulliam MCC blood & tumor,\nChiffelle T30 post-ACT,\nMinervina COVID, Kasmani NOD",
-        ),
-        (
-            "FM3. Short restimulation\nwithout cell division",
-            "3. Score Evidence\n(--method stimulation)",
-            "Paired within-clone ΔAIM /\nΔAcuteActivation over\nsource: control well",
-            "Fischer 2021 16 h SARS-CoV-2\nSpike restimulation\n(GT_6 & GT_2)",
-        ),
-        (
-            "FM4. Coreceptor dropout\n& shallow-depth gates",
-            "1. Load & QC /\n2. Phenotype",
-            "Sample pre_sorted: CD4/CD8\ndropout rescue + adaptive\n--min-cd3 3 + hg19 aliases",
-            "Oh 2020 CD4 bladder (88.5%\ndropout), Khatun GP66 CD4,\nCaushi NSCLC depth sweep",
-        ),
-        (
-            "FM5. Intratumoral FOXP3+\nTreg mimicry in CD4",
-            "4. Auditable\nSelection",
-            "Raw-count foxp3_pos_fraction\naudit (risk_flags=treg_FOXP3)\n+ --exclude-treg",
-            "Veatch 2022 melanoma CD4\n& Oh 2020 bladder CD4 TILs",
-        ),
-        (
-            "FM6. Public β-chain DB\ncollisions & circularity",
-            "4. Annotate &\nPublicness",
-            "Default --database-match\nstrict_ab + host_species=same\n+ k-mer Pgen/Ppost",
-            "10x Donors 1 & 2, Minervina,\nPulliam MCC, Kasmani NOD,\nKhatun LCMV (study holdouts)",
-        ),
-        (
-            "FM7. Sticky pMHC\ndextramer UMI noise",
-            "1. Load & 4. Audit\n(--call-multimers)",
-            "Negative-control gate +\nclonal concordance (>=50%\n& >=2 binding cells)",
-            "10x Healthy Donors 1 & 2\n(44 pMHC + 6 NC; sticky\nCMV KLGGALQAK & HIV Gag)",
-        ),
-        (
-            "FM8. 5'-truncated VDJ &\nmouse -dv / Trbc errors",
-            "5. Construct\nAssembly",
-            "Donor-contig V(D)J first;\n--germline-vdj-fallback +\n-dv & Trbj->Trbc parity fix",
-            "Minervina CR6 (46), Fischer\n5'-trunc (160), MC38 + Khatun\nmurine shortlists (101)",
-        ),
-    ]
-
-    fig, ax = plt.subplots(figsize=(12.2, 8.6), constrained_layout=True)
-    widths = [2.65, 2.05, 2.95, 3.05]
-    xs = [0.15]
-    gap = 0.34
-    for w in widths[:-1]:
-        xs.append(xs[-1] + w + gap)
-    height = 0.84
-    dy = 1.02
-
-    for c, (name, x, w) in enumerate(zip(columns, xs, widths)):
-        ax.text(
-            x + w / 2,
-            0.42,
-            name,
-            ha="center",
-            va="center",
-            fontsize=9.6,
-            fontweight="bold",
-            color=INK,
-        )
-
-    for r, cells in enumerate(rows):
-        y = -r * dy - 0.15
-        for c, (words, x, w) in enumerate(zip(cells, xs, widths)):
-            is_fm = c == 0
-            is_guard = c == 2
-            fc = ORANGE if is_fm else (BLUE if is_guard else SURFACE)
-            ec = ORANGE if is_fm else (BLUE if is_guard else NEUTRAL)
-            tc = SURFACE if (is_fm or is_guard) else INK
-            ax.add_patch(
-                matplotlib.patches.FancyBboxPatch(
-                    (x, y - height),
-                    w,
-                    height,
-                    boxstyle="round,pad=0,rounding_size=0.07",
-                    facecolor=fc,
-                    edgecolor=ec,
-                    linewidth=1.25,
-                )
-            )
-            ax.text(
-                x + w / 2,
-                y - height / 2,
-                words,
-                ha="center",
-                va="center",
-                fontsize=8.2,
-                fontweight="bold" if is_fm else "normal",
-                color=tc,
-                linespacing=1.22,
-            )
-            if c < len(cells) - 1:
-                ax.annotate(
-                    "",
-                    xy=(xs[c + 1] - 0.04, y - height / 2),
-                    xytext=(x + w + 0.04, y - height / 2),
-                    arrowprops={"arrowstyle": "->", "color": INK2, "lw": 1.05},
-                )
-
-    ax.set_xlim(0, xs[-1] + widths[-1] + 0.15)
-    ax.set_ylim(-(len(rows) - 1) * dy - height - 0.3, 0.72)
-    ax.axis("off")
-    save_tight(fig, "benchmark_failure_modes_map")
-
-
-def h2h_prioritize_auroc_and_treg() -> None:
-    """Head-to-head ex vivo prioritization: AUROC across 5 cohorts + shortlist precision & Treg rate."""
+def h2h_prioritize_figures() -> None:
+    """Single-panel AUROC and CD4 Treg shortlist figures across 5 ex vivo cohorts."""
     df = pd.read_csv(H2H_RESULTS / "h2h_prioritize_baselines.csv")
 
     cohort_order = [
@@ -190,11 +64,8 @@ def h2h_prioritize_auroc_and_treg() -> None:
         ("tcrsift", "TCRsift default", BLUE),
     ]
 
-    fig, (ax1, ax2) = plt.subplots(
-        1, 2, figsize=(12.2, 4.9), gridspec_kw={"width_ratios": [1.38, 1.0]}, constrained_layout=True
-    )
-
-    # Panel A: Grouped horizontal bars of AUROC across the 5 cohorts
+    # Figure 1: Grouped horizontal bars of AUROC across the 5 cohorts
+    fig1, ax1 = plt.subplots(figsize=(7.6, 5.2), constrained_layout=True)
     y_centers = np.arange(len(cohort_order))[::-1]
     bar_h = 0.145
     offsets = np.linspace(2 * bar_h, -2 * bar_h, len(method_specs))
@@ -221,23 +92,34 @@ def h2h_prioritize_auroc_and_treg() -> None:
         )
         if m_key == "tcrsift":
             for yv, v in zip(ys, vals):
-                ax1.text(v + 0.012, yv, f"{v:.2f}", va="center", ha="left", fontsize=7.8, fontweight="bold", color=BLUE)
+                ax1.text(
+                    v + 0.012,
+                    yv,
+                    f"{v:.2f}",
+                    va="center",
+                    ha="left",
+                    fontsize=8.3,
+                    fontweight="bold",
+                    color=BLUE,
+                )
 
     ax1.axvline(0.5, color=INK2, lw=1.0, ls=(0, (4, 3)))
     ax1.set_yticks(y_centers, [lbl for _, lbl in cohort_order])
     ax1.set_xlim(0.0, 0.98)
     ax1.set_xlabel("Clone-level AUROC")
-    ax1.set_title("A. Ranking discrimination across 5 ex vivo cohorts", fontsize=10.0)
+    ax1.set_title("Ex vivo ranking AUROC across 5 human cohorts", fontsize=10.2)
     ax1.grid(axis="x", lw=0.6)
     ax1.set_axisbelow(True)
     ax1.spines["left"].set_visible(False)
     ax1.tick_params(axis="y", length=0)
-    ax1.legend(frameon=False, fontsize=7.9, loc="lower right")
+    ax1.legend(frameon=False, fontsize=8.4, loc="lower right")
+    save_tight(fig1, "h2h_prioritize_auroc")
 
-    # Panel B: CD4 Treg shortlist contamination on Veatch 2022 & Oh 2020 (shortlist fraction)
+    # Figure 2: CD4 Treg shortlist contamination on Veatch 2022 & Oh 2020
+    fig2, ax2 = plt.subplots(figsize=(6.8, 4.4), constrained_layout=True)
     cd4_cohorts = [
-        ("veatch_melanoma_cd4", "Veatch 2022\nMelanoma CD4\n(FOXP3+ Treg)"),
-        ("oh_bladder_cd4", "Oh 2020\nBladder CD4\n(CD4IL2RAHI Treg)"),
+        ("veatch_melanoma_cd4", "Veatch 2022\nMelanoma CD4 (FOXP3+ Treg)"),
+        ("oh_bladder_cd4", "Oh 2020\nBladder CD4 (CD4IL2RAHI Treg)"),
     ]
     xs = np.arange(len(cd4_cohorts))
     bw = 0.15
@@ -270,36 +152,35 @@ def h2h_prioritize_auroc_and_treg() -> None:
                 f"{tf:.0%}",
                 ha="center",
                 va="bottom",
-                fontsize=7.6,
+                fontsize=8.2,
                 fontweight="bold" if m_key == "tcrsift" else "normal",
                 color=BLUE if m_key == "tcrsift" else INK,
             )
 
     percent_axis(ax2, "y", decimals=0)
     ax2.set_xticks(xs, [lbl for _, lbl in cd4_cohorts])
-    ax2.set_ylim(0, max(ymax * 1.24, 0.35))
+    ax2.set_ylim(0, max(ymax * 1.28, 0.35))
     ax2.set_ylabel("Treg fraction in top-K shortlist (lower is better)")
-    ax2.set_title("B. CD4 shortlist Treg contamination (--exclude-treg)", fontsize=10.0)
+    ax2.set_title("CD4 shortlist Treg fraction (--exclude-treg)", fontsize=10.2)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
+    ax2.legend(frameon=False, fontsize=8.2, loc="upper right")
+    save_tight(fig2, "h2h_prioritize_cd4_treg")
 
-    save_tight(fig, "h2h_prioritize_auroc_and_treg")
 
-
-def h2h_assembly_and_pgen() -> None:
-    """Head-to-head construct assembly vs stitchr v1.3.1 & Pgen/Ppost vs OLGA v1.3.0."""
+def h2h_assembly_and_pgen_figures() -> None:
+    """Single-panel construct assembly vs stitchr 1.3.1 and Pgen/Ppost vs OLGA 1.3.0."""
     asm = pd.read_csv(H2H_RESULTS / "h2h_assembly_vs_stitchr.csv")
     pgen = pd.read_csv(H2H_RESULTS / "h2h_pgen_vs_olga.csv")
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.2, 4.7), constrained_layout=True)
-
-    # Panel A: Assembly completion rate & error/polymorphism annotations vs stitchr/thimble v1.3.1
+    # Figure 3: Construct assembly completion rate & variant/error annotations
+    fig1, ax1 = plt.subplots(figsize=(7.8, 4.9), constrained_layout=True)
     asm_bars = [
         ("minervina_2022_human_cr6_vdj", "tcrsift_donor_contig", "Minervina CR6\nTCRsift donor contig", BLUE),
-        ("minervina_2022_human_cr6_vdj", "stitchr_thimble_v1.3.1", "Minervina CR6\nstitchr v1.3.1 (*01)", NEUTRAL),
+        ("minervina_2022_human_cr6_vdj", "stitchr_thimble_v1.3.1", "Minervina CR6\nstitchr 1.3.1 (*01)", NEUTRAL),
         ("fischer_2021_5prime_truncated_human", "tcrsift_donor_contig_only", "Fischer 5'-trunc\nTCRsift strict contig", INK2),
         ("fischer_2021_5prime_truncated_human", "tcrsift_germline_vdj_fallback", "Fischer 5'-trunc\nTCRsift --germline-vdj-fallback", BLUE),
-        ("fischer_2021_5prime_truncated_human", "stitchr_thimble_v1.3.1", "Fischer 5'-trunc\nstitchr v1.3.1", NEUTRAL),
+        ("fischer_2021_5prime_truncated_human", "stitchr_thimble_v1.3.1", "Fischer 5'-trunc\nstitchr 1.3.1", NEUTRAL),
         ("mouse_cellranger_101_mc38_khatun", "tcrsift_mouse_germline_fallback", "Mouse CR\nTCRsift --species mouse", BLUE),
         ("mouse_cellranger_101_mc38_khatun", "stitchr_thimble_v1.3.1_default", "Mouse CR\nstitchr default", ORANGE),
         ("mouse_cellranger_101_mc38_khatun", "stitchr_thimble_v1.3.1_skip_c_checks", "Mouse CR\nstitchr -sc (skip C check)", NEUTRAL),
@@ -322,7 +203,7 @@ def h2h_assembly_and_pgen() -> None:
         if tool == "tcrsift_donor_contig" and poly > 0:
             notes.append(f"{rate:.1%} ({poly} donor V-variants kept)")
         elif misc > 0:
-            notes.append(f"{rate:.1%} ({misc} Trbj/Trbc mismatches!)")
+            notes.append(f"{rate:.1%} ({misc} Trbj/Trbc mismatches)")
         else:
             notes.append(f"{rate:.1%} ({int(r['n_complete'])}/{int(r['n_clones'])})")
 
@@ -334,22 +215,24 @@ def h2h_assembly_and_pgen() -> None:
             txt,
             va="center",
             ha="left",
-            fontsize=7.7,
+            fontsize=8.2,
             fontweight="bold" if col == BLUE else "normal",
             color=ORANGE if "mismatches" in txt else INK,
         )
     percent_axis(ax1, "x", decimals=0)
     ax1.set_xticks([0.0, 0.25, 0.50, 0.75, 1.0])
-    ax1.set_yticks(ys, labels, fontsize=8.0)
+    ax1.set_yticks(ys, labels, fontsize=8.4)
     ax1.set_xlim(0, 1.48)
     ax1.set_xlabel("Complete single-chain constructs built")
-    ax1.set_title("A. Construct assembly: TCRsift vs stitchr (thimble v1.3.1)", fontsize=9.8)
+    ax1.set_title("Construct assembly: TCRsift vs stitchr (thimble 1.3.1)", fontsize=10.2)
     ax1.grid(axis="x", lw=0.6)
     ax1.set_axisbelow(True)
     ax1.spines["left"].set_visible(False)
     ax1.tick_params(axis="y", length=0)
+    save_tight(fig1, "h2h_assembly_stitchr")
 
-    # Panel B: Cross-donor public sharing AUROC & throughput vs OLGA v1.3.0
+    # Figure 4: Cross-donor public sharing AUROC & throughput vs OLGA 1.3.0
+    fig2, ax2 = plt.subplots(figsize=(6.8, 4.5), constrained_layout=True)
     pgen_cohorts = [
         ("human_blood_donors_1500", "Human blood\n(n=1,500 clones)"),
         ("mouse_khatun_gp66_1781", "Mouse GP66 CD4\n(n=1,781 clones)"),
@@ -357,7 +240,7 @@ def h2h_assembly_and_pgen() -> None:
     models = [
         ("tcrsift_kmer_pgen_beta", "TCRsift k-mer Pgen", AQUA),
         ("tcrsift_kmer_ppost_beta", "TCRsift k-mer Ppost", BLUE),
-        ("olga_exact_vdj_pgen_beta", "OLGA v1.3.0 exact DP", NEUTRAL),
+        ("olga_exact_vdj_pgen_beta", "OLGA 1.3.0 exact DP", NEUTRAL),
     ]
     xs = np.arange(len(pgen_cohorts))
     bw = 0.24
@@ -371,7 +254,15 @@ def h2h_assembly_and_pgen() -> None:
             aucs.append(float(r["public_sharing_auroc"]))
             spds.append(float(r["clones_per_sec"]))
             r_vals.append(r["pearson_r_vs_olga_beta"])
-        ax2.bar(xs + offs[m_idx], aucs, width=bw * 0.9, color=col, edgecolor=SURFACE, linewidth=0.8, label=m_lbl)
+        ax2.bar(
+            xs + offs[m_idx],
+            aucs,
+            width=bw * 0.9,
+            color=col,
+            edgecolor=SURFACE,
+            linewidth=0.8,
+            label=m_lbl,
+        )
         for xv, av, sp, rv in zip(xs + offs[m_idx], aucs, spds, r_vals):
             spd_txt = f"{sp / 1000:.0f}k/s" if sp >= 1000 else f"{sp:.0f}/s"
             extra = f"\n(r={float(rv):.2f})" if m_key == "tcrsift_kmer_pgen_beta" and pd.notna(rv) else ""
@@ -381,25 +272,24 @@ def h2h_assembly_and_pgen() -> None:
                 f"{av:.2f}\n{spd_txt}{extra}",
                 ha="center",
                 va="bottom",
-                fontsize=7.5,
+                fontsize=8.0,
                 color=INK,
-                linespacing=1.12,
+                linespacing=1.15,
             )
 
     ax2.axhline(0.5, color=INK2, lw=1.0, ls=(0, (4, 3)))
     ax2.set_xticks(xs, [lbl for _, lbl in pgen_cohorts])
     ax2.set_ylim(0.4, 1.06)
     ax2.set_ylabel("Cross-donor public sharing AUROC")
-    ax2.set_title("B. Publicness AUROC & speed: TCRsift k-mer vs OLGA v1.3.0", fontsize=9.8)
+    ax2.set_title("Publicness AUROC and throughput: TCRsift k-mer vs OLGA 1.3.0", fontsize=10.2)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
-    ax2.legend(frameon=False, fontsize=8.0, loc="lower right")
+    ax2.legend(frameon=False, fontsize=8.4, loc="lower right")
+    save_tight(fig2, "h2h_pgen_olga")
 
-    save_tight(fig, "h2h_assembly_stitchr_and_pgen_olga")
 
-
-def h2h_multimer_callers() -> None:
-    """Head-to-head pMHC multimer callers on 10x Healthy Donors 1 & 2."""
+def h2h_multimer_figures() -> None:
+    """Single-panel pMHC multimer clone count and VDJdb precision figures on 10x Donors 1 & 2."""
     df = pd.read_csv(H2H_RESULTS / "h2h_multimer_callers.csv").set_index("caller")
     caller_order = [
         ("10x_per_cell_threshold", "10x per-cell\nthreshold", NEUTRAL),
@@ -408,31 +298,57 @@ def h2h_multimer_callers() -> None:
         ("tcrsift_clonal_concordance", "TCRsift clonal\nconcordance", BLUE),
     ]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.4), constrained_layout=True)
-
     xs = np.arange(len(caller_order))
     sticky = [int(df.loc[k, "sticky_KLGGALQAK_fp_clones"]) for k, _, _ in caller_order]
     hiv = [int(df.loc[k, "hiv_gag_fp_clones"]) for k, _, _ in caller_order]
     canon = [int(df.loc[k, "canonical_flu_ebv_cmv_clones"]) for k, _, _ in caller_order]
     precs = [float(df.loc[k, "vdjdb_cognate_precision"]) for k, _, _ in caller_order]
 
+    # Figure 5: Sticky KLGGALQAK / HIV Gag FPs vs canonical viral clones
+    fig1, ax1 = plt.subplots(figsize=(7.2, 4.4), constrained_layout=True)
     w = 0.36
-    ax1.bar(xs - w / 2, sticky, width=w, color=ORANGE, edgecolor=SURFACE, label="Sticky CMV KLGGALQAK + HIV Gag FPs")
+    ax1.bar(
+        xs - w / 2,
+        sticky,
+        width=w,
+        color=ORANGE,
+        edgecolor=SURFACE,
+        label="Sticky CMV KLGGALQAK + HIV Gag FPs",
+    )
     ax1.bar(xs - w / 2, hiv, bottom=sticky, width=w, color="#b84a14", edgecolor=SURFACE)
-    ax1.bar(xs + w / 2, canon, width=w, color=BLUE, edgecolor=SURFACE, label="Canonical Flu / EBV / CMV clones")
+    ax1.bar(
+        xs + w / 2,
+        canon,
+        width=w,
+        color=BLUE,
+        edgecolor=SURFACE,
+        label="Canonical Flu / EBV / CMV clones",
+    )
     for x, s, h, c in zip(xs, sticky, hiv, canon):
         tot_fp = s + h
-        ax1.text(x - w / 2, tot_fp + 18, f"{tot_fp:,}", ha="center", va="bottom", fontsize=8.0, fontweight="bold", color=ORANGE)
-        ax1.text(x + w / 2, c + 18, f"{c:,}", ha="center", va="bottom", fontsize=8.0, color=BLUE)
+        ax1.text(
+            x - w / 2,
+            tot_fp + 18,
+            f"{tot_fp:,}",
+            ha="center",
+            va="bottom",
+            fontsize=8.4,
+            fontweight="bold",
+            color=ORANGE,
+        )
+        ax1.text(x + w / 2, c + 18, f"{c:,}", ha="center", va="bottom", fontsize=8.4, color=BLUE)
 
     ax1.set_xticks(xs, [lbl for _, lbl, _ in caller_order])
     ax1.set_ylim(0, max(max(s + h for s, h in zip(sticky, hiv)), max(canon)) * 1.18)
     ax1.set_ylabel("Called expanded clones (>=2 cells, Donors 1 + 2)")
-    ax1.set_title("A. Sticky KLGGALQAK / HIV Gag FPs vs canonical viral clones", fontsize=9.8)
+    ax1.set_title("Sticky KLGGALQAK / HIV Gag false positives vs canonical viral clones", fontsize=10.0)
     ax1.grid(axis="y", lw=0.6)
     ax1.set_axisbelow(True)
-    ax1.legend(frameon=False, fontsize=8.0, loc="upper right")
+    ax1.legend(frameon=False, fontsize=8.4, loc="upper right")
+    save_tight(fig1, "h2h_multimer_counts")
 
+    # Figure 6: Independent cognate precision on 10x-held-out strict_ab VDJdb
+    fig2, ax2 = plt.subplots(figsize=(6.8, 4.3), constrained_layout=True)
     bars = ax2.bar(
         xs,
         precs,
@@ -451,7 +367,7 @@ def h2h_multimer_callers() -> None:
             f"{exact_p:.1%}\n({n_ok}/{n_m})",
             ha="center",
             va="bottom",
-            fontsize=8.1,
+            fontsize=8.4,
             fontweight="bold" if col == BLUE else "normal",
             color=BLUE if col == BLUE else INK,
         )
@@ -459,19 +375,17 @@ def h2h_multimer_callers() -> None:
     ax2.set_xticks(xs, [lbl for _, lbl, _ in caller_order])
     ax2.set_ylim(0, 1.16)
     ax2.set_ylabel("Cognate epitope precision vs held-out VDJdb")
-    ax2.set_title("B. Independent cognate precision (10x held-out strict_ab VDJdb)", fontsize=9.8)
+    ax2.set_title("Cognate precision on 10x-held-out strict_ab VDJdb", fontsize=10.2)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
-
-    save_tight(fig, "h2h_multimer_callers")
+    save_tight(fig2, "h2h_multimer_precision")
 
 
 def main() -> None:
-    failure_modes_map()
-    h2h_prioritize_auroc_and_treg()
-    h2h_assembly_and_pgen()
-    h2h_multimer_callers()
-    print(f"Wrote 4 overview & head-to-head SVGs to {OUT}")
+    h2h_prioritize_figures()
+    h2h_assembly_and_pgen_figures()
+    h2h_multimer_figures()
+    print(f"Wrote 6 head-to-head SVGs to {OUT}")
 
 
 if __name__ == "__main__":

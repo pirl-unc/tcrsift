@@ -18,7 +18,7 @@ tcrsift prioritize samples.yaml -o candidates/ --context heme
 tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 tcrsift til-prioritize samples.yaml -o candidates/
 
-# Go straight from sample sheet to synthesis-ready β-T2A-α constructs in one pass
+# Assemble full-length β-T2A-α constructs in the same command
 tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor --assemble
 ```
 
@@ -30,9 +30,9 @@ file layout.
 !!! note "What expression prioritization measures"
     Signatures rank transcriptional states associated with activation, memory,
     or tumor reactivity; they do not predict epitope specificity or prove that
-    a clone was induced by vaccination. Empirical performance across 15 public
-    human and murine cohorts and head-to-head baselines is summarized in
-    [Benchmark Overview & Failure Modes](../benchmarks-overview.md) and
+    a clone was induced by vaccination. Empirical performance across public
+    human and mouse cohorts is reported in the
+    [Benchmark overview](../benchmarks-overview.md) and
     [Benchmark on public TIL data](../benchmarks.md).
 
 ## Selection algorithm
@@ -59,7 +59,7 @@ file layout.
    probability, decreasing high-cell fraction, cell count, and CDR3 sequence.
 5. **Take turns across lists up to the budget.** Visit active lists in
    round-robin order, picking the highest-ranked unselected clone from each list
-   until **200 candidates** are chosen across the run (`--max-clones 200`, or
+   until 200 candidates are chosen across the run (`--max-clones 200`, or
    `0` for no cap) or all lists are exhausted. Lists that run out drop out of
    rotation; the shortlist is never padded with clones that missed the cutoffs.
 
@@ -72,11 +72,11 @@ patients is treated as two distinct rows.
 
 By default (`--round-robin-mode tiered`, active whenever `--signatures` is not
 explicitly overridden), context presets schedule dedicated tumor/neoantigen
-signatures in **Tier 1** (`TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` in
+signatures in Tier 1 (`TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` in
 `solid-tumor`; `MANAscore`, `NeoTCR8`, `NeoTCR4` in `mpe`; `NeoTCR_PBL` in
 `blood-tumor`) until all Tier-1 lists are exhausted or `--max-clones` is
 reached, and then backfill remaining budget slots from the six general state
-panels in **Tier 2**. Pass `--round-robin-mode flat` to give every signature
+panels in Tier 2. Pass `--round-robin-mode flat` to give every signature
 equal weight from round 1.
 
 Within each tier, full rounds visit lists by signature order (preset order below,
@@ -89,7 +89,7 @@ listed late in a tier from being starved.
 ## Two complementary evidence routes
 
 Under the default `--signature-cutoff background --signature-evidence either`,
-a clone can qualify through an elevated mean **or** an enriched subset of
+a clone can qualify through an elevated mean or an enriched subset of
 high-scoring cells. Keeping separate ranked lists for the two routes ensures
 that a clone with heterogeneous cell states is not buried by a modest overall
 mean. If a clone qualifies on both routes, it consumes one shortlist slot and
@@ -380,7 +380,7 @@ tcrsift prioritize samples.yaml -o candidates/ --context blood \
 - **Known viral matches are retained by default** so vaccine studies and
   virus-driven tumor analyses do not lose target clones. Pass
   `--exclude-known-viral` to exclude them. Because every clone scored by
-  `prioritize` has paired α/β chains, `--database-match` defaults to **`strict_ab`**
+  `prioritize` has paired α/β chains, `--database-match` defaults to `strict_ab`
   (exact paired α+β matching) so private tumor-reactive clones sharing only a
   public β-chain CDR3 with a viral entry are neither mislabeled nor discarded;
   pass `--database-match ab_with_partial` or `b_only` to include β-only matches.

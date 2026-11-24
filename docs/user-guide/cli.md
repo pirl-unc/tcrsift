@@ -10,9 +10,7 @@ tcrsift --version      # Print version (short form: -v)
 tcrsift --help         # Tiered command overview (Primary workflows / Exploration / Modular steps)
 ```
 
-`tcrsift --help` groups all 25 commands into three tiers so common workflows
-stay immediately discoverable while keeping every modular step and legacy v2
-command available:
+`tcrsift --help` groups all 25 commands into three sections:
 
 1. **Primary workflows:** `prioritize`, `run`, `assemble`, `data`
 2. **Exploration & annotation:** `cells`, `annotate`, `report`

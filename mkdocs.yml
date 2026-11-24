@@ -71,7 +71,7 @@ nav:
     - Sample Sheets: getting-started/sample-sheets.md
   - How It Works: how-it-works.md
   - Benchmarks:
-    - Overview & Failure Modes: benchmarks-overview.md
+    - Overview & Comparisons: benchmarks-overview.md
     - TIL Prioritization: benchmarks.md
     - Infectious Disease & Blood: benchmarks-infectious.md
     - Blood-Tumor, Post-ACT & CD4+ TIL: benchmarks-blood-cd4.md

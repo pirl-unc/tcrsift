@@ -6,7 +6,7 @@
 [![PyPI version](https://badge.fury.io/py/tcrsift.svg)](https://pypi.org/project/tcrsift/)
 
 Prioritize T-cell receptor clonotypes from paired 10x Genomics single-cell VDJ
-and gene-expression data for **human** (*Homo sapiens*) and **mouse** (*Mus
+and gene-expression data for human (*Homo sapiens*) and mouse (*Mus
 musculus*) studies. Standard Cell Ranger directories serve as input:
 `cellranger vdj` supplies TCR contigs and clonotypes, and `cellranger count`
 supplies gene expression for CD4/CD8 phenotyping, signature scoring, and
@@ -15,17 +15,17 @@ cell-type annotation (VDJ-only workflows are also supported).
 TCRsift combines clonal abundance, T-cell lineage, gene-expression state
 signatures, public TCR database matches (VDJdb, IEDB, CEDAR), sequence
 generation probability (`Pgen`/`Ppost`), and optional TIL overlap to produce
-auditable shortlists and synthesis-ready full-length constructs. None of these
+auditable shortlists and full-length receptor constructs. None of these
 signals predicts epitope specificity on its own; functional testing is still
 required.
 
 - **Documentation:** [pirl.unc.edu/tcrsift](https://pirl.unc.edu/tcrsift/)
 - **Method overview:** [How TCRsift works](https://pirl.unc.edu/tcrsift/how-it-works/)
-- **Benchmark overview (8 focal failure modes & head-to-head vs Scanpy, Stitchr, OLGA, CLR/GMM):** [Benchmarks Overview & Failure Modes](https://pirl.unc.edu/tcrsift/benchmarks-overview/)
-- **Empirical evaluation (solid-tumor CD8 TIL, 5 cohorts / 33 patients):** [Benchmark on public TIL data](https://pirl.unc.edu/tcrsift/benchmarks/)
-- **Empirical evaluation (infectious disease & blood, 3 cohorts):** [Benchmark on infectious disease and blood](https://pirl.unc.edu/tcrsift/benchmarks-infectious/)
-- **Empirical evaluation (paired blood-tumor, post-ACT & CD4+ TIL, 4 cohorts):** [Benchmark on paired blood-tumor, post-ACT, and CD4+ TILs](https://pirl.unc.edu/tcrsift/benchmarks-blood-cd4/)
-- **Empirical evaluation (murine `--species mouse`, 3 cohorts / 19 libraries):** [Benchmark on murine models](https://pirl.unc.edu/tcrsift/benchmarks-mouse/)
+- **Benchmark overview & external comparisons (`Scanpy`, `stitchr`, `OLGA`, multimer callers):** [Benchmark overview](https://pirl.unc.edu/tcrsift/benchmarks-overview/)
+- **Solid-tumor CD8 TIL benchmark (5 cohorts / 33 patients):** [Benchmark on public TIL data](https://pirl.unc.edu/tcrsift/benchmarks/)
+- **Infectious disease & blood benchmark (3 cohorts):** [Benchmark on infectious disease and blood](https://pirl.unc.edu/tcrsift/benchmarks-infectious/)
+- **Paired blood-tumor, post-ACT & CD4 TIL benchmark (4 cohorts):** [Benchmark on paired blood-tumor, post-ACT, and CD4+ TILs](https://pirl.unc.edu/tcrsift/benchmarks-blood-cd4/)
+- **Murine `--species mouse` benchmark (3 cohorts / 19 libraries):** [Benchmark on murine models](https://pirl.unc.edu/tcrsift/benchmarks-mouse/)
 
 ## Quick example
 
@@ -49,8 +49,7 @@ tcrsift run --sample-sheet samples.yaml --output-dir results/
 ```
 
 Or rank clones by expression state in fresh TIL, blood, pleural effusion, or
-marrow — and optionally assemble synthesis-ready `β-T2A-α` constructs in the
-same pass:
+marrow (add `--assemble` to also build full-length `β-T2A-α` constructs):
 
 ```bash
 tcrsift prioritize til_samples.yaml -o candidates/ --context solid-tumor --assemble
@@ -76,7 +75,7 @@ for context presets and cutoff rules.
 
 ## Choose a Workflow
 
-Every TCRsift workflow executes the same **five-stage architecture** (`Load & QC → Phenotype & Clonotype → Score Evidence → Auditable Selection → Construct Assembly`); only the **evidence source** in Stage 3 changes with your experimental design:
+All workflows share loading, CD4/CD8 phenotyping, database annotation, and construct assembly; only the clonotype scoring step changes with experimental design:
 
 | Study design | Command | Key options |
 | --- | --- | --- |
@@ -111,7 +110,7 @@ Cell Ranger VDJ + GEX
                        (with optional `--germline-vdj-fallback` + J->C parity correction)
 ```
 
-`tcrsift --help` organizes all 25 CLI commands into **Primary workflows** (`prioritize`, `run`, `assemble`, `data`), **Exploration & annotation** (`cells`, `annotate`, `report`), and **Modular pipeline steps & legacy commands**.
+`tcrsift --help` organizes all 25 CLI commands into "Primary workflows" (`prioritize`, `run`, `assemble`, `data`), "Exploration & annotation" (`cells`, `annotate`, `report`), and "Modular pipeline steps & legacy commands".
 
 ### Key Data Structures
 
@@ -378,7 +377,7 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
     --iedb /path/to/iedb
 ```
 
-Matches clonotypes against **VDJdb**, **IEDB**, and **CEDAR**, setting
+Matches clonotypes against VDJdb, IEDB, and CEDAR, setting
 `db_match`, separating official encoding gene symbols (`db_antigen_gene`, e.g.
 `CTAG1A`/`CTAG1B` vs `CTAG2`, `MLANA`/`Mlana`, `DCT`/`Dct`, `CEACAM5`; `None`
 for viral or foreign proteins such as chicken OVA) from canonical protein labels

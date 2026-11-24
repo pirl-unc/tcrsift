@@ -1,7 +1,7 @@
 # TCRsift
 
 Prioritize T-cell receptor clonotypes from paired 10x Genomics single-cell VDJ
-and gene-expression data in **human** (*Homo sapiens*) and **mouse** (*Mus
+and gene-expression data in human (*Homo sapiens*) and mouse (*Mus
 musculus*) studies.
 
 ## Overview
@@ -21,15 +21,14 @@ Standard 10x Genomics Cell Ranger directories serve as input:
   matrices for CD4/CD8 phenotyping, signature scoring, and cell-type annotation
   (optional for VDJ-only workflows).
 
-For an overview of the unified 5-stage data flow and selection algorithms, see
-[How TCRsift works](how-it-works.md). For a unified digest of all **15 public
-cohorts** organized around **8 focal failure modes** and **head-to-head
-comparisons** against `Scanpy score_genes`, `stitchr` (`thimble`), `OLGA`, and
-CLR/GMM multimer callers, start with
-**[Benchmark Overview & Failure Modes](benchmarks-overview.md)**, then see the
-cohort deep-dives on [public CD8+ TIL data](benchmarks.md),
+For an overview of the data flow and selection algorithms, see
+[How TCRsift works](how-it-works.md). For evaluations across 15 public human and
+mouse cohorts and head-to-head comparisons against `Scanpy score_genes`,
+`stitchr`, `OLGA`, and per-cell/CLR/GMM multimer callers, see the
+[Benchmark overview](benchmarks-overview.md) and the cohort pages on
+[public CD8 TIL data](benchmarks.md),
 [infectious disease and blood](benchmarks-infectious.md),
-[paired blood-tumor, post-ACT, and CD4+ TILs](benchmarks-blood-cd4.md), and
+[paired blood-tumor, post-ACT, and CD4 TILs](benchmarks-blood-cd4.md), and
 [murine models (`--species mouse`)](benchmarks-mouse.md).
 
 ## Choose a workflow
@@ -66,7 +65,7 @@ tcrsift run --sample-sheet samples.yaml --output-dir results/
 ```
 
 Or prioritize clones by expression state in a fresh tumor sample sheet and
-assemble synthesis-ready `β-T2A-α` constructs in one command:
+assemble full-length `β-T2A-α` constructs in one command:
 
 ```bash
 tcrsift prioritize til_samples.yaml -o candidates/ --context solid-tumor --assemble

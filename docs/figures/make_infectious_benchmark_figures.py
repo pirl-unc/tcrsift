@@ -307,9 +307,9 @@ def vdjdb_precision_recall() -> None:
         ("levenshtein:b_only", "levenshtein b_only"),
     ]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.5, 4.5), constrained_layout=True)
+    fig1, ax1 = plt.subplots(figsize=(6.8, 4.5), constrained_layout=True)
 
-    # Panel A: 10x Donor 1 + Donor 2 pooled exact-epitope precision vs recall
+    # 10x Donor 1 + Donor 2 pooled exact-epitope precision vs recall
     tenx = df[df["dataset"].isin(["tenx_donor1", "tenx_donor2"])].copy()
     pooled = (
         tenx.groupby(["db_scope", "circular", "rule"], as_index=False)[
@@ -339,7 +339,7 @@ def vdjdb_precision_recall() -> None:
             ax1.scatter(
                 [rec],
                 [prec],
-                s=62,
+                s=64,
                 color=SURFACE if hollow else color,
                 edgecolor=color if hollow else SURFACE,
                 linewidth=1.8 if hollow else 1.4,
@@ -353,7 +353,7 @@ def vdjdb_precision_recall() -> None:
                     textcoords="offset points",
                     xytext=(off[0], off[1]),
                     ha=off[2],
-                    fontsize=8.0,
+                    fontsize=8.4,
                     color=INK,
                 )
         ax1.plot([], [], color=color, ls=ls, marker="o", mfc=SURFACE if hollow else color, mec=color, lw=1.8, label=label)
@@ -364,12 +364,14 @@ def vdjdb_precision_recall() -> None:
     ax1.set_ylim(0.55, 1.05)
     ax1.set_xlabel("exact-epitope recall")
     ax1.set_ylabel("exact-epitope precision")
-    ax1.set_title("10x Donors 1 & 2 (Flu, EBV, CMV, MART-1)")
+    ax1.set_title("10x Donors 1 & 2 (Flu, EBV, CMV, MART-1): VDJdb matching")
     ax1.grid(lw=0.6)
     ax1.set_axisbelow(True)
-    ax1.legend(frameon=False, fontsize=8.3, loc="lower left")
+    ax1.legend(frameon=False, fontsize=8.5, loc="lower left")
+    save_tight(fig1, "benchmark_infectious_vdjdb_10x")
 
-    # Panel B: Minervina 2022 SARS-CoV-2 virus precision vs recall
+    # Minervina 2022 SARS-CoV-2 virus precision vs recall
+    fig2, ax2 = plt.subplots(figsize=(6.8, 4.5), constrained_layout=True)
     minv = df[df["dataset"].eq("minervina_2022_sarscov2")].copy()
     n_sars_query = int(minv["n_query_clones"].iloc[0])
     panel_b_offsets = {
@@ -397,7 +399,7 @@ def vdjdb_precision_recall() -> None:
             ax2.scatter(
                 [rec],
                 [prec],
-                s=62,
+                s=64,
                 color=SURFACE if hollow else color,
                 edgecolor=color if hollow else SURFACE,
                 linewidth=1.8 if hollow else 1.4,
@@ -410,7 +412,7 @@ def vdjdb_precision_recall() -> None:
                 textcoords="offset points",
                 xytext=(off[0], off[1]),
                 ha=off[2],
-                fontsize=8.0,
+                fontsize=8.4,
                 color=INK,
             )
         ax2.plot([], [], color=color, ls=ls, marker="o", mfc=SURFACE if hollow else color, mec=color, lw=1.8, label=label)
@@ -421,11 +423,11 @@ def vdjdb_precision_recall() -> None:
     ax2.set_ylim(0.12, 1.06)
     ax2.set_xlabel("SARS-CoV-2 recall")
     ax2.set_ylabel("SARS-CoV-2 species precision")
-    ax2.set_title(f"Minervina 2022 ({n_sars_query:,} SARS-CoV-2 clones)")
+    ax2.set_title(f"Minervina 2022 ({n_sars_query:,} SARS-CoV-2 clones): VDJdb matching")
     ax2.grid(lw=0.6)
     ax2.set_axisbelow(True)
-    ax2.legend(frameon=False, fontsize=8.3, loc="lower right")
-    save_tight(fig, "benchmark_infectious_vdjdb")
+    ax2.legend(frameon=False, fontsize=8.5, loc="lower right")
+    save_tight(fig2, "benchmark_infectious_vdjdb_minervina")
 
 
 def multimer_concordance_qc() -> None:

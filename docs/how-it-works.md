@@ -7,9 +7,9 @@ expression programs, public TCR database matches, and sequence generation
 probability. None of these signals predicts which epitope a receptor binds;
 confirming specificity still requires a functional assay.
 
-## Unified five-stage architecture
+## Pipeline stages
 
-Every workflow in TCRsift follows one five-stage sequence — `1. Load & QC → 2. Phenotype & Clonotype → 3. Score Evidence → 4. Auditable Selection → 5. Construct Assembly` — differing only in which experimental evidence drives Stage 3:
+Every workflow in TCRsift follows the same sequence (`Load & QC → Phenotype & Clonotype → Score Evidence → Annotate & Audit → Assemble`), differing only in which signal scores clones in Stage 3:
 
 ```mermaid
 flowchart LR
@@ -47,8 +47,8 @@ All primary commands share loading, species harmonization (`human` HGNC/GRCh38/h
 
 Unlike culture experiments with unstimulated controls, fresh tissue or blood
 cohorts must rank clones within each sample and lineage without pooling raw
-scores across samples. The five figures below use **simulated cell scores**
-(`docs/figures/make_figures.py`) to illustrate the exact resampling and
+scores across samples. The five figures below use simulated cell scores
+(`docs/figures/make_figures.py`) to illustrate the resampling and
 enrichment rules implemented in `tcrsift prioritize`.
 
 ### 1. Mean route: a clone's mean must beat size-matched random cell groups
@@ -120,11 +120,10 @@ each candidate. Full details, CLI flags, and statistical assumptions are in the
 Default cutoffs are fixed operating choices rather than parameters fitted to
 labeled training data. Six empirical evaluations are documented:
 
-- **[Benchmark overview: 8 focal failure modes & head-to-head comparisons](benchmarks-overview.md)**:
-  unified scorecard across all 15 public human and murine cohorts plus direct
-  head-to-head comparisons against `Scanpy score_genes`, single-gene `CXCL13`,
-  `stitchr` (`thimble v1.3.1`), `OLGA v1.3.0`, and per-cell/CLR/GMM multimer
-  callers.
+- [Benchmark overview and head-to-head comparisons](benchmarks-overview.md):
+  summary across 15 public human and mouse cohorts and direct comparisons
+  against `Scanpy score_genes`, single-gene `CXCL13`, `stitchr` (`thimble
+  1.3.1`), `OLGA 1.3.0`, and per-cell/CLR/GMM multimer callers.
 - [Benchmark on public TIL data](benchmarks.md): evaluation of `tcrsift
   prioritize --context solid-tumor` across five public human CD8+ tumor cohorts
   (33 patients) with experimentally tested clones. TumorReactive separates
