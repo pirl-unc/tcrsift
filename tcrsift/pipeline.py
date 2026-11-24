@@ -321,9 +321,10 @@ def run_pipeline(
                 f"{atlas.obs['phenotype_base'].nunique()} cell types "
                 f"→ {data_dir / 'atlas.h5ad'}"
             )
-            plot_umap(atlas, "phenotype", plots_dir / "atlas_umap_phenotype.png")
-            plot_umap(atlas, "leiden", plots_dir / "atlas_umap_leiden.png")
-            print(f"  Atlas UMAPs (phenotype, leiden) → {plots_dir}")
+            if config.output.generate_plots:
+                plot_umap(atlas, "phenotype", plots_dir / "atlas_umap_phenotype.png")
+                plot_umap(atlas, "leiden", plots_dir / "atlas_umap_leiden.png")
+                print(f"  Atlas UMAPs (phenotype, leiden) → {plots_dir}")
         except ImportError as e:
             print(f"  [embed] skipped — install tcrsift[atlas] to enable ({e})")
 
@@ -494,9 +495,10 @@ def run_pipeline(
         or (emit_long == "auto" and n_samples_in_run >= 2)
     )
     have_method_axis = "enrichment_method" in adata.obs.columns
+    has_selection_rules = bool(config.selection.get("rules"))
 
     long_df = None
-    if should_emit_long or have_method_axis:
+    if should_emit_long or have_method_axis or has_selection_rules:
         from .clonotype import build_clone_sample_long
 
         long_df = build_clone_sample_long(adata, attribution=config.attribution)
@@ -581,10 +583,24 @@ def run_pipeline(
                 "has n_donors >= 2. Result will likely be empty."
             )
 
+    _cohort_donors: set[str] = set()
+    if "patient_id" in adata.obs.columns:
+        _cohort_donors = {
+            str(v).strip()
+            for v in adata.obs["patient_id"].dropna().unique()
+            if str(v).strip()
+        }
+    if not _cohort_donors and "donors" in clonotypes.columns and len(clonotypes):
+        for _dval in clonotypes["donors"].dropna().astype(str):
+            _cohort_donors.update(t.strip() for t in _dval.split(";") if t.strip())
     n_donors_in_run = (
-        int(clonotypes["n_donors"].max())
-        if "n_donors" in clonotypes.columns and len(clonotypes)
-        else 1
+        len(_cohort_donors)
+        if _cohort_donors
+        else (
+            int(clonotypes["n_donors"].max())
+            if "n_donors" in clonotypes.columns and len(clonotypes)
+            else 1
+        )
     )
     sheet_shares_antigen = getattr(sheet_obj, "donors_share_antigen", False)
     donors_share_antigen = config.filter.donors_share_antigen or sheet_shares_antigen
@@ -905,6 +921,76 @@ def run_pipeline(
     assembled = None
     n_selected_clones: int | None = None
     n_non_viral: int | None = None
+    rules = None
+    if config.selection.get("rules") and long_df is not None:
+        from .selection import select_from_clone_sample_long
+
+        selection_long = long_df
+        sig_names = config.selection.get("signatures")
+        if sig_names:
+            from .signature_methods import (
+                build_signature_methods,
+                signatures_for_species,
+            )
+
+            sig_registry = signatures_for_species(run_species)
+            genes = sorted({
+                g for n in sig_names for g in sig_registry[n].all_genes
+            })
+            expr, apply_sig_log1p = _prepare_signature_expression(adata, genes)
+            obs_sig = adata.obs
+            if "CDR3ab" not in obs_sig.columns and {
+                "CDR3_alpha", "CDR3_beta"
+            } <= set(obs_sig.columns):
+                obs_sig = obs_sig.assign(CDR3ab=paired_cdr3ab_key(obs_sig)[0])
+            if not ({"CDR3ab", "sample"} <= set(obs_sig.columns)):
+                raise ValueError(
+                    f"selection.signatures={sig_names} requested but "
+                    "adata.obs lacks CDR3ab/sample — cannot build "
+                    "signature methods."
+                )
+            sig_long = build_signature_methods(
+                expr, obs_sig, signatures=sig_names,
+                log1p=apply_sig_log1p,
+                positive_method=config.selection.get(
+                    "signature_positive_method", "gap"
+                ),
+                species=run_species,
+            )
+            selection_long = pd.concat(
+                [long_df, sig_long], ignore_index=True
+            )
+            print(
+                f"  Added {len(sig_long)} signature-method rows "
+                f"({', '.join(sig_names)}) to the selection input"
+            )
+        exclude_clones = None
+        if config.selection.get("exclude_viral", True) and "is_viral" in til_matched.columns:
+            viral_mask = truthy_flag_series(til_matched["is_viral"])
+            exclude_clones = set(
+                til_matched.loc[viral_mask, "CDR3ab"].astype(str)
+            )
+            if exclude_clones:
+                audit_cols = [
+                    c for c in (
+                        "CDR3ab", "CDR3_alpha", "CDR3_beta", "is_viral",
+                        "db_protein_canonical", "db_antigen_gene", "db_protein",
+                        "db_species", "db_epitope", "db_database", "db_category",
+                    )
+                    if c in til_matched.columns
+                ]
+                til_matched.loc[viral_mask, audit_cols].to_csv(
+                    data_dir / "excluded_viral_clones.csv", index=False
+                )
+                n_non_viral = int((~viral_mask).sum())
+                print(
+                    f"  Selection excluding {len(exclude_clones)} viral clones "
+                    f"-> data/excluded_viral_clones.csv"
+                )
+        rules = select_from_clone_sample_long(
+            selection_long, config.selection, exclude_clones=exclude_clones,
+        )
+
     has_leaders = (
         config.assemble.alpha_leader is not None or config.assemble.beta_leader is not None
     )
@@ -1011,88 +1097,6 @@ def run_pipeline(
         if _fidelity:
             print(f"  WARNING: {_fidelity}")
 
-        rules = None
-        if config.selection.get("rules") and long_df is not None:
-            from .selection import select_from_clone_sample_long
-
-            selection_long = long_df
-            sig_names = config.selection.get("signatures")
-            if sig_names:
-                from .signature_methods import (
-                    build_signature_methods,
-                    signatures_for_species,
-                )
-
-                sig_registry = signatures_for_species(run_species)
-                genes = sorted({
-                    g for n in sig_names for g in sig_registry[n].all_genes
-                })
-                expr, apply_sig_log1p = _prepare_signature_expression(adata, genes)
-                obs_sig = adata.obs
-                if "CDR3ab" not in obs_sig.columns and {
-                    "CDR3_alpha", "CDR3_beta"
-                } <= set(obs_sig.columns):
-                    obs_sig = obs_sig.assign(CDR3ab=paired_cdr3ab_key(obs_sig)[0])
-                if not ({"CDR3ab", "sample"} <= set(obs_sig.columns)):
-                    raise ValueError(
-                        f"selection.signatures={sig_names} requested but "
-                        "adata.obs lacks CDR3ab/sample — cannot build "
-                        "signature methods."
-                    )
-                sig_long = build_signature_methods(
-                    expr, obs_sig, signatures=sig_names,
-                    log1p=apply_sig_log1p,
-                    positive_method=config.selection.get(
-                        "signature_positive_method", "gap"
-                    ),
-                    species=run_species,
-                )
-                selection_long = pd.concat(
-                    [long_df, sig_long], ignore_index=True
-                )
-                print(
-                    f"  Added {len(sig_long)} signature-method rows "
-                    f"({', '.join(sig_names)}) to the selection input"
-                )
-            exclude_clones = None
-            if config.selection.get("exclude_viral", True) and "is_viral" in til_matched.columns:
-                viral_mask = truthy_flag_series(til_matched["is_viral"])
-                exclude_clones = set(
-                    til_matched.loc[viral_mask, "CDR3ab"].astype(str)
-                )
-                if exclude_clones:
-                    audit_cols = [
-                        c for c in (
-                            "CDR3ab", "CDR3_alpha", "CDR3_beta", "is_viral",
-                            "db_protein_canonical", "db_antigen_gene", "db_protein",
-                            "db_species", "db_epitope", "db_database", "db_category",
-                        )
-                        if c in til_matched.columns
-                    ]
-                    til_matched.loc[viral_mask, audit_cols].to_csv(
-                        data_dir / "excluded_viral_clones.csv", index=False
-                    )
-                    n_non_viral = int((~viral_mask).sum())
-                    print(
-                        f"  Selection excluding {len(exclude_clones)} viral clones "
-                        f"-> data/excluded_viral_clones.csv"
-                    )
-            rules = select_from_clone_sample_long(
-                selection_long, config.selection, exclude_clones=exclude_clones,
-            )
-            if not rules.empty and "CDR3ab" in assembled.columns:
-                selected = (
-                    rules.merge(assembled, on="CDR3ab", how="left")
-                    .sort_values("global_rank")
-                    .reset_index(drop=True)
-                )
-                selected.to_csv(data_dir / "selected_clones.csv", index=False)
-                n_selected_clones = len(selected)
-                print(
-                    f"  Wrote selected_clones.csv: {len(selected)} clones "
-                    f"across {rules['selection_rule'].nunique()} rules"
-                )
-
         if config.output.generate_plots:
             plot_assembly(assembled, plots_dir)
 
@@ -1146,6 +1150,21 @@ def run_pipeline(
         if config.output.output_airr or config.output.output_fasta:
             print("  Skipping AIRR/FASTA export because assembly was skipped")
 
+    if rules is not None and not rules.empty:
+        _selection_base = assembled if assembled is not None else til_matched
+        if "CDR3ab" in _selection_base.columns:
+            selected = (
+                rules.merge(_selection_base, on="CDR3ab", how="left")
+                .sort_values("global_rank")
+                .reset_index(drop=True)
+            )
+            selected.to_csv(data_dir / "selected_clones.csv", index=False)
+            n_selected_clones = len(selected)
+            print(
+                f"  Wrote selected_clones.csv: {len(selected)} clones "
+                f"across {rules['selection_rule'].nunique()} rules"
+            )
+
     if config.output.generate_plots:
         create_pipeline_funnel(
             raw_cells=funnel_counts.get("Raw Cells", 0),
@@ -1175,25 +1194,28 @@ def run_pipeline(
             plot_leader_summary(assembled, plots_dir / "leader_summary.png")
 
     if config.output.generate_report:
-        print("\nGenerating report...")
-        from .report import resolve_report_name
-
-        resolved_report_name = resolve_report_name(
-            output_dir,
-            clones_df=clonotypes,
-            cli_name=report_name,
-        )
-        report_format = str(config.output.report_format).lower()
-        if report_format == "both":
-            generate_report(plots_dir, format="html", report_name=resolved_report_name)
-            generate_report(plots_dir, format="pdf", report_name=resolved_report_name)
-        elif report_format in {"html", "pdf"}:
-            generate_report(plots_dir, format=report_format, report_name=resolved_report_name)
+        if not list(plots_dir.glob("*.png")):
+            print("\nSkipping figure report generation (no plot PNGs produced)")
         else:
-            raise TCRsiftValidationError(
-                f"Invalid report format: '{config.output.report_format}'",
-                hint="Use report_format: pdf, html, or both in config.",
+            print("\nGenerating report...")
+            from .report import resolve_report_name
+
+            resolved_report_name = resolve_report_name(
+                output_dir,
+                clones_df=clonotypes,
+                cli_name=report_name,
             )
+            report_format = str(config.output.report_format).lower()
+            if report_format == "both":
+                generate_report(plots_dir, format="html", report_name=resolved_report_name)
+                generate_report(plots_dir, format="pdf", report_name=resolved_report_name)
+            elif report_format in {"html", "pdf"}:
+                generate_report(plots_dir, format=report_format, report_name=resolved_report_name)
+            else:
+                raise TCRsiftValidationError(
+                    f"Invalid report format: '{config.output.report_format}'",
+                    hint="Use report_format: pdf, html, or both in config.",
+                )
 
     print("\n" + "=" * 60)
     print("Pipeline complete!")

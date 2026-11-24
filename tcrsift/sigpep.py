@@ -121,7 +121,8 @@ def signal_peptide_features(leader: str | None) -> dict:
     # Helix-breaker (Pro/Gly) at/after the h/c boundary positions the cleavage.
     helix_breaker = bool(set(leader[max(h_end - 1, 0):]) & set("PG"))
 
-    gate = met_start and length_ok and h_core_ok and h_core_no_charge
+    valid_aa = ("*" not in leader) and ("X" not in leader)
+    gate = valid_aa and met_start and length_ok and h_core_ok and h_core_no_charge
     crit = (met_start, length_ok, h_core_ok, h_core_no_charge,
             n_positive, cleavage_ok, helix_breaker)
     return {

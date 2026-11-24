@@ -200,6 +200,7 @@ def percentile_rank_score(
     clone_col: str = "CDR3ab",
     group_col: str | None = None,
     require_complete: bool = False,
+    key_by_group: bool = False,
 ) -> dict:
     """Weighted mean-percentile composite per clone — the PRISM math (#193).
 
@@ -207,17 +208,22 @@ def percentile_rank_score(
     Each term contributes a ``[0, 1]`` percentile rank (0 = best;
     ``direction="high"`` means high values are best — e.g. an antigen-response
     GEX score), averaged (optionally weighted). Returns ``{clone: composite}``
-    where a **low** composite = a strong multi-criterion candidate (private +
-    antigen-responding + non-naive, when given those terms). Percentile ranks
-    are computed within ``group_col`` (e.g. per condition) when provided.
+    (or ``{(clone, group): composite}`` when ``key_by_group=True`` and
+    ``group_col`` is present) where a **low** composite = a strong
+    multi-criterion candidate (private + antigen-responding + non-naive, when
+    given those terms). Percentile ranks are computed within ``group_col``
+    (e.g. per condition) when provided; when a clone appears in multiple groups
+    and ``key_by_group=False``, its best (minimum finite) composite is kept
+    rather than arbitrarily overwritten by the last row.
 
     Missing-data policy (explicit, #193 audit): with ``require_complete=False``
     (default) a clone missing one term still ranks on its remaining terms
     (NaN-aware) — used by the config-driven ``select`` ``rank_by`` route, and
     NaN never corrupts ``_rank_candidates`` ordering (it coerces to +inf). With
-    ``require_complete=True`` a clone missing ANY term gets a NaN composite and
-    is therefore never PRISM-picked — "don't pick a clone we can't fully score",
-    which is the behavior the validated per-condition recipe relies on.
+    ``require_complete=True`` a clone missing ANY term (including an absent
+    term column) gets a NaN composite and is therefore never PRISM-picked —
+    "don't pick a clone we can't fully score", which is the behavior the
+    validated per-condition recipe relies on.
 
     This lets a ``tcrsift select`` route ``rank_by`` reproduce PRISM exactly by
     combining Ppost with GEX/RNA score terms — a deliberate, config-driven
@@ -228,9 +234,11 @@ def percentile_rank_score(
     if clone_scores is None or len(clone_scores) == 0 or not terms:
         return {}
     weighted = []
+    missing_term = False
     for t in terms:
         col = t.get("col")
         if not col or col not in clone_scores.columns:
+            missing_term = True
             continue
         lower = str(t.get("direction", "low")).lower() == "low"
         w = float(t.get("weight", 1.0))
@@ -241,6 +249,12 @@ def percentile_rank_score(
         else:
             pr = percentile_rank(clone_scores[col], lower_is_better=lower)
         weighted.append((pr, w))
+    if require_complete and missing_term:
+        clones = clone_scores[clone_col].astype(str)
+        if key_by_group and group_col and group_col in clone_scores.columns:
+            groups = clone_scores[group_col].astype(str)
+            return {(c, g): float("nan") for c, g in zip(clones, groups)}
+        return {c: float("nan") for c in clones}
     if not weighted:
         return {}
     prs = np.vstack([np.asarray(pr, dtype=float) for pr, _ in weighted])
@@ -257,7 +271,18 @@ def percentile_rank_score(
         den = (present * wts[:, None]).sum(axis=0)
         with np.errstate(invalid="ignore", divide="ignore"):
             composite = np.where(den > 0, num / den, np.nan)
-    return dict(zip(clone_scores[clone_col].astype(str), composite))
+    clones = clone_scores[clone_col].astype(str)
+    if key_by_group and group_col and group_col in clone_scores.columns:
+        groups = clone_scores[group_col].astype(str)
+        return {(c, g): float(v) for c, g, v in zip(clones, groups, composite)}
+    out: dict[str, float] = {}
+    for c, v in zip(clones, composite):
+        fv = float(v)
+        if c not in out:
+            out[c] = fv
+        elif np.isfinite(fv) and (not np.isfinite(out[c]) or fv < out[c]):
+            out[c] = fv
+    return out
 
 
 def _composite_for(metric, clone_scores, clone_col):
@@ -336,6 +361,13 @@ def build_selection_rules(
     if clone_method_long.empty or not rules_cfg:
         return _empty_selection(clone_col)
 
+    def _safe_freq(v) -> float:
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            return 0.0
+        return fv if np.isfinite(fv) else 0.0
+
     # Per-clone method->tier and method->frequency maps.
     tier_by: dict[object, dict] = {}
     freq_by: dict[object, dict] = {}
@@ -343,7 +375,9 @@ def build_selection_rules(
         clone_col, sort=False, observed=True,
     ):
         tier_by[clone] = dict(zip(g[method_col], g[tier_col]))
-        freq_by[clone] = dict(zip(g[method_col], g[freq_col]))
+        freq_by[clone] = {
+            m: _safe_freq(f) for m, f in zip(g[method_col], g[freq_col])
+        }
     # Drop excluded clones up front (e.g. public-DB viral bystanders) so
     # no rule can select them (#122 exclude_viral).
     exclude_clones = exclude_clones or set()
@@ -455,7 +489,9 @@ def build_selection_rules(
             top_n = cfg.get("top_n", 3)
             metric = cfg.get("rank_by", "mean_freq_across_pair")
             for name, members in pairs.items():
-                members = list(members)
+                members = [m for m in (members or ()) if m is not None and str(m).strip()]
+                if not members:
+                    continue
                 member_set = set(members)
                 cands = []
                 for c in all_clones:
@@ -561,7 +597,11 @@ def select_from_clone_sample_long(
         return _empty_selection(clone_col)
     cml = attach_method_tiers(cml)
     return build_selection_rules(
-        cml, config, clone_col=clone_col, exclude_clones=exclude_clones,
+        cml,
+        config,
+        clone_col=clone_col,
+        method_col=method_col,
+        exclude_clones=exclude_clones,
         clone_scores=clone_scores,
     )
 
@@ -681,6 +721,10 @@ def select_specificity_candidates(
     candidates; it does not measure specificity. Returns a copy.
     """
     out = clonotypes.copy()
+    if not (np.isfinite(percentile) and 0.0 < percentile <= 100.0):
+        raise ValueError(
+            f"select_specificity_candidates: percentile must be in (0, 100], got {percentile!r}"
+        )
     if ppost_col not in out.columns:
         raise ValueError(
             f"select_specificity_candidates: missing {ppost_col!r}. "
@@ -698,13 +742,13 @@ def select_specificity_candidates(
     # so the route still works on runs without an enrichment_method axis (a
     # missing per-method column would otherwise gate out every clone silently).
     if freq_col in out.columns:
-        freq = out[freq_col]
+        freq = pd.to_numeric(out[freq_col], errors="coerce")
     elif "max_frequency" in out.columns:
         logger.warning(
             "select_specificity_candidates: %r absent; gating on 'max_frequency'.",
             freq_col,
         )
-        freq = out["max_frequency"]
+        freq = pd.to_numeric(out["max_frequency"], errors="coerce")
     else:
         logger.warning(
             "select_specificity_candidates: no frequency column (%r / "
@@ -712,11 +756,11 @@ def select_specificity_candidates(
             freq_col,
         )
         freq = pd.Series(float("inf"), index=out.index)
-    gated = complete & (freq.fillna(0) > min_frequency) & out[ppost_col].notna()
+    ppost = pd.to_numeric(out[ppost_col], errors="coerce")
+    gated = complete & (freq.fillna(0.0) > min_frequency) & ppost.notna()
     out["specificity_gated"] = gated
 
     # Rank gated clones by ascending Ppost(alpha) (lowest = most private).
-    ppost = pd.to_numeric(out[ppost_col], errors="coerce")
     out["specificity_ppost_rank"] = (
         ppost.where(gated).rank(method="min", ascending=True).astype("Int64")
     )
@@ -727,17 +771,13 @@ def select_specificity_candidates(
         candidate = gated & (ppost <= cutoff)
         if abs_log10_ppost is not None:
             # add_pgen_ppost emits ln(P), while older callers/tests may provide
-            # raw P. Applying log10 directly to ln(P) clips every negative
-            # value to 1e-300 and makes the absolute cutoff meaningless.
-            log10_ppost = pd.Series(np.nan, index=ppost.index, dtype=float)
-            # A raw probability may legitimately be exactly zero. Treat only
-            # negative values as ln(P); zero is clipped as a raw probability.
-            is_log_probability = ppost < 0
-            log10_ppost.loc[is_log_probability] = (
-                ppost.loc[is_log_probability] / np.log(10.0)
-            )
-            raw_probability = ppost.loc[~is_log_probability].clip(lower=1e-300)
-            log10_ppost.loc[~is_log_probability] = np.log10(raw_probability)
+            # raw P. Detect scale at the column level so ln(P) == 0.0 (P = 1)
+            # converts to log10 = 0.0 rather than clipping to -300.
+            is_log_scale = bool((ppost[gated] < 0).any())
+            if is_log_scale:
+                log10_ppost = ppost / np.log(10.0)
+            else:
+                log10_ppost = np.log10(ppost.clip(lower=1e-300))
             candidate = candidate & (log10_ppost <= abs_log10_ppost)
     out["specificity_candidate"] = candidate
     return out
@@ -858,10 +898,25 @@ def select_by_dominant_specificity(
                 f"select_by_dominant_specificity: missing lineage_col "
                 f"{lineage_col!r}"
             )
-        lineage = clone_condition_long.groupby(clone_col, observed=True)[
-            lineage_col
-        ].agg(lambda s: s.mode().iloc[0] if not s.mode().empty else "Unknown")
-        res["lineage"] = lineage.reindex(dominant.index).to_numpy()
+        lin_df = clone_condition_long[[clone_col, lineage_col, count_col]].copy()
+        lin_df[count_col] = pd.to_numeric(lin_df[count_col], errors="coerce").fillna(0.0)
+        lin_df = lin_df[lin_df[lineage_col].notna()]
+        if not lin_df.empty:
+            lin_sums = (
+                lin_df.groupby([clone_col, lineage_col], observed=True)[count_col]
+                .sum()
+                .reset_index()
+            )
+            lin_sums["_lin_str"] = lin_sums[lineage_col].astype(str)
+            lin_sums = lin_sums.sort_values(
+                [clone_col, count_col, "_lin_str"], ascending=[True, False, True]
+            )
+            lineage = lin_sums.drop_duplicates(subset=[clone_col], keep="first").set_index(
+                clone_col
+            )[lineage_col]
+            res["lineage"] = lineage.reindex(dominant.index).fillna("Unknown").to_numpy()
+        else:
+            res["lineage"] = "Unknown"
         res["min_dominant_cells"] = [
             _lineage_min_threshold(lab, per_lineage_min, min_dominant_cells)
             for lab in res["lineage"]

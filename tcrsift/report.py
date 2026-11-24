@@ -350,6 +350,10 @@ def expand_dual_alpha_variants(
     ``obs`` is None or there's no ``merged_alpha_partners`` column.
     """
     out = selected.copy()
+    if out.empty:
+        out["dual_alpha_variant"] = pd.Series(dtype=object)
+        out["selected_clone"] = pd.Series(dtype=object)
+        return out.reset_index(drop=True), {}
     if partners_col not in out.columns or obs is None:
         out["dual_alpha_variant"] = None
         return out.reset_index(drop=True), {}
@@ -621,7 +625,26 @@ def build_selected_report(
 
     prov_cols = [c for c in (provenance_cols or []) if c in selected.columns]
     keep = ["CDR3ab", *prov_cols]
-    sel = selected[[c for c in keep if c in selected.columns]].drop_duplicates("CDR3ab")
+    sel_raw = selected[[c for c in keep if c in selected.columns]]
+    if sel_raw["CDR3ab"].duplicated().any() and prov_cols:
+        def _merge_prov(series: pd.Series):
+            vals = [v for v in series if pd.notna(v) and str(v).strip() != ""]
+            if not vals:
+                return np.nan
+            uniq: list = []
+            seen: set[str] = set()
+            for v in vals:
+                sv = str(v)
+                if sv not in seen:
+                    seen.add(sv)
+                    uniq.append(v)
+            return uniq[0] if len(uniq) == 1 else "; ".join(str(v) for v in uniq)
+
+        sel = sel_raw.groupby("CDR3ab", sort=False, as_index=False).agg(
+            {c: _merge_prov for c in prov_cols}
+        )
+    else:
+        sel = sel_raw.drop_duplicates("CDR3ab")
     merged = sel.merge(clonotypes, on="CDR3ab", how="left", suffixes=("", "_clo"))
 
     expanded, variant_of = expand_dual_alpha_variants(merged, obs)
@@ -645,7 +668,10 @@ def build_selected_report(
     if fidelity:
         logger.warning(fidelity)
     _report_species = (assemble_kwargs or {}).get("species")
-    validate_sequences(assembled, strict=False, species=_report_species)
+    _val_msgs = validate_sequences(assembled, strict=False, species=_report_species)
+    for _vm in _val_msgs:
+        if getattr(_vm, "severity", None) in ("load_bearing", "autocorrect"):
+            logger.warning("build_selected_report validation: %s", _vm)
     qc_text = assemble_qc_report(assembled)
     synth_text = synthesis_qc_report(assembled)
     if synth_text:
@@ -731,7 +757,7 @@ def build_selected_report(
         assembled, seq_pdf, strict=False, annotations=pdf_annotations, species=_report_species,
     )
     # Prepend a self-documenting construct cover/legend page (#202).
-    if cover:
+    if cover and seq_pdf.is_file():
         from pypdf import PdfReader, PdfWriter
 
         writer = PdfWriter()

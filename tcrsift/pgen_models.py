@@ -88,14 +88,32 @@ _STD_AA = set("ACDEFGHIKLMNPQRSTVWY")
 _HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (tcrsift)"}
 
 
-def _download(url: str, dest: Path) -> None:
-    """Download ``url`` → ``dest`` with a browser User-Agent (CDN-friendly)."""
+def _download(url: str, dest: Path, *, timeout: float = 30.0) -> None:
+    """Download ``url`` → ``dest`` atomically with scheme validation & timeout."""
+    import os
     import shutil
+    import tempfile
+    import urllib.parse
     import urllib.request
 
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(
+            f"Unsupported URL scheme {parsed.scheme!r} for {url!r}; only http/https allowed"
+        )
+    dest.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(url, headers=_HTTP_HEADERS)  # noqa: S310
-    with urllib.request.urlopen(req) as resp, open(dest, "wb") as fh:  # noqa: S310
-        shutil.copyfileobj(resp, fh)
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{dest.name}.", suffix=".tmp", delete=False, dir=dest.parent
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp, open(tmp_path, "wb") as fh:  # noqa: S310
+            shutil.copyfileobj(resp, fh)
+        os.replace(tmp_path, dest)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def fetch_healthy_pbmc(*, force: bool = False) -> dict[str, Path]:
@@ -288,8 +306,11 @@ def fetch_repertoire(
 
 
 def _suffix(url: str) -> str:
+    import urllib.parse
+
+    path = urllib.parse.urlparse(url).path or url
     for s in (".csv.gz", ".tsv.gz", ".csv", ".tsv", ".gz"):
-        if url.endswith(s):
+        if path.endswith(s):
             return s
     return ".csv"
 
@@ -323,7 +344,7 @@ def train_model(
     backend: str = DEFAULT_BACKEND,
     role: str = "ppost",
     url: str | None = None,
-    order: int = 3,
+    order: int = 2,
     epochs: int = 30,
     batch_size: int = 2000,
     device: str | None = None,
@@ -409,25 +430,27 @@ def ensure_model(
 
     sp = normalize_species(species)
     key = (chain.lower(), backend, role, sp, str(cache_dir()))
-    if key in _CACHE:
-        return _CACHE[key]
+    if url is None:
+        if key in _CACHE:
+            return _CACHE[key]
 
-    path = cached_model_file(backend, role, chain, species=sp)
-    if path.is_file():
-        model = seqprob.BACKENDS[backend].load(str(path))
-        _CACHE[key] = model
-        return model
+        path = cached_model_file(backend, role, chain, species=sp)
+        if path.is_file():
+            model = seqprob.BACKENDS[backend].load(str(path))
+            _CACHE[key] = model
+            return model
 
     # Shipped k-mer / kmer_gene defaults (instant, no training when present).
     # For mouse with auto_train=True and an available mouse repertoire (or url),
-    # prefer training a genuine murine ppost model over falling back to human AA kmer.
+    # or whenever the caller explicitly provides a training `url`, train instead
+    # of returning a shipped default.
     can_train_mouse_ppost = (
         sp == "mouse"
         and role == "ppost"
         and auto_train
         and (url is not None or cached_repertoire_file(chain, species=sp).is_file())
     )
-    if backend in ("kmer", "kmer_gene") and not can_train_mouse_ppost:
+    if backend in ("kmer", "kmer_gene") and url is None and not can_train_mouse_ppost:
         try:
             model = seqprob.load_background_model(chain, backend, role, species=sp)
             _CACHE[key] = model

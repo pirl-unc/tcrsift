@@ -7,6 +7,55 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.35.0
+
+Whole-library bug-fix release addressing correctness, statistical edge cases,
+assembly QC, and I/O safety across all pipeline stages, plus a standalone
+manuscript Methods section ([methods-section.md](methods-section.md)):
+
+- **Loading, QC, phenotyping, and clonotyping.** Guarded mitochondrial QC
+  (`min_mito_pct` / `max_mito_pct`) when no mitochondrial genes are present in
+  the expression matrix; made marker extraction and GEX signature scoring safe
+  under duplicate `var_names` and already-log-transformed matrices; fixed
+  `species="auto"` gene-ID resolution; removed mouse V-genes (`TRAV12-2`,
+  `TRBV28`) from the human-only species detector; enforced numeric
+  `min_cd3_reads` in `apply_cd3_gate` and synthesized `CD3` from
+  `CD3D`/`CD3E`/`CD3G`; added an expression-ratio guard (`max_imbalance_ratio`)
+  to `cd4_cd8_doublet_mask`; fixed multi-sample contig ID collision tracking in
+  `qc_battery`; and handled string booleans, missing chains, and per-donor
+  method recovery cleanly.
+- **Scoring, filtering, selection, TIL matching, and attribution.** Replaced
+  grid-clamped logistic FDR thresholds with analytical thresholds
+  (`analytical_logistic_threshold`) and non-misleading fallback tiers; fixed
+  `subset_percentile` to rank `-hypergeom.logsf` with `method="max"` (avoiding
+  float64 tail underflow and midpoint tie bias); tightened `RECEPTOR_GENE_RE`
+  and added receptor-gene anti-leakage checks across signature scorers; fixed
+  `fdr_scope="auto"` multi-donor cohort detection in `run_pipeline`; moved
+  `config.selection` outside the assembly guard so `--no-assemble` still runs
+  selection; propagated `patient_id` in `load_til_samples`; folded dual-alpha
+  merge counts into attribution priors; and guarded constant score columns
+  against passing 100% of clones in `insilico_filter`.
+- **Database annotation, probability models, and cache safety.** Fixed IEDB /
+  CEDAR UniProt tumor-self classification (MART-1, HER2, PRAME, gp100, TRP-1,
+  Tyrosinase, NY-BR-1) and word-bounded influenza/bacterial matching so
+  *Haemophilus influenzae* is not misclassified as viral influenza; added Zip
+  Slip validation, thread-safe IPv4 fallback, and atomic `force=True` staging
+  in `datacache`; fixed log-space insertion probabilities and `pd.NA` handling
+  in `pgen`; set `train_model` default k-mer order to `2` matching `seqprob`;
+  and fixed `unify` (`Likely_CD8` symmetry, dotted condition names, tie
+  handling) and `cohort` empty-beta overlap.
+- **Construct assembly and reporting.** Fixed premature-stop detection in
+  `_nt_contig_in_frame_no_premature_stop`, bare-mature 1-aa junction offset
+  validation, and uppercase mouse `TRAJ` detection in `_assemble_qc`; added
+  `NcoI`/`BsaI`/`BsmBI` to forbidden synthesis motifs and guarded recoding
+  against introducing restriction sites; skipped leader/constant assembly on
+  missing chains of unpaired clones; fixed `TRBC01`/`TRBC02` allele parsing
+  and human `TRBC2*01` regeneration; made `tcrsift.annotate_cells` and
+  `tcrsift.annotate_tcrs` callable even after submodule import; supported
+  CSV-round-tripped stringified `sample_frequencies` in plotting; fixed
+  `pretty_sample` on non-marker hyphenated names (`Patient1-TIL`, `MART-1`);
+  and preserved multi-condition provenance in `build_selected_report`.
+
 ## 3.34.1
 
 Documentation cleanup across the overview, TIL, infectious disease, paired

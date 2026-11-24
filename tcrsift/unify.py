@@ -136,11 +136,15 @@ def merge_experiments(
         if "CDR3ab" in df_copy.columns:
             parts = _clean_str_col(df_copy["CDR3ab"]).str.split("_", n=1, expand=True)
             if "CDR3_alpha" not in df_copy.columns:
-                df_copy["CDR3_alpha"] = parts[0] if parts.shape[1] > 0 else ""
+                df_copy["CDR3_alpha"] = (
+                    _clean_str_col(parts[0]) if parts.shape[1] > 0 else ""
+                )
             else:
                 df_copy["CDR3_alpha"] = _clean_str_col(df_copy["CDR3_alpha"])
             if "CDR3_beta" not in df_copy.columns:
-                df_copy["CDR3_beta"] = parts[1] if parts.shape[1] > 1 else ""
+                df_copy["CDR3_beta"] = (
+                    _clean_str_col(parts[1]) if parts.shape[1] > 1 else ""
+                )
             else:
                 df_copy["CDR3_beta"] = _clean_str_col(df_copy["CDR3_beta"])
             df_copy["CDR3_pair"] = df_copy["CDR3_alpha"] + "/" + df_copy["CDR3_beta"]
@@ -247,13 +251,16 @@ def merge_experiments(
     if verbose:
         logger.info(f"  Merged result: {len(merged):,} rows, {len(merged.columns)} columns")
 
-    # Add basic metadata
-    merged["has_CDR3_alpha"] = merged["CDR3_alpha"].fillna("").str.len() > 0
-    merged["has_CDR3_beta"] = merged["CDR3_beta"].fillna("").str.len() > 0
-    merged["is_paired"] = merged["has_CDR3_alpha"] & merged["has_CDR3_beta"]
+    # Add basic metadata (guard when custom key_cols omits CDR3_alpha/CDR3_beta)
+    if "CDR3_alpha" in merged.columns:
+        merged["has_CDR3_alpha"] = merged["CDR3_alpha"].fillna("").astype(str).str.len() > 0
+    if "CDR3_beta" in merged.columns:
+        merged["has_CDR3_beta"] = merged["CDR3_beta"].fillna("").astype(str).str.len() > 0
+    if "has_CDR3_alpha" in merged.columns and "has_CDR3_beta" in merged.columns:
+        merged["is_paired"] = merged["has_CDR3_alpha"] & merged["has_CDR3_beta"]
 
     # Add occurrence flags
-    if add_occurrence_flags:
+    if add_occurrence_flags and "CDR3_pair" in merged.columns:
         if verbose:
             logger.info("  Adding occurrence flags...")
         for df, name in experiments:
@@ -269,10 +276,10 @@ def merge_experiments(
         if verbose:
             logger.info("  Computing combined statistics...")
 
-        # Combine count columns
+        # Combine count columns across all sources (not just those with total_cells.count)
         count_col_names = count_cols or ["total_cells", "CD4_only", "CD8_only"]
         for count_col in count_col_names:
-            input_cols = [f"{source}.{count_col}.count" for source in sources_with_counts]
+            input_cols = [f"{source}.{count_col}.count" for source in source_names]
             input_cols = [c for c in input_cols if c in merged.columns]
             if input_cols:
                 output_col = f"combined.{count_col}.count"
@@ -281,15 +288,14 @@ def merge_experiments(
                     total = merged[output_col].sum()
                     logger.info(f"    {output_col}: {total:,.0f} total")
 
-        # Combine GEX columns
-        if sources_with_gex:
-            gex_col_names = gex_cols or ["gex.CD3", "gex.CD4", "gex.CD8"]
-            for gex_col in gex_col_names:
-                input_cols = [f"{source}.{gex_col}.sum" for source in sources_with_gex]
-                input_cols = [c for c in input_cols if c in merged.columns]
-                if input_cols:
-                    output_col = f"combined.{gex_col}.sum"
-                    merged[output_col] = merged[input_cols].fillna(0).sum(axis=1)
+        # Combine GEX columns across all sources
+        gex_col_names = gex_cols or ["gex.CD3", "gex.CD4", "gex.CD8"]
+        for gex_col in gex_col_names:
+            input_cols = [f"{source}.{gex_col}.sum" for source in source_names]
+            input_cols = [c for c in input_cols if c in merged.columns]
+            if input_cols:
+                output_col = f"combined.{gex_col}.sum"
+                merged[output_col] = merged[input_cols].fillna(0).sum(axis=1)
 
         # Compute CD4/CD8 fractions
         if "combined.total_cells.count" in merged.columns:
@@ -343,6 +349,7 @@ def add_phenotype_confidence(
     if verbose:
         logger.info("Adding phenotype confidence columns...")
 
+    df = df.copy()
     cd4_sum = df.get(cd4_sum_col, pd.Series(0, index=df.index)).fillna(0)
     cd8_sum = df.get(cd8_sum_col, pd.Series(0, index=df.index)).fillna(0)
 
@@ -376,9 +383,18 @@ def add_phenotype_confidence(
                 elif "CD4" in col:
                     til_cd4_mask |= df[col].eq(True)
 
-    # Likely classifications
-    df["Likely_CD8"] = df["Confident_CD8"] | til_cd8_mask
-    df["Likely_CD4"] = df["Confident_CD4"] | til_cd4_mask | (~df["Likely_CD8"] & (cd4_sum > 0))
+    # Symmetric likely classifications: a CD8-dominant clone (e.g. cd8=10, cd4=2)
+    # is Likely_CD8, never misclassified as Likely_CD4.
+    df["Likely_CD8"] = (
+        df["Confident_CD8"]
+        | til_cd8_mask
+        | (~df["Confident_CD4"] & ~til_cd4_mask & (cd8_sum > cd4_sum))
+    )
+    df["Likely_CD4"] = (
+        df["Confident_CD4"]
+        | til_cd4_mask
+        | (~df["Confident_CD8"] & ~til_cd8_mask & (cd4_sum > cd8_sum))
+    )
 
     if verbose:
         logger.info(f"  Confident CD4+: {df['Confident_CD4'].sum():,}")
@@ -421,18 +437,15 @@ def compute_condition_statistics(
     if verbose:
         logger.info(f"Computing statistics for {len(conditions)} conditions")
 
+    df = df.copy()
     # Find condition columns for each condition
     for condition in conditions:
-        # Find fraction columns for this condition. Match the EXACT dot-segment
-        # ``condition_{condition}`` rather than substring containment — otherwise
-        # condition ``pool1`` also matches ``...condition_pool10.frac`` (any
-        # prefix-substring pair: pool1/pool10, d7/d70), silently pooling the
-        # wrong fractions into the per-condition statistics.
-        segment = f"condition_{condition}"
+        # Match exact condition segment (including dotted condition names like
+        # "v1.0") without prefix-substring leakage (pool1 vs pool10).
+        suffix = f"condition_{condition}.frac"
         frac_cols = [
             c for c in df.columns
-            if c.endswith(".frac")
-            and segment in c.split(".")
+            if (c == suffix or c.endswith(f".{suffix}"))
             and (not source_prefix or c.startswith(f"{source_prefix}."))
         ]
 
@@ -453,7 +466,10 @@ def compute_condition_statistics(
         else:
             std_vals = data.fillna(0).std(axis=1)
         df[f"combined.{condition}.frac.std"] = std_vals
-        cv = np.where(mean_vals > 0, std_vals / mean_vals, np.nan)
+        mean_arr = mean_vals.to_numpy(dtype=float)
+        std_arr = std_vals.to_numpy(dtype=float)
+        cv = np.full(len(df), np.nan, dtype=float)
+        np.divide(std_arr, mean_arr, out=cv, where=mean_arr > 0)
         df[f"combined.{condition}.frac.cv"] = cv
 
         # Consistency (1 / (1 + CV))
@@ -495,6 +511,7 @@ def find_top_condition(
     pd.DataFrame
         DataFrame with top_condition column added
     """
+    df = df.copy()
     stat_cols = [f"combined.{c}.{stat}" for c in conditions]
     stat_cols = [c for c in stat_cols if c in df.columns]
 
@@ -512,10 +529,12 @@ def find_top_condition(
         if require_clear_winner and len(sorted_vals) >= 2:
             if sorted_vals.iloc[0] <= sorted_vals.iloc[1]:
                 return None
-        return sorted_vals.index[0].replace("combined.", "").replace(f".{stat}", "")
+        col_name = str(sorted_vals.index[0])
+        return col_name.removeprefix("combined.").removesuffix(f".{stat}")
 
     df["top_condition"] = data.apply(get_top, axis=1)
-    df["top_condition.value"] = data.max(axis=1)
+    max_vals = data.max(axis=1)
+    df["top_condition.value"] = max_vals.where(df["top_condition"].notna(), np.nan)
 
     if verbose:
         n_assigned = df["top_condition"].notna().sum()

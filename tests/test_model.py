@@ -273,7 +273,7 @@ class TestAnnotatePlotWithThresholdsAndCounts:
         try:
             fdr_to_threshold, threshold_to_count, model = calc_thresholds_and_counts(
                 sample_clonotype_df,
-                fdrs=[0.1, 0.01],
+                fdrs=[0.2, 0.1],
             )
 
             annotate_plot_with_thresholds_and_counts(
@@ -284,7 +284,9 @@ class TestAnnotatePlotWithThresholdsAndCounts:
                 threshold_to_count,
             )
 
-            assert len(ax.lines) == 3  # 1 probability curve + 2 threshold lines
-            assert len(ax.texts) == 2
+            n_finite = sum(np.isfinite(t) for t in fdr_to_threshold.values())
+            assert n_finite == 2
+            assert len(ax.lines) == 1 + n_finite  # 1 probability curve + finite threshold lines
+            assert len(ax.texts) == n_finite
         finally:
             plt.close(fig)

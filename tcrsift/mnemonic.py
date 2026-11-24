@@ -317,7 +317,7 @@ def _make_pronounceable(seq: str) -> str:
             # Choose vowel based on the last consonant and position
             prev_cons = result[-1] if result else "t"
             vowel = _choose_vowel(prev_cons, insert_count)
-            result.append(vowel)
+            result.extend(vowel)
             insert_count += 1
 
         result.append(c)
@@ -433,14 +433,16 @@ def tcr_name(
     if suffixes is None:
         suffixes = DEFAULT_SUFFIXES
 
-    # Strip longest matching prefix
-    for prefix in sorted(prefixes, key=len, reverse=True):
+    # Strip longest matching non-empty prefix
+    clean_prefixes = [p.strip().upper() for p in prefixes if isinstance(p, str) and p.strip()]
+    for prefix in sorted(clean_prefixes, key=len, reverse=True):
         if seq.startswith(prefix):
             seq = seq[len(prefix) :]
             break
 
-    # Strip longest matching suffix
-    for suffix in sorted(suffixes, key=len, reverse=True):
+    # Strip longest matching non-empty suffix
+    clean_suffixes = [s.strip().upper() for s in suffixes if isinstance(s, str) and s.strip()]
+    for suffix in sorted(clean_suffixes, key=len, reverse=True):
         if seq.endswith(suffix):
             seq = seq[: -len(suffix)]
             break

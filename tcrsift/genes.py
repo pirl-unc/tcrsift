@@ -396,7 +396,7 @@ def ensembl_ids_to_symbols(
     if not ids_list:
         return {}
 
-    if species is None:
+    if species is None or str(species).strip().lower() in ("", "auto"):
         n_mouse = sum(1 for e in ids_list if e.startswith("ENSMUSG"))
         n_human = sum(1 for e in ids_list if e.startswith("ENSG"))
         sp = "mouse" if n_mouse > n_human else "human"
@@ -558,7 +558,12 @@ def _resolve_symbol_series(
     looks_mouse = base_names.str.startswith("ENSMUSG")
     looks_ensembl = looks_human | looks_mouse
     if looks_ensembl.any():
-        detected_sp = species or (
+        sp_clean = (
+            None
+            if (species is None or str(species).strip().lower() in ("", "auto"))
+            else species
+        )
+        detected_sp = sp_clean or (
             "mouse" if int(looks_mouse.sum()) > int(looks_human.sum()) else "human"
         )
         ens_list = s[looks_ensembl].tolist()

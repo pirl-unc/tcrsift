@@ -367,7 +367,12 @@ def prism_score(
         out, predicates, group_col=group_col, weights=weights, require_complete=True,
     )
     out[score_col] = scores
-    out[rank_col] = scores.rank(method="min", ascending=True, na_option="bottom")
+    if group_col is not None and group_col in out.columns:
+        out[rank_col] = out.groupby(group_col, observed=True)[score_col].rank(
+            method="min", ascending=True, na_option="bottom",
+        )
+    else:
+        out[rank_col] = scores.rank(method="min", ascending=True, na_option="bottom")
     return out
 
 
@@ -413,12 +418,13 @@ def annotate_tcrs(
     from .species import resolve_species
 
     sp = resolve_species(species, df=df, warn_mismatch=False)
-    methods = methods or ["pgen", "ppost", "promiscuity", "gex_signatures", "prism"]
+    if methods is None:
+        methods = ["pgen", "ppost", "promiscuity", "gex_signatures", "prism"]
     out = df.copy()
     if "pgen" in methods or "ppost" in methods or "prism" in methods:
         out = add_pgen_ppost(
             out, chains=chains, backend=backend,
-            with_pgen=("pgen" in methods or "prism" in methods),
+            with_pgen=("pgen" in methods),
             with_ppost=("ppost" in methods or "prism" in methods),
             species=sp,
         )
@@ -430,12 +436,31 @@ def annotate_tcrs(
             gex_prefix=gex_prefix, species=sp,
         )
     if "prism" in methods:
-        have = [p.score for p in PRISM_DEFAULT_PREDICATES if p.score in out.columns]
+        have = [
+            p.score
+            for p in PRISM_DEFAULT_PREDICATES
+            if p.score in out.columns and out[p.score].notna().any()
+        ]
         if len(have) == len(PRISM_DEFAULT_PREDICATES):
             out = prism_score(out, group_col=group_col)
         else:
             logger.warning(
-                "annotate_tcrs: PRISM needs %s; have only %s — skipping PRISM",
+                "annotate_tcrs: PRISM needs populated %s; have only %s — skipping PRISM",
                 [p.score for p in PRISM_DEFAULT_PREDICATES], have,
             )
     return out
+
+
+import sys as _sys  # noqa: E402
+import types as _types  # noqa: E402
+
+
+class _CallableAnnotateTcrsModule(_types.ModuleType):
+    """Allow ``tcrsift.annotate_tcrs(df, ...)`` even when the submodule
+    object has been bound on the package by ``from tcrsift.annotate_tcrs import ...``."""
+
+    def __call__(self, *args, **kwargs):
+        return annotate_tcrs(*args, **kwargs)
+
+
+_sys.modules[__name__].__class__ = _CallableAnnotateTcrsModule

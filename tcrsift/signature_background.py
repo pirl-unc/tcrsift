@@ -100,12 +100,22 @@ def calibrate_signature_background(scores, per_cell, signatures, *, quantile=0.9
             clone_high = group.CDR3ab.map(high_counts).to_numpy(dtype=int)
             # Exactly the same finite-population reference as the mean test,
             # applied to high/low cell labels: P(random group has >= k highs).
-            tail = hypergeom.sf(clone_high - 1, len(cells), int(high.sum()), group.cells.to_numpy())
+            # Rank -logsf with method="max" so ties or float64 underflow at the
+            # top do not pull top-enriched clones below the percentile gate;
+            # clones with zero high cells receive subset_percentile = 0.0.
+            log_tail = hypergeom.logsf(
+                clone_high - 1, len(cells), int(high.sum()), group.cells.to_numpy()
+            )
+            tail = np.exp(log_tail)
+            subset_pct = pd.Series(-log_tail, index=group.index).rank(
+                method="max", pct=True
+            )
+            subset_pct = subset_pct.where(clone_high > 0, 0.0)
             result.loc[group.index, f"{col}_high_cell_threshold"] = threshold
             result.loc[group.index, f"{col}_high_cells"] = clone_high
             result.loc[group.index, f"{col}_high_fraction"] = clone_high / group.cells.to_numpy()
             result.loc[group.index, f"{col}_subset_tail_probability"] = tail
-            result.loc[group.index, f"{col}_subset_percentile"] = pd.Series(-tail, index=group.index).rank(pct=True)
+            result.loc[group.index, f"{col}_subset_percentile"] = subset_pct
             high_thresholds[j], high_totals[j] = threshold, high.sum()
         for size, same_size in group.groupby("cells", observed=True, sort=True):
             size = int(size)

@@ -133,12 +133,15 @@ def _parse_imgt_leader_html(
         gene = gene_raw.strip().upper()
         allele = allele.strip() or "01"
         func = fields[3].strip()
-        nt = re.sub(r"[^ACGTUacgtu]", "", "".join(chunks)).upper().replace("U", "T")
+        # Strip ONLY whitespace and IMGT alignment gaps ('.', '-'); never
+        # strip IUPAC ambiguity letters (N/R/Y), which would frameshift the ORF.
+        nt = re.sub(r"[\s.\-]", "", "".join(chunks)).upper().replace("U", "T")
         if len(nt) < 36:
             return
-        nt_trimmed = nt[: (len(nt) // 3) * 3]
+        n_codons = len(nt) // 3
+        nt_trimmed = nt[: n_codons * 3]
         aa, _ = translate_dna(nt_trimmed)
-        if not aa or not aa.startswith("M") or "*" in aa or "X" in aa:
+        if not aa or len(aa) != n_codons or not aa.startswith("M") or "*" in aa or "X" in aa:
             return
         by_gene.setdefault(gene, []).append((allele, func, aa))
         nt_index[(gene, allele)] = nt_trimmed

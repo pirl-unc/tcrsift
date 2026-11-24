@@ -253,12 +253,16 @@ def _reembed_leiden(
         keep = ~np.array([is_receptor_gene(g) for g in syms])
         keep &= ~np.array([str(g).startswith("MT-") for g in syms])
         pool = pool[:, keep].copy()
+        if pool.n_vars < 2:
+            return np.full(adata.n_obs, "0", dtype=object)
         sc.pp.normalize_total(pool, target_sum=1e4)
         sc.pp.log1p(pool)
         n_top = min(n_top_genes, pool.n_vars)
         sc.pp.highly_variable_genes(pool, n_top_genes=n_top, flavor="seurat")
         panel = list(pool.var_names[pool.var["highly_variable"].to_numpy()])
 
+    if len(panel) < 2 or adata.n_obs < 2:
+        return np.full(adata.n_obs, "0", dtype=object)
     emb = adata[:, panel].copy()
     counts = _counts(emb)
     emb.X = counts.copy() if hasattr(counts, "copy") else np.asarray(counts)
@@ -377,9 +381,11 @@ def refine_cluster(
         sel = (adata.obs[label_col].astype(object) == mask).to_numpy()
     else:
         sel = np.asarray(mask)
-    if sel.dtype != bool:  # a positional-index list
+    if sel.size == 0:
+        sel = np.zeros(adata.n_obs, dtype=bool)
+    elif sel.dtype != bool:  # a positional-index list
         idx = np.zeros(adata.n_obs, dtype=bool)
-        idx[sel] = True
+        idx[sel.astype(int)] = True
         sel = idx
     if sel.shape[0] != adata.n_obs:
         raise ValueError(

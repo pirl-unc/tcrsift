@@ -75,12 +75,10 @@ _MOUSE_ONLY_V_PREFIXES = (
 )
 _MOUSE_DUP_TRAV_RE = re.compile(r"^TRAV\d+[DN](?:-|/|$)")
 _HUMAN_ONLY_V_PREFIXES = (
-    "TRAV12-2",
     "TRAV38-2",
     "TRAV26-1",
     "TRAV26-2",
     "TRBV20-1",
-    "TRBV28",
     "TRBV6-5",
     "TRBV7-9",
 )

@@ -170,8 +170,6 @@ def check_assembly(d: pd.DataFrame) -> QCResult:
     from .assemble import LINKERS
 
     valid_linkers = {v["aa"] for v in LINKERS.values()} | {EXPECTED_T2A}
-    if "linker" in d.columns:
-        valid_linkers |= {str(x) for x in d["linker"].dropna() if str(x)}
     bad = 0
     linkers: set[str] = set()
     n_sc = 0
@@ -188,13 +186,11 @@ def check_assembly(d: pd.DataFrame) -> QCResult:
             ("beta_leader_nt", "beta_leader_aa"),
             ("alpha_leader_nt", "alpha_leader_aa"),
         ]:
-            if (
-                pd.notna(r.get(ntc))
-                and pd.notna(r.get(aac))
-                and str(r.get(ntc)) != ""
-                and _nz(_tr(r[ntc])) != _nz(r[aac])
-            ):
-                bad += 1
+            if pd.notna(r.get(ntc)) and pd.notna(r.get(aac)):
+                nt_str = str(r[ntc]).strip()
+                if nt_str != "":
+                    if len(nt_str) % 3 != 0 or _nz(_tr(nt_str)) != _nz(r[aac]):
+                        bad += 1
         for ch in ("alpha", "beta"):
             full = _nz(r.get(f"full_{ch}_aa"))
             if not full:
@@ -208,10 +204,10 @@ def check_assembly(d: pd.DataFrame) -> QCResult:
         if sc:
             n_sc += 1
             expect_m = bool(_nz(r.get("beta_leader_aa")))
-            if not (sc.startswith(fb) and fa in sc and (not expect_m or sc.startswith("M"))):
+            if not (sc.startswith(fb) and sc.endswith(fa) and (not expect_m or sc.startswith("M"))):
                 bad += 1
-            if sc.startswith(fb) and fa in sc:
-                linkers.add(sc[len(fb) : sc.rindex(fa)])
+            if sc.startswith(fb) and sc.endswith(fa) and len(sc) >= len(fb) + len(fa):
+                linkers.add(sc[len(fb) : len(sc) - len(fa)])
         elif fb and fa:
             bad += 1
         for c in ["full_beta_aa", "full_alpha_aa", "single_chain_aa"]:
@@ -238,13 +234,12 @@ def check_cdr3_ref(d: pd.DataFrame) -> QCResult:
     for _, r in d.iterrows():
         allow_map = NONCANON_J_END_MOUSE if _is_mouse_row(r) else NONCANON_J_END_HUMAN
         for ch in ("alpha", "beta"):
-            cdr, vdj, jg = (
-                str(r[f"CDR3_{ch}"]),
-                str(r[f"VDJ_{ch}_aa"]),
-                str(r[f"{ch}_j_gene"]),
-            )
-            if cdr in ("", "nan"):
+            raw_cdr = r[f"CDR3_{ch}"]
+            if pd.isna(raw_cdr) or str(raw_cdr).strip() == "":
                 continue
+            cdr = str(raw_cdr).strip()
+            vdj = _nz(r[f"VDJ_{ch}_aa"])
+            jg = "" if pd.isna(r[f"{ch}_j_gene"]) else str(r[f"{ch}_j_gene"])
             lens.append(len(cdr))
             if cdr not in vdj or not cdr.startswith("C"):
                 bad += 1
@@ -362,7 +357,7 @@ def check_synth(d: pd.DataFrame) -> QCResult:
     )
 
 
-def check_contigs(d: pd.DataFrame, cmap: dict[str, str] | None) -> QCResult:
+def check_contigs(d: pd.DataFrame, cmap: dict[str, str | set[str]] | None) -> QCResult:
     """E. Every contig ref exists in cellranger; CDR3 matches ≥1 own contig."""
     if not cmap:
         return QCResult(
@@ -371,17 +366,28 @@ def check_contigs(d: pd.DataFrame, cmap: dict[str, str] | None) -> QCResult:
     refs = orphan = nomatch = 0
     for _, r in d.iterrows():
         for ch, cdrcol in [("beta", "CDR3_beta"), ("alpha", "CDR3_alpha")]:
+            raw_ids = r.get(f"{ch}_contig_ids")
+            if pd.isna(raw_ids):
+                continue
             ids = [
                 x.strip()
-                for x in str(r.get(f"{ch}_contig_ids", "")).replace(";", ",").split(",")
+                for x in str(raw_ids).replace(";", ",").split(",")
                 if x.strip()
             ]
             if not ids:
                 continue
             refs += len(ids)
             orphan += sum(1 for c in ids if c not in cmap)
-            raws = [cmap[c] for c in ids if c in cmap]
-            if raws and str(r.get(cdrcol)) not in raws:
+            raw_set: set[str] = set()
+            for c in ids:
+                if c in cmap:
+                    val = cmap[c]
+                    if isinstance(val, (set, frozenset, list, tuple)):
+                        raw_set.update(str(v) for v in val)
+                    else:
+                        raw_set.add(str(val))
+            cdr_val = r.get(cdrcol)
+            if raw_set and (pd.isna(cdr_val) or str(cdr_val) not in raw_set):
                 nomatch += 1
     return QCResult(
         "E. Raw cellranger contigs",
@@ -428,17 +434,16 @@ def contig_cdr3_map(
     contig_dir: str | Path | None = None,
     *,
     cellranger_dir: str | Path | None = None,
-) -> dict[str, str]:
-    """Build a ``contig_id -> cdr3`` map from CellRanger ``*contig_annotations*.csv``
+) -> dict[str, set[str]]:
+    """Build a ``contig_id -> set[cdr3]`` map from CellRanger ``*contig_annotations*.csv``
     under the given tree. Returns an empty dict when nothing is found (check E
-    then reports SKIP). Last-writer-wins on duplicate contig ids across files —
-    contig ids are unique per cellranger run, and dup keys would only arise from
-    overlapping globs.
+    then reports SKIP). Uses a set per contig ID so shared 10x barcodes across
+    multi-sample directories never overwrite each other.
     """
     root = cellranger_dir or contig_dir
     if root is None:
         return {}
-    m: dict[str, str] = {}
+    raw: dict[str, set[str]] = {}
     for f in glob.glob(f"{root}/**/*contig_annotations*.csv", recursive=True):
         try:
             a = pd.read_csv(f, usecols=lambda c: c in ("contig_id", "cdr3"))
@@ -446,9 +451,11 @@ def contig_cdr3_map(
             continue
         if "contig_id" not in a.columns or "cdr3" not in a.columns:
             continue
-        for cid, cdr in zip(a["contig_id"].astype(str), a["cdr3"].astype(str)):
-            m[cid] = cdr
-    return m
+        for cid, cdr in zip(a["contig_id"], a["cdr3"]):
+            if pd.isna(cid) or pd.isna(cdr):
+                continue
+            raw.setdefault(str(cid), set()).add(str(cdr))
+    return {k: (next(iter(v)) if len(v) == 1 else v) for k, v in raw.items()}
 
 
 def run_qc_battery(

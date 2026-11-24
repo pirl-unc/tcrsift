@@ -709,19 +709,29 @@ def load_cellranger_gex(
         adata.obs["n_counts"] = adata.obs["total_counts"]
 
     # Add QC filter flags
+    has_mt_genes = bool(adata.var["mt"].any())
     adata.obs["filter:min_genes"] = adata.obs["n_genes"] >= min_genes
     adata.obs["filter:max_genes"] = adata.obs["n_genes"] <= max_genes
     adata.obs["filter:min_counts"] = adata.obs["n_counts"] >= min_counts
     adata.obs["filter:max_counts"] = adata.obs["n_counts"] <= max_counts
-    adata.obs["filter:min_mito"] = adata.obs["percent_mt"] >= min_mito_pct
-    adata.obs["filter:max_mito"] = adata.obs["percent_mt"] <= max_mito_pct
+    if has_mt_genes:
+        adata.obs["filter:min_mito"] = adata.obs["percent_mt"] >= min_mito_pct
+        adata.obs["filter:max_mito"] = adata.obs["percent_mt"] <= max_mito_pct
+    else:
+        adata.obs["filter:min_mito"] = True
+        adata.obs["filter:max_mito"] = True
+        if min_mito_pct > 0 or max_mito_pct < 100:
+            logger.warning(
+                "  No mitochondrial genes found in %s; skipping min_mito_pct/max_mito_pct QC gates.",
+                sample_name,
+            )
 
     # The min_mito_pct FLOOR discards *low*-mito cells (near-zero-mito
     # empty/ambient droplets). The default 2.0 floor trims a small tail on most
     # datasets — that's the intended behavior, so report it at info level rather
     # than warning on every run (#168). Only escalate to a warning when the floor
     # culls an unusually large fraction (>10%), which signals it's set too high.
-    if min_mito_pct > 0:
+    if has_mt_genes and min_mito_pct > 0:
         n_below_floor = int((~adata.obs["filter:min_mito"]).sum())
         if n_below_floor:
             frac = n_below_floor / adata.n_obs if adata.n_obs else 0.0
@@ -813,7 +823,14 @@ def _extract_tcell_markers(adata: ad.AnnData) -> pd.DataFrame:
         logger.warning(f"T cell marker {sym} not found in gene expression data")
 
     if present_cols:
-        block = adata[:, present_cols].X
+        if adata.var_names.is_unique:
+            block = adata[:, present_cols].X
+        else:
+            name_to_pos: dict[str, int] = {}
+            for pos, vname in enumerate(var_names):
+                name_to_pos.setdefault(vname, pos)
+            col_positions = [name_to_pos[c] for c in present_cols]
+            block = adata.X[:, col_positions]
         if hasattr(block, "toarray"):
             block = block.toarray()
         # asarray is defensive: covers the h5py-dataset path under backed
@@ -1060,6 +1077,12 @@ def load_sample(
     # Combine or create from VDJ only
     if adata is not None and vdj_df is not None:
         adata = combine_gex_and_vdj(adata, vdj_df)
+    elif adata is not None and adata.n_vars > 0:
+        marker_df = _extract_tcell_markers(adata)
+        for col in marker_df.columns:
+            adata.obs[col] = marker_df[col].values
+        adata.obs["CD3"] = adata.obs["CD3D"] + adata.obs["CD3E"] + adata.obs["CD3G"]
+        adata.obs["CD8"] = adata.obs["CD8A"] + adata.obs["CD8B"]
     elif vdj_df is not None:
         # Create minimal AnnData from VDJ data
         vdj_pivoted = _pivot_vdj_by_barcode(vdj_df)
@@ -1107,6 +1130,7 @@ def load_sample(
                 context=f"sample '{sample.sample}'",
             )
             adata.uns["species"] = resolved_sp
+            adata.obs["species"] = resolved_sp
 
     return adata
 
@@ -1329,6 +1353,8 @@ def load_samples(
         # fail on symbols the matrices do contain).
         if gene_symbols:
             combined.var["gene_symbols"] = [gene_symbols.get(name, name) for name in combined.var_names]
+
+    rehydrate_obs(combined)
 
     # Tempdir is cleaned up here; `combined` is fully in-memory.
     # Inverse of `_ensure_x`: an all-VDJ-only sheet produces n_vars == 0,

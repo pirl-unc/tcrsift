@@ -845,6 +845,7 @@ def cmd_pgen_fetch(args):
         print(f"Source {args.source!r}: {REPERTOIRE_SOURCES[args.source]}")
         print("Download a healthy/neutral (not antigen-sorted) repertoire CSV "
               "from there and pass it via --url, or use --source healthy-pbmc.")
+    failures: list[str] = []
     for chain in chains:
         try:
             path = fetch_repertoire(
@@ -855,8 +856,11 @@ def cmd_pgen_fetch(args):
                 species=sp,
             )
             print(f"  [{chain}] cached → {path}")
-        except (FileNotFoundError, ValueError) as exc:
+        except (FileNotFoundError, ValueError, OSError, RuntimeError) as exc:
+            failures.append(chain)
             print(f"  [{chain}] {exc}")
+    if failures:
+        raise SystemExit(1)
 
 
 def cmd_pgen_train(args):
@@ -866,6 +870,7 @@ def cmd_pgen_train(args):
     sp = getattr(args, "species", "human") or "human"
     chains = ["alpha", "beta"] if args.chain == "both" else [args.chain]
     roles = ["pgen", "ppost"] if args.role == "both" else [args.role]
+    failures: list[str] = []
     for chain in chains:
         for role in roles:
             try:
@@ -874,8 +879,11 @@ def cmd_pgen_train(args):
                     epochs=args.epochs, device=args.device, species=sp,
                 )
                 print(f"  trained {args.backend} {role} {chain} ({sp}) → {path}")
-            except (FileNotFoundError, ImportError, ValueError) as exc:
+            except (FileNotFoundError, ImportError, ValueError, OSError, RuntimeError) as exc:
+                failures.append(f"{role}/{chain}")
                 print(f"  [{role} {chain}] skipped: {exc}")
+    if failures:
+        raise SystemExit(1)
 
 
 def cmd_pgen_annotate(args):
@@ -1006,8 +1014,8 @@ def cmd_data_download(args):
 
 def cmd_run(args):
     """Run the complete TCRsift pipeline."""
-    validate_run_args(args)
     config = load_config_with_args(args)
+    validate_run_args(args, config=config)
     if getattr(args, "no_pgen_ppost", False):
         config.clonotype.add_pgen_ppost = False
     setup_logging(config.verbose)
@@ -1547,6 +1555,11 @@ def cmd_report_selected(args):
             species=getattr(cfg, "species", "auto") or "auto",
             constant_species=getattr(asm, "constant_species", None),
             codon_species=getattr(asm, "codon_species", None),
+            germline_vdj_fallback=bool(getattr(asm, "germline_vdj_fallback", False)),
+            auto_download_germline=bool(
+                getattr(asm, "auto_download_germline", False)
+                or getattr(cfg.annotate, "auto_download", False)
+            ),
         )
     # Per-donor contig + species overrides (#196).
     if args.cellranger_dir:
@@ -1557,6 +1570,7 @@ def cmd_report_selected(args):
         assemble_kwargs["sample_name_from"] = args.sample_name_from
     if getattr(args, "species", None) is not None:
         assemble_kwargs["species"] = args.species
+    assemble_kwargs.setdefault("species", "auto")
     if getattr(args, "constant_species", None) is not None:
         assemble_kwargs["constant_species"] = args.constant_species
     if getattr(args, "codon_species", None) is not None:
@@ -1567,6 +1581,12 @@ def cmd_report_selected(args):
         assemble_kwargs["max_codon_repeats"] = args.max_codon_repeats
     if getattr(args, "avoid_enzymes", None) is not None:
         assemble_kwargs["avoid_enzymes"] = tuple(args.avoid_enzymes)
+    if getattr(args, "germline_vdj_fallback", False):
+        assemble_kwargs["germline_vdj_fallback"] = True
+    if getattr(args, "auto_download_germline", False):
+        assemble_kwargs["auto_download_germline"] = True
+    if getattr(args, "cache_dir", None):
+        assemble_kwargs["data_dir"] = args.cache_dir
 
     prov_cols = [c for c in selected.columns if c != "CDR3ab"]
     build_selected_report(

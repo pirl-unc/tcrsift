@@ -444,22 +444,20 @@ def validate_sequences(
                         f"+ canonical {bare8!r})")
                 elif chain == "alpha":
                     j_gene_val = row.get("alpha_j_gene")
-                    if explicit_vdj_sp or detected_vdj_sp:
+                    if explicit_vdj_sp:
                         expected_set = {
-                            _traj_junction_residue(
-                                j_gene_val,
-                                species=(explicit_vdj_sp or detected_vdj_sp or "human"),
-                            )
+                            _traj_junction_residue(j_gene_val, species=explicit_vdj_sp)
                         } - {None}
-                    elif row_const_sp == "mouse":
-                        # Either pure mouse or chimeric human-VDJ + mouse-constant.
+                    elif detected_vdj_sp and row_const_sp == detected_vdj_sp:
+                        expected_set = {
+                            _traj_junction_residue(j_gene_val, species=detected_vdj_sp)
+                        } - {None}
+                    else:
+                        # Auto-detected species can be ambiguous on uppercased mouse
+                        # TRAJ calls or chimeric constructs; accept either germline.
                         expected_set = {
                             _traj_junction_residue(j_gene_val, species="human"),
                             _traj_junction_residue(j_gene_val, species="mouse"),
-                        } - {None}
-                    else:
-                        expected_set = {
-                            _traj_junction_residue(j_gene_val, species="human")
                         } - {None}
                     if expected_set and const[0] not in expected_set:
                         expected_disp = sorted(expected_set)[0] if len(expected_set) == 1 else sorted(expected_set)
@@ -486,23 +484,33 @@ def validate_sequences(
             endings_map = CONSTANT_REGION_ENDINGS_BY_SPECIES[row_const_sp]
             if c_gene_base in endings_map:
                 expected_end = endings_map[c_gene_base]
-                if not seq.endswith(expected_end):
+                seq_no_stop = seq.rstrip("*")
+                if not seq_no_stop.endswith(expected_end):
                     _lb(idx,
                         f"{chain} doesn't end with canonical "
                         f"{c_gene_base} C-terminus ({expected_end!r}); "
-                        f"got {seq[-len(expected_end):]!r}")
+                        f"got {seq_no_stop[-len(expected_end):]!r}")
                 expected_const = row.get(f"{chain}_constant_aa")
+                used_bare_fallback = False
                 if not isinstance(expected_const, str) or not expected_const:
                     expected_const = CONSTANT_REGIONS_AA_BY_SPECIES[row_const_sp].get(c_gene_base)
-                if expected_const and not verify_canonical_constant_start(
-                    _expected_constant_start_from_full(seq, row, chain),
-                    expected_const,
-                    min_match=8,
-                ):
-                    _lb(idx,
-                        f"{chain} constant start doesn't match canonical "
-                        f"{c_gene_base} (expected start "
-                        f"{expected_const[:15]!r})")
+                    used_bare_fallback = True
+                if expected_const:
+                    obs_start = _expected_constant_start_from_full(seq_no_stop, row, chain)
+                    ok_start = verify_canonical_constant_start(
+                        obs_start, expected_const, min_match=8
+                    ) or (
+                        used_bare_fallback
+                        and len(obs_start) > 1
+                        and verify_canonical_constant_start(
+                            obs_start[1:], expected_const, min_match=8
+                        )
+                    )
+                    if not ok_start:
+                        _lb(idx,
+                            f"{chain} constant start doesn't match canonical "
+                            f"{c_gene_base} (expected start "
+                            f"{expected_const[:15]!r})")
             else:
                 _info(idx,
                     f"{chain} c_gene={c_gene!r} not in "
@@ -748,12 +756,13 @@ def build_assembly_qc_report(df: pd.DataFrame) -> AssemblyQCReport:
                 row.get(f"{_chain}_constant_aa"), s, base, default="human"
             )
             endings = CONSTANT_REGION_ENDINGS_BY_SPECIES[csp]
+            s_clean = s.rstrip("*")
             if base in endings:
-                return s.endswith(endings[base])
+                return s_clean.endswith(endings[base])
             all_ends = set(CONSTANT_REGION_ENDINGS.values()) | set(
                 MOUSE_CONSTANT_REGION_ENDINGS.values()
             )
-            return any(s.endswith(end) for end in all_ends)
+            return any(s_clean.endswith(end) for end in all_ends)
 
         end_pass = sub.apply(_ends_canonical, axis=1)
         _add(
@@ -1315,11 +1324,17 @@ def _collect_divergences_for_chain(
 
     # ---- Source 1: stored divergences from auto_detected clones ----
     if divs_col in df.columns and called_col in df.columns:
+        keep_cols = [called_col, divs_col, gene_col]
+        if v_col in df.columns:
+            keep_cols.append(v_col)
+        if "samples" in df.columns:
+            keep_cols.append("samples")
         stored = df.loc[
             df[divs_col].notna() & df[called_col].notna(),
-            [called_col, divs_col, gene_col, v_col, "samples"] if v_col in df.columns
-            else [called_col, divs_col, gene_col, "samples"],
+            keep_cols,
         ].copy()
+        if "samples" not in stored.columns:
+            stored["samples"] = ""
         if not stored.empty:
             # Parse each clone's divergence string into a list, then
             # explode so each (clone, position) becomes its own row.
@@ -1767,9 +1782,7 @@ def _nt_contig_in_frame_no_premature_stop(nt: str, aa: str) -> bool:
         return False
     work = nt[: 3 * n_codons]
     translated, ragged = translate_dna(work)
-    if ragged:
-        return False
-    if "*" in translated:
+    if ragged or len(translated) != n_codons or "*" in translated:
         return False
     return True
 

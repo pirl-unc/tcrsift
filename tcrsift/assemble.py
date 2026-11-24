@@ -801,9 +801,9 @@ def _assemble_clone(
         vdj_nt_col = f"VDJ_{chain}_nt"
 
         if vdj_col in row and pd.notna(row.get(vdj_col)):
-            result[f"vdj_{chain}_aa"] = row[vdj_col]
+            result[f"vdj_{chain}_aa"] = str(row[vdj_col]).strip()
         if vdj_nt_col in row and pd.notna(row.get(vdj_nt_col)):
-            vdj_nt = row[vdj_nt_col]
+            vdj_nt = str(row[vdj_nt_col]).strip()
             vdj_aa = result.get(f"vdj_{chain}_aa")
             if isinstance(vdj_aa, str) and vdj_aa:
                 vdj_nt = vdj_nt[: 3 * len(vdj_aa)]
@@ -815,6 +815,9 @@ def _assemble_clone(
                 result[col] = row[col]
 
     for chain in ["alpha", "beta"]:
+        # Skip leader assembly when this chain has no VDJ sequence (unpaired clones).
+        if not result.get(f"vdj_{chain}_aa"):
+            continue
         chain_leader = leader_config.get(chain)
         if chain_leader is None:
             continue
@@ -849,6 +852,7 @@ def _assemble_clone(
                 vdj_species=vdj_species,
                 constant_species=constant_species,
                 codon_species=codon_species,
+                recode=recode,
             )
 
     include_alpha_leader = leader_config.get("alpha") is not None
@@ -1043,25 +1047,46 @@ def _add_constant_regions(
     vdj_species: str = "human",
     constant_species: str = "human",
     codon_species: str = "human",
+    recode: CodonOptimization | None = None,
 ):
     """Add constant-region sequences and verify against the observed
     CellRanger contig start where possible (including chimeric constructs)."""
     allele_overrides = allele_overrides or {}
     is_chimeric = constant_species != vdj_species
+    extra_sites = recode.restriction_sites() if recode is not None else ()
+    const_forbidden = (
+        tuple(dict.fromkeys((*DEFAULT_FORBIDDEN_MOTIFS, *extra_sites)))
+        if extra_sites
+        else DEFAULT_FORBIDDEN_MOTIFS
+    )
     species_allele_pools = CONSTANT_ALLELES_BY_SPECIES.get(
         constant_species, HUMAN_CONSTANT_ALLELES
     )
     for chain in ["alpha", "beta"]:
+        # Skip constant-region assembly when this chain has no VDJ sequence
+        # (prevents spurious constant-allele warnings & no-call inflation on unpaired clones).
+        if not result.get(f"vdj_{chain}_aa"):
+            continue
         c_gene = result.get(f"{chain}_c_gene")
         j_gene = result.get(f"{chain}_j_gene")
         canonical_name, canonical_aa = pick_canonical_constant(
             chain, c_gene, j_gene, species=constant_species
         )
 
-        canonical_nt_codon_opt = constant_seqs.get(
-            canonical_name,
-            optimize_codons(canonical_aa, species=codon_species) + stops_nt,
-        )
+        if extra_sites:
+            canonical_nt_codon_opt = (
+                optimize_codons(
+                    canonical_aa,
+                    species=codon_species,
+                    forbidden_motifs=const_forbidden,
+                )
+                + stops_nt
+            )
+        else:
+            canonical_nt_codon_opt = constant_seqs.get(
+                canonical_name,
+                optimize_codons(canonical_aa, species=codon_species) + stops_nt,
+            )
         result[f"{chain}_c_gene_canonical"] = canonical_name
 
         contig_nt_past_vdj = (
@@ -1153,6 +1178,7 @@ def _add_constant_regions(
                     contig_post_junction_nt, candidate_aa,
                 ):
                     allele_called_reason = ALLELE_REASON_FRAME_ERROR
+                    contig_nt_past_vdj = None
                     result.setdefault("qc_warnings", []).append(
                         f"{chain}: allele picker selected "
                         f"{canonical_name}*{best_allele} (AA score "
@@ -1192,7 +1218,11 @@ def _add_constant_regions(
                     else:
                         canonical_aa = candidate_aa
                         canonical_nt_codon_opt = (
-                            optimize_codons(canonical_aa, species=codon_species)
+                            optimize_codons(
+                                canonical_aa,
+                                species=codon_species,
+                                forbidden_motifs=const_forbidden,
+                            )
                             + stops_nt
                         )
                         allele_called = best_allele
@@ -1831,8 +1861,17 @@ def _build_full_sequences(
                 full_aa = result[f"full_{chain}_aa"]
                 donor_aa = full_aa[: len(full_aa) - len(const_aa)] if const_aa else full_aa
                 if recode.mode == "full":
-                    donor_opt = optimize_codons(donor_aa, species=recode.codon_species)
-                    if sites or recode.max_codon_repeats != 1:
+                    full_forbidden = (
+                        tuple(dict.fromkeys((*DEFAULT_FORBIDDEN_MOTIFS, *sites)))
+                        if sites
+                        else DEFAULT_FORBIDDEN_MOTIFS
+                    )
+                    donor_opt = optimize_codons(
+                        donor_aa,
+                        species=recode.codon_species,
+                        forbidden_motifs=full_forbidden,
+                    )
+                    if sites or (recode.max_codon_repeats and recode.max_codon_repeats >= 1):
                         donor_opt, _ = recode_codons(
                             donor_opt,
                             max_codon_repeats=recode.max_codon_repeats,
@@ -2058,7 +2097,7 @@ def _substitute_chain_leader(
         else optimize_codons(new_aa, species=eff_recode.codon_species)
     )
     target[f"{chain}_leader_aa"] = new_aa
-    target[f"{chain}_leader_nt"] = new_nt
+    target[f"{chain}_leader_nt"] = eff_new_nt
     target[f"{chain}_leader_len"] = len(new_aa)
     target[f"{chain}_leader_source"] = source
     target[f"{chain}_leader_qc"] = "substituted"
@@ -2084,38 +2123,62 @@ def _substitute_chain_leader(
 
     fn_blend = orig.get(f"full_{chain}_nt")
     if isinstance(fn_blend, str) and donor_nt and fn_blend.upper().startswith(donor_nt.upper()):
-        target[f"full_{chain}_nt"] = (new_nt + fn_blend[len(donor_nt) :]) if new_nt else None
+        target[f"full_{chain}_nt"] = (eff_new_nt + fn_blend[len(donor_nt) :]) if eff_new_nt else None
     elif isinstance(fn_blend, str) and not donor_nt:
-        target[f"full_{chain}_nt"] = (new_nt + fn_blend) if new_nt else None
+        target[f"full_{chain}_nt"] = (eff_new_nt + fn_blend) if eff_new_nt else None
 
     fn_contig = orig.get(f"full_{chain}_nt_contig")
     if isinstance(fn_contig, str) and donor_nt and fn_contig.upper().startswith(donor_nt.upper()):
-        target[f"full_{chain}_nt_contig"] = (new_nt + fn_contig[len(donor_nt) :]) if new_nt else None
+        target[f"full_{chain}_nt_contig"] = (eff_new_nt + fn_contig[len(donor_nt) :]) if eff_new_nt else None
     elif f"full_{chain}_nt_contig" in orig:
         target[f"full_{chain}_nt_contig"] = None
 
+    def _as_str(v) -> str:
+        return v if isinstance(v, str) else ""
+
     # Rebuild full_{chain}_nt_optimized (and recoded position tags) from the new
     # leader + VDJ + constant_nt_optimized so translation always matches full_{chain}_aa.
-    if f"full_{chain}_nt_optimized" in orig or orig.get(f"{chain}_constant_nt_optimized"):
-        const_opt = target.get(f"{chain}_constant_nt_optimized") or orig.get(f"{chain}_constant_nt_optimized") or ""
-        const_aa = target.get(f"{chain}_constant_aa") or orig.get(f"{chain}_constant_aa") or ""
-        full_aa_now = target.get(f"full_{chain}_aa") or ""
+    if f"full_{chain}_nt_optimized" in orig or _as_str(orig.get(f"{chain}_constant_nt_optimized")):
+        const_opt = _as_str(target.get(f"{chain}_constant_nt_optimized")) or _as_str(
+            orig.get(f"{chain}_constant_nt_optimized")
+        )
+        const_aa = _as_str(target.get(f"{chain}_constant_aa")) or _as_str(
+            orig.get(f"{chain}_constant_aa")
+        )
+        full_aa_now = _as_str(target.get(f"full_{chain}_aa"))
+        if not full_aa_now:
+            return
         donor_aa_now = (
             full_aa_now[: len(full_aa_now) - len(const_aa)]
             if (const_aa and full_aa_now.endswith(const_aa))
             else full_aa_now
         )
         sites = eff_recode.restriction_sites()
-        vdj_nt_raw = target.get(f"vdj_{chain}_nt") or orig.get(f"vdj_{chain}_nt") or orig.get(f"VDJ_{chain}_nt") or ""
-        if isinstance(vdj_nt_raw, str):
-            vdj_aa_raw = target.get(f"vdj_{chain}_aa") or orig.get(f"vdj_{chain}_aa") or orig.get(f"VDJ_{chain}_aa") or ""
-            if isinstance(vdj_aa_raw, str) and vdj_aa_raw:
+        vdj_nt_raw = (
+            _as_str(target.get(f"vdj_{chain}_nt"))
+            or _as_str(orig.get(f"vdj_{chain}_nt"))
+            or _as_str(orig.get(f"VDJ_{chain}_nt"))
+        ).strip()
+        if vdj_nt_raw:
+            vdj_aa_raw = (
+                _as_str(target.get(f"vdj_{chain}_aa"))
+                or _as_str(orig.get(f"vdj_{chain}_aa"))
+                or _as_str(orig.get(f"VDJ_{chain}_aa"))
+            ).strip()
+            if vdj_aa_raw:
                 vdj_nt_raw = vdj_nt_raw[: 3 * len(vdj_aa_raw)]
-        else:
-            vdj_nt_raw = ""
         if eff_recode.mode == "full" or not vdj_nt_raw:
-            donor_opt = optimize_codons(donor_aa_now, species=eff_recode.codon_species)
-            if sites or eff_recode.max_codon_repeats != 1:
+            full_forbidden = (
+                tuple(dict.fromkeys((*DEFAULT_FORBIDDEN_MOTIFS, *sites)))
+                if sites
+                else DEFAULT_FORBIDDEN_MOTIFS
+            )
+            donor_opt = optimize_codons(
+                donor_aa_now,
+                species=eff_recode.codon_species,
+                forbidden_motifs=full_forbidden,
+            )
+            if sites or (eff_recode.max_codon_repeats and eff_recode.max_codon_repeats >= 1):
                 donor_opt, _ = recode_codons(
                     donor_opt,
                     max_codon_repeats=eff_recode.max_codon_repeats,
@@ -2280,7 +2343,8 @@ def apply_leader_policy(
             aa = work.get(f"{chain}_leader_aa")
             has_leader = isinstance(aa, str) and bool(aa)
             if force[chain]:
-                if not has_leader and not isinstance(work.get(f"full_{chain}_aa"), str):
+                full_chain_val = work.get(f"full_{chain}_aa")
+                if not isinstance(full_chain_val, str) or not full_chain_val:
                     continue
                 res = _resolve_named_leader(
                     force[chain], work, chain, species=species
@@ -2373,7 +2437,8 @@ def apply_leader_policy(
                 if not secondary[chain]:
                     continue
                 cur_aa = row.get(f"{chain}_leader_aa")
-                if not isinstance(cur_aa, str):
+                full_chain_val = row.get(f"full_{chain}_aa")
+                if not isinstance(cur_aa, str) or not isinstance(full_chain_val, str) or not full_chain_val:
                     continue
                 res = _resolve_named_leader(
                     secondary[chain], row, chain, species=species

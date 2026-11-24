@@ -80,6 +80,14 @@ _STRING_COLS: frozenset[str] = frozenset(
         "TRA_1_partial_vdj_nt",
         "TRB_1_partial_vdj_aa",
         "TRB_1_partial_vdj_nt",
+        "TRA_1_cdr3",
+        "TRB_1_cdr3",
+        "TRA_2_cdr3",
+        "TRB_2_cdr3",
+        "TRA_2_v_gene",
+        "TRA_2_j_gene",
+        "TRB_2_v_gene",
+        "TRB_2_j_gene",
     }
 )
 
@@ -96,8 +104,18 @@ _BOOL_COLS: frozenset[str] = frozenset(
         "is_doublet",
         "is_CD4",
         "is_CD8",
+        "is_confident",
+        "confident_and_complete",
         "TRA_pass_umi",
         "TRB_pass_umi",
+        "filter:min_cd3",
+        "filter:pass_qc",
+        "filter:min_genes",
+        "filter:max_genes",
+        "filter:min_counts",
+        "filter:max_counts",
+        "filter:min_mito",
+        "filter:max_mito",
     }
 )
 
@@ -127,19 +145,9 @@ def _to_clean_object_series(s: pd.Series) -> pd.Series:
 
 def _coerce_bool_array(s: pd.Series) -> np.ndarray:
     """Coerce boolean / nullable / stringified boolean Series to plain ``bool``."""
-    vals = s.astype(object).to_numpy()
-    out = np.zeros(len(vals), dtype=bool)
-    for i, v in enumerate(vals):
-        if v is None or v is pd.NA or (isinstance(v, float) and np.isnan(v)):
-            out[i] = False
-        elif isinstance(v, (bool, np.bool_)):
-            out[i] = bool(v)
-        elif isinstance(v, str):
-            tok = v.strip().lower()
-            out[i] = tok not in ("", "0", "false", "f", "no", "n", "nan", "none", "<na>")
-        else:
-            out[i] = bool(v)
-    return out
+    from ._schema import truthy_flag_series
+
+    return truthy_flag_series(s).to_numpy(dtype=bool)
 
 
 def rehydrate_obs(adata: ad.AnnData) -> ad.AnnData:

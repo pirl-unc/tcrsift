@@ -987,12 +987,12 @@ def _count_trbc_overrides(df: pd.DataFrame) -> int:
 
 def _beta_c_base(c_gene: str | None) -> str:
     """Parse the C-gene base (``"TRBC1"`` / ``"TRBC2"``) from a raw
-    C-gene call. Tolerates lowercase, whitespace, and allele suffixes
-    (``"TRBC2*01"``). Returns an empty string when the input doesn't
-    resolve to a known TRBC."""
+    C-gene call. Tolerates lowercase, whitespace, zero-padding
+    (``"TRBC01"`` / ``"TRBC02"``), and allele suffixes (``"TRBC2*01"``).
+    Returns an empty string when the input doesn't resolve to a known TRBC."""
     if not isinstance(c_gene, str):
         return ""
-    token = c_gene.strip().upper().split("*", 1)[0]
+    token = re.sub(r"(?<=[A-Z])0+(\d)", r"\1", c_gene.strip().upper().split("*", 1)[0])
     return token if token in {"TRBC1", "TRBC2"} else ""
 
 

@@ -99,6 +99,8 @@ class Sample:
     species: str | None = None
 
     def __post_init__(self):
+        if isinstance(self.species, str) and not self.species.strip():
+            self.species = None
         if self.species is not None:
             from .species import normalize_species
 
@@ -386,8 +388,14 @@ class SampleSheet:
                 "antigen_type": s.antigen_type,
                 "antigen_description": s.antigen_description,
                 "antigen_name": s.antigen_name,
+                "antigen_sequence": s.antigen_sequence,
                 "epitope_sequence": s.epitope_sequence,
                 "mhc_allele": s.mhc_allele,
+                "antigen_names": s.antigen_names,
+                "antigen_sequences": s.antigen_sequences,
+                "epitope_sequences": s.epitope_sequences,
+                "til_csv": s.til_csv,
+                "til_h5ad": s.til_h5ad,
                 "culture_days": s.culture_days,
                 "tcell_type_expected": s.tcell_type_expected,
                 "pre_sorted": s.pre_sorted,

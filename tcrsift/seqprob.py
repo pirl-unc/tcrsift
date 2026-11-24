@@ -80,10 +80,13 @@ class SequenceProbabilityModel(abc.ABC):
 
 def _encode(seq: str) -> list[int] | None:
     """CDR3 string → list of AA indices, or None if it has a non-AA char."""
-    if not isinstance(seq, str) or not seq:
+    if not isinstance(seq, str):
+        return None
+    cleaned = seq.strip().upper()
+    if not cleaned:
         return None
     out = []
-    for ch in seq:
+    for ch in cleaned:
         idx = _AA_INDEX.get(ch)
         if idx is None:
             return None
@@ -419,7 +422,13 @@ class TCRpegProbabilityModel(SequenceProbabilityModel):
 
     def fit(self, sequences: Iterable[str]) -> TCRpegProbabilityModel:
         self._require()
-        seqs = [s for s in sequences if isinstance(s, str) and s]
+        seqs = [
+            s.strip().upper()
+            for s in sequences
+            if isinstance(s, str)
+            and _encode(s) is not None
+            and len(s.strip()) <= self.max_length
+        ]
         if not seqs:
             raise ValueError("TCRpegProbabilityModel.fit: no scorable sequences")
         self._model = self._new_model(seqs)
@@ -434,10 +443,14 @@ class TCRpegProbabilityModel(SequenceProbabilityModel):
         if self._model is None:
             raise RuntimeError("TCRpegProbabilityModel is not fitted")
         seqs = list(sequences)
-        scorable = [isinstance(s, str) and bool(s) and _encode(s) is not None
-                    for s in seqs]
+        scorable = [
+            isinstance(s, str)
+            and _encode(s) is not None
+            and len(s.strip()) <= self.max_length
+            for s in seqs
+        ]
         out = np.full(len(seqs), np.nan)
-        good = [s for s, ok in zip(seqs, scorable) if ok]
+        good = [s.strip().upper() for s, ok in zip(seqs, scorable) if ok]
         if good:
             # sampling_tcrpeg already returns natural-log probabilities.
             logs = np.asarray(self._model.sampling_tcrpeg(good), dtype=float)

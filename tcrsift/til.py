@@ -224,9 +224,11 @@ def load_til_samples(
         source_type, source_path = source
         df = load_til_data(source_type, source_path, sample.sample)
 
-        # Add tissue info if available
+        # Add tissue and patient_id metadata if available
         if sample.tissue and "tissue" not in df.columns:
             df["tissue"] = sample.tissue
+        if sample.patient_id and "patient_id" not in df.columns:
+            df["patient_id"] = sample.patient_id
 
         til_data[sample.sample] = df
 
@@ -408,6 +410,12 @@ def match_til(
         - til_cell_count.{sample}: Cells in specific sample (multi-sample only)
         - til_frequency.{sample}: Frequency in specific sample (multi-sample only)
     """
+    if match_by not in {"CDR3ab", "CDR3b_only"}:
+        raise TCRsiftValidationError(
+            f"Invalid match_by: '{match_by}'",
+            hint="Use one of: CDR3ab, CDR3b_only",
+        )
+
     # Normalize til_data to dict format
     if isinstance(til_data, ad.AnnData):
         rehydrate_obs(til_data)
@@ -426,6 +434,23 @@ def match_til(
 
     df = culture_clonotypes.copy()
 
+    # Build query key array positionally (handles duplicate indices and missing CDR3ab)
+    if match_by == "CDR3ab":
+        if "CDR3ab" in df.columns:
+            raw_keys = df["CDR3ab"].to_numpy()
+        elif "CDR3_alpha" in df.columns and "CDR3_beta" in df.columns:
+            a_s = df["CDR3_alpha"].astype("string").fillna("").str.strip()
+            b_s = df["CDR3_beta"].astype("string").fillna("").str.strip()
+            raw_keys = np.where((a_s != "") & (b_s != ""), a_s + "_" + b_s, "")
+        else:
+            raw_keys = np.full(len(df), "", dtype=object)
+    else:
+        raw_keys = (
+            df["CDR3_beta"].to_numpy()
+            if "CDR3_beta" in df.columns
+            else np.full(len(df), "", dtype=object)
+        )
+
     # Process each TIL sample
     sample_stats = {}
     for sample_name, til_df in til_dict.items():
@@ -439,33 +464,32 @@ def match_til(
             "total_til": total_til,
         }
 
-    # Initialize combined columns
-    df["til_match"] = False
-    df["til_samples"] = ""
-    df["til_cell_count"] = 0
-    df["til_frequency"] = 0.0
-
-    # Initialize per-sample columns if multiple samples
-    if n_samples > 1:
-        for sample_name in til_dict.keys():
-            df[f"til_cell_count.{sample_name}"] = 0
-            df[f"til_frequency.{sample_name}"] = 0.0
-
     # Total TIL cells across all samples (for combined frequency)
     total_til_all = sum(s["total_til"] for s in sample_stats.values())
 
-    # Match each culture clone
-    for idx, row in df.iterrows():
-        if match_by == "CDR3ab":
-            cdr3ab = row.get("CDR3ab", "")
-        else:
-            cdr3ab = row.get("CDR3_beta", "")
+    n_rows = len(df)
+    til_match_arr = np.zeros(n_rows, dtype=bool)
+    til_samples_arr = [""] * n_rows
+    til_count_arr = np.zeros(n_rows, dtype=int)
+    til_freq_arr = np.zeros(n_rows, dtype=float)
+    per_sample_counts: dict[str, np.ndarray] = {}
+    per_sample_freqs: dict[str, np.ndarray] = {}
+    if n_samples > 1:
+        for sample_name in til_dict.keys():
+            per_sample_counts[sample_name] = np.zeros(n_rows, dtype=int)
+            per_sample_freqs[sample_name] = np.zeros(n_rows, dtype=float)
 
-        if pd.isna(cdr3ab):
+    # Match each culture clone positionally
+    query_keys: list[str] = []
+    for pos, raw_key in enumerate(raw_keys):
+        if pd.isna(raw_key):
+            query_keys.append("")
             continue
-        cdr3ab = str(cdr3ab).strip()
+        cdr3ab = str(raw_key).strip()
         if not cdr3ab or cdr3ab == "_":
+            query_keys.append("")
             continue
+        query_keys.append(cdr3ab)
 
         matching_samples = []
         total_count = 0
@@ -479,16 +503,25 @@ def match_til(
 
                     # Per-sample stats
                     if n_samples > 1:
-                        df.loc[idx, f"til_cell_count.{sample_name}"] = count
-                        df.loc[idx, f"til_frequency.{sample_name}"] = safe_divide(
+                        per_sample_counts[sample_name][pos] = count
+                        per_sample_freqs[sample_name][pos] = safe_divide(
                             count, stats["total_til"], default=0.0
                         )
 
         if matching_samples:
-            df.loc[idx, "til_match"] = True
-            df.loc[idx, "til_samples"] = ",".join(matching_samples)
-            df.loc[idx, "til_cell_count"] = total_count
-            df.loc[idx, "til_frequency"] = safe_divide(total_count, total_til_all, default=0.0)
+            til_match_arr[pos] = True
+            til_samples_arr[pos] = ",".join(matching_samples)
+            til_count_arr[pos] = total_count
+            til_freq_arr[pos] = safe_divide(total_count, total_til_all, default=0.0)
+
+    df["til_match"] = til_match_arr
+    df["til_samples"] = til_samples_arr
+    df["til_cell_count"] = til_count_arr
+    df["til_frequency"] = til_freq_arr
+    if n_samples > 1:
+        for sample_name in til_dict.keys():
+            df[f"til_cell_count.{sample_name}"] = per_sample_counts[sample_name]
+            df[f"til_frequency.{sample_name}"] = per_sample_freqs[sample_name]
 
     n_matches = df["til_match"].sum()
     match_pct = safe_percentage(n_matches, len(df), default=0.0)
@@ -517,16 +550,13 @@ def match_til(
             counts.pop("_", None)
             bucket = donor_clone_counts.setdefault(str(donor), {})
             for clone, n in counts.items():
-                bucket[clone] = bucket.get(clone, 0) + n
+                if n >= min_til_cells:
+                    bucket[clone] = bucket.get(clone, 0) + n
 
     if donor_clone_counts:
         til_cells_per_donor = []
         max_per_donor = []
-        for _, row in df.iterrows():
-            raw_key = row.get("CDR3ab", "") if match_by == "CDR3ab" else row.get("CDR3_beta", "")
-            cdr3ab = "" if pd.isna(raw_key) else str(raw_key).strip()
-            if cdr3ab == "_":
-                cdr3ab = ""
+        for cdr3ab in query_keys:
             per_donor = {
                 d: counts[cdr3ab]
                 for d, counts in donor_clone_counts.items()

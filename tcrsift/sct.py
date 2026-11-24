@@ -133,10 +133,12 @@ def load_sct(
     trb_len_mask = df[trb_cdr3_col].fillna("").str.len() > 1
     quality_mask &= tra_len_mask & trb_len_mask
 
+    from ._schema import truthy_flag_series
+
     # Mutation match filter
     mutation_pe_col = _find_column(df, ["Top1.mutation.PE.eq.Top1.mutation.APC", "mutation_match"])
     if require_mutation_match and mutation_pe_col:
-        mutation_mask = df[mutation_pe_col] == "Yes"
+        mutation_mask = truthy_flag_series(df[mutation_pe_col])
         quality_mask &= mutation_mask
         if verbose:
             logger.info(f"  Mutation match: {mutation_mask.sum():,} pass")
@@ -144,7 +146,7 @@ def load_sct(
     # comPACT match filter
     compact_col = _find_column(df, ["Top1.comPACT.ID.PE.eq.Top1.comPACT.ID.APC", "compact_match"])
     if require_compact_match and compact_col:
-        compact_mask = df[compact_col] == "Yes"
+        compact_mask = truthy_flag_series(df[compact_col])
         quality_mask &= compact_mask
         if verbose:
             logger.info(f"  comPACT match: {compact_mask.sum():,} pass")
@@ -160,7 +162,7 @@ def load_sct(
     if trb_reads_col:
         chosen_mask &= df[trb_reads_col].fillna(0) >= 50
     if compact_col:
-        chosen_mask &= df[compact_col] == "Yes"
+        chosen_mask &= truthy_flag_series(df[compact_col])
     df["chosen"] = chosen_mask
 
     if verbose:
@@ -263,11 +265,20 @@ def aggregate_sct(
     # Aggregate
     result = df.groupby(group_cols, observed=True).agg(agg_dict)
 
-    # Flatten column names
-    result.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in result.columns]
+    # Flatten column names (handle both MultiIndex tuples and flat string Index
+    # when numeric_cols and boolean_cols are empty).
+    result.columns = [
+        (f"{col[0]}_{col[1]}" if col[1] else col[0]) if isinstance(col, tuple) else col
+        for col in result.columns
+    ]
 
     # Rename columns
-    result = result.rename(columns={"CDR3_pair_count": "num_original_entries"})
+    result = result.rename(
+        columns={
+            "CDR3_pair_count": "num_original_entries",
+            "CDR3_pair": "num_original_entries",
+        }
+    )
     for col in numeric_cols:
         if col in df.columns:
             result = result.rename(

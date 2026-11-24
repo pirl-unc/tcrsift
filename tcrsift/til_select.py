@@ -267,12 +267,24 @@ def match_clonotypes(
             }
         )
 
+    # Drop rows with missing/empty join keys from db so NaN CDR3s never join
+    # across unrelated clones, and drop pre-existing annotation columns on df
+    # so repeated calls don't create _x/_y suffix collisions.
+    valid_db = pd.Series(True, index=db.index)
+    for gc in group_cols:
+        valid_db &= db[gc].notna() & (db[gc].astype(str).str.strip() != "")
+    db = db[valid_db]
     agg = (
-        db.groupby(group_cols, dropna=False, group_keys=False, observed=True)
+        db.groupby(group_cols, dropna=True, group_keys=False, observed=True)
         .apply(_agg_group, include_groups=False)
         .reset_index()
     )
-    merged = df.merge(agg, left_on=key_cols, right_on=group_cols, how="left")
+    existing_ann = [
+        c for c in ("db_epitope", "db_species", "db_database", "db_match", "is_viral")
+        if c in df.columns
+    ]
+    base_df = df.drop(columns=existing_ann) if existing_ann else df
+    merged = base_df.merge(agg, left_on=key_cols, right_on=group_cols, how="left")
     merged["db_match"] = merged["db_database"].notna()
     merged["is_viral"] = merged["is_viral"].astype("boolean").fillna(False).astype(bool)
     drop_cols = [c for c in group_cols if c in merged.columns and c not in key_cols]
@@ -296,7 +308,13 @@ def viral_cdr3b_set(
     selection) without re-deriving it. Concatenate the loaded public databases
     first for a broader public/viral exclusion set.
     """
-    matched = match_clonotypes(clonotypes, database, match_by="CDR3b_only")
+    if beta_col not in clonotypes.columns:
+        raise ValueError(f"viral_cdr3b_set: missing beta_col {beta_col!r}")
+    work = clonotypes
+    if beta_col != "CDR3_beta":
+        work = clonotypes.copy()
+        work["CDR3_beta"] = work[beta_col]
+    matched = match_clonotypes(work, database, match_by="CDR3b_only")
     viral = matched.loc[matched["is_viral"].astype(bool), beta_col]
     return {str(b) for b in viral.dropna() if str(b).strip()}
 
@@ -1262,7 +1280,8 @@ def build_harmonized_table(
         df = samples[label]
         meta_cols = [c for c in df.columns if c not in key_cols + ["cell_count"]]
         if meta_cols:
-            metadata_frames.append(df[key_cols + meta_cols].copy())
+            keep_meta = key_cols + (["cell_count"] if "cell_count" in df.columns else []) + meta_cols
+            metadata_frames.append(df[keep_meta].copy())
         df = df[key_cols + ["cell_count"]].copy()
         count_col = f"cell_count_{label}"
         count_cols.append(count_col)
@@ -1286,7 +1305,9 @@ def build_harmonized_table(
         # timepoint; fall back to row order otherwise. Per-column modes
         # would decouple AA / NT / V / J across timepoints.
         metadata_all = pd.concat(metadata_frames, ignore_index=True)
-        meta_cols_union = [c for c in metadata_all.columns if c not in key_cols]
+        meta_cols_union = [
+            c for c in metadata_all.columns if c not in key_cols + ["cell_count"]
+        ]
         if "cell_count" in metadata_all.columns:
             rep_source = metadata_all.sort_values(
                 "cell_count", ascending=False, kind="mergesort"
@@ -1343,7 +1364,8 @@ def compute_increasing_masks_from_frequencies(
 
     freq_values = freq_df.apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(dtype=float)
     n_rows = freq_values.shape[0]
-    increasing = np.zeros(n_rows, dtype=bool)
+    increasing_nonzero = np.zeros(n_rows, dtype=bool)
+    increasing_all_tp = np.zeros(n_rows, dtype=bool)
     tol = 1e-12
 
     for i in range(n_rows):
@@ -1355,10 +1377,14 @@ def compute_increasing_masks_from_frequencies(
         if baseline <= 0.0:
             continue
         if last + tol >= ratio_nonzero_min * baseline:
-            increasing[i] = True
+            increasing_nonzero[i] = True
+        if np.all(row > 0.0) and last + tol >= ratio_all_timepoints_min * baseline:
+            increasing_all_tp[i] = True
 
-    mask = pd.Series(increasing, index=freq_df.index)
-    return mask, mask.copy()
+    return (
+        pd.Series(increasing_nonzero, index=freq_df.index),
+        pd.Series(increasing_all_tp, index=freq_df.index),
+    )
 
 
 def _resolve_best_metric_series(

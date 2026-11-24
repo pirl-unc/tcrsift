@@ -70,6 +70,7 @@ nav:
     - Quick Start: getting-started/quickstart.md
     - Sample Sheets: getting-started/sample-sheets.md
   - How It Works: how-it-works.md
+  - Methods Section: methods-section.md
   - Benchmarks:
     - Overview & Comparisons: benchmarks-overview.md
     - TIL Prioritization: benchmarks.md

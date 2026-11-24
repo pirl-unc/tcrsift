@@ -769,11 +769,14 @@ class TestFilterClonotypesLogistic:
     """Tests for logistic regression filtering."""
 
     def test_logistic_returns_tiers(self, clonotypes_for_logistic):
-        """Logistic method should return tier assignments."""
-        result = filter_clonotypes_logistic(clonotypes_for_logistic)
+        """Logistic method should return analytically calibrated tier assignments."""
+        result = filter_clonotypes_logistic(
+            clonotypes_for_logistic,
+            fdr_tiers=[0.3, 0.2, 0.15, 0.1, 0.05],
+        )
 
         assert "tier" in result.columns
-        # Verify model actually fit and assigned varied tiers
+        # Verify model actually fit and assigned varied reachable tiers
         tier_counts = result["tier"].value_counts()
         assert len(tier_counts) >= 2  # Should have multiple tiers
 
@@ -810,8 +813,12 @@ class TestFilterClonotypesLogistic:
         )
 
         assert result.attrs["logistic_fallback_reason"] == "fit_failed"
-        assert result.attrs["fdr_to_threshold"] == {0.05: 0.4, 0.1: 0.4, 0.2: 0.4}
-        assert result.loc[result["max_frequency"] >= 0.4, "tier"].eq("tier1").all()
+        assert result.attrs["fdr_to_threshold"] == {
+            0.05: float("inf"),
+            0.1: float("inf"),
+            0.2: 0.4,
+        }
+        assert result.loc[result["max_frequency"] >= 0.4, "tier"].eq("tier3").all()
 
     def test_logistic_prefers_n_conditions_for_target(self, clonotypes_for_logistic, monkeypatch):
         """Strict logistic mode should use condition counts when available."""
@@ -861,10 +868,11 @@ class TestFilterClonotypes:
             clonotypes_for_logistic,
             method="logistic",
             min_cells=1,
+            fdr_tiers=[0.3, 0.2, 0.1],
         )
 
         assert "tier" in result.columns
-        # Should have meaningful tier distribution
+        # Should have meaningful tier distribution for reachable FDR levels
         assert result["tier"].notna().sum() > 0
 
     def test_filter_combined_criteria(self, sample_clonotypes_df):

@@ -435,8 +435,10 @@ def summarize_clone_multimer_specificity(
         n_spec = len(spec_grp)
         if n_spec > 0:
             vc = spec_grp["multimer_call"].astype(str).value_counts()
-            top_m = str(vc.index[0])
-            top_m_cells = int(vc.iloc[0])
+            # Deterministic tie-breaking: descending count, then ascending name.
+            ranked = sorted(vc.items(), key=lambda kv: (-int(kv[1]), kv[0]))
+            top_m, top_m_cells = ranked[0][0], int(ranked[0][1])
+            is_tie = len(ranked) >= 2 and int(ranked[1][1]) == top_m_cells
             concordance = top_m_cells / n_total
             top_sub = spec_grp[spec_grp["multimer_call"].astype(str) == top_m]
             mean_umi = (
@@ -452,6 +454,7 @@ def summarize_clone_multimer_specificity(
         else:
             top_m = None
             top_m_cells = 0
+            is_tie = False
             concordance = 0.0
             mean_umi = np.nan
             mean_nc_fc = np.nan
@@ -469,6 +472,7 @@ def summarize_clone_multimer_specificity(
                 "mean_nc_fold_change": mean_nc_fc,
                 "multimer_confident": bool(
                     top_m is not None
+                    and not is_tie
                     and top_m_cells >= min_specific_cells
                     and concordance >= min_concordance
                 ),
@@ -525,7 +529,28 @@ def call_multimers_for_adata(
         if not classified["multimers"]:
             continue
         sample_barcodes = adata.obs_names[mask].astype(str)
-        fb_aligned = fb.reindex(sample_barcodes).fillna(0.0)
+        n_direct = int(sample_barcodes.isin(fb.index).sum())
+        if n_direct == 0 and len(sample_barcodes) > 0:
+            # Handle uniquified barcodes (e.g., ACGT-1-0 or sample_ACGT-1) by
+            # stripping trailing concat suffix when it yields a unique mapping.
+            fb_index_set = set(fb.index.astype(str))
+            stripped = [
+                bc.rsplit("-", 1)[0] if bc.rsplit("-", 1)[0] in fb_index_set else bc
+                for bc in sample_barcodes
+            ]
+            if any(s in fb_index_set for s in stripped):
+                fb_aligned = fb.reindex(stripped).fillna(0.0)
+                fb_aligned.index = sample_barcodes
+            else:
+                logger.warning(
+                    "Sample %s: 0/%d obs barcodes matched the Feature Barcode matrix; "
+                    "multimer counts will be zero (check barcode suffix conventions).",
+                    s_name,
+                    len(sample_barcodes),
+                )
+                fb_aligned = fb.reindex(sample_barcodes).fillna(0.0)
+        else:
+            fb_aligned = fb.reindex(sample_barcodes).fillna(0.0)
         fb_aligned.attrs["feature_types"] = fb.attrs.get("feature_types", {})
         calls = call_multimer_specificity(
             fb_aligned,

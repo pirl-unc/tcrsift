@@ -189,42 +189,47 @@ def augment_with_gex(
             hint=f"Requested: {gene_list[:5]}... Available: {list(gene_names[:5])}...",
         )
 
-    # Initialize output columns
-    for gene in available_genes:
-        df[f"{col_prefix}.{gene}"] = np.nan
-
-    if include_qc:
-        df[f"{col_prefix}.n_reads"] = np.nan
-        df[f"{col_prefix}.n_genes"] = np.nan
-        df[f"{col_prefix}.pct_mito"] = np.nan
+    # Copy input DataFrame so callers' frames are never mutated in place
+    df = df.copy()
 
     # Barcode mapping
     bc_to_idx = {bc: i for i, bc in enumerate(adata.obs_names)}
 
-    # Populate values
-    missing_barcodes = 0
-    matched_barcodes = 0
-    # Use zip with df.index to correctly handle DataFrames with non-sequential indices
-    for row_idx, bc in zip(df.index, df[barcode_col]):
-        if bc not in bc_to_idx:
-            missing_barcodes += 1
-            continue
+    # Populate values positionally (safe when df.index contains duplicates)
+    n_rows = len(df)
+    adata_indices = np.full(n_rows, -1, dtype=np.int64)
+    for pos, bc in enumerate(df[barcode_col].to_numpy()):
+        if bc in bc_to_idx:
+            adata_indices[pos] = bc_to_idx[bc]
+    matched_mask = adata_indices >= 0
+    matched_barcodes = int(matched_mask.sum())
+    matched_adata_idx = adata_indices[matched_mask]
 
-        adata_idx = bc_to_idx[bc]
-        matched_barcodes += 1
+    if include_qc:
+        n_reads_arr = np.full(n_rows, np.nan, dtype=float)
+        n_genes_arr = np.full(n_rows, np.nan, dtype=float)
+        pct_mito_arr = np.full(n_rows, np.nan, dtype=float)
+        if matched_barcodes > 0:
+            n_reads_arr[matched_mask] = total_counts[matched_adata_idx]
+            n_genes_arr[matched_mask] = n_genes_detected[matched_adata_idx]
+            pct_mito_arr[matched_mask] = pct_mito[matched_adata_idx]
+        df[f"{col_prefix}.n_reads"] = n_reads_arr
+        df[f"{col_prefix}.n_genes"] = n_genes_arr
+        df[f"{col_prefix}.pct_mito"] = pct_mito_arr
 
-        # QC metrics
-        if include_qc:
-            df.at[row_idx, f"{col_prefix}.n_reads"] = total_counts[adata_idx]
-            df.at[row_idx, f"{col_prefix}.n_genes"] = n_genes_detected[adata_idx]
-            df.at[row_idx, f"{col_prefix}.pct_mito"] = pct_mito[adata_idx]
-
-        # Gene expression
+    if matched_barcodes > 0:
+        gene_cols_idx = [gene_to_idx[g] for g in available_genes]
+        sub_mat = adata.X[matched_adata_idx, :][:, gene_cols_idx]
+        if hasattr(sub_mat, "toarray"):
+            sub_mat = sub_mat.toarray()
+        sub_mat = np.asarray(sub_mat, dtype=float)
+        for j, gene in enumerate(available_genes):
+            vals = np.full(n_rows, np.nan, dtype=float)
+            vals[matched_mask] = sub_mat[:, j]
+            df[f"{col_prefix}.{gene}"] = vals
+    else:
         for gene in available_genes:
-            v = adata.X[adata_idx, gene_to_idx[gene]]
-            if hasattr(v, "toarray"):
-                v = v.toarray()[0, 0]
-            df.at[row_idx, f"{col_prefix}.{gene}"] = v
+            df[f"{col_prefix}.{gene}"] = np.nan
 
     # Compute gene groups
     if verbose:
@@ -330,17 +335,24 @@ def _build_prefixed_col_lookup(columns, gex_prefix: str) -> dict[str, str]:
 
 
 def _score_gene_block(
-    frame: pd.DataFrame, cols: list[str], *, zscore: bool
+    frame: pd.DataFrame,
+    cols: list[str],
+    *,
+    zscore: bool,
+    apply_log1p: bool = True,
 ) -> np.ndarray:
-    """Per-cell score for one gene block: mean over genes of ``log1p(expr)``,
-    optionally z-scored per gene across the cells in ``frame`` first.
+    """Per-cell score for one gene block: mean over genes of ``log1p(expr)``
+    (or raw/already-logged ``expr`` when ``apply_log1p=False``), optionally
+    z-scored per gene across the cells in ``frame`` first.
 
     The single per-cell scoring primitive shared by the per-clonotype and
     per-cell signature scorers (#313) — ``zscore=False`` reproduces the
     historical log1p-mean; ``zscore=True`` gives the z-scored program score
     (``mean_z(genes)``) the atlas colorings and vs-background panels use.
     """
-    vals = np.log1p(frame[cols].fillna(0).to_numpy(dtype=float))
+    vals = frame[cols].fillna(0).to_numpy(dtype=float)
+    if apply_log1p:
+        vals = np.log1p(np.clip(vals, a_min=0.0, a_max=None))
     if zscore:
         mu = vals.mean(axis=0)
         sd = vals.std(axis=0, ddof=0)
@@ -513,6 +525,7 @@ def compute_signature_scores_per_cell(
     signatures: dict[str, tuple[str, ...]] | None = None,
     zscore: bool = True,
     layer: str | None = None,
+    log1p: bool | None = None,
     key_prefix: str = "signature_",
     on_missing: str = "warn",
     species: str | None = None,
@@ -527,6 +540,12 @@ def compute_signature_scores_per_cell(
     each cell as the mean over present genes of z-scored ``log1p`` expression
     (``zscore=True``, the default) or plain ``log1p``-mean (``zscore=False``),
     writing it to ``adata.obs[f"{key_prefix}{name}"]``.
+
+    When ``log1p=None`` (default), automatically avoids double-logging matrices
+    already marked ``adata.uns["log1p"]``, matrices with negative (scaled)
+    values, or non-integer normalized expression matrices, and applies CP10K
+    normalization before ``log1p`` on raw count matrices. Pass ``log1p=True``
+    or ``log1p=False`` to force or disable ``np.log1p`` explicitly.
 
     Unlike the per-clonotype scorer this is CD4-INCLUSIVE (no CD8 gate) — it
     scores every cell; restrict upstream for a lineage subset. For signed /
@@ -561,6 +580,37 @@ def compute_signature_scores_per_cell(
     expr = expression_frame_from_adata(
         adata, all_genes, layer=layer, on_missing=on_missing
     )
+
+    # Decide whether to CP10K-normalize / log1p based on matrix scale
+    if log1p is not None:
+        do_log1p = bool(log1p)
+    else:
+        src_mat = adata.layers[layer] if (layer is not None and layer in adata.layers) else adata.X
+        if expr.empty:
+            do_log1p = False
+        else:
+            arr = expr.to_numpy(dtype=float)
+            finite = arr[np.isfinite(arr)]
+            has_neg = bool(finite.size and finite.min() < 0)
+            already_logged = bool(layer is None and "log1p" in getattr(adata, "uns", {}))
+            if has_neg or already_logged:
+                do_log1p = False
+            else:
+                # Non-integer bounded values without uns["log1p"] are already normalized/logged
+                x_max = float(finite.max()) if finite.size else 0.0
+                is_int_like = bool(
+                    finite.size and np.allclose(finite, np.round(finite), atol=1e-6)
+                )
+                if not is_int_like and x_max <= 20.0:
+                    do_log1p = False
+                else:
+                    # Raw counts: CP10K-normalize per cell using total counts before log1p
+                    if x_max > 25.0 or layer == "counts":
+                        totals = np.asarray(src_mat.sum(axis=1)).ravel().astype(float)
+                        scale = np.where(totals > 0, 1e4 / totals, 0.0)
+                        expr = expr.mul(scale, axis=0)
+                    do_log1p = True
+
     present = set(expr.columns)
     n_scored = 0
     for name, genes in signatures.items():
@@ -574,7 +624,9 @@ def compute_signature_scores_per_cell(
                 )
             adata.obs[col_name] = np.nan
             continue
-        adata.obs[col_name] = _score_gene_block(expr, cols, zscore=zscore)
+        adata.obs[col_name] = _score_gene_block(
+            expr, cols, zscore=zscore, apply_log1p=do_log1p
+        )
         n_scored += 1
     if verbose:
         logger.info(

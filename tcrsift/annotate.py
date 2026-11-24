@@ -177,6 +177,9 @@ BACTERIAL_SPECIES_PATTERNS = [
     "helicobacter",
     "chlamydia",
     "treponema",
+    "haemophilus",
+    "pseudomonas",
+    "vibrio",
 ]
 
 UNKNOWN_SPECIES_TOKENS = {
@@ -373,15 +376,15 @@ def _canonical_v_gene(value: object) -> str:
     """Normalize a V-gene call so VDJdb / IEDB / CellRanger spellings
     compare cleanly (#56).
 
-    Strips allele suffix (``TRBV6-1*01`` → ``TRBV6-1``), uppercases,
-    and trims whitespace. Returns ``""`` when the input isn't a string
-    or is empty / NaN so the downstream comparison can be a simple
-    ``a == b and a``.
+    Delegates to :func:`tcrsift.genes.canonicalize_gene` so allele suffixes
+    and zero-padded subgroups (``TRBV06-01*01`` vs ``TRBV6-1``) align.
     """
     if not isinstance(value, str):
         return ""
-    base = value.strip().upper().split("*", 1)[0]
-    return base
+    from .genes import canonicalize_gene
+
+    canon = canonicalize_gene(value)
+    return canon if canon else ""
 
 
 def _canonical_variants(s: str):
@@ -537,6 +540,8 @@ def canonicalize_species(value: object) -> str | None:
         return CANONICAL_SPECIES_ALIASES[key]
 
     for needle, canonical in CANONICAL_SPECIES_CONTAINS:
+        if needle == "influenza" and ("haemophilus" in key or "parainfluenza" in key):
+            continue
         if needle in key:
             return canonical
 
@@ -797,7 +802,11 @@ def canonicalize_antigen(
         r"55 kda immediate-early|regulatory protein ie1|immediate[- ]early (?:protein )?1\b|\bcmv ie1\b|\bul123\b",
         lowered,
     ):
-        return "MCMV IE1" if org == "Mouse CMV" else "CMV IE1"
+        if org == "Mouse CMV":
+            return "MCMV IE1"
+        if org in (None, "", "CMV") or "cmv" in lowered or "ul123" in lowered:
+            return "CMV IE1"
+        return f"{org} IE1"
 
     if re.search(r"nuclear antigen ebna-?3|\bebna-?3[abc]?\b", lowered):
         return "EBV EBNA-3"
@@ -817,7 +826,13 @@ def canonicalize_antigen(
     if re.search(r"matrix protein 1\b|matrix protein m1\b|\bm1 protein\b|influenza a virus matrix", lowered):
         return "Flu M1"
     if re.search(r"\bhemagglutinin\b", lowered):
-        return "Flu HA"
+        if (
+            org in (None, "", "Influenza", "Influenza A", "Influenza B")
+            or "influenza" in lowered
+            or re.search(r"\bflu\b", lowered)
+        ):
+            return "Flu HA"
+        return f"{org} HA"
 
     if re.search(r"\bnucleoprotein\b|\bnp protein\b", lowered):
         if org in (None, "", "Influenza", "Influenza A", "Influenza B"):
@@ -833,7 +848,11 @@ def canonicalize_antigen(
         return f"{org} NP"
 
     if re.search(r"replicase polyprotein 1ab?\b|orf1ab(?: polyprotein)?\b", lowered):
-        return "SARS-CoV-1 ORF1ab" if org == "SARS-CoV-1" else "SARS-CoV-2 ORF1ab"
+        if org == "SARS-CoV-1":
+            return "SARS-CoV-1 ORF1ab"
+        if org in (None, "", "SARS-CoV-2") or "sars" in lowered:
+            return "SARS-CoV-2 ORF1ab"
+        return f"{org} ORF1ab"
 
     if re.search(r"spike glycoprotein|surface glycoprotein|\bspike protein\b|sars-cov-2 spike", lowered):
         if org == "SARS-CoV-1":
@@ -1663,7 +1682,11 @@ def _upgrade_iedb_cdr3_with_junction(
             continue
         if not c_str:
             out.at[idx] = j_str
-        elif not c_str.startswith("C") and c_str in j_str and len(j_str) <= len(c_str) + 2:
+        elif (
+            (not c_str.startswith("C") or c_str[-1] not in _VALID_CDR3_ANCHOR_ENDS)
+            and c_str in j_str
+            and len(j_str) <= len(c_str) + 2
+        ):
             out.at[idx] = j_str
     return out
 
@@ -1904,18 +1927,53 @@ def load_cedar(path: str | Path) -> pd.DataFrame:
     return df
 
 
+_TUMOR_SELF_CANONICAL_LABELS = frozenset(
+    {
+        "MART-1",
+        "LAGE-1",
+        "NY-ESO-1",
+        "gp100",
+        "TRP-2",
+        "TRP-1",
+        "Tyrosinase",
+        "CEA",
+        "WT1",
+        "TERT",
+        "HER2",
+        "Survivin",
+        "PSA",
+        "NY-BR-1",
+        "PRAME",
+        "SSX2",
+        "Mesothelin",
+        "AFP",
+        "MAGE-A",
+    }
+)
+
+
+def _match_viral_species_lower(species_lower: pd.Series) -> pd.Series:
+    """Match viral organism names while avoiding bacterial/non-flu false hits."""
+    is_viral = pd.Series(False, index=species_lower.index)
+    for pattern in VIRAL_SPECIES_PATTERNS:
+        if pattern == "flu":
+            is_viral |= species_lower.str.contains(r"(?<!\w)flu\b", na=False, regex=True)
+        elif pattern == "influenza":
+            is_viral |= species_lower.str.contains(
+                r"(?<!para)\binfluenza\b(?!e\b)", na=False, regex=True
+            )
+        else:
+            is_viral |= species_lower.str.contains(pattern, na=False, regex=False)
+    return is_viral
+
+
 def _flag_viral(df: pd.DataFrame) -> pd.Series:
     """Flag entries as viral based on species column."""
     if "species" not in df.columns:
         return pd.Series(False, index=df.index)
 
     species_lower = canonicalize_species_labels(df["species"]).fillna("").str.lower()
-
-    is_viral = pd.Series(False, index=df.index)
-    for pattern in VIRAL_SPECIES_PATTERNS:
-        is_viral |= species_lower.str.contains(pattern, na=False)
-
-    return is_viral
+    return _match_viral_species_lower(species_lower)
 
 
 def classify_category(
@@ -1923,6 +1981,7 @@ def classify_category(
     antigen_gene: pd.Series,
     *,
     query_species: str = "human",
+    canonical_proteins: pd.Series | None = None,
 ) -> pd.Series:
     """Classify each entry into a coarse specificity category.
 
@@ -1947,9 +2006,7 @@ def classify_category(
     is_known_species = species_canonical.notna() & (species_lower.str.len() > 0)
     category[is_known_species] = CATEGORY_OTHER
 
-    is_viral = pd.Series(False, index=species.index)
-    for pattern in VIRAL_SPECIES_PATTERNS:
-        is_viral |= species_lower.str.contains(pattern, na=False, regex=False)
+    is_viral = _match_viral_species_lower(species_lower)
     category[is_viral] = CATEGORY_VIRAL
 
     is_bacterial = pd.Series(False, index=species.index)
@@ -1960,13 +2017,24 @@ def classify_category(
     is_self = species_canonical == self_binomial
     category[is_self & ~is_viral & ~is_bacterial] = CATEGORY_SELF
 
-    # Tumor-self override: regex patterns anchored at word boundaries so
-    # short tokens (her2, tert, psa, wt1, dct) don't false-positive on
-    # unrelated gene names containing them as substrings.
+    # Tumor-self override: match both word-bounded raw regexes AND canonicalized
+    # UniProt/CEDAR/IEDB protein labels (e.g. MART-1, HER2, PRAME, gp100, TRP-1,
+    # Tyrosinase, NY-BR-1), gated on non-pathogen rows so viral/bacterial entries
+    # containing short tokens (PSA/AFP/DCT) are never overwritten.
     is_tumor_self = pd.Series(False, index=species.index)
     for pattern in TUMOR_SELF_ANTIGEN_PATTERNS:
         is_tumor_self |= antigen_lower.str.contains(pattern, na=False, regex=True)
-    category[is_tumor_self] = CATEGORY_TUMOR_SELF
+    canon_s = (
+        canonical_proteins
+        if canonical_proteins is not None
+        else canonicalize_antigens(antigen_gene, species=species_canonical)
+    )
+    if canon_s is not None and len(canon_s) == len(species):
+        canon_str = canon_s.reindex(species.index).fillna("").astype(str)
+        is_tumor_self |= canon_str.isin(_TUMOR_SELF_CANONICAL_LABELS) | canon_str.str.startswith(
+            "MAGE-"
+        )
+    category[is_tumor_self & ~is_viral & ~is_bacterial] = CATEGORY_TUMOR_SELF
 
     return category
 
@@ -2216,15 +2284,18 @@ def match_clonotypes(
         else pd.Series([""] * len(database), index=database.index)
     )
     new_columns: dict[str, pd.Series] = {}
-    if "db_category" not in database.columns:
-        new_columns["db_category"] = classify_category(
-            species_col, antigen_col, query_species=query_species
-        )
     if "db_protein_canonical" not in database.columns:
         new_columns["db_protein_canonical"] = canonicalize_antigens(
             antigen_col, species=species_col
         )
     canon_col = new_columns.get("db_protein_canonical", database.get("db_protein_canonical"))
+    if "db_category" not in database.columns:
+        new_columns["db_category"] = classify_category(
+            species_col,
+            antigen_col,
+            query_species=query_species,
+            canonical_proteins=canon_col,
+        )
     if "db_antigen_gene" not in database.columns:
         new_columns["db_antigen_gene"] = resolve_antigen_genes(
             antigen_col, canonical_proteins=canon_col, species=species_col
@@ -2232,11 +2303,27 @@ def match_clonotypes(
     if new_columns:
         database = database.assign(**new_columns)
 
+    # Normalize database CDR3 strings (strip whitespace + uppercase) once
+    db_cdr3_updates: dict[str, pd.Series] = {}
+    for col in ("cdr3_alpha", "cdr3_beta"):
+        if col in database.columns:
+            s = database[col]
+            db_cdr3_updates[col] = s.where(
+                s.isna(), s.astype(str).str.strip().str.upper()
+            )
+    if db_cdr3_updates:
+        database = database.assign(**db_cdr3_updates)
+
     beta_neighbor_index: dict[str, set[str]] | None = (
         _build_cdr3_neighbor_index(database["cdr3_beta"])
-        if match_mode == "levenshtein"
+        if match_mode == "levenshtein" and strictness != "strict_ab"
         else None
     )
+
+    # Work on a clean 0..N-1 index internally so duplicate indices on the input
+    # DataFrame never corrupt label-based _annotate_match writes; restore on return.
+    orig_index = df.index
+    df = df.reset_index(drop=True)
 
     # Pre-index positional row slices by CDR3β and paired (CDR3α, CDR3β) once
     # so per-clone lookups run in O(1) instead of scanning a 140k-row DataFrame.
@@ -2281,8 +2368,8 @@ def match_clonotypes(
         for idx, row in row_iter:
             raw_a = row.get("CDR3_alpha", "")
             raw_b = row.get("CDR3_beta", "")
-            alpha = raw_a.strip() if isinstance(raw_a, str) else ""
-            beta = raw_b.strip() if isinstance(raw_b, str) else ""
+            alpha = raw_a.strip().upper() if isinstance(raw_a, str) else ""
+            beta = raw_b.strip().upper() if isinstance(raw_b, str) else ""
 
             if alpha and beta and (alpha, beta) in ab_to_pos:
                 matches = database.iloc[ab_to_pos[(alpha, beta)]]
@@ -2320,7 +2407,7 @@ def match_clonotypes(
 
         for idx, row in row_iter:
             raw_b = row.get("CDR3_beta", "")
-            beta = raw_b.strip() if isinstance(raw_b, str) else ""
+            beta = raw_b.strip().upper() if isinstance(raw_b, str) else ""
             if beta and beta in b_to_pos:
                 matches = database.iloc[b_to_pos[beta]]
                 _annotate_match(
@@ -2341,6 +2428,7 @@ def match_clonotypes(
                             query_species=query_species,
                         )
 
+    df.index = orig_index
     n_matches = df["db_match"].sum()
     n_viral = df["is_viral"].sum()
     if verbose:
@@ -2447,8 +2535,15 @@ def _annotate_match(
         df.loc[idx, "db_category_detail"] = detail
         df.loc[idx, "db_category_counts"] = counts
 
-    df.loc[idx, "db_database"] = ";".join(matches["database"].unique())
-    df.loc[idx, "is_viral"] = matches["is_viral"].any()
+    if "database" in matches.columns:
+        dbs = matches["database"].dropna().astype(str).unique()
+        df.loc[idx, "db_database"] = ";".join(dbs)
+    if "is_viral" in matches.columns:
+        from ._schema import truthy_flag_series
+
+        df.loc[idx, "is_viral"] = bool(truthy_flag_series(matches["is_viral"]).any())
+    elif "db_category" in matches.columns:
+        df.loc[idx, "is_viral"] = bool((matches["db_category"] == CATEGORY_VIRAL).any())
 
     if partial:
         df.loc[idx, "db_match_partial"] = True
