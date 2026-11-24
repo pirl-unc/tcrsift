@@ -45,13 +45,13 @@ import re
 
 import pandas as pd
 
-from ._assemble_codons import back_translate, translate_dna
-from .leaders import GERMLINE_MIN_IDENTITY, normalize_vgene
-from .vregion import (
+from ..leaders import GERMLINE_MIN_IDENTITY, normalize_vgene
+from ..vregion import (
     germline_jregion_sequences,
     germline_vregion_sequences,
     normalize_jgene,
 )
+from .codons import back_translate, translate_dna
 
 logger = logging.getLogger(__name__)
 
@@ -437,8 +437,8 @@ def reconstruct_germline_vdj(
         ``{chain}_vdj_source``, ``{chain}_vdj_germline_allele``, and updated
         ``qc_warnings``.
     """
-    from .datacache import GROUPS, ensure_cached
-    from .species import normalize_species, resolve_species
+    from ..datacache import GROUPS, ensure_cached
+    from ..species import normalize_species, resolve_species
 
     sp = resolve_species(species, df=clonotypes, warn_mismatch=False)
     cod_sp = normalize_species(codon_species) if codon_species else sp

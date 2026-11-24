@@ -148,7 +148,7 @@ DATABASES: dict[str, DatabaseSpec] = {
     ),
     # IMGT V-QUEST reference directory FASTAs (one per locus and species). Backs
     # framework (FR1–FR3) and J-region (FR4) germline comparison and 5'-partial
-    # contig rescue in tcrsift.vregion and tcrsift._assemble_germline. Cached
+    # contig rescue in tcrsift.vregion and tcrsift.assemble.germline. Cached
     # rather than vendored; tcrsift.vregion parses both raw gapped FASTA and
     # legacy GENElect <pre> HTML.
     "imgt_trav_vregion": DatabaseSpec(

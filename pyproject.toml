@@ -117,7 +117,7 @@ full = [
 version = {attr = "tcrsift.version.__version__"}
 
 [tool.setuptools]
-packages = ["tcrsift", "tcrsift.refseqs"]
+packages = ["tcrsift", "tcrsift.assemble", "tcrsift.cli", "tcrsift.plots", "tcrsift.refseqs"]
 
 [tool.setuptools.package-data]
 "tcrsift.refseqs" = ["*.fasta", "*.npz", "*.csv.gz", "PROVENANCE.md"]

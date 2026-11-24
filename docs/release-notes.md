@@ -7,6 +7,24 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.36.0
+
+Internal package organization cleanup (no CLI flag, scoring, or selection
+behavior changes):
+
+- Converted `tcrsift.cli`, `tcrsift.assemble`, and `tcrsift.plots` from flat
+  modules plus underscore-prefixed helper files (`_cli_commands.py`,
+  `_assemble_*.py`, `_plots_*.py`) into cohesive domain subpackages:
+  - `tcrsift.cli` (`pipeline`, `load`, `cells`, `filter`, `til`, `annotate`,
+    `assemble`, `report`, `data`, `common`, `__main__`), pairing parser
+    registration and command handlers per workflow domain.
+  - `tcrsift.assemble` (`construct`, `contigs`, `leader_policy`, `constants`,
+    `codons`, `germline`, `qc`, `alleles`).
+  - `tcrsift.plots` (`state`, `repertoire`, `annotations`, `ranks`, `atlas`,
+    `selection`, `reports`).
+- Preserved all existing public re-exports on `tcrsift.cli`, `tcrsift.assemble`,
+  and `tcrsift.plots`, plus `python -m tcrsift.cli`.
+
 ## 3.35.0
 
 Whole-library bug-fix release addressing correctness, statistical edge cases,

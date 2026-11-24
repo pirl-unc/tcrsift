@@ -20,15 +20,17 @@ from importlib.resources import files as _pkg_files
 
 import pandas as pd
 
-from ._assemble_codons import (
-    CODON_TABLE,
-    back_translate,
-)
-from .leaders import (
+from ..leaders import (
     germline_compare_leader,
     normalize_vgene,
 )
-from .sigpep import signal_peptide_features, sp_features_summary
+from ..sigpep import signal_peptide_features, sp_features_summary
+from .codons import (
+    CODON_TABLE,
+    back_translate,
+    optimize_codons,
+    stop_codons_nt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1043,3 +1045,21 @@ def _describe_leader(param_value: str | None, resolved: str | dict | None) -> st
         return f"{param_value.upper()} ({resolved['source']})"
     return str(param_value)
 
+
+def get_constant_region_sequences(
+    *,
+    stop_codons: tuple[str, ...] = ("TAA", "TGA"),
+    species: str = "human",
+    codon_species: str | None = None,
+) -> dict[str, str]:
+    """Return TCR constant-region CDS (DNA) via codon-aware back-translation."""
+    from ..species import normalize_species
+
+    const_sp = normalize_species(species)
+    cod_sp = normalize_species(codon_species) if codon_species else const_sp
+    stops_nt = stop_codons_nt(stop_codons)
+    regions = CONSTANT_REGIONS_AA_BY_SPECIES[const_sp]
+    out: dict[str, str] = {}
+    for name, aa in regions.items():
+        out[name] = optimize_codons(aa, species=cod_sp) + stops_nt
+    return out
