@@ -24,12 +24,12 @@ from .common import setup_logging
 _UNSET_CLI = object()
 
 _CELLS_QC_THRESHOLDS = (
-    ("min_genes", "min_genes", "Min genes per cell"),
-    ("max_genes", "max_genes", "Max genes per cell"),
-    ("min_counts", "min_counts", "Min UMI counts"),
-    ("max_counts", "max_counts", "Max UMI counts"),
-    ("min_mito", "min_mito_pct", "Min mito %% FLOOR (drops low-mito ambient)"),
-    ("max_mito", "max_mito_pct", "Max mito %% (drops dying cells)"),
+    ("min_genes", "min_genes", "Min genes per cell (default: 250; pass 'none' to disable)"),
+    ("max_genes", "max_genes", "Max genes per cell (default: disabled; pass 'none' to disable)"),
+    ("min_counts", "min_counts", "Min UMI counts (default: 500; pass 'none' to disable)"),
+    ("max_counts", "max_counts", "Max UMI counts (default: disabled; pass 'none' to disable)"),
+    ("min_mito", "min_mito_pct", "Min mito %% floor (default: disabled; pass 'none' to disable)"),
+    ("max_mito", "max_mito_pct", "Max mito %% (default: 8.0; pass 'none' to disable)"),
 )
 
 
@@ -192,7 +192,7 @@ def register(subparsers) -> None:
             type=_cells_threshold,
             default=_UNSET_CLI,
             metavar="N|none",
-            help=f"{helptext} (default: cell_qc_funnel's; pass 'none' to disable)",
+            help=helptext,
         )
     p_cells_qc.add_argument(
         "--pbmc-preset",

@@ -82,7 +82,7 @@ def select_candidates(
         to its score column.
     tier1_label, tier2_label, tier3plus_labels : str
         Tier labels in the frame. Defaults match
-        :data:`tcrsift.filter.DEFAULT_TIER_DEFINITIONS`.
+        :data:`tcrsift.filter.DEFAULT_THRESHOLD_TIERS`.
 
     Returns
     -------

@@ -113,91 +113,46 @@ def _mode_or_nan(series: pd.Series):
     return mode.iloc[0]
 
 
+def _normalize_til_select_db(df: pd.DataFrame, label: str, path: str | Path) -> pd.DataFrame:
+    """Ensure canonical columns and ``is_viral`` flag on a database frame."""
+    if df.empty or "cdr3_beta" not in df.columns:
+        raise TCRsiftValidationError(
+            f"{label} file missing CDR3 beta column after mapping",
+            hint=f"Path: {path}",
+        )
+    df = df[df["cdr3_beta"].notna() & (df["cdr3_beta"].astype(str) != "")].copy()
+    if df.empty:
+        raise TCRsiftValidationError(f"{label} file has no TRB entries: {path}")
+    if "cdr3_alpha" not in df.columns:
+        df["cdr3_alpha"] = ""
+    if "database" not in df.columns:
+        df["database"] = label
+    df["is_viral"] = _flag_viral(df)
+    return df
+
+
 def load_vdjdb(path: str | Path) -> pd.DataFrame:
     """Load VDJdb TSV or directory and normalize core columns (preserving paired TRA+TRB)."""
     from .annotate import load_vdjdb as _load_vdjdb_paired
 
     df = _load_vdjdb_paired(path, verbose=False)
-    if df.empty or "cdr3_beta" not in df.columns:
-        raise TCRsiftValidationError(
-            "VDJdb file missing CDR3 beta column after mapping",
-            hint=f"Path: {path}",
-        )
-    df = df[df["cdr3_beta"].notna() & (df["cdr3_beta"].astype(str) != "")].copy()
-    if df.empty:
-        raise TCRsiftValidationError(f"VDJdb file has no TRB entries: {path}")
-    df["is_viral"] = _flag_viral(df)
-    return df
-
-
-def _load_iedb_cedar_multiheader(path: Path, label: str) -> pd.DataFrame:
-    """Load IEDB/CEDAR format with multi-index header (CSV v3 or TSV)."""
-    from .annotate import _looks_like_iedb_v3, _upgrade_iedb_cdr3_with_junction
-
-    sep = "," if _looks_like_iedb_v3(path) else "\t"
-    df = pd.read_csv(path, sep=sep, header=[0, 1], low_memory=False)
-    if df.empty:
-        raise TCRsiftValidationError(f"{label} file is empty: {path}")
-    if df.columns.nlevels != 2:
-        raise TCRsiftValidationError(
-            f"{label} file does not appear to have a two-row header",
-            hint="Expected grouped columns like Chain 1 / Chain 2.",
-        )
-
-    def _col(group: str, field: str) -> tuple[str, str]:
-        return (group, field)
-
-    def _coalesce_cdr3(group: str, require: bool = False) -> pd.Series:
-        cur_col = _col(group, "CDR3 Curated")
-        calc_col = _col(group, "CDR3 Calculated")
-        junc_col = _col(group, "Junction Calculated")
-        has_cur = cur_col in df.columns
-        has_calc = calc_col in df.columns
-        if not has_cur and not has_calc:
-            if require:
-                raise TCRsiftValidationError(f"{label} missing {group} CDR3 column in {path}")
-            base = pd.Series([""] * len(df), index=df.index, dtype=object)
-        elif has_cur and has_calc:
-            cur = df[cur_col].replace("", pd.NA)
-            calc = df[calc_col].replace("", pd.NA)
-            base = cur.combine_first(calc)
-        else:
-            base = df[cur_col] if has_cur else df[calc_col]
-        if junc_col in df.columns:
-            base = _upgrade_iedb_cdr3_with_junction(base, df[junc_col])
-        return base
-
-    cdr3_alpha = _coalesce_cdr3("Chain 1", require=False)
-    cdr3_beta = _coalesce_cdr3("Chain 2", require=True)
-
-    out = pd.DataFrame(
-        {
-            "cdr3_alpha": cdr3_alpha,
-            "cdr3_beta": cdr3_beta,
-            "epitope": df.get(_col("Epitope", "Name")),
-            "antigen_gene": df.get(_col("Epitope", "Source Molecule")),
-            "species": df.get(_col("Epitope", "Source Organism")),
-            "chain1_type": df.get(_col("Chain 1", "Type")),
-            "chain2_type": df.get(_col("Chain 2", "Type")),
-        }
-    )
-    if "chain2_type" in out.columns and out["chain2_type"].notna().any():
-        mask = out["chain2_type"].fillna("").str.lower().isin(["beta", "trb"])
-        out = out[mask]
-    out = out.drop(columns=["chain1_type", "chain2_type"])
-    out["database"] = label
-    out["is_viral"] = _flag_viral(out)
-    return out
+    return _normalize_til_select_db(df, "VDJdb", path)
 
 
 def load_iedb(path: str | Path) -> pd.DataFrame:
-    """Load IEDB TSV."""
-    return _load_iedb_cedar_multiheader(Path(path), "IEDB")
+    """Load IEDB TSV/CSV via :func:`tcrsift.annotate.load_iedb`."""
+    from .annotate import load_iedb as _load_iedb
+
+    df = _load_iedb(path)
+    return _normalize_til_select_db(df, "IEDB", path)
 
 
 def load_cedar(path: str | Path) -> pd.DataFrame:
-    """Load CEDAR TSV."""
-    return _load_iedb_cedar_multiheader(Path(path), "CEDAR")
+    """Load CEDAR TSV/CSV via :func:`tcrsift.annotate.load_cedar`."""
+    from .annotate import load_cedar as _load_cedar
+
+    df = _load_cedar(path)
+    return _normalize_til_select_db(df, "CEDAR", path)
 
 
 def load_databases(

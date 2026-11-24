@@ -24,7 +24,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tcrsift import datacache, loader, vregion
+from tcrsift import datacache, loader
+from tcrsift.assemble import vregion
 from tcrsift.cli import create_parser
 from tcrsift.cli import main as cli_main
 from tcrsift.prioritize import PrioritizeConfig

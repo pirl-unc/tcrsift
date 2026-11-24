@@ -21,7 +21,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-import tcrsift.vregion as vr
+import tcrsift.assemble.vregion as vr
 from tcrsift.assemble import annotate_vregion_divergence
 
 # A synthetic germline framework for one gene, two alleles.

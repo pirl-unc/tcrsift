@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from tcrsift import leaders, vregion
+from tcrsift.assemble import leaders, vregion
 from tcrsift.datacache import (
     DATABASES,
     GROUPS,

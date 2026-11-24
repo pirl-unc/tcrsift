@@ -19,10 +19,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-import tempfile
 from pathlib import Path
 
-from ..config import add_config_args, generate_example_config, load_config_with_args
+from ..config import TCRsiftConfig, add_config_args, generate_example_config, load_config_with_args
 from ..pipeline import run_pipeline
 from ..validation import validate_run_args
 from .common import LEADER_CHOICES, setup_logging
@@ -30,10 +29,9 @@ from .common import LEADER_CHOICES, setup_logging
 
 def cmd_run(args):
     """Run the complete TCRsift pipeline."""
+    setup_logging(bool(getattr(args, "verbose", False)))
     config = load_config_with_args(args)
     validate_run_args(args, config=config)
-    if getattr(args, "no_pgen_ppost", False):
-        config.clonotype.add_pgen_ppost = False
     setup_logging(config.verbose)
 
     run_pipeline(
@@ -50,15 +48,14 @@ def cmd_run(args):
 
 
 def cmd_generate_config(args):
-    """Generate an example configuration file (#195: no silent overwrite)."""
-    # Default to stdout so `tcrsift generate-config | less` is safe and never
-    # clobbers a working config (#195).
+    """Generate an example configuration file (prints to stdout when -o is omitted)."""
     if args.output is None:
-        with tempfile.NamedTemporaryFile("w+", suffix=".yaml", delete=False) as tf:
-            tmp = Path(tf.name)
-        generate_example_config(tmp)
-        print(tmp.read_text(), end="")
-        tmp.unlink()
+        import yaml
+
+        print(
+            yaml.dump(TCRsiftConfig().to_dict(), default_flow_style=False, sort_keys=False),
+            end="",
+        )
         return
 
     out_path = Path(args.output)

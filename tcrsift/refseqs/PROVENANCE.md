@@ -2,7 +2,7 @@
 
 Provenance for packaged background probability models (`tcrsift.seqprob`),
 canonical TCR constant-region FASTAs (`tcrsift.assemble`), and IMGT V-gene
-leader references (`tcrsift.leaders`).
+leader references (`tcrsift.assemble.leaders`).
 
 ## `Ppost`: observed healthy-PBMC background
 
@@ -63,7 +63,7 @@ Ensembl release 112) constant-region amino-acid sequences:
   C-terminus `VKKKNS`)
 
 Regenerate from local Ensembl caches via
-`python -m tcrsift._regen_canonical_constants --species {human,mouse}`.
+`python scripts/regen_canonical_constants.py --species {human,mouse}`.
 
 ## Germline V-gene signal peptides (IMGT/GENE-DB)
 

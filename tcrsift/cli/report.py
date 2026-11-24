@@ -256,8 +256,8 @@ def cmd_report_polished(args):
 
 def register(subparsers) -> None:
     """Register the ``report`` command group."""
-    p_report = subparsers.add_parser("report", help="Unified reporting (figure bundles)")
-    p_report.set_defaults(func=lambda _a: p_report.print_help())
+    p_report = subparsers.add_parser("report", help="Unified reporting (figure bundles, selected clones, cohorts)")
+    p_report.set_defaults(func=lambda _a: (p_report.print_help(), 1)[1])
     p_report_sub = p_report.add_subparsers(dest="report_command")
 
     pb = p_report_sub.add_parser(

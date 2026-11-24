@@ -671,7 +671,9 @@ def run_til_prioritize(
             fidelity = assemble_fidelity_summary(constructs)
             fidelity_note = enforce_contig_fidelity(
                 constructs,
-                allow_canonical_fallback=True,
+                allow_canonical_fallback=bool(
+                    getattr(args, "allow_canonical_fallback", True)
+                ),
                 context="prioritize",
             )
             if fidelity_note:
@@ -933,6 +935,12 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
         choices=("T2A", "P2A", "E2A", "F2A", "none"),
         default="T2A",
         help="2A self-cleaving linker for --assemble single-chain constructs (default: T2A; 'none' omits linker)",
+    )
+    parser.add_argument(
+        "--allow-canonical-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Allow canonical constant fallback when --assemble has unverified contigs (pass --no-allow-canonical-fallback to fail closed)",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose logging and error tracebacks")
     parser.add_argument("--context", choices=CONTEXT_SIGNATURES, default=context,

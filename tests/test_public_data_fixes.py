@@ -342,7 +342,7 @@ class TestFlexibleCellRangerLoadingAndJsonEnrichment:
     def test_json_vdj_enrichment_and_contig_loading_for_assembly(self, tmp_path):
         """Pre-CR6 CSV without fwr1..fwr4 + all_contig_annotations.json.gz enables full assembly."""
         from tcrsift.assemble import HUMAN_CONSTANT_REGIONS_AA, back_translate
-        from tcrsift.leaders import germline_vgene_leaders
+        from tcrsift.assemble.leaders import germline_vgene_leaders
 
         sdir = tmp_path / "GT6_stim"
         sdir.mkdir()

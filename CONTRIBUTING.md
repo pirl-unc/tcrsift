@@ -1,16 +1,30 @@
 # Contributing to TCRsift
 
-We would love your help in making TCRsift a useful resource for the community. No contribution is too small, and we especially appreciate usability improvements like better documentation, tutorials, tests, or code cleanup.
+Thank you for your interest in contributing to TCRsift.
 
-## Making a contribution
-All contributions can be made as pull requests on Github. One of the core developers will review your contribution. As needed the core contributors will also make releases and submit to PyPI.
+## Development setup
 
-A few other guidelines:
+TCRsift supports Python 3.9–3.12. Install the package in editable mode with
+development and documentation dependencies:
 
-* TCRsift supports Python 3.9+ (see `pyproject.toml`). We primarily test on Linux and macOS.
-* All functions should be documented using [numpy-style docstrings](https://numpydoc.readthedocs.io/en/latest/format.html) and associated with unit tests.
-* Bugfixes should be accompanied with a test that illustrates the bug when feasible.
-* Contributions are licensed under Apache 2.0
-* Please adhere to our [code of conduct](code-of-conduct.md).
+```bash
+git clone https://github.com/pirl-unc/tcrsift.git
+cd tcrsift
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev,docs]"
+```
 
-Working on your first Pull Request? One resource that may be helpful is [How to Contribute to an Open Source Project on GitHub](https://egghead.io/series/how-to-contribute-to-an-open-source-project-on-github).
+## Checks before opening a pull request
+
+```bash
+./lint.sh
+pytest tests/ -n auto
+mkdocs build --strict
+```
+
+Set `TCRSIFT_LINT_INCLUDE_PYLINT=1 ./lint.sh` to also run the `pylint --errors-only`
+check enforced by CI.
+
+See [docs/contributing.md](docs/contributing.md) for full details and
+[code-of-conduct.md](code-of-conduct.md) for community standards.

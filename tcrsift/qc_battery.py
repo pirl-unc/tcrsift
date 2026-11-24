@@ -107,7 +107,7 @@ def _nz(a) -> str:
     return str(a).rstrip("*")
 
 
-class QCResult:
+class BatteryCheckResult:
     """One check's verdict: PASS / FAIL / SKIP plus a human detail string."""
 
     __slots__ = ("name", "status", "detail")
@@ -158,15 +158,15 @@ _CDR3_COLS = [
 ]
 
 
-def check_assembly(d: pd.DataFrame) -> QCResult:
+def check_assembly(d: pd.DataFrame) -> BatteryCheckResult:
     """A. Every translation exact, recomposition byte-for-byte, M-start, 2A linker."""
     miss = _missing(d, _ASSEMBLY_COLS)
     if miss:
-        return QCResult(
+        return BatteryCheckResult(
             "A. Assembly integrity", "SKIP", f"missing columns: {', '.join(miss)}"
         )
     if len(d) == 0:
-        return QCResult("A. Assembly integrity", "SKIP", "0 rows")
+        return BatteryCheckResult("A. Assembly integrity", "SKIP", "0 rows")
     from .assemble import LINKERS
 
     valid_linkers = {v["aa"] for v in LINKERS.values()} | {EXPECTED_T2A}
@@ -216,18 +216,18 @@ def check_assembly(d: pd.DataFrame) -> QCResult:
                 bad += 1
     linkers_ok = (not n_sc) or (bool(linkers) and linkers <= valid_linkers)
     ok = bad == 0 and linkers_ok
-    return QCResult(
+    return BatteryCheckResult(
         "A. Assembly integrity",
         "PASS" if ok else "FAIL",
         f"{bad} integrity failures; inter-chain linker(s)={linkers or 'NONE'}",
     )
 
 
-def check_cdr3_ref(d: pd.DataFrame) -> QCResult:
+def check_cdr3_ref(d: pd.DataFrame) -> BatteryCheckResult:
     """B. CDR3 ⊂ VDJ, canonical C…[F/W] (TRAJ35 allow-list), valid gene names."""
     miss = _missing(d, _CDR3_COLS)
     if miss:
-        return QCResult(
+        return BatteryCheckResult(
             "B. CDR3 + reference", "SKIP", f"missing columns: {', '.join(miss)}"
         )
     bad, noncanon, lens = 0, 0, []
@@ -263,7 +263,7 @@ def check_cdr3_ref(d: pd.DataFrame) -> QCResult:
             if len(jr) != 1 or not jr.isalpha():
                 bad += 1
     span = f"{min(lens)}-{max(lens)} (med {int(np.median(lens))})" if lens else "n/a"
-    return QCResult(
+    return BatteryCheckResult(
         "B. CDR3 + reference",
         "PASS" if bad == 0 else "FAIL",
         f"{bad} failures; CDR3 len {span}; {noncanon} non-canonical-J C-ending "
@@ -271,12 +271,12 @@ def check_cdr3_ref(d: pd.DataFrame) -> QCResult:
     )
 
 
-def check_source(d: pd.DataFrame, clonotypes: pd.DataFrame | None) -> QCResult:
+def check_source(d: pd.DataFrame, clonotypes: pd.DataFrame | None) -> BatteryCheckResult:
     """C. Selected V/J/CDR3/cell_count matches the source clonotypes."""
     if clonotypes is None or "CDR3ab" not in getattr(clonotypes, "columns", []):
-        return QCResult("C. Source mapping", "SKIP", "no source clonotypes available")
+        return BatteryCheckResult("C. Source mapping", "SKIP", "no source clonotypes available")
     if "CDR3ab" not in d.columns:
-        return QCResult("C. Source mapping", "SKIP", "assembled frame has no CDR3ab key")
+        return BatteryCheckResult("C. Source mapping", "SKIP", "assembled frame has no CDR3ab key")
     ct = clonotypes.set_index("CDR3ab")
     mm, dualsec = 0, 0
     for _, r in d.iterrows():
@@ -298,7 +298,7 @@ def check_source(d: pd.DataFrame, clonotypes: pd.DataFrame | None) -> QCResult:
             and abs(float(r["cell_count"]) - float(s["cell_count"])) > 0.5
         ):
             mm += 1
-    return QCResult(
+    return BatteryCheckResult(
         "C. Source mapping",
         "PASS" if mm == 0 else "FAIL",
         f"{mm} V/J/CDR3/cell mismatches; {dualsec} dual-alpha secondaries not "
@@ -306,10 +306,10 @@ def check_source(d: pd.DataFrame, clonotypes: pd.DataFrame | None) -> QCResult:
     )
 
 
-def check_synth(d: pd.DataFrame) -> QCResult:
+def check_synth(d: pd.DataFrame) -> BatteryCheckResult:
     """D. contig_verified all true; no dup constructs / α-β swaps / dup SCs."""
     if "single_chain_aa" not in d.columns:
-        return QCResult(
+        return BatteryCheckResult(
             "D. Synthesis / dual-alpha", "SKIP", "no single_chain_aa column"
         )
     n = len(d)
@@ -348,7 +348,7 @@ def check_synth(d: pd.DataFrame) -> QCResult:
         if "dual_alpha_variant" in d else 0
     )
     sp_split = f"{n_primary} primary" + (f" + {n_secondary} secondary-SP" if n_secondary else "")
-    return QCResult(
+    return BatteryCheckResult(
         "D. Synthesis / dual-alpha",
         "PASS" if ok else "FAIL",
         f"contig_verified {cv_str}; {nclone} clones->{n} constructs "
@@ -357,10 +357,10 @@ def check_synth(d: pd.DataFrame) -> QCResult:
     )
 
 
-def check_contigs(d: pd.DataFrame, cmap: dict[str, str | set[str]] | None) -> QCResult:
+def check_contigs(d: pd.DataFrame, cmap: dict[str, str | set[str]] | None) -> BatteryCheckResult:
     """E. Every contig ref exists in cellranger; CDR3 matches ≥1 own contig."""
     if not cmap:
-        return QCResult(
+        return BatteryCheckResult(
             "E. Raw cellranger contigs", "SKIP", "no cellranger contig annotations available"
         )
     refs = orphan = nomatch = 0
@@ -389,7 +389,7 @@ def check_contigs(d: pd.DataFrame, cmap: dict[str, str | set[str]] | None) -> QC
             cdr_val = r.get(cdrcol)
             if raw_set and (pd.isna(cdr_val) or str(cdr_val) not in raw_set):
                 nomatch += 1
-    return QCResult(
+    return BatteryCheckResult(
         "E. Raw cellranger contigs",
         "PASS" if orphan == 0 and nomatch == 0 else "FAIL",
         f"{refs} contig refs; {orphan} not in cellranger; {nomatch} clones whose "
@@ -397,7 +397,7 @@ def check_contigs(d: pd.DataFrame, cmap: dict[str, str | set[str]] | None) -> QC
     )
 
 
-def check_germline(d: pd.DataFrame) -> QCResult:
+def check_germline(d: pd.DataFrame) -> BatteryCheckResult:
     """F. Donor-vs-germline divergence by region (leader / constant / framework).
 
     Informational, not a gate — germline divergence is expected donor biology, so
@@ -411,9 +411,9 @@ def check_germline(d: pd.DataFrame) -> QCResult:
     try:
         gv = collect_germline_variants(d)
     except Exception as e:  # never let the surfacing check break the battery
-        return QCResult("F. Germline / allele divergence", "SKIP", f"unavailable: {e}")
+        return BatteryCheckResult("F. Germline / allele divergence", "SKIP", f"unavailable: {e}")
     if gv is None or gv.empty:
-        return QCResult(
+        return BatteryCheckResult(
             "F. Germline / allele divergence", "SKIP",
             "no germline-comparable columns (run with contigs + V-leader reference)",
         )
@@ -427,7 +427,7 @@ def check_germline(d: pd.DataFrame) -> QCResult:
         shipped = "/".join(sorted(sub["shipped"].astype(str).unique()))
         parts.append(f"{region}: {n_variants} variant(s), {n_constructs} construct(s) [{shipped}]")
     detail = "; ".join(parts) if parts else "none"
-    return QCResult("F. Germline / allele divergence", "PASS", detail)
+    return BatteryCheckResult("F. Germline / allele divergence", "PASS", detail)
 
 
 def contig_cdr3_map(
@@ -463,7 +463,7 @@ def run_qc_battery(
     *,
     clonotypes: pd.DataFrame | None = None,
     contig_map: dict[str, str] | None = None,
-) -> list[QCResult]:
+) -> list[BatteryCheckResult]:
     """Run all checks and return their results in A–F order."""
     return [
         check_assembly(assembled),
@@ -487,7 +487,7 @@ _EDGE_CASE_NOTES = [
 
 
 def qc_summary_markdown(
-    cohorts: dict[str, list[QCResult]],
+    cohorts: dict[str, list[BatteryCheckResult]],
     *,
     title: str = "QC summary",
     deliverable: str | None = None,

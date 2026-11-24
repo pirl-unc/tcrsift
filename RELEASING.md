@@ -1,24 +1,18 @@
 # Releasing TCRsift
 
-This document explains how to publish a new TCRsift release once your changes are merged and the working tree is clean.
+Merging a release PR to `main` and publishing it to PyPI are performed together
+in one pass so `main` never runs ahead of the latest published package:
 
-## Fast path (recommended)
-
-Use the release script to run lint/tests, optionally bump the version, build, upload, and tag:
+1. Complete all changes — including the version bump in `tcrsift/version.py`
+   and changelog entry in `docs/release-notes.md` — on the PR branch.
+2. Wait until all CI checks (`test` 3.9–3.12, `lint`, `build`, docs `build`)
+   are green.
+3. Squash-merge the PR with commit title `X.Y.Z: <summary> (#PR)`.
+4. Immediately tag `vX.Y.Z` (GitHub release) and upload the built distributions:
 
 ```bash
-# Verify readiness without uploading or tagging
-./deploy.sh --dry-run
-
-# Bump to a new version and release
-./deploy.sh 0.2.5
-
-# Release the current version without bumping
-./deploy.sh
+rm -rf dist/ build/
+python -m build
+twine check dist/tcrsift-X.Y.Z*
+twine upload dist/tcrsift-X.Y.Z*
 ```
-
-## Notes
-
-- Version is stored in `tcrsift/version.py` as `__version__`.
-- The release script will refuse to run if the working tree is dirty.
-- If `uv` is available, the release script will use `uv build` and `uv tool run twine`; otherwise it falls back to `pip` and `python -m build/twine`.

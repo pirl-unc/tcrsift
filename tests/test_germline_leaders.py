@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from tcrsift.leaders import (
+from tcrsift.assemble.leaders import (
     _diff_vs_germline,
     characterize_divergence,
     germline_anchor_leader,

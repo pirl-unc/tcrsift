@@ -73,7 +73,7 @@ def cmd_data_download(args):
     """Download one or more supported reference databases / groups into the cache."""
     from ..datacache import DownloadError, download_database, resolve_db_selection
 
-    setup_logging(verbose=True)
+    setup_logging(bool(getattr(args, "verbose", False)))
     # Expand --db names + --group aliases. Default (neither) = all auto-
     # downloadable DBs; group/default expansions skip manual-only DBs (CEDAR),
     # while an explicit `--db cedar` is kept so its manual instruction surfaces.
@@ -170,4 +170,5 @@ def register(subparsers) -> None:
     p_data_download.add_argument(
         "--cache-dir", help="Override the default cache directory"
     )
+    p_data_download.add_argument("--verbose", action="store_true", help="Verbose logging")
     p_data_download.set_defaults(func=cmd_data_download)

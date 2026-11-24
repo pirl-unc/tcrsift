@@ -19,15 +19,6 @@ from collections import Counter
 
 import pandas as pd
 
-from ..leaders import (
-    characterize_divergence,
-    germline_anchor_leader,
-    germline_compare_leader,
-    germline_leader_nt,
-    germline_vgene_leaders,
-    normalize_vgene,
-)
-from ..sigpep import signal_peptide_features, sp_features_summary
 from ..validation import TCRsiftValidationError
 from .codons import (
     DEFAULT_FORBIDDEN_MOTIFS,
@@ -47,7 +38,16 @@ from .constants import (
     _lookup_default_leader,
     _record_leader,
 )
+from .leaders import (
+    characterize_divergence,
+    germline_anchor_leader,
+    germline_compare_leader,
+    germline_leader_nt,
+    germline_vgene_leaders,
+    normalize_vgene,
+)
 from .qc import add_synthesis_qc
+from .sigpep import signal_peptide_features, sp_features_summary
 
 logger = logging.getLogger(__name__)
 

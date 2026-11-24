@@ -567,8 +567,9 @@ class TCRsiftConfig:
                 # A key that names a section AND is given as a dict is a nested
                 # block, even when a same-named flat scalar alias exists (e.g.
                 # 'attribution', which is both a section and a --attribution bool).
-                if key in nested and isinstance(value, dict):
-                    nested[key].update(value)
+                if key in nested and (isinstance(value, dict) or value is None):
+                    if isinstance(value, dict):
+                        nested[key].update(value)
                 elif key in flat_to_nested:
                     section, param = flat_to_nested[key]
                     if key in _INVERTED_FLAT_ALIASES:
@@ -596,9 +597,23 @@ class TCRsiftConfig:
         if _overrides:
             _apply_mapping(_overrides, warn_unknown=False)
 
-        section_objs = {
-            sec: sec_cls(**nested[sec]) for sec, sec_cls in _SECTION_CLASSES.items()
-        }
+        section_objs = {}
+        for sec, sec_cls in _SECTION_CLASSES.items():
+            try:
+                section_objs[sec] = sec_cls(**nested[sec])
+            except TypeError as exc:
+                from .validation import TCRsiftValidationError
+
+                valid = sorted(f.name for f in dataclasses.fields(sec_cls))
+                unknown = sorted(set(nested[sec]) - set(valid))
+                if unknown:
+                    raise TCRsiftValidationError(
+                        f"Unknown configuration key(s) in section '{sec}': {', '.join(unknown)}",
+                        hint=f"Valid keys for '{sec}': {', '.join(valid)}",
+                    ) from exc
+                raise TCRsiftValidationError(
+                    f"Invalid configuration in section '{sec}': {exc}",
+                ) from exc
         return cls(**section_objs, **global_opts)
 
     def to_yaml(self, path: str | Path) -> None:
@@ -666,12 +681,8 @@ class TCRsiftConfig:
         # so they never clobber `True` values configured in YAML.
         store_true_default_false = {
             "verbose",
-            "no_leaders",
-            "leaders_from_contigs",
             "no_pgen_ppost",
             "no_assemble",
-            "no_sheet_contigs",
-            "allow_canonical_fallback",
         }
 
         cli_overrides: dict[str, Any] = {}
@@ -697,6 +708,7 @@ class TCRsiftConfig:
                 "no_sheet_contigs",
                 "allow_canonical_fallback",
                 "cache_dir",
+                "report_name",
             ):
                 continue
             if key in store_true_default_false and value is False:
