@@ -244,10 +244,16 @@ def _attribute_single_pool(
     def _canon(key: str) -> str:
         return merge_map.get(key, key)
 
-    # Canonical-clone priors (merged constituents pooled).
+    # Canonical-clone priors (merged constituents pooled, plus recurrent
+    # dual-alpha merged cells so pure dual-alpha clones have non-zero prior
+    # for beta_share and doublet splitting).
     canon_prior: dict[str, float] = {}
     for key, p in prior_of.items():
         canon_prior[_canon(key)] = canon_prior.get(_canon(key), 0.0) + float(p)
+    for canon_key, stats in merge_stats.items():
+        n_dual = float(stats.get("dual_alpha_n_dual_cells", 0))
+        if n_dual > 0:
+            canon_prior[canon_key] = canon_prior.get(canon_key, 0.0) + n_dual
 
     uniform = config.share_weighting == "uniform"
 
@@ -285,15 +291,24 @@ def _attribute_single_pool(
             keys = [_canon(target_fns[0](i)) for i in idx]
             _emit(idx, keys, np.ones(len(idx)), kind_primary)
             return
-        target_keys = [[_canon(fn(i)) for i in idx] for fn in target_fns]
-        target_pr = [
-            np.array([_eff_prior(k) for k in tk]) for tk in target_keys
-        ]
-        totals = np.sum(target_pr, axis=0)
-        m = len(target_fns)
-        for j in range(m):
-            w = np.where(totals > 0, target_pr[j] / np.where(totals > 0, totals, 1), 1.0 / m)
-            _emit(idx, target_keys[j], w, kind_split)
+        # Deduplicate canonical targets per cell so a merged dual-alpha clone
+        # appearing in multiple slots (e.g., quad_split) is not double-counted
+        # in the prior denominator.
+        emit_idx: list[int] = []
+        emit_keys: list[str] = []
+        emit_w: list[float] = []
+        for i in idx:
+            uniq_keys = list(dict.fromkeys(_canon(fn(i)) for fn in target_fns))
+            prs = [_eff_prior(k) for k in uniq_keys]
+            tot = sum(prs)
+            m_u = len(uniq_keys)
+            for k, p in zip(uniq_keys, prs):
+                w = (p / tot) if tot > 0 else (1.0 / m_u)
+                emit_idx.append(int(i))
+                emit_keys.append(k)
+                emit_w.append(float(w))
+        if emit_idx:
+            _emit(np.asarray(emit_idx, dtype=np.int64), emit_keys, np.asarray(emit_w, dtype=float), kind_split)
 
     # --- Category 2: dual-alpha (merge or split) --------------------------
     if dual_alpha.any():
@@ -439,20 +454,29 @@ def attribute_cells(
                 )
                 if len(sub_lt):
                     tables.append(sub_lt)
-                merged_all.update(sub_mm)
+                for mkey, mcanon in sub_mm.items():
+                    if mkey not in merged_all:
+                        merged_all[mkey] = mcanon
                 for mkey, mval in sub_ms.items():
                     if mkey not in stats_all:
                         stats_all[mkey] = dict(mval)
                     else:
                         prev = stats_all[mkey]
-                        prev_partners = str(prev.get("merged_alpha_partners", "") or "").split(";")
-                        new_partners = str(mval.get("merged_alpha_partners", "") or "").split(";")
-                        prev["merged_alpha_partners"] = ";".join(
-                            dict.fromkeys(p for p in (*prev_partners, *new_partners) if p)
+                        prev_n = int(prev.get("dual_alpha_n_dual_cells", 0))
+                        new_n = int(mval.get("dual_alpha_n_dual_cells", 0))
+                        prev["dual_alpha_n_dual_cells"] = prev_n + new_n
+                        prev["dual_alpha_beta_partners"] = max(
+                            int(prev.get("dual_alpha_beta_partners", 0)),
+                            int(mval.get("dual_alpha_beta_partners", 0)),
                         )
-                        prev["dual_alpha_n_dual_cells"] = int(
-                            prev.get("dual_alpha_n_dual_cells", 0)
-                        ) + int(mval.get("dual_alpha_n_dual_cells", 0))
+                        p_cof = prev.get("dual_alpha_cofraction")
+                        n_cof = mval.get("dual_alpha_cofraction")
+                        if p_cof is not None and n_cof is not None and (prev_n + new_n) > 0:
+                            prev["dual_alpha_cofraction"] = round(
+                                (p_cof * prev_n + n_cof * new_n) / (prev_n + new_n), 4
+                            )
+                        elif n_cof is not None:
+                            prev["dual_alpha_cofraction"] = n_cof
             long_table = (
                 pd.concat(tables, ignore_index=True)
                 if tables

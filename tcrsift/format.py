@@ -193,9 +193,22 @@ def pretty_method(
     if not isinstance(name, str):
         return str(name)
     parts = name.split("_")
-    # Reorder on the RAW tokens (baseline detection is independent of the
-    # superscript translation), then format each surviving part.
-    ordered = order_conditions(parts, priority=priority, last=last)
+    # Only reorder when at least one token looks like an enrichment marker
+    # (``pos``/``neg``) or matches ``priority``/``last``; otherwise preserve
+    # input order so arbitrary underscored names aren't scrambled alphabetically.
+    effective_last = list(last) if last is not None else list(BASELINE_MARKERS)
+    effective_priority = list(priority or ())
+    has_marker_or_rule = any(
+        p.endswith(("pos", "neg"))
+        or _is_baseline(p, effective_last)
+        or any(pr and pr in p for pr in effective_priority)
+        for p in parts
+    )
+    ordered = (
+        order_conditions(parts, priority=priority, last=last)
+        if has_marker_or_rule
+        else parts
+    )
     return "".join(_format_part(p) for p in ordered)
 
 
@@ -208,15 +221,26 @@ def pretty_sample(name: str) -> str:
     """Format a sample name like ``AIMpos_CTYneg-2`` as the prettified
     method (``AIM⁺CTY⁻``), dropping the trailing ``-N`` donor suffix.
 
+    Only strips a trailing ``-<digits>`` suffix when the stem looks like a
+    marker/method string (contains a ``pos``/``neg`` token), so non-marker
+    hyphenated names like ``Patient1-TIL``, ``Patient1-PBMC``, ``MART-1``,
+    or ``TRAV12-2`` are never collapsed or truncated.
+
     Use in plots that label by sample-of-origin in a single-donor
     context (the donor is named elsewhere in the figure title).
     """
     if not isinstance(name, str):
         return str(name)
-    stem = name.rsplit("-", 1)[0] if "-" in name else name
-    if not stem:
+    if "-" in name:
+        stem, suffix = name.rsplit("-", 1)
+        if (
+            stem
+            and suffix.isdigit()
+            and any(p.endswith(("pos", "neg")) for p in stem.split("_"))
+        ):
+            return pretty_method(stem)
         return name
-    return pretty_method(stem)
+    return pretty_method(name)
 
 
 def pretty_samples(names: Iterable[str]) -> list[str]:

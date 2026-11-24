@@ -237,7 +237,7 @@ DEFAULT_FORBIDDEN_MOTIFS: tuple[str, ...] = (
     "TTTTT",
     "GGGGG",
     "CCCCC",
-    # Common Type-II restriction sites (sense strand only).
+    # Common Type-II / Type-IIS restriction sites (both strands for asymmetric Type-IIS).
     "GAATTC",    # EcoRI
     "GGATCC",    # BamHI
     "AAGCTT",    # HindIII
@@ -248,6 +248,11 @@ DEFAULT_FORBIDDEN_MOTIFS: tuple[str, ...] = (
     "TCTAGA",    # XbaI
     "CTCGAG",    # XhoI
     "GGTACC",    # KpnI
+    "CCATGG",    # NcoI
+    "GGTCTC",    # BsaI (+)
+    "GAGACC",    # BsaI (-)
+    "CGTCTC",    # BsmBI (+)
+    "GAGACG",    # BsmBI (-)
     # Cryptic polyadenylation signals.
     "AATAAA",
     "ATTAAA",
@@ -295,20 +300,24 @@ def optimize_codons(
     codon_alts = CODON_ALTERNATIVES_BY_SPECIES.get(species, HUMAN_CODON_ALTERNATIVES)
     preferred_codons = PREFERRED_CODONS_BY_SPECIES.get(species, HUMAN_PREFERRED_CODONS)
     gc_balancing_active = gc_target_range != (0.0, 1.0)
+    prefix_up = str(prefix_nt).upper() if prefix_nt else ""
+    motifs_up = tuple(str(m).upper() for m in forbidden_motifs if m)
+    eff_window = max(context_window, max((len(m) for m in motifs_up), default=0))
 
-    def _new_motifs(buffer_with_codon: str, baseline: set[str]) -> bool:
-        return any(
-            motif not in baseline and motif in buffer_with_codon
-            for motif in forbidden_motifs
-        )
+    def _creates_motif(buf: str, codon: str) -> bool:
+        for motif in motifs_up:
+            k = len(motif) - 1
+            tail = buf[-k:] if k > 0 else ""
+            if motif in (tail + codon):
+                return True
+        return False
 
     def _has_valid_next(next_aa: str, new_buffer: str) -> bool:
         next_alts = codon_alts.get(next_aa)
         if not next_alts:
             return True
-        baseline = {m for m in forbidden_motifs if m in new_buffer}
         for next_codon in next_alts:
-            if not _new_motifs(new_buffer + next_codon, baseline):
+            if not _creates_motif(new_buffer, next_codon):
                 return True
         return False
 
@@ -323,35 +332,47 @@ def optimize_codons(
         return gc_target_range[0] <= frac <= gc_target_range[1]
 
     nt_parts: list[str] = []
-    buffer = prefix_nt[-context_window:] if prefix_nt else ""
-    gc_buffer = prefix_nt[-gc_target_window:] if prefix_nt else ""
-    preexisting = {m for m in forbidden_motifs if m in buffer}
+    buffer = prefix_up[-eff_window:] if prefix_up else ""
+    gc_buffer = prefix_up[-gc_target_window:] if prefix_up else ""
     for i, aa in enumerate(aa_sequence):
         alternatives = codon_alts.get(aa)
         if not alternatives:
             codon = preferred_codons.get(aa, "NNN")
             nt_parts.append(codon)
-            buffer = (buffer + codon)[-context_window:]
+            buffer = (buffer + codon)[-eff_window:]
             gc_buffer = (gc_buffer + codon)[-gc_target_window:]
-            preexisting = {m for m in forbidden_motifs if m in buffer}
             continue
         next_aa = aa_sequence[i + 1] if i + 1 < len(aa_sequence) else None
-        # Filter 1 (hard): motif-free
+        # Filter 1 (hard): motif-free across the prefix+codon boundary
         motif_free = [
             c for c in alternatives
-            if not _new_motifs(buffer + c, preexisting)
+            if not _creates_motif(buffer, c)
         ]
         if not motif_free:
-            # Every alternative introduces a motif; pick the lowest-CAI
-            # option to minimize cascade pressure on the next codon.
-            chosen = alternatives[-1]
+            # Every alternative triggers a motif (e.g. G after GGGGG); pick the
+            # candidate that minimizes the resulting homopolymer/motif overlap,
+            # breaking ties by highest CAI (first in `alternatives`).
+            def _badness(cand: str) -> int:
+                joined = buffer + cand
+                score = sum(1 for m in motifs_up if m in joined)
+                # Penalize extending a trailing homopolymer run further.
+                tail_ch = cand[-1]
+                run = 0
+                for ch in reversed(joined):
+                    if ch == tail_ch:
+                        run += 1
+                    else:
+                        break
+                return score * 100 + run
+
+            chosen = min(alternatives, key=_badness)
         else:
             # Filter 2 (soft): lookahead-valid. Refine motif_free; if
             # the refined set is empty, fall back to motif_free.
             lookahead_valid = [
                 c for c in motif_free
                 if next_aa is None
-                or _has_valid_next(next_aa, (buffer + c)[-context_window:])
+                or _has_valid_next(next_aa, (buffer + c)[-eff_window:])
             ] or motif_free
             # Filter 3 (soft): GC-in-range. Refine; fall back to
             # lookahead_valid if every option is out of range.
@@ -361,9 +382,8 @@ def optimize_codons(
             # CAI tiebreak: first remaining candidate is highest-CAI.
             chosen = gc_balanced[0]
         nt_parts.append(chosen)
-        buffer = (buffer + chosen)[-context_window:]
+        buffer = (buffer + chosen)[-eff_window:]
         gc_buffer = (gc_buffer + chosen)[-gc_target_window:]
-        preexisting = {m for m in forbidden_motifs if m in buffer}
     return "".join(nt_parts)
 
 
@@ -391,7 +411,16 @@ def recode_codons(
         if s:
             forbidden.add(s)
             forbidden.add(_revcomp(s))
-    max_site = max((len(s) for s in forbidden), default=0)
+    # Avoid newly injecting common restriction sites during repeat-breaking swaps
+    # even when the caller did not pass explicit `restriction_sites`.
+    soft_forbidden: set[str] = set()
+    for site in SYNTHESIS_RESTRICTION_SITES.values():
+        s = site.upper()
+        soft_forbidden.add(s)
+        soft_forbidden.add(_revcomp(s))
+    max_site = max(
+        (len(s) for s in (forbidden | soft_forbidden)), default=0
+    )
     repeat_active = bool(max_codon_repeats and max_codon_repeats >= 1)
 
     def _repeats_ok(prefix_codons: list[str], cand: str) -> bool:
@@ -405,10 +434,11 @@ def recode_codons(
                 break
         return run <= max_codon_repeats
 
-    def _sites_ok(trail_buf: str, cand: str, lookahead: str = "") -> bool:
-        if not forbidden:
+    def _sites_ok(trail_buf: str, cand: str, lookahead: str = "", *, check_set: set[str] | None = None) -> bool:
+        target_set = forbidden if check_set is None else check_set
+        if not target_set:
             return True
-        for f in forbidden:
+        for f in target_set:
             k = len(f) - 1
             left = trail_buf[-k:] if k > 0 else ""
             right = lookahead[:k] if k > 0 else ""
@@ -426,12 +456,25 @@ def recode_codons(
         alts = codon_alts.get(aa, [])
         candidates = [orig, *[c for c in alts if c != orig]]
         trail = "".join(out)[-(max_site - 1) :] if (max_site > 1 and out) else ""
-        la = lookahead_tail if i == n_codons - 1 else ""
+        # Look ahead into upcoming native codons (plus right_context) so a swap
+        # does not create a restriction site spanning codon i -> i+1 (e.g. GCC->GCT + AGC = NheI).
+        upcoming = "".join(orig_codons[i + 1 : i + 4]) + lookahead_tail
+        la = upcoming[: max(0, max_site - 1)] if max_site > 1 else ""
         chosen = None
         for cand in candidates:
-            if _repeats_ok(out, cand) and _sites_ok(trail, cand, la):
-                chosen = cand
-                break
+            if not (_repeats_ok(out, cand) and _sites_ok(trail, cand, la)):
+                continue
+            # When swapping away from the native codon, avoid introducing a new
+            # restriction site from SYNTHESIS_RESTRICTION_SITES.
+            if cand != orig and not _sites_ok(trail, cand, la, check_set=soft_forbidden):
+                continue
+            chosen = cand
+            break
+        if chosen is None:
+            for cand in candidates:
+                if _repeats_ok(out, cand) and _sites_ok(trail, cand, la):
+                    chosen = cand
+                    break
         if chosen is None and i > 0:
             # 1-codon backtracking: needed when codon i has no alternative (e.g.
             # ATG/Met or TGG/Trp at the 3' end of NcoI CCATGG or NdeI CATATG).
@@ -566,6 +609,7 @@ def find_longest_orf(dna_seq: str) -> tuple[str, int, str]:
     tuple
         (amino_acid_sequence, start_offset, ragged_3p_nucleotides)
     """
+    dna_seq = str(dna_seq).upper()
     start_positions = [i for i in range(len(dna_seq)) if dna_seq[i : i + 3] == "ATG"]
 
     longest_aa = ""

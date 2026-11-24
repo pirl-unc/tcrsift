@@ -559,6 +559,9 @@ def plot_umap_facets(
     """
     if facet_col not in adata.obs.columns:
         raise ValueError(f"facet_col {facet_col!r} not in adata.obs")
+    if adata.n_obs == 0:
+        logger.warning("plot_umap_facets: empty AnnData; skipping")
+        return None
     # Keep missing annotations as a visible facet, just like missing colors.
     fvals = adata.obs[facet_col].astype("string").fillna("nan")
     groups = sorted(fvals.unique())
@@ -582,6 +585,8 @@ def plot_umap_facets(
         panels.append((adata, integ))
     for g in groups:
         panels.append((adata[(fvals == g).to_numpy()], view_labels.get(g, f"({g})")))
+    if not panels:
+        return None
 
     # One shared legend/colorbar for the whole grid (from the pinned scale) beats
     # a per-panel legend that would jut into its neighbor.
@@ -590,7 +595,7 @@ def plot_umap_facets(
     )
     n_rows, n_cols = _grid_shape(len(panels), max_cols=max_cols)
     fig, axes = plt.subplots(
-        n_rows, n_cols, figsize=(6.0 * n_cols, 5.0 * n_cols / max_cols + 0.5 * n_rows),
+        n_rows, n_cols, figsize=(6.0 * n_cols, 5.0 * n_rows),
         squeeze=False,
     )
     flat = axes.flatten()
@@ -803,10 +808,15 @@ def plot_signature_vs_background(
         raise ValueError(f"signature_cols not in adata.obs: {missing}")
     if not signature_cols:
         raise ValueError("signature_cols is empty")
+    if adata.n_obs == 0:
+        logger.warning("plot_signature_vs_background: empty AnnData; skipping")
+        return None
 
     sub_mask = _resolve_subset_mask(adata, subset, by)
     groups = adata.obs[group_col].astype(str)
     order = sorted(groups.unique())
+    if not order:
+        return None
     gpos = {g: i for i, g in enumerate(order)}
 
     # Antigen coloring of the subset dots.
@@ -980,56 +990,71 @@ def plot_til(matched_clonotypes: pd.DataFrame, output_dir: str | Path):
         logger.warning("No TIL match data found")
         return
 
+    from ._schema import truthy_flag_series
+
+    til_mask = truthy_flag_series(matched_clonotypes["til_match"])
+
     # TIL recovery by tier
     if "tier" in matched_clonotypes.columns:
-        fig, ax = plt.subplots(figsize=(10, 6))
-
         tiers = sorted(matched_clonotypes["tier"].dropna().unique())
-        recovery_rates = []
+        if tiers:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            recovery_rates = []
 
-        for tier in tiers:
-            tier_data = matched_clonotypes[matched_clonotypes["tier"] == tier]
-            recovery = (
-                tier_data["til_match"].sum() / len(tier_data) * 100 if len(tier_data) > 0 else 0
+            for tier in tiers:
+                tier_sel = matched_clonotypes["tier"] == tier
+                n_tier = int(tier_sel.sum())
+                recovery = (
+                    float(til_mask[tier_sel].sum()) / n_tier * 100 if n_tier > 0 else 0.0
+                )
+                recovery_rates.append(recovery)
+
+            ax.bar(
+                range(len(tiers)), recovery_rates, color=plt.cm.viridis(np.linspace(0, 1, len(tiers)))
             )
-            recovery_rates.append(recovery)
-
-        ax.bar(
-            range(len(tiers)), recovery_rates, color=plt.cm.viridis(np.linspace(0, 1, len(tiers)))
-        )
-        ax.set_xticks(range(len(tiers)))
-        ax.set_xticklabels(tiers)
-        ax.set_ylabel("TIL Recovery Rate (%)")
-        ax.set_title("Culture→TIL Recovery by Confidence Tier")
-        for i, v in enumerate(recovery_rates):
-            ax.text(i, v + 1, f"{v:.1f}%", ha="center", fontsize=10)
-        save_figure(fig, output_dir / "til_recovery_by_tier.png")
+            ax.set_xticks(range(len(tiers)))
+            ax.set_xticklabels(tiers)
+            ax.set_ylabel("TIL Recovery Rate (%)")
+            ax.set_title("Culture→TIL Recovery by Confidence Tier")
+            for i, v in enumerate(recovery_rates):
+                ax.text(i, v + 1, f"{v:.1f}%", ha="center", fontsize=10)
+            save_figure(fig, output_dir / "til_recovery_by_tier.png")
 
     # Culture vs TIL frequency scatter
-    matched = matched_clonotypes[matched_clonotypes["til_match"]]
+    matched = matched_clonotypes.loc[til_mask]
     if (
         len(matched) > 0
         and "max_frequency" in matched.columns
         and "til_frequency" in matched.columns
     ):
-        fig, ax = plt.subplots(figsize=(10, 10))
-        ax.scatter(
-            matched["max_frequency"] * 100,
-            matched["til_frequency"] * 100,
-            alpha=0.6,
-            s=matched["cell_count"] * 10,
-        )
-        ax.set_xlabel("Culture Frequency (%)")
-        ax.set_ylabel("TIL Frequency (%)")
-        ax.set_title("Culture vs TIL Frequency\n(size = culture cell count)")
+        x_vals = pd.to_numeric(matched["max_frequency"], errors="coerce") * 100
+        y_vals = pd.to_numeric(matched["til_frequency"], errors="coerce") * 100
+        pos_mask = (x_vals > 0) & (y_vals > 0) & np.isfinite(x_vals) & np.isfinite(y_vals)
+        if pos_mask.any():
+            fig, ax = plt.subplots(figsize=(10, 10))
+            sizes = (
+                pd.to_numeric(matched.loc[pos_mask, "cell_count"], errors="coerce").fillna(4.0) * 10
+                if "cell_count" in matched.columns
+                else 40
+            )
+            ax.scatter(
+                x_vals[pos_mask],
+                y_vals[pos_mask],
+                alpha=0.6,
+                s=sizes,
+            )
+            ax.set_xlabel("Culture Frequency (%)")
+            ax.set_ylabel("TIL Frequency (%)")
+            ax.set_title("Culture vs TIL Frequency\n(size = culture cell count)")
 
-        # Add diagonal line
-        max_val = max(matched["max_frequency"].max(), matched["til_frequency"].max()) * 100
-        ax.plot([0, max_val], [0, max_val], "k--", alpha=0.3, label="1:1 line")
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.legend()
-        save_figure(fig, output_dir / "til_frequency_scatter.png")
+            # Add positive-domain 1:1 diagonal for log-log axes
+            min_pos = float(min(x_vals[pos_mask].min(), y_vals[pos_mask].min()))
+            max_val = float(max(x_vals[pos_mask].max(), y_vals[pos_mask].max()))
+            ax.plot([min_pos, max_val], [min_pos, max_val], "k--", alpha=0.3, label="1:1 line")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.legend()
+            save_figure(fig, output_dir / "til_frequency_scatter.png")
 
 
 # =============================================================================
@@ -1072,6 +1097,7 @@ def plot_set_overlap(
     if len(set(pretty.values())) == len(pretty):
         sets = {pretty[name]: sets[name] for name in ordered_names}
 
+    upset_fig = None
     try:
         import warnings
 
@@ -1091,13 +1117,13 @@ def plot_set_overlap(
             warnings.simplefilter("ignore", PerformanceWarning)
             warnings.simplefilter("ignore", DeprecationWarning)
             data = upsetplot.from_contents(sets)
-            fig = plt.figure(figsize=(max(7, 0.6 * len(sets) + 5), 5))
+            upset_fig = plt.figure(figsize=(max(7, 0.6 * len(sets) + 5), 5))
             upsetplot.plot(
-                data, fig=fig, sort_by="cardinality", show_counts=True,
+                data, fig=upset_fig, sort_by="cardinality", show_counts=True,
                 min_subset_size=min_subset_size,
             )
-            fig.suptitle(title)
-            save_figure(fig, output_path, dpi=150)
+            upset_fig.suptitle(title)
+            save_figure(upset_fig, output_path, dpi=150)
         return
     except ImportError:
         fallback_note = " (install 'upsetplot' for UpSet view)"
@@ -1105,7 +1131,8 @@ def plot_set_overlap(
         # upsetplot 0.9.0 fills missing dot styles with chained in-place
         # ``fillna``, which pandas 3 ignores, so its matrix reaches matplotlib
         # with NaN colors. Draw the bar chart instead of failing the report.
-        plt.close("all")
+        if upset_fig is not None:
+            plt.close(upset_fig)
         logger.warning("UpSet plot failed (%s: %s); drawing a bar chart of overlaps instead",
                        type(error).__name__, error)
         fallback_note = ""
@@ -1148,8 +1175,15 @@ def plot_method_overlap(
 
     n = len(matrix)
     fig, ax = plt.subplots(figsize=(max(6, 0.7 * n + 2), max(5, 0.7 * n + 1)))
-    vmax = float(matrix.values.max()) if matrix.size else 1.0
-    fmt = "d" if similarity == "count" else ".2f"
+    vals = np.asarray(matrix.values, dtype=float)
+    finite_vals = vals[np.isfinite(vals)]
+    vmax = float(finite_vals.max()) if finite_vals.size else 1.0
+    is_int_matrix = (
+        similarity == "count"
+        and not np.isnan(vals).any()
+        and all(np.issubdtype(dt, np.integer) for dt in matrix.dtypes)
+    )
+    fmt = "d" if is_int_matrix else (".0f" if similarity == "count" else ".2f")
     sns.heatmap(
         matrix,
         annot=True,
@@ -1204,10 +1238,14 @@ def plot_freq_prism_grid(
     fig, ax = plt.subplots(
         figsize=(max(6, 0.8 * n_cols + 2), max(5, 0.8 * n_rows + 1))
     )
+    pivot_int = (
+        not pivot.isna().any().any()
+        and all(np.issubdtype(dt, np.integer) for dt in pivot.dtypes)
+    )
     sns.heatmap(
         pivot,
         annot=True,
-        fmt="d",
+        fmt="d" if pivot_int else ".0f",
         cmap="viridis",
         ax=ax,
         cbar_kws={"label": "distinct clones"},
@@ -1477,9 +1515,10 @@ def plot_vgene_usage_by_method(
     if not present:
         return None
     matrices = []
+    long_dedup = long_df[[method_col, clone_col]].drop_duplicates()
     for vgcol, pretty in present:
-        merged = long_df.merge(clonotypes[[clone_col, vgcol]], on=clone_col, how="inner")
-        merged = merged[merged[vgcol].notna()]
+        clo_vg = clonotypes[[clone_col, vgcol]].dropna(subset=[vgcol]).drop_duplicates(subset=[clone_col])
+        merged = long_dedup.merge(clo_vg, on=clone_col, how="inner")
         if merged.empty:
             continue
         counts = merged.groupby([method_col, vgcol]).size().unstack(fill_value=0)

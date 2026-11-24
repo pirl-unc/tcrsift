@@ -22,11 +22,14 @@ from __future__ import annotations
 import argparse
 import copy
 import dataclasses
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -555,7 +558,7 @@ class TCRsiftConfig:
         nested: dict[str, dict[str, Any]] = {sec: {} for sec in _SECTION_CLASSES}
         global_opts: dict[str, Any] = {}
 
-        def _apply_mapping(source: dict[str, Any]) -> None:
+        def _apply_mapping(source: dict[str, Any], *, warn_unknown: bool = False) -> None:
             for key, value in source.items():
                 # A key that names a section AND is given as a dict is a nested
                 # block, even when a same-named flat scalar alias exists (e.g.
@@ -579,10 +582,15 @@ class TCRsiftConfig:
                     global_opts["insilico_filter"] = (
                         value if isinstance(value, dict) else {}
                     )
+                elif warn_unknown:
+                    logger.warning(
+                        "Unknown configuration key %r ignored (check spelling or section nesting)",
+                        key,
+                    )
 
-        _apply_mapping(data)
+        _apply_mapping(data, warn_unknown=True)
         if _overrides:
-            _apply_mapping(_overrides)
+            _apply_mapping(_overrides, warn_unknown=False)
 
         section_objs = {
             sec: sec_cls(**nested[sec]) for sec, sec_cls in _SECTION_CLASSES.items()

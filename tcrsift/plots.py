@@ -84,6 +84,7 @@ from ._plots_state import (  # noqa: F401
     VALID_PLOT_FORMATS,
     _category_color_strip,
     _grid_shape,
+    _parse_sample_frequencies,
     _per_cell_signature,
     get_plot_format,
     save_figure,
@@ -899,14 +900,21 @@ def _expand_sample_frequencies(clonotypes: pd.DataFrame) -> pd.DataFrame:
     """Pivot the per-clone ``sample_frequencies`` dict into a wide table.
 
     Returns an N_clones × N_samples DataFrame indexed by ``CDR3ab`` with
-    one column per sample (zero-filled where a clone is absent).
+    one column per sample (zero-filled where a clone is absent). Accepts
+    either Python dicts or stringified dicts produced by CSV round-trips.
     """
-    if "sample_frequencies" not in clonotypes.columns:
+    if "sample_frequencies" not in clonotypes.columns or "CDR3ab" not in clonotypes.columns:
         return pd.DataFrame(index=clonotypes.get("CDR3ab", pd.Index([], name="CDR3ab")))
-    freqs = clonotypes["sample_frequencies"].dropna()
-    if len(freqs) == 0:
-        return pd.DataFrame(index=clonotypes.get("CDR3ab", pd.Index([], name="CDR3ab")))
-    expanded = pd.DataFrame(list(freqs.values), index=clonotypes.loc[freqs.index, "CDR3ab"])
+    parsed_rows = []
+    idx_labels = []
+    for cdr3, raw in zip(clonotypes["CDR3ab"].tolist(), clonotypes["sample_frequencies"].tolist()):
+        d = _parse_sample_frequencies(raw)
+        if d:
+            parsed_rows.append(d)
+            idx_labels.append(cdr3)
+    if not parsed_rows:
+        return pd.DataFrame(index=pd.Index([], name="CDR3ab"))
+    expanded = pd.DataFrame(parsed_rows, index=pd.Index(idx_labels, name="CDR3ab"))
     return expanded.fillna(0.0).sort_index(axis=1)
 
 
@@ -1713,7 +1721,7 @@ def _derive_n_methods(clonotypes: pd.DataFrame) -> pd.Series | None:
         return clonotypes["n_conditions_present"]
     if "sample_frequencies" in clonotypes.columns:
         return clonotypes["sample_frequencies"].apply(
-            lambda d: sum(1 for v in (d or {}).values() if v > 0)
+            lambda d: sum(1 for v in _parse_sample_frequencies(d).values() if v > 0)
         )
     return None
 
@@ -1878,7 +1886,7 @@ def plot_clone_freq_vs_signature_per_sample(
     # Long-format frequency lookup from sample_frequencies.
     freq_rows = []
     for _, row in clonotypes.iterrows():
-        freqs = row.get("sample_frequencies") or {}
+        freqs = _parse_sample_frequencies(row.get("sample_frequencies"))
         for sample, freq in freqs.items():
             if freq > 0:
                 freq_rows.append(

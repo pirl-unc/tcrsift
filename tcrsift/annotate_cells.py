@@ -592,6 +592,13 @@ def annotate_clusters(
         if klrb1_each else {}
     )
     has_nk = "ct::NK cell" in ctm.columns
+    allow_t = "ct::T cell" in ctm.columns
+
+    def _lin(cl_key, col_name: str) -> float:
+        if col_name not in linm.columns:
+            return 0.0
+        val = linm.loc[cl_key, col_name]
+        return float(val) if pd.notna(val) else 0.0
 
     labels: dict = {}
     for cl in ctm.index:
@@ -603,14 +610,18 @@ def annotate_clusters(
         best = scores.idxmax().split("::", 1)[1]
 
         # NK vs cytotoxic-CD8: resolve on the POSITIVE NK signal (NK-restricted
-        # receptors CD8 lacks), gated so a strong-CD3 cluster stays T.
+        # receptors CD8 lacks), gated so a strong-CD3 cluster stays T (and never
+        # rewrites to T cell if T cell was excluded via allowed_types).
         if (has_nk and best in ("T cell", "NK cell")
                 and ctm.loc[cl, "ct::NK cell"] > gates.other_threshold):
             is_nk = (
-                linm.loc[cl, "lin::NKspec"] > gates.nk_specific_min
-                and linm.loc[cl, "lin::CD3"] < gates.cd3_dominant
+                _lin(cl, "lin::NKspec") > gates.nk_specific_min
+                and _lin(cl, "lin::CD3") < gates.cd3_dominant
             )
-            best = "NK cell" if is_nk else "T cell"
+            if is_nk:
+                best = "NK cell"
+            elif allow_t and ("lin::CD3" not in linm.columns or _lin(cl, "lin::CD3") > 0.0):
+                best = "T cell"
 
         # Innate-like T override (before Other/state): a TRDC+ (γδ) or
         # SLC4A10+/CD161+ (MAIT) lymphoid cluster is that T lineage even if the
@@ -628,7 +639,7 @@ def annotate_clusters(
         if best_v < gates.other_threshold:
             labels[cl] = "Other"
         elif best == "T cell":
-            lineage = ("CD8" if linm.loc[cl, "lin::CD8"] >= linm.loc[cl, "lin::CD4"]
+            lineage = ("CD8" if _lin(cl, "lin::CD8") >= _lin(cl, "lin::CD4")
                        else "CD4")
             ranked = stm.loc[cl].sort_values(ascending=False) if st_cols else pd.Series(dtype=float)
             state = None
@@ -698,6 +709,11 @@ def top_markers(adata, leiden_col: str = "leiden", *, n_genes: int = 30) -> dict
         work = work.copy()
         work.var_names_make_unique()
     work.obs[tmp_col] = pd.Categorical(str_vals[valid_mask].to_numpy())
+    prev_rgg = (
+        adata.uns.get("rank_genes_groups", _UNSET_RGG := object())
+        if work is adata
+        else None
+    )
     try:
         sc.tl.rank_genes_groups(
             work,
@@ -716,8 +732,13 @@ def top_markers(adata, leiden_col: str = "leiden", *, n_genes: int = 30) -> dict
     except (ValueError, ZeroDivisionError, KeyError):
         return out
     finally:
-        if work is adata and tmp_col in adata.obs.columns:
-            del adata.obs[tmp_col]
+        if work is adata:
+            if tmp_col in adata.obs.columns:
+                del adata.obs[tmp_col]
+            if prev_rgg is _UNSET_RGG:
+                adata.uns.pop("rank_genes_groups", None)
+            else:
+                adata.uns["rank_genes_groups"] = prev_rgg
     return out
 
 
@@ -836,3 +857,18 @@ def annotate_cells(
         len(labels), adata.n_obs,
     )
     return adata
+
+
+import sys as _sys  # noqa: E402
+import types as _types  # noqa: E402
+
+
+class _CallableAnnotateCellsModule(_types.ModuleType):
+    """Allow ``tcrsift.annotate_cells(adata, ...)`` even when the submodule
+    object has been bound on the package by ``from tcrsift.annotate_cells import ...``."""
+
+    def __call__(self, *args, **kwargs):
+        return annotate_cells(*args, **kwargs)
+
+
+_sys.modules[__name__].__class__ = _CallableAnnotateCellsModule

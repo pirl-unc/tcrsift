@@ -181,8 +181,17 @@ def insilico_mask(
         return mask
     for pred in predicates:
         pr = _grouped_percentile_rank(df, pred, group_col)
+        # Check whether each row's score group has >1 distinct finite value;
+        # a constant score column has no top-ranked clones and must not pass
+        # 100% of rows via the best-tie rescue when percentile < 1.0.
+        vals = pd.to_numeric(df[pred.score], errors="coerce")
+        if group_col is not None and group_col in df.columns:
+            n_uniq = df.assign(_v=vals).groupby(group_col, observed=True)["_v"].transform("nunique")
+            has_variation = n_uniq > 1
+        else:
+            has_variation = pd.Series(vals.nunique(dropna=True) > 1, index=df.index)
         if pred.rank_method == "min":
-            best_tie = pr == 0.0
+            best_tie = (pr == 0.0) & has_variation
         else:
             min_pred = FilterPredicate(
                 score=pred.score,
@@ -190,7 +199,7 @@ def insilico_mask(
                 percentile=pred.percentile,
                 rank_method="min",
             )
-            best_tie = _grouped_percentile_rank(df, min_pred, group_col) == 0.0
+            best_tie = (_grouped_percentile_rank(df, min_pred, group_col) == 0.0) & has_variation
         mask &= (pr <= pred.percentile) | best_tie
     mask = mask.fillna(False)
     return mask

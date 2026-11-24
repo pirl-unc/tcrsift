@@ -119,11 +119,17 @@ def sort_signature_consistency(
 
     # z-score signatures within each donor (transform avoids the grouping-
     # column apply deprecation), then mean per (donor, sort).
+    def _zscore_group(v: pd.Series) -> pd.Series:
+        if v.notna().sum() == 0:
+            return pd.Series(np.nan, index=v.index, dtype=float)
+        sd = v.std(ddof=0)
+        if pd.notna(sd) and sd > 0:
+            return (v - v.mean()) / sd
+        return pd.Series(0.0, index=v.index, dtype=float).where(v.notna(), np.nan)
+
     if zscore_within_donor:
         for c in signature_cols:
-            work[c] = work.groupby(donor_col, observed=True)[c].transform(
-                lambda v: (v - v.mean()) / v.std(ddof=0)
-                if v.std(ddof=0) and v.std(ddof=0) > 0 else 0.0)
+            work[c] = work.groupby(donor_col, observed=True)[c].transform(_zscore_group)
     agg = (
         work.groupby([donor_col, method_col], observed=True)[signature_cols]
         .mean().reset_index()
@@ -175,6 +181,9 @@ def sort_signature_consistency(
             z = float(r[col])
             row[f"z_{sig}"] = z
             if not can_compare_within_donor:
+                continue
+            if not np.isfinite(z):
+                problems.append(f"{sig} is NaN (missing/unscored)")
                 continue
             ok = (
                 z >= enrich_threshold - 1e-12

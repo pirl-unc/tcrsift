@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 # segments (require a trailing digit so TRADD/TRAF/IGF* don't match) and the
 # C-region genes (TRAC, TRBC1/2, TRGC, TRDC, IGKC/IGLC, IGH[ADEGM]).
 RECEPTOR_GENE_RE = re.compile(
-    r"^(TR[ABGD][VDJ]\d|TR[ABGD]C|IG[HKL][VDJ]\d|IGH[ADEGM]|IG[KL]C)",
+    r"^(TR[ABGD][VDJ]\d|TR[ABGD]C[0-9]?$|IG[HKL][VDJ]\d|IGH[ADEGM](?:[1-4][A-C]?|P)?$|IG[KL]C[0-9]?$)",
     re.IGNORECASE,
 )
 
@@ -539,9 +539,17 @@ def score_signature(
     cols = set(expr.columns)
     if background is not None:
         cols &= set(background.columns)
-    up = [g for g in signature.genes_up if g in cols]
-    down = [g for g in signature.genes_down if g in cols]
-    missing = [g for g in signature.all_genes if g not in cols]
+    # Anti-leakage guard: drop TCR/Ig receptor segment transcripts (#144).
+    dropped_rec = [g for g in signature.all_genes if is_receptor_gene(g)]
+    if dropped_rec:
+        logger.warning(
+            "score_signature[%s]: dropping receptor segment gene(s): %s",
+            signature.name,
+            dropped_rec,
+        )
+    up = [g for g in signature.genes_up if g in cols and not is_receptor_gene(g)]
+    down = [g for g in signature.genes_down if g in cols and not is_receptor_gene(g)]
+    missing = [g for g in signature.all_genes if g not in cols and not is_receptor_gene(g)]
     if missing:
         msg = (
             f"score_signature[{signature.name}]: required gene(s) have no "
@@ -893,9 +901,17 @@ def score_weighted_z(
     cols = set(expr.columns)
     if background is not None:
         cols &= set(background.columns)
-    up = [g for g in signature.genes_up if g in cols]
-    down = [g for g in signature.genes_down if g in cols]
-    missing = [g for g in signature.all_genes if g not in cols]
+    # Anti-leakage guard: drop TCR/Ig receptor segment transcripts (#144).
+    dropped_rec = [g for g in signature.all_genes if is_receptor_gene(g)]
+    if dropped_rec:
+        logger.warning(
+            "score_weighted_z[%s]: dropping receptor segment gene(s): %s",
+            signature.name,
+            dropped_rec,
+        )
+    up = [g for g in signature.genes_up if g in cols and not is_receptor_gene(g)]
+    down = [g for g in signature.genes_down if g in cols and not is_receptor_gene(g)]
+    missing = [g for g in signature.all_genes if g not in cols and not is_receptor_gene(g)]
     if missing:
         msg = f"score_weighted_z[{signature.name}]: missing gene(s): {missing}"
         if on_missing == "error":
@@ -927,6 +943,7 @@ def _score_genes_adata(
     layer: str | None = None,
     groups: pd.Series | None = None,
     apply_log1p: bool = False,
+    explicit_log1p: bool = False,
 ) -> pd.Series:
     """Control-subtracted module score via Scanpy (not scGSEA/rank enrichment)."""
     import scanpy as sc
@@ -946,8 +963,20 @@ def _score_genes_adata(
                 on_missing=on_missing,
                 layer=layer,
                 apply_log1p=apply_log1p,
+                explicit_log1p=explicit_log1p,
             ).to_numpy(dtype=float)
         return pd.Series(out_vals, index=index)
+
+    # Anti-leakage guard: drop TCR/Ig receptor segment transcripts (#144).
+    clean_genes = [g for g in genes if not is_receptor_gene(g)]
+    dropped_rec = [g for g in genes if is_receptor_gene(g)]
+    if dropped_rec:
+        logger.warning(
+            "_score_genes_adata: dropping receptor segment gene(s): %s",
+            dropped_rec,
+        )
+    if not clean_genes:
+        return pd.Series(0.0, index=index)
 
     work = adata
     if layer is not None or apply_log1p or not adata.var_names.is_unique:
@@ -959,13 +988,16 @@ def _score_genes_adata(
         if apply_log1p:
             x_min = float(work.X.min()) if work.n_obs and work.n_vars else 0.0
             x_max = float(work.X.max()) if work.n_obs and work.n_vars else 0.0
-            if x_min >= 0 and x_max > 25:
-                sc.pp.normalize_total(work, target_sum=1e4)
-                sc.pp.log1p(work)
+            if x_min >= 0:
+                if x_max > 25 or layer == "counts":
+                    sc.pp.normalize_total(work, target_sum=1e4)
+                    sc.pp.log1p(work)
+                elif explicit_log1p:
+                    sc.pp.log1p(work)
 
-    sym = harmonize_gene_symbols(adata_symbol_array(work), genes)
+    sym = harmonize_gene_symbols(adata_symbol_array(work), clean_genes)
     var_names = list(work.var_names)
-    want = {str(g).upper() for g in genes}
+    want = {str(g).upper() for g in clean_genes}
     present_syms = set(sym)
     picked = [var_names[i] for i, s in enumerate(sym) if s in want]
     missing = sorted(want - present_syms)
@@ -1098,11 +1130,22 @@ def score_by_name(
             series = _score_genes_adata(
                 data, sig.all_genes, on_missing=on_missing,
                 layer=layer, groups=groups, apply_log1p=apply_log1p,
+                explicit_log1p=(log1p is True),
             )
         else:
             expr = expression_frame_from_adata(
                 data, sig.all_genes, layer=layer, on_missing=on_missing
             )
+            # Match geneset_enrichment: CP10K-normalize raw counts before log1p
+            # when scoring AnnData without a caller-provided background frame.
+            if apply_log1p and background is None and not expr.empty and data.n_obs and data.n_vars:
+                src_mat = data.layers[layer] if (layer is not None and layer in data.layers) else data.X
+                x_min = float(src_mat.min())
+                x_max = float(src_mat.max())
+                if x_min >= 0 and (x_max > 25 or layer == "counts"):
+                    totals = np.asarray(src_mat.sum(axis=1)).ravel().astype(float)
+                    scale = np.where(totals > 0, 1e4 / totals, 0.0)
+                    expr = expr.mul(scale, axis=0)
             series = _score_frame(
                 expr, sig, log1p=apply_log1p, background=background,
                 groups=groups, on_missing=on_missing,

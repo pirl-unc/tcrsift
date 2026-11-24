@@ -160,19 +160,27 @@ def aggregate_clonotypes(
             elif verbose:
                 logger.info("  Using primary chain for doublets")
 
-    # Apply UMI filter
-    if "TRA_1_umis" in df.columns and min_umi > 0:
-        df["TRA_pass_umi"] = df["TRA_1_umis"].fillna(0) >= min_umi
-        df["TRB_pass_umi"] = df["TRB_1_umis"].fillna(0) >= min_umi
+    # Apply UMI filter independently per available chain column
+    if min_umi > 0:
+        df["TRA_pass_umi"] = (
+            df["TRA_1_umis"].fillna(0) >= min_umi
+            if "TRA_1_umis" in df.columns
+            else True
+        )
+        df["TRB_pass_umi"] = (
+            df["TRB_1_umis"].fillna(0) >= min_umi
+            if "TRB_1_umis" in df.columns
+            else True
+        )
     else:
         df["TRA_pass_umi"] = True
         df["TRB_pass_umi"] = True
 
     # Build clone identifier. CDR3_alpha/CDR3_beta have been re-pinned to
     # object by rehydrate_obs above, so .fillna("") is safe.
-    a_str = df["CDR3_alpha"].astype("string").fillna("").astype(object)
     b_str = df["CDR3_beta"].astype("string").fillna("").astype(object)
     if group_by == "CDR3ab":
+        a_str = df["CDR3_alpha"].astype("string").fillna("").astype(object)
         df["CDR3ab"] = a_str + "_" + b_str
         df["is_complete_clone"] = (
             (a_str != "")
@@ -232,7 +240,9 @@ def _warn_high_multichain_rate(df: pd.DataFrame, threshold: float) -> None:
     """
     if threshold <= 0 or "multi_chain" not in df.columns or len(df) == 0:
         return
-    mc = df["multi_chain"].fillna(False).astype(bool)
+    from ._schema import truthy_flag_series
+
+    mc = truthy_flag_series(df["multi_chain"])
     n_doublets = int(mc.sum())
     if n_doublets == 0:
         return
@@ -652,11 +662,14 @@ def _aggregate_clone_data(
             antigens = antigens_series.dropna().unique()
             record["antigens"] = ";".join(str(a) for a in antigens)
             record["n_antigens"] = len(antigens)
-            record["n_conditions"] = record["n_antigens"]
+            if record["n_antigens"] > 0:
+                record["n_conditions"] = record["n_antigens"]
 
         # Source information
         if "source" in clone_df.columns:
-            record["sources"] = ";".join(clone_df["source"].unique())
+            record["sources"] = ";".join(
+                clone_df["source"].dropna().astype(str).unique()
+            )
 
         # T cell type consensus
         if "Tcell_type" in clone_df.columns:
@@ -1454,13 +1467,12 @@ def build_method_recovery_table(
         # don't fall back to the cohort-wide target count, which would
         # produce misleading "0/N" denominators that imply the donor was
         # supposed to recover a target it never had access to.
-        donor_clones_total = set(
-            long_df[long_df["donor"].astype(str) == donor]["CDR3ab"]
-        )
+        donor_rows = long_df[long_df["donor"].astype(str) == donor]
+        donor_clones_total = set(donor_rows["CDR3ab"])
         donor_target = target_clones & donor_clones_total
         donor_total = len(donor_target)
         for method in sorted(
-            long_df["method"].dropna().astype(str).unique()
+            donor_rows["method"].dropna().astype(str).unique()
         ):
             sub = selected[
                 (selected["donor"].astype(str) == donor)

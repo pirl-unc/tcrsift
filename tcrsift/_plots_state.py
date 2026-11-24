@@ -167,19 +167,67 @@ def _grid_shape(n_panels: int, max_cols: int = 3) -> tuple[int, int]:
     return rows, cols
 
 
+def _parse_sample_frequencies(val) -> dict[str, float]:
+    """Parse a per-clone ``sample_frequencies`` cell (dict or stringified dict from CSV)."""
+    import ast
+    import json
+
+    if isinstance(val, dict):
+        parsed = val
+    elif isinstance(val, str):
+        s = val.strip()
+        if not s or s.lower() in {"nan", "none", "{}"}:
+            return {}
+        try:
+            parsed = json.loads(s)
+        except Exception:
+            try:
+                parsed = ast.literal_eval(s)
+            except Exception:
+                return {}
+        if not isinstance(parsed, dict):
+            return {}
+    else:
+        return {}
+
+    out: dict[str, float] = {}
+    for k, v in parsed.items():
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(fv):
+            out[str(k)] = fv
+    return out
+
+
 def _per_cell_signature(adata: ad.AnnData, gene_ids: list[str]) -> np.ndarray:
     """Mean log1p expression across ``gene_ids`` per cell.
 
     Drops any IDs not present in ``adata.var_names``; returns a
     zero-vector if none of the requested genes are in the matrix.
+    Safe against duplicate ``var_names`` and already-log-transformed
+    or residual matrices.
     """
-    valid = [g for g in gene_ids if g in adata.var_names]
-    if not valid:
+    var_names = adata.var_names
+    idx = []
+    for g in gene_ids:
+        matches = np.flatnonzero(var_names == g)
+        if len(matches) > 0:
+            idx.append(int(matches[0]))
+    if not idx:
         return np.zeros(adata.n_obs)
-    idx = [adata.var_names.get_loc(g) for g in valid]
     X = adata.X[:, idx]
     if hasattr(X, "toarray"):
         X = X.toarray()
-    return np.log1p(X).mean(axis=1)
+    X = np.asarray(X, dtype=float)
+    if X.ndim == 1:
+        X = X[:, None]
+    already_logged = "log1p" in getattr(adata, "uns", {}) or (
+        X.size > 0 and float(np.nanmin(X)) < 0
+    )
+    if already_logged:
+        return np.nanmean(X, axis=1)
+    return np.nanmean(np.log1p(np.clip(X, 0.0, None)), axis=1)
 
 

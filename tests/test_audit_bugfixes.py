@@ -361,8 +361,9 @@ class TestFilterLogisticAndInsilicoFixes:
         )
         out = filter_clonotypes_logistic(df, fdr_tiers=[0.1, 0.01], default_freq_threshold=0.50)
         assert out.attrs["logistic_fallback_reason"] == "negative_weight"
-        assert out.attrs["fdr_to_threshold"] == {0.1: 0.50, 0.01: 0.50}
-        assert (out["tier"] == "tier1").sum() == 1
+        assert out.attrs["fdr_to_threshold"] == {0.1: 0.50, 0.01: float("inf")}
+        assert (out["tier"] == "tier2").sum() == 1
+        assert (out["tier"] == "tier1").sum() == 0
 
     def test_insilico_mask_retains_clones_tied_at_best_possible_value(self):
         from tcrsift.insilico_filter import FilterPredicate, insilico_mask

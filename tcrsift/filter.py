@@ -404,9 +404,9 @@ def resolve_filter_mode_kwargs(
     resolved = dict(NAMED_FILTER_MODE_DEFAULTS.get(mode, {}))
     if user_kwargs:
         # Strip None / 0 / 0.0 from user_kwargs so unset CLI flags don't
-        # clobber preset values.
+        # clobber preset values, while preserving explicit boolean False.
         for k, v in user_kwargs.items():
-            if v not in (None, 0, 0.0):
+            if isinstance(v, bool) or v not in (None, 0, 0.0):
                 resolved[k] = v
     return resolved
 
@@ -599,8 +599,10 @@ def filter_clonotypes_threshold(
 
     # Viral exclusion
     if exclude_viral and "is_viral" in df.columns:
+        from ._schema import truthy_flag_series
+
         before = len(df)
-        is_viral = df["is_viral"].eq(True)
+        is_viral = truthy_flag_series(df["is_viral"])
         n_viral = int(is_viral.sum())
         df = df[~is_viral]
         if verbose:
@@ -668,7 +670,9 @@ def assign_tiers_threshold(
 
     # Apply viral exclusion if specified
     if exclude_viral and "is_viral" in df.columns:
-        viral_mask = ~df["is_viral"].eq(True)
+        from ._schema import truthy_flag_series
+
+        viral_mask = ~truthy_flag_series(df["is_viral"])
     else:
         viral_mask = pd.Series(True, index=df.index)
 
@@ -685,10 +689,10 @@ def assign_tiers_threshold(
     for tier_name in sorted(tier_definitions.keys(), key=_strictness):
         tier_def = tier_definitions[tier_name]
 
-        cell_mask = df["cell_count"] >= tier_def["min_cells"]
+        cell_mask = df["cell_count"] >= tier_def.get("min_cells", 0)
 
         if "max_frequency" in df.columns:
-            freq_mask = df["max_frequency"] >= tier_def["min_frequency"]
+            freq_mask = df["max_frequency"] >= tier_def.get("min_frequency", 0.0)
         else:
             freq_mask = pd.Series(True, index=df.index)
 
@@ -754,10 +758,13 @@ def filter_clonotypes_logistic(
         return assign_tiers_threshold(df)
 
     # Prepare model target
+    from ._schema import truthy_flag_series
+    from .model import analytical_logistic_threshold
+
     target_above_min = (df["max_frequency"] > min_freq_threshold).values
 
     if only_avoid_viral and "is_viral" in df.columns:
-        target = target_above_min & (~df["is_viral"].eq(True)).values
+        target = target_above_min & (~truthy_flag_series(df["is_viral"])).values
     else:
         condition_counts, _ = _get_condition_count_info(df)
         if condition_counts is not None:
@@ -765,6 +772,24 @@ def filter_clonotypes_logistic(
             target = target_above_min & (condition_counts == 1).values
         else:
             target = target_above_min
+
+    def _fallback_result(weight_val: float, reason: str) -> pd.DataFrame:
+        # On fallback, only the loosest tier receives default_freq_threshold so
+        # clones are never falsely stamped with tier1 (FDR=0.0001).
+        loosest_fdr = float(max(fdr_tiers))
+        fallback_thresholds = {
+            float(fdr): (
+                float(default_freq_threshold)
+                if float(fdr) == loosest_fdr
+                else float("inf")
+            )
+            for fdr in fdr_tiers
+        }
+        result_df = _assign_logistic_tiers_from_thresholds(df, fallback_thresholds)
+        result_df.attrs["logistic_model_weight"] = weight_val
+        result_df.attrs["fdr_to_threshold"] = fallback_thresholds
+        result_df.attrs["logistic_fallback_reason"] = reason
+        return result_df
 
     # Fit logistic regression
     try:
@@ -774,33 +799,23 @@ def filter_clonotypes_logistic(
         logger.warning(
             f"Model fitting failed: {e}. Falling back to default frequency threshold."
         )
-        fallback_thresholds = {float(fdr): float(default_freq_threshold) for fdr in fdr_tiers}
-        result_df = _assign_logistic_tiers_from_thresholds(df, fallback_thresholds)
-        result_df.attrs["logistic_model_weight"] = 0.0
-        result_df.attrs["fdr_to_threshold"] = fallback_thresholds
-        result_df.attrs["logistic_fallback_reason"] = "fit_failed"
-        return result_df
+        return _fallback_result(0.0, "fit_failed")
 
     if weight <= 0:
         logger.warning(
             "Data too noisy for adaptive thresholds, falling back to default frequency threshold"
         )
-        fallback_thresholds = {float(fdr): float(default_freq_threshold) for fdr in fdr_tiers}
-        result_df = _assign_logistic_tiers_from_thresholds(df, fallback_thresholds)
-        result_df.attrs["logistic_model_weight"] = weight
-        result_df.attrs["fdr_to_threshold"] = fallback_thresholds
-        result_df.attrs["logistic_fallback_reason"] = "negative_weight"
-        return result_df
+        return _fallback_result(weight, "negative_weight")
 
-    # Calculate thresholds for each FDR level over the empirical frequency range
-    x_range = np.linspace(df["max_frequency"].min(), df["max_frequency"].max(), 10000)
-    y_pred = model.predict(x_range)
-
-    fdr_to_threshold = {}
-    for fdr in fdr_tiers:
-        y_target = 1.0 - fdr
-        threshold_idx = np.argmin(np.abs(y_pred - y_target))
-        fdr_to_threshold[fdr] = max(min_freq_threshold, float(x_range[threshold_idx]))
+    # Compute exact analytical thresholds: x* = ln((1 - fdr) / fdr) / weight.
+    # Unreachable FDR levels (x* > 1.0) map to inf so no clone is falsely
+    # clamped into tier1 when the model never achieves 1 - fdr.
+    fdr_to_threshold = {
+        float(fdr): analytical_logistic_threshold(
+            weight, float(fdr), min_value=min_freq_threshold
+        )
+        for fdr in fdr_tiers
+    }
 
     df = _assign_logistic_tiers_from_thresholds(df, fdr_to_threshold)
 
@@ -890,7 +905,11 @@ def filter_clonotypes_stimulation(
         else ("log2_fold_change" if "log2_fold_change" in df.columns else None)
     )
     sig_delta_cols = [c for c in df.columns if c.startswith("delta_signature_")]
-    delta_cols = sig_delta_cols or [c for c in df.columns if c.startswith("delta_")]
+    delta_cols = sig_delta_cols or [
+        c
+        for c in df.columns
+        if c.startswith("delta_") and pd.api.types.is_numeric_dtype(df[c])
+    ]
 
     if fdr_col is None and lfc_col is None and not delta_cols:
         raise TCRsiftValidationError(
@@ -1063,14 +1082,17 @@ def filter_clonotypes(
 
     logger.info(f"Filtering clonotypes using {method} method")
 
-    # Basic filtering first
+    # Basic filtering first. When method="logistic" and exclude_viral=True,
+    # defer viral removal until after fitting so viral clones inform the
+    # viral-avoidance logistic boundary rather than being stripped beforehand.
+    defer_viral_exclusion = (method == "logistic") and exclude_viral
     df = filter_clonotypes_threshold(
         clonotypes,
         min_cells=min_cells,
         min_frequency=min_frequency,
         require_complete=require_complete,
         tcell_type=tcell_type if tcell_type != "both" else None,
-        exclude_viral=exclude_viral,
+        exclude_viral=False if defer_viral_exclusion else exclude_viral,
         min_donors=min_donors,
         min_methods_per_donor=min_methods_per_donor,
         min_cells_per_method=min_cells_per_method,
@@ -1089,6 +1111,16 @@ def filter_clonotypes(
 
     if method == "logistic":
         df = filter_clonotypes_logistic(df, fdr_tiers=fdr_tiers)
+        if defer_viral_exclusion and "is_viral" in df.columns:
+            from ._schema import truthy_flag_series
+
+            is_viral = truthy_flag_series(df["is_viral"])
+            df = df[~is_viral].copy()
+            if len(df) == 0:
+                raise TCRsiftValidationError(
+                    "No clonotypes remain after excluding viral clones",
+                    hint="All surviving clonotypes were flagged as viral.",
+                )
     elif method == "stimulation":
         df = filter_clonotypes_stimulation(
             df,

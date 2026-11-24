@@ -182,6 +182,10 @@ def phenotype_cells(
     tcell_types[ratio_cd8_over_cd4 > cd4_cd8_ratio] = "Confident CD8+"
 
     # CD3 filter (evaluated before pre_sorted rescue so non-T contaminants stay Unknown)
+    if "CD3" not in adata.obs.columns:
+        cd3_parts = [c for c in ("CD3D", "CD3E", "CD3G") if c in adata.obs.columns]
+        if cd3_parts:
+            adata.obs["CD3"] = sum(adata.obs[c].fillna(0) for c in cd3_parts)
     if "CD3" in adata.obs.columns:
         adata.obs["filter:min_cd3"] = adata.obs["CD3"].fillna(0) >= min_cd3_reads
         n_pass_cd3 = adata.obs["filter:min_cd3"].sum()
@@ -326,20 +330,31 @@ def filter_by_tcell_type(
             hint=f"Valid options are: {valid_types}",
         )
 
+    rehydrate_obs(adata)
+    is_cd8 = (
+        adata.obs["is_CD8"].to_numpy(dtype=bool)
+        if "is_CD8" in adata.obs.columns
+        else adata.obs["Tcell_type"].astype(str).str.contains("CD8", na=False).to_numpy(dtype=bool)
+    )
+    is_cd4 = (
+        adata.obs["is_CD4"].to_numpy(dtype=bool)
+        if "is_CD4" in adata.obs.columns
+        else adata.obs["Tcell_type"].astype(str).str.contains("CD4", na=False).to_numpy(dtype=bool)
+    )
     if tcell_type.lower() == "cd8":
-        mask = adata.obs["is_CD8"]
+        mask = is_cd8
         if verbose:
             logger.info(
                 f"Filtering to CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum() / len(adata) * 100:.1f}%)"
             )
     elif tcell_type.lower() == "cd4":
-        mask = adata.obs["is_CD4"]
+        mask = is_cd4
         if verbose:
             logger.info(
                 f"Filtering to CD4+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum() / len(adata) * 100:.1f}%)"
             )
     else:  # both
-        mask = adata.obs["is_CD8"] | adata.obs["is_CD4"]
+        mask = is_cd8 | is_cd4
         if verbose:
             logger.info(
                 f"Keeping both CD4+ and CD8+ cells: {mask.sum():,} of {len(adata):,} ({mask.sum() / len(adata) * 100:.1f}%)"
@@ -368,7 +383,12 @@ def apply_cd3_gate(adata: ad.AnnData, min_cd3_reads: int) -> ad.AnnData:
     """
     if min_cd3_reads <= 0 or "filter:min_cd3" not in adata.obs.columns:
         return adata
-    return adata[adata.obs["filter:min_cd3"]].copy()
+    if "CD3" in adata.obs.columns:
+        mask = pd.to_numeric(adata.obs["CD3"], errors="coerce").fillna(0) >= min_cd3_reads
+        return adata[mask.to_numpy(dtype=bool)].copy()
+    from ._schema import truthy_flag_series
+
+    return adata[truthy_flag_series(adata.obs["filter:min_cd3"]).to_numpy(dtype=bool)].copy()
 
 
 def get_phenotype_summary(adata: ad.AnnData) -> pd.DataFrame:

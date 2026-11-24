@@ -98,7 +98,14 @@ def fetch_canonical_constants(
                 f"({ids['ensembl']}); got start {seq[:10]!r}. Check whether "
                 f"Ensembl's convention changed in release {release}."
             )
-        out[gene] = seq[1:]
+        seq = seq[1:]
+        # Human Ensembl ENST00000466254 encodes TRBC2*03 (K at mature pos 9,
+        # 0-indexed 8), whereas ~99% of humans carry TRBC2*01 (E at pos 9,
+        # NCBI AAA60662). Patch to TRBC2*01 so regenerating canonical_constants.fasta
+        # never reverts human TRBC2*01 to *03 mislabeled as allele:01.
+        if sp == "human" and gene == "TRBC2" and len(seq) > 8 and seq[8] == "K":
+            seq = seq[:8] + "E" + seq[9:]
+        out[gene] = seq
     return out
 
 

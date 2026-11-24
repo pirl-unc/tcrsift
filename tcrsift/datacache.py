@@ -40,6 +40,7 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,7 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 _META_FILENAME = "_meta.json"
+_IPV4_FALLBACK_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -520,7 +522,9 @@ def _default_urlopen(url: str, *, timeout: float = 20.0):
     import urllib.error
     import urllib.request
 
-    req = urllib.request.Request(url, headers={"User-Agent": "tcrsift/3.33"})
+    from .version import __version__
+
+    req = urllib.request.Request(url, headers={"User-Agent": f"tcrsift/{__version__}"})
 
     def _open_once():
         # Respect monkeypatched urllib.request.urlopen in tests; otherwise attach
@@ -535,18 +539,19 @@ def _default_urlopen(url: str, *, timeout: float = 20.0):
     except (urllib.error.URLError, TimeoutError, OSError) as first_err:
         if isinstance(first_err, urllib.error.HTTPError) and first_err.code not in (403, 502, 503, 504):
             raise
-        orig_getaddrinfo = socket.getaddrinfo
+        with _IPV4_FALLBACK_LOCK:
+            orig_getaddrinfo = socket.getaddrinfo
 
-        def _ipv4_only(*args, **kwargs):
-            res = orig_getaddrinfo(*args, **kwargs)
-            v4 = [r for r in res if r[0] == socket.AF_INET]
-            return v4 or res
+            def _ipv4_only(*args, **kwargs):
+                res = orig_getaddrinfo(*args, **kwargs)
+                v4 = [r for r in res if r[0] == socket.AF_INET]
+                return v4 or res
 
-        socket.getaddrinfo = _ipv4_only
-        try:
-            return _open_once()
-        finally:
-            socket.getaddrinfo = orig_getaddrinfo
+            socket.getaddrinfo = _ipv4_only
+            try:
+                return _open_once()
+            finally:
+                socket.getaddrinfo = orig_getaddrinfo
 
 
 def _resolve_vdjdb_url(opener: Callable[[str], object]) -> str:
@@ -633,46 +638,88 @@ def download_database(
         return existing
 
     base = resolve_cache_dir(data_dir)
+    base.mkdir(parents=True, exist_ok=True)
     db_dir = base / db
-    if db_dir.exists():
-        # `force=True` path: clear before re-downloading so partial state
-        # from a failed previous run can't shadow the new download.
-        shutil.rmtree(db_dir)
-    db_dir.mkdir(parents=True)
 
     url = spec.download_url
     if url == _VDJDB_LATEST_SENTINEL:
         url = _resolve_vdjdb_url(opener)
 
-    logger.info("Downloading %s from %s", db, url)
-    with tempfile.NamedTemporaryFile(
-        prefix=f"{db}_", suffix=".tmp", delete=False, dir=base,
-    ) as tmp:
-        tmp_path = Path(tmp.name)
-        try:
-            with opener(url) as resp:  # type: ignore[arg-type]
-                shutil.copyfileobj(resp, tmp)
-        except Exception as e:
-            tmp_path.unlink(missing_ok=True)
-            shutil.rmtree(db_dir, ignore_errors=True)
-            raise DownloadError(f"Failed to download {db} from {url}: {e}") from e
-
+    # Stage download and extraction into a sibling temp dir so a failed
+    # `force=True` refresh never destroys an existing working cache.
+    staging_dir = Path(tempfile.mkdtemp(prefix=f".{db}_staging_", dir=base))
+    tmp_path: Path | None = None
     try:
+        logger.info("Downloading %s from %s", db, url)
+        with tempfile.NamedTemporaryFile(
+            prefix=f"{db}_", suffix=".tmp", delete=False, dir=base,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            try:
+                with opener(url) as resp:  # type: ignore[arg-type]
+                    shutil.copyfileobj(resp, tmp)
+            except Exception as e:
+                raise DownloadError(f"Failed to download {db} from {url}: {e}") from e
+
         if spec.archive_format == "zip":
-            _extract_zip(tmp_path, db_dir, spec.archive_member)
+            _extract_zip(tmp_path, staging_dir, spec.archive_member)
         elif spec.archive_format == "raw":
-            shutil.move(str(tmp_path), str(db_dir / spec.filename))
-            tmp_path = db_dir / spec.filename
+            shutil.move(str(tmp_path), str(staging_dir / spec.filename))
+            tmp_path = None
         else:
             raise DownloadError(
                 f"Unknown archive_format {spec.archive_format!r} for {db}"
             )
+
+        if db == "vdjdb":
+            has_vdjdb = _dir_has_vdjdb_files(staging_dir) or any(
+                _dir_has_vdjdb_files(sub)
+                for sub in staging_dir.glob("vdjdb-*")
+                if sub.is_dir()
+            )
+            if not has_vdjdb:
+                raise DownloadError(
+                    "Downloaded vdjdb but no VDJdb files found after extraction."
+                )
+            staged_target = staging_dir
+        else:
+            staged_target = staging_dir / spec.filename
+            if not staged_target.exists():
+                raise DownloadError(
+                    f"Downloaded {db} but canonical path is still missing — "
+                    f"archive_member={spec.archive_member!r} likely incorrect."
+                )
+
+        size = _path_size(staged_target)
+        sha256 = _sha256_of(staged_target) if staged_target.is_file() else ""
+        _write_metadata(
+            staging_dir,
+            url=url,
+            downloaded_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+            size=size,
+            sha256=sha256,
+        )
+
+        # Atomically swap staging_dir into db_dir (keeping a backup until move succeeds).
+        backup_dir: Path | None = None
+        if db_dir.exists():
+            backup_dir = Path(tempfile.mkdtemp(prefix=f".{db}_old_", dir=base))
+            backup_dir.rmdir()
+            shutil.move(str(db_dir), str(backup_dir))
+        try:
+            shutil.move(str(staging_dir), str(db_dir))
+        except Exception:
+            if backup_dir is not None and backup_dir.exists() and not db_dir.exists():
+                shutil.move(str(backup_dir), str(db_dir))
+            raise
+        if backup_dir is not None and backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
     except Exception:
-        shutil.rmtree(db_dir, ignore_errors=True)
+        shutil.rmtree(staging_dir, ignore_errors=True)
         raise
     finally:
-        if tmp_path.exists() and spec.archive_format == "zip":
-            tmp_path.unlink()
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
 
     resolved = cached_path(db, data_dir)
     if resolved is None:
@@ -680,33 +727,45 @@ def download_database(
             f"Downloaded {db} but canonical path is still missing — "
             f"archive_member={spec.archive_member!r} likely incorrect."
         )
-
-    size = _path_size(resolved)
-    sha256 = _sha256_of(resolved) if resolved.is_file() else ""
-    _write_metadata(
-        db_dir,
-        url=url,
-        downloaded_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-        size=size,
-        sha256=sha256,
-    )
     _invalidate_germline_memo_caches()
     return resolved
 
 
 def _extract_zip(archive: Path, dest: Path, member: str | None) -> None:
-    """Extract `member` (or the whole archive when member is None) into `dest`."""
+    """Extract `member` (or the whole archive when member is None) into `dest`.
+
+    Validates every archive entry path against ``dest.resolve()`` to block
+    Zip Slip path-traversal entries.
+    """
+    dest_resolved = dest.resolve()
     with zipfile.ZipFile(archive) as zf:
         if member is None:
-            zf.extractall(dest)
+            for info in zf.infolist():
+                target = (dest_resolved / info.filename).resolve()
+                try:
+                    target.relative_to(dest_resolved)
+                except ValueError as exc:
+                    raise DownloadError(
+                        f"Refusing to extract unsafe archive member {info.filename!r} "
+                        f"outside destination {dest_resolved}"
+                    ) from exc
+            zf.extractall(dest_resolved)
             return
         # Locate the member case-insensitively against the archive's basenames
         # so a release that wraps files in a top-level dir doesn't trip us.
-        candidates = [n for n in zf.namelist() if n.rsplit("/", 1)[-1] == member]
+        member_lower = member.lower()
+        candidates = [
+            n for n in zf.namelist() if n.rsplit("/", 1)[-1].lower() == member_lower
+        ]
         if not candidates:
             raise DownloadError(
                 f"Archive member {member!r} not found in {archive.name}. "
                 f"Contents: {zf.namelist()[:10]}{'...' if len(zf.namelist()) > 10 else ''}"
             )
-        with zf.open(candidates[0]) as src, (dest / member).open("wb") as dst:
+        target = (dest_resolved / Path(member).name).resolve()
+        try:
+            target.relative_to(dest_resolved)
+        except ValueError as exc:
+            raise DownloadError(f"Unsafe target member name {member!r}") from exc
+        with zf.open(candidates[0]) as src, target.open("wb") as dst:
             shutil.copyfileobj(src, dst)

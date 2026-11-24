@@ -182,7 +182,7 @@ def _pick_v_for_partial(
             # Penalize length discrepancy slightly so exact C104 register wins ties.
             len_pen = abs(len(g_tail) - len(donor_fr_suffix)) * 0.02
             ident = (matches / max(len(donor_fr_suffix), len(g_tail))) - len_pen
-            if len(donor_fr_suffix) >= 8 and (matches / n_cmp) < GERMLINE_MIN_IDENTITY:
+            if n_cmp >= 3 and (matches / n_cmp) < GERMLINE_MIN_IDENTITY:
                 continue
             score = (ident, allele_pref, func_rank)
             if best is None or score > best[0]:
@@ -253,8 +253,11 @@ def _reconstruct_from_bare_vj(
         return None
     _vs, v_allele, v_aa, v_nt_raw, c104, n_v_cdr3 = best_v
     v_nt = _ensure_nt_for_aa(v_aa, v_nt_raw, codon_species=codon_species)
-    fr1_fr3_aa = v_aa[:c104]
-    fr1_fr3_nt = v_nt[: 3 * c104]
+    # Preserve conserved Cys-104 if the input CDR3 is IMGT anchorless (missing leading 'C').
+    include_c104 = (not cdr3_aa.startswith("C")) and v_aa[c104] == "C"
+    fr_end = c104 + 1 if include_c104 else c104
+    fr1_fr3_aa = v_aa[:fr_end]
+    fr1_fr3_nt = v_nt[: 3 * fr_end]
 
     # Pick J allele: locate conserved [FWC][GA]XG anchor and score C-terminal CDR3 overlap.
     best_j = None
@@ -357,14 +360,19 @@ def reconstruct_germline_vdj_chain(
     ):
         p_aa = partial_aa_raw.strip()
         cdr_idx = p_aa.rindex(cdr3_aa)
-        donor_fr_suffix = p_aa[:cdr_idx]
-        picked = _pick_v_for_partial(
-            v_gene,
-            donor_fr_suffix,
-            species=species,
-            codon_species=codon_species,
-            data_dir=data_dir,
-        )
+        # Ensure the partial contig preserves an intact 3' FR4 tail past CDR3
+        # before trusting Path 1; otherwise fall through to Path 2 bare V+J.
+        if _FR4_TAIL_RE.search(p_aa[cdr_idx:]) is None:
+            picked = None
+        else:
+            donor_fr_suffix = p_aa[:cdr_idx]
+            picked = _pick_v_for_partial(
+                v_gene,
+                donor_fr_suffix,
+                species=species,
+                codon_species=codon_species,
+                data_dir=data_dir,
+            )
         if picked is not None:
             allele_label, prefix_aa, prefix_nt, _offset = picked
             p_nt = _ensure_nt_for_aa(

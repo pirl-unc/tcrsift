@@ -270,11 +270,11 @@ def _n_inserted_log(n_inserted: int, chain: str, species: str = "human") -> floa
     p = geom_p[chain]
     if chain == "beta":
         # Sum of two iid geometric(p) → negative binomial(r=2, p).
-        # P(N=n) = C(n+1, 1) * (1-p)^n * p^2
-        return math.log((n_inserted + 1) * ((1 - p) ** n_inserted) * (p ** 2))
+        # Compute directly in log-space to avoid float64 underflow on long CDR3s.
+        return math.log(n_inserted + 1) + n_inserted * math.log(1.0 - p) + 2.0 * math.log(p)
     else:
         # Geometric(p): P(N=n) = (1-p)^n * p
-        return math.log(((1 - p) ** n_inserted) * p)
+        return n_inserted * math.log(1.0 - p) + math.log(p)
 
 
 def _estimate_n_inserted(cdr3_aa: str, chain: str) -> int:
@@ -323,8 +323,8 @@ def pgen_components(
     L = len(cdr3_aa) if isinstance(cdr3_aa, str) else 0
     LN10 = math.log(10.0)
     return {
-        "log10_p_v":          _v_usage_log(v_gene or "", chain, sp) / LN10,
-        "log10_p_j":          _j_usage_log(j_gene or "", chain, sp) / LN10,
+        "log10_p_v":          _v_usage_log(v_gene if isinstance(v_gene, str) else "", chain, sp) / LN10,
+        "log10_p_j":          _j_usage_log(j_gene if isinstance(j_gene, str) else "", chain, sp) / LN10,
         "log10_p_length":     _length_log(L, chain, sp) / LN10,
         "log10_p_n_inserted": _n_inserted_log(n_inserted, chain, sp) / LN10,
         "log10_p_composition": _composition_log(cdr3_aa) / LN10,
@@ -413,8 +413,8 @@ def compute_pgen(
     # V / J gene-usage logs — dict-lookup per row.
     v_series = df[v_gene_col] if v_gene_col in df.columns else pd.Series([None] * len(df), index=df.index)
     j_series = df[j_gene_col] if j_gene_col in df.columns else pd.Series([None] * len(df), index=df.index)
-    log10_p_v = v_series.apply(lambda g: _v_usage_log(g or "", chain, sp) / LN10)
-    log10_p_j = j_series.apply(lambda g: _j_usage_log(g or "", chain, sp) / LN10)
+    log10_p_v = v_series.apply(lambda g: _v_usage_log(g if isinstance(g, str) else "", chain, sp) / LN10)
+    log10_p_j = j_series.apply(lambda g: _j_usage_log(g if isinstance(g, str) else "", chain, sp) / LN10)
 
     total = (
         log10_p_v + log10_p_j + log10_p_length

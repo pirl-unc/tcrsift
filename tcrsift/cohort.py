@@ -127,11 +127,23 @@ def cohort_overlap(
     result["cell_weighted_jaccard"] = paired["cell_weighted_jaccard"]
 
     if include_beta_only and "CDR3_beta" in cohort_long.columns:
-        beta = compute_sample_overlap_matrices(
-            cohort_long, clone_col="CDR3_beta", sample_col="donor", cells_col="cells",
+        valid_beta = (
+            cohort_long["CDR3_beta"].notna()
+            & (cohort_long["CDR3_beta"].astype(str).str.strip() != "")
         )
-        result["jaccard_beta_only"] = beta["jaccard"]
-        result["cell_weighted_jaccard_beta_only"] = beta["cell_weighted_jaccard"]
+        beta = compute_sample_overlap_matrices(
+            cohort_long.loc[valid_beta],
+            clone_col="CDR3_beta",
+            sample_col="donor",
+            cells_col="cells",
+        )
+        donors = list(paired["jaccard"].index)
+        for key in ("jaccard", "cell_weighted_jaccard"):
+            mat = beta[key].reindex(index=donors, columns=donors, fill_value=0.0)
+            for d in donors:
+                if d not in beta[key].index:
+                    mat.loc[d, d] = 1.0
+            result[f"{key}_beta_only"] = mat
     return result
 
 

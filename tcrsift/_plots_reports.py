@@ -296,7 +296,8 @@ def plot_funnel_lollipop(
         return output_dir / filename
 
     stages = list(stage_counts.keys())
-    counts = np.array([max(c, 1) for c in stage_counts.values()], dtype=float)
+    raw_counts = [int(c) for c in stage_counts.values()]
+    counts = np.array([max(c, 1) for c in raw_counts], dtype=float)
     n = len(stages)
 
     fig, ax = plt.subplots(figsize=(10.5, max(4, 0.6 * n + 2)))
@@ -307,10 +308,10 @@ def plot_funnel_lollipop(
         s=np.linspace(95, 42, n),
         color="#b91c1c", edgecolor="white", linewidth=1.0, zorder=3,
     )
-    for yi, stage, count in zip(y, stages, counts):
+    for yi, stage, count, raw_count in zip(y, stages, counts, raw_counts):
         ax.hlines(yi, xmin=count, xmax=counts.max() * 2.4,
                   color="#fda4a4", linewidth=2.3)
-        ax.text(count / 1.10, yi, f"n = {int(count):,}",
+        ax.text(count / 1.10, yi, f"n = {raw_count:,}",
                 va="center", ha="left", fontsize=9.5)
 
     ax.set_xscale("log")
@@ -765,6 +766,8 @@ def create_tcr_sequence_pdf(
     c = canvas.Canvas(str(output_path), pagesize=letter)
     width, height = letter
 
+    from .format import pdf_safe
+
     # Ensure Courier is available
     pdfmetrics.getFont("Courier")
 
@@ -777,7 +780,7 @@ def create_tcr_sequence_pdf(
             nonlocal y_position
             c.setFont(font, size or title_font_size)
             c.setFillColor(color)
-            c.drawString(x, y_position, str(text))
+            c.drawString(x, y_position, pdf_safe(str(text)))
             y_position -= y_offset
 
         def blank(space=25):
@@ -799,7 +802,7 @@ def create_tcr_sequence_pdf(
         else:
             title = f"TCR #{idx}"
 
-        c.drawString(30, y_position, title)
+        c.drawString(30, y_position, pdf_safe(title))
         y_position -= 25
 
         # Metadata
@@ -878,8 +881,8 @@ def create_tcr_sequence_pdf(
                 current_line_width += 1
 
         # Per-method evidence / selection-rule overlay (#123/#125). Drawn
-        # at the bottom of the page when an annotation block is supplied
-        # for this clone (keyed by ``annotation_key_column``).
+        # below the sequence (or on a fresh page if space is tight) so it
+        # never overlaps long amino-acid/nucleotide sequences.
         if annotations:
             key = row.get(annotation_key_column)
             ann_lines = annotations.get(key)
@@ -887,14 +890,23 @@ def create_tcr_sequence_pdf(
                 ann_lines = annotations.get(str(key))
             if ann_lines:
                 disp = _expand_annotation_lines(ann_lines)
-                ann_y = 60 + 13 * min(len(disp), 18)
+                ann_needed = 13 * (min(len(disp), 18) + 1)
+                ann_y = min(y_position - 25, 60 + 13 * min(len(disp), 18))
+                if y_position - 25 < 60 + ann_needed:
+                    c.showPage()
+                    ann_y = height - 50
                 c.setFillColor(colors.black)
                 c.setFont("Helvetica-Bold", label_font_size)
                 c.drawString(30, ann_y, "Selection:")
                 ann_y -= 13
                 c.setFont("Helvetica", label_font_size - 1)
                 for line in disp:
-                    c.drawString(36, ann_y, line)
+                    if ann_y < 40:
+                        c.showPage()
+                        ann_y = height - 50
+                        c.setFillColor(colors.black)
+                        c.setFont("Helvetica", label_font_size - 1)
+                    c.drawString(36, ann_y, pdf_safe(line))
                     ann_y -= 13
 
         c.showPage()
@@ -975,16 +987,19 @@ def generate_report(
             logger.warning("reportlab not installed, cannot generate PDF report")
 
     elif format == "html":
+        import html as _html
+
         html_path = output_dir / "all-figures.html"
 
-        name = f" — {report_name}" if report_name else ""
-        html_content = [f"<html><head><title>TCRsift figures{name}</title></head><body>"]
-        html_content.append(f"<h1>TCRsift — all figures{name}</h1>")
+        safe_name = f" — {_html.escape(str(report_name))}" if report_name else ""
+        html_content = [f"<html><head><title>TCRsift figures{safe_name}</title></head><body>"]
+        html_content.append(f"<h1>TCRsift — all figures{safe_name}</h1>")
 
         for png_file in sorted(output_dir.glob("*.png")):
-            title = png_file.stem.replace("_", " ").title()
+            title = _html.escape(png_file.stem.replace("_", " ").title())
+            src = _html.escape(png_file.name, quote=True)
             html_content.append(f"<h2>{title}</h2>")
-            html_content.append(f'<img src="{png_file.name}" style="max-width:100%;">')
+            html_content.append(f'<img src="{src}" style="max-width:100%;">')
             html_content.append("<hr>")
 
         html_content.append("</body></html>")

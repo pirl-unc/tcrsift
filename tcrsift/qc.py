@@ -406,8 +406,10 @@ def validate_clonotypes(
             )
         )
 
-    # Read count check
-    read_cols = [c for c in df.columns if c.endswith("_reads") or c == "reads"]
+    # Read count check (supports both per-cell *_reads and clonotype *_reads_mean)
+    read_cols = [
+        c for c in df.columns if c.endswith(("_reads", "_reads_mean")) or c == "reads"
+    ]
     if read_cols:
         for col in read_cols:
             low_reads = df[col].fillna(0) < min_reads
@@ -416,8 +418,10 @@ def validate_clonotypes(
             if n_low > 0:
                 report.add_warning(f"{n_low} clonotypes with {col} < {min_reads}")
 
-    # UMI count check
-    umi_cols = [c for c in df.columns if c.endswith("_umis") or c == "umis"]
+    # UMI count check (supports both per-cell *_umis and clonotype *_umis_mean)
+    umi_cols = [
+        c for c in df.columns if c.endswith(("_umis", "_umis_mean")) or c == "umis"
+    ]
     if umi_cols:
         for col in umi_cols:
             low_umis = df[col].fillna(0) < min_umis
@@ -553,20 +557,27 @@ def get_qc_summary(clonotypes: pd.DataFrame) -> dict:
     if alpha_valid is not None and beta_valid is not None:
         summary["n_complete"] = int((alpha_valid & beta_valid).sum())
 
-    # CDR3 length statistics
+    # CDR3 length statistics (ignore empty/whitespace strings)
     for chain, col in [("alpha", "CDR3_alpha"), ("beta", "CDR3_beta")]:
         if col in clonotypes.columns:
-            lengths = clonotypes[col].dropna().str.len()
+            nonempty = clonotypes[col].dropna().astype(str).str.strip()
+            nonempty = nonempty[nonempty != ""]
+            lengths = nonempty.str.len()
             if len(lengths) > 0:
                 summary[f"cdr3_{chain}_mean_length"] = lengths.mean()
                 summary[f"cdr3_{chain}_min_length"] = lengths.min()
                 summary[f"cdr3_{chain}_max_length"] = lengths.max()
 
-    # Cell count statistics
-    if "n_cells" in clonotypes.columns:
-        summary["total_cells"] = clonotypes["n_cells"].sum()
-        summary["mean_cells_per_clonotype"] = clonotypes["n_cells"].mean()
-        summary["max_cells_per_clonotype"] = clonotypes["n_cells"].max()
+    # Cell count statistics (supports both legacy `n_cells` and standard `cell_count`)
+    cell_col = (
+        "n_cells"
+        if "n_cells" in clonotypes.columns
+        else ("cell_count" if "cell_count" in clonotypes.columns else None)
+    )
+    if cell_col is not None:
+        summary["total_cells"] = clonotypes[cell_col].sum()
+        summary["mean_cells_per_clonotype"] = clonotypes[cell_col].mean()
+        summary["max_cells_per_clonotype"] = clonotypes[cell_col].max()
 
     return summary
 
@@ -708,7 +719,13 @@ def gex_vdj_overlap(
     obs = adata.obs
     present = [c for c in vdj_cols if c in obs.columns]
     if present:
-        has_vdj = obs[present].notna().any(axis=1)
+        has_vdj = pd.DataFrame(
+            {
+                c: obs[c].notna() & (obs[c].astype(str).str.strip() != "")
+                for c in present
+            },
+            index=obs.index,
+        ).any(axis=1)
     else:
         has_vdj = pd.Series(False, index=obs.index)
     rows = []
@@ -751,8 +768,9 @@ def inter_sample_barcode_jaccard(
     bcs = pd.Series(list(map(str, adata.obs_names)), index=obs.index)
     if strip_suffix:
         bcs = bcs.map(_base_barcode)
-    samples = sorted(obs[sample_col].astype(str).unique())
-    sets = {s: set(bcs[obs[sample_col].astype(str) == s]) for s in samples}
+    non_na = obs[sample_col].notna()
+    samples = sorted(obs.loc[non_na, sample_col].astype(str).unique())
+    sets = {s: set(bcs[non_na & (obs[sample_col].astype(str) == s)]) for s in samples}
     mat = pd.DataFrame(0.0, index=samples, columns=samples)
     for a in samples:
         for b in samples:
@@ -1008,15 +1026,27 @@ def cd4_cd8_doublet_mask(
     cd4_gene: str = "CD4",
     cd8_genes: tuple[str, ...] = ("CD8A", "CD8B"),
     counts_layer: str | None = None,
+    max_imbalance_ratio: float = 5.0,
 ) -> np.ndarray:
-    """Mask of CD4⁺CD8⁺ double-positive T cells — gated on CD3 (#314)."""
+    """Mask of CD4⁺CD8⁺ double-positive T cells — gated on CD3 (#314).
+
+    Requires both CD4 and CD8 expression >= 1 AND a balanced co-expression
+    ratio (``max(CD4, CD8) <= max_imbalance_ratio * min(CD4, CD8)``) so a
+    confident single-positive T cell with a single ambient UMI of the opposite
+    co-receptor (e.g., CD8A=30, CD4=1) is not discarded as a doublet.
+    """
     eff_layer = counts_layer if counts_layer is not None else ("counts" if "counts" in adata.layers else None)
     cd3 = _gene_vector(adata, cd3_gene, layer=eff_layer)
     cd4 = _gene_vector(adata, cd4_gene, layer=eff_layer)
     cd8 = np.zeros(adata.n_obs)
     for g in cd8_genes:
         cd8 = np.maximum(cd8, _gene_vector(adata, g, layer=eff_layer))
-    return (cd3 >= 1) & (cd4 >= 1) & (cd8 >= 1)
+    both_pos = (cd3 >= 1) & (cd4 >= 1) & (cd8 >= 1)
+    if max_imbalance_ratio is not None and max_imbalance_ratio > 0:
+        major = np.maximum(cd4, cd8)
+        minor = np.minimum(cd4, cd8)
+        return both_pos & (major <= max_imbalance_ratio * minor)
+    return both_pos
 
 
 # Sentinel so an explicit ``None`` (disable this bound) is distinguishable from
@@ -1203,15 +1233,29 @@ def cell_qc_funnel(
         drop(adata.obs["_n_counts"] < min_counts, "min_counts", f"< {min_counts} UMIs")
     if max_counts is not None:
         drop(adata.obs["_n_counts"] > max_counts, "max_counts", f"> {max_counts} UMIs")
-    if min_mito_pct is not None and min_mito_pct > 0:
-        drop(adata.obs["_pct_mt"] < min_mito_pct, "min_mito",
-             f"< {min_mito_pct:g}% mito (ambient)")
-    if max_mito_pct is not None:
-        drop(adata.obs["_pct_mt"] >= max_mito_pct, "max_mito",
-             f">= {max_mito_pct:g}% mito")
+    has_mt_genes = bool(mt_mask.any())
+    if not has_mt_genes and (
+        (min_mito_pct is not None and min_mito_pct > 0) or max_mito_pct is not None
+    ):
+        logger.warning(
+            "cell_qc_funnel[%s]: 0 mitochondrial genes detected in var_names; "
+            "skipping mitochondrial QC bounds (min_mito_pct=%s, max_mito_pct=%s).",
+            prefix,
+            min_mito_pct,
+            max_mito_pct,
+        )
+    else:
+        if min_mito_pct is not None and min_mito_pct > 0:
+            drop(adata.obs["_pct_mt"] < min_mito_pct, "min_mito",
+                 f"< {min_mito_pct:g}% mito (ambient)")
+        if max_mito_pct is not None:
+            drop(adata.obs["_pct_mt"] > max_mito_pct, "max_mito",
+                 f"> {max_mito_pct:g}% mito")
 
     if trb_doublet_col in adata.obs.columns:
-        drop(adata.obs[trb_doublet_col].fillna(False).astype(bool), "tcr_2b",
+        from ._schema import truthy_flag_series
+
+        drop(truthy_flag_series(adata.obs[trb_doublet_col]), "tcr_2b",
              ">=2 productive TRB (T-T)")
     c_layer = "counts" if "counts" in adata.layers else None
     drop(

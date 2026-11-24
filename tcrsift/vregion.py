@@ -171,11 +171,16 @@ def _parse_vregion_fasta_with_nt(
         gene_raw, _, allele = fields[1].partition("*")
         gene = gene_raw.strip().upper()
         functionality = fields[3].strip()
-        nt_raw = re.sub(r"[^ACGTacgt]", "", "".join(chunks)).upper()
+        # Strip ONLY whitespace and IMGT alignment gaps; preserve IUPAC codes
+        # so ambiguous bases trigger 'X' rejection instead of frameshifting.
+        nt_raw = re.sub(r"[\s.\-]", "", "".join(chunks)).upper().replace("U", "T")
         if not nt_raw:
             return
-        aa, _ragged = translate_dna(nt_raw)
-        if not aa or "*" in aa or "X" in aa:
+        n_codons = len(nt_raw) // 3
+        if n_codons == 0:
+            return
+        aa, _ragged = translate_dna(nt_raw[: 3 * n_codons])
+        if not aa or len(aa) != n_codons or "*" in aa or "X" in aa:
             return
         clean_nt = nt_raw[: 3 * len(aa)]
         ref.setdefault(gene, []).append((allele, functionality, aa))
@@ -226,7 +231,7 @@ def _parse_jregion_fasta_with_nt(
         gene_raw, _, allele = fields[1].partition("*")
         gene = gene_raw.strip().upper()
         functionality = fields[3].strip()
-        nt_raw = re.sub(r"[^ACGTacgt]", "", "".join(chunks)).upper()
+        nt_raw = re.sub(r"[\s.\-]", "", "".join(chunks)).upper().replace("U", "T")
         if len(nt_raw) < 27:
             return
 
@@ -238,7 +243,7 @@ def _parse_jregion_fasta_with_nt(
                 continue
             sub_nt = nt_raw[frame : frame + 3 * n_codons]
             aa, _ = translate_dna(sub_nt)
-            if not aa or "*" in aa or "X" in aa:
+            if not aa or len(aa) != n_codons or "*" in aa or "X" in aa:
                 continue
             if not _FR4_MOTIF_RE.search(aa):
                 continue

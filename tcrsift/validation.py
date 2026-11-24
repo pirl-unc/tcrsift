@@ -366,7 +366,9 @@ def resolve_cellranger_gex_source(path: str | Path) -> tuple[str, Path]:
     # Priority 1: filtered matrix directory or exact filtered .h5
     for d in search_dirs:
         mdir = d / "filtered_feature_bc_matrix"
-        if mdir.is_dir():
+        if mdir.is_dir() and (
+            (mdir / "matrix.mtx.gz").is_file() or (mdir / "matrix.mtx").is_file()
+        ):
             return ("mtx", mdir)
     for d in search_dirs:
         h5 = d / "filtered_feature_bc_matrix.h5"
@@ -404,7 +406,9 @@ def resolve_cellranger_gex_source(path: str | Path) -> tuple[str, Path]:
     _log = _logging.getLogger(__name__)
     for d in search_dirs:
         raw_mdir = d / "raw_feature_bc_matrix"
-        if raw_mdir.is_dir():
+        if raw_mdir.is_dir() and (
+            (raw_mdir / "matrix.mtx.gz").is_file() or (raw_mdir / "matrix.mtx").is_file()
+        ):
             _log.warning(
                 "Using unfiltered CellRanger matrix %s (filtered_feature_bc_matrix not found)",
                 raw_mdir,
@@ -495,11 +499,21 @@ def validate_cdr3_sequence(
     - Warns (debug level) if sequence doesn't start with C
     - Warns (debug level) if sequence length is outside 5-30 aa range
     """
-    if pd.isna(seq) or seq == "":
+    if seq is None or pd.isna(seq) or seq == "":
         return True  # Missing is OK
 
-    # Valid amino acid characters
-    valid_aa = set("ACDEFGHIKLMNPQRSTVWY*")
+    if not isinstance(seq, str):
+        msg = f"CDR3 {chain} sequence must be a string, got {type(seq).__name__}: {seq!r}"
+        if strict:
+            raise TCRsiftValidationError(
+                msg,
+                hint="CDR3 sequences should be standard amino acid strings.",
+            )
+        logger.warning(msg)
+        return False
+
+    # Valid amino acid characters (reject stop codons '*' in productive CDR3s)
+    valid_aa = set("ACDEFGHIKLMNPQRSTVWY")
 
     invalid_chars = set(seq.upper()) - valid_aa
     if invalid_chars:
@@ -931,12 +945,23 @@ def validate_numeric_param(
     float
         Validated value
     """
+    if isinstance(value, bool):
+        raise TCRsiftValidationError(
+            f"Parameter '{name}' must be a number, got bool: {value}",
+            hint="Check that you're passing a valid number, not a boolean.",
+        )
     try:
         value = float(value)
     except (TypeError, ValueError):
         raise TCRsiftValidationError(
             f"Parameter '{name}' must be a number, got: {value} ({type(value).__name__})",
             hint="Check that you're passing a valid number.",
+        )
+
+    if not np.isfinite(value):
+        raise TCRsiftValidationError(
+            f"Parameter '{name}' must be a finite number, got: {value}",
+            hint="Pass a finite numeric value (not NaN or Inf).",
         )
 
     if min_value is not None and value < min_value:
@@ -1242,7 +1267,7 @@ def validate_annotate_gex_args(args) -> None:
     validate_file_exists(args.gex_file, "gene expression file (--gex-file)")
 
 
-def validate_run_args(args) -> None:
+def validate_run_args(args, config=None) -> None:
     """
     Validate arguments for the run command (unified pipeline).
 
@@ -1250,6 +1275,9 @@ def validate_run_args(args) -> None:
     ----------
     args : argparse.Namespace
         Parsed CLI arguments for run command
+    config : TCRsiftConfig, optional
+        Resolved configuration (when available) so contig directories specified
+        in YAML config satisfy ``--leaders-from-contigs`` / ``--*-leader=from_contig``.
 
     Raises
     ------
@@ -1260,8 +1288,12 @@ def validate_run_args(args) -> None:
         getattr(args, "alpha_leader", None) == "from_contig"
         or getattr(args, "beta_leader", None) == "from_contig"
     )
+    cfg_asm = getattr(config, "assemble", None) if config is not None else None
     has_contig_source = bool(
-        getattr(args, "contigs_dir", None) or getattr(args, "cellranger_dir", None)
+        getattr(args, "contigs_dir", None)
+        or getattr(args, "cellranger_dir", None)
+        or (cfg_asm is not None and getattr(cfg_asm, "contigs_dir", None))
+        or (cfg_asm is not None and getattr(cfg_asm, "cellranger_dir", None))
     )
     if needs_contig_leaders and not has_contig_source:
         raise TCRsiftValidationError(

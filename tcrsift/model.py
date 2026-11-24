@@ -79,6 +79,7 @@ def fit_frequency_logistic_model(
 
     weight = 0.0
     converged = False
+    n_iter = 0
 
     for n_iter in range(1, max_iter + 1):
         logits = np.clip(x_values * weight, -500.0, 500.0)
@@ -132,10 +133,34 @@ def calc_threshold(
     min_value: float = 0.0,
 ) -> tuple[float, int]:
     y_target = 1.0 - fdr
+    if len(y_plot) == 0 or float(np.nanmax(y_plot)) < y_target:
+        return float("inf"), 0
     threshold_idx = int(np.argmin(np.abs(y_plot - y_target)))
     freq_threshold = max(float(min_value), float(x_plot[threshold_idx]))
     n = count_at_threshold(df, freq_threshold)
     return freq_threshold, n
+
+
+def analytical_logistic_threshold(
+    weight: float,
+    fdr: float,
+    min_value: float = 0.0,
+    max_frequency: float = 1.0,
+) -> float:
+    """Exact frequency threshold x* solving sigmoid(weight * x*) = 1 - fdr.
+
+    Returns ``float('inf')`` when ``weight <= 0``, ``fdr <= 0``, or the exact
+    threshold exceeds ``max_frequency`` (so unreachable FDR tiers never clamp
+    onto the largest observed clone).
+    """
+    if weight <= 0 or not np.isfinite(weight) or fdr <= 0:
+        return float("inf")
+    if fdr >= 1.0:
+        return float(min_value)
+    x_star = float(np.log((1.0 - fdr) / fdr) / weight)
+    if x_star > max_frequency:
+        return float("inf")
+    return max(float(min_value), x_star)
 
 
 def calc_thresholds_and_counts(
@@ -176,16 +201,11 @@ def calc_thresholds_and_counts(
         )
         return fdr_to_threshold, threshold_to_count, model
 
-    x_plot = np.linspace(df["max_freq"].min(), df["max_freq"].max(), 10000)
-    y_plot = model.predict(x_plot)
     for fdr in fdr_values:
-        threshold, n = calc_threshold(
-            df,
-            x_plot,
-            y_plot,
-            fdr,
-            min_value=min_freq_threshold,
+        threshold = analytical_logistic_threshold(
+            weight, float(fdr), min_value=min_freq_threshold
         )
+        n = count_at_threshold(df, threshold) if np.isfinite(threshold) else 0
         fdr_to_threshold[fdr] = threshold
         threshold_to_count[threshold] = n
 

@@ -87,7 +87,7 @@ def annotate_combined_df(
         for a, b in zip(df["CDR3_alpha"], df["CDR3_beta"])
     ]
     df["CDR3a/b_pairs"] = [
-        [aa + "_" + bb for aa in a.split(";") for bb in b.split(";")]
+        [aa + "/" + bb for aa in a.split(";") for bb in b.split(";")]
         for a, b in zip(df["CDR3_alpha"], df["CDR3_beta"])
     ]
     df["Cell_ID"] = df["Peptide_Number"].astype("string") + "-" + df["Barcode"].astype("string")

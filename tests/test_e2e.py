@@ -257,12 +257,13 @@ class TestEndToEndPipeline:
         """Test logistic regression filtering with proper synthetic data."""
         from tcrsift.filter import filter_clonotypes, get_filter_summary
 
-        # Filter with logistic method
+        # Filter with logistic method (achievable FDR tiers for a 20%-viral synthetic fixture)
         result = filter_clonotypes(
             clonotypes_for_logistic,
             method="logistic",
             min_cells=1,
             tcell_type="both",
+            fdr_tiers=[0.25, 0.30, 0.35, 0.40, 0.45],
         )
 
         assert "tier" in result.columns
