@@ -988,7 +988,10 @@ def run_pipeline(
                     f"-> data/excluded_viral_clones.csv"
                 )
         rules = select_from_clone_sample_long(
-            selection_long, config.selection, exclude_clones=exclude_clones,
+            selection_long,
+            config.selection,
+            exclude_clones=exclude_clones,
+            clone_scores=til_matched,
         )
 
     has_leaders = (
@@ -1007,7 +1010,7 @@ def run_pipeline(
         )
         _sheet_vdj_dirs = [s.vdj_dir for s in sheet_obj.samples if s.vdj_dir]
         if (
-            _sample_name_from == "parent"
+            _sample_name_from in ("parent", "sheet")
             and not _explicit_contigs
             and _sheet_vdj_dirs
             and not no_sheet_contigs

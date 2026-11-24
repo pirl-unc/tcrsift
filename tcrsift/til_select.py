@@ -229,16 +229,24 @@ def match_clonotypes(
     for gc in group_cols:
         valid_db &= db[gc].notna() & (db[gc].astype(str).str.strip() != "")
     db = db[valid_db]
-    agg = (
-        db.groupby(group_cols, dropna=True, group_keys=False, observed=True)
-        .apply(_agg_group, include_groups=False)
-        .reset_index()
-    )
     existing_ann = [
         c for c in ("db_epitope", "db_species", "db_database", "db_match", "is_viral")
         if c in df.columns
     ]
     base_df = df.drop(columns=existing_ann) if existing_ann else df
+    if db.empty:
+        merged = base_df.copy()
+        merged["db_epitope"] = np.nan
+        merged["db_species"] = np.nan
+        merged["db_database"] = np.nan
+        merged["db_match"] = False
+        merged["is_viral"] = False
+        return merged
+    agg = (
+        db.groupby(group_cols, dropna=True, group_keys=False, observed=True)
+        .apply(_agg_group, include_groups=False)
+        .reset_index()
+    )
     merged = base_df.merge(agg, left_on=key_cols, right_on=group_cols, how="left")
     merged["db_match"] = merged["db_database"].notna()
     merged["is_viral"] = merged["is_viral"].astype("boolean").fillna(False).astype(bool)

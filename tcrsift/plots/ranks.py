@@ -102,7 +102,9 @@ def _per_sample_rank_table(clonotypes: pd.DataFrame) -> dict[str, pd.DataFrame]:
         return {}
 
     tier_lookup = (
-        clonotypes.set_index("CDR3ab")["tier"]
+        clonotypes.dropna(subset=["tier"])
+        .drop_duplicates(subset=["CDR3ab"], keep="first")
+        .set_index("CDR3ab")["tier"]
         if "tier" in clonotypes.columns
         else None
     )
@@ -278,7 +280,8 @@ def plot_top_n_labeled_bars_per_sample(
         return None
 
     cell_count_lookup = (
-        clonotypes.set_index("CDR3ab")["cell_count"]
+        clonotypes.drop_duplicates(subset=["CDR3ab"], keep="first")
+        .set_index("CDR3ab")["cell_count"]
         if "cell_count" in clonotypes.columns
         else None
     )

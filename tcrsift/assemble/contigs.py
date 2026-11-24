@@ -187,6 +187,17 @@ def load_contigs(
 
     sheet_dir_to_sample: dict[Path, str] = {}
     if sample_name_from == "sheet":
+        if isinstance(sample_sheet, (str, Path)):
+            from ..sample_sheet import load_sample_sheet
+
+            sheet_obj = load_sample_sheet(sample_sheet)
+            sample_sheet = pd.DataFrame(
+                [
+                    {"sample": s.sample, "vdj_dir": s.vdj_dir}
+                    for s in sheet_obj.samples
+                    if s.vdj_dir
+                ]
+            )
         missing = {"sample", "vdj_dir"} - set(sample_sheet.columns)
         if missing:
             raise ValueError(
@@ -194,6 +205,8 @@ def load_contigs(
             )
         sheet_dir_to_sample = {}
         for row in sample_sheet.itertuples(index=False):
+            if pd.isna(row.vdj_dir) or not str(row.vdj_dir).strip():
+                continue
             p = Path(row.vdj_dir).resolve()
             sheet_dir_to_sample[p.parent if p.is_file() else p] = row.sample
 
@@ -353,7 +366,12 @@ def _add_constant_regions(
             if allele_choice in allele_pool:
                 canonical_aa = allele_pool[allele_choice]
                 canonical_nt_codon_opt = (
-                    optimize_codons(canonical_aa, species=codon_species) + stops_nt
+                    optimize_codons(
+                        canonical_aa,
+                        species=codon_species,
+                        forbidden_motifs=const_forbidden,
+                    )
+                    + stops_nt
                 )
                 allele_called = allele_choice
                 allele_score = 1.0
@@ -375,7 +393,12 @@ def _add_constant_regions(
             default_allele = next(iter(allele_pool.keys()))
             canonical_aa = allele_pool[default_allele]
             canonical_nt_codon_opt = (
-                optimize_codons(canonical_aa, species=codon_species) + stops_nt
+                optimize_codons(
+                    canonical_aa,
+                    species=codon_species,
+                    forbidden_motifs=const_forbidden,
+                )
+                + stops_nt
             )
             allele_called = default_allele
             allele_score = 1.0

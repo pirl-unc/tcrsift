@@ -1244,6 +1244,16 @@ def validate_assemble_args(args) -> None:
             hint="Provide --contigs-dir <path> or --cellranger-dir <path>.",
         )
 
+    # Validate --sample-sheet when --sample-name-from sheet is requested
+    if getattr(args, "sample_name_from", None) == "sheet":
+        if not getattr(args, "sample_sheet", None):
+            raise TCRsiftValidationError(
+                "--sample-sheet is required when --sample-name-from sheet is used",
+                hint="Provide --sample-sheet <path> or use --sample-name-from parent/grandparent.",
+            )
+    if getattr(args, "sample_sheet", None):
+        validate_file_exists(args.sample_sheet, "sample sheet (--sample-sheet)")
+
     # Validate contigs-dir / cellranger-dir exists if provided
     if getattr(args, "contigs_dir", None):
         validate_directory_exists(args.contigs_dir, "contigs directory")
@@ -1286,6 +1296,9 @@ def validate_run_args(args, config=None) -> None:
     TCRsiftValidationError
         If required arguments are missing
     """
+    # Validate sample sheet exists first so we can check its vdj_dir entries.
+    validate_file_exists(args.sample_sheet, "sample sheet (--sample-sheet)")
+
     cfg_asm = getattr(config, "assemble", None) if config is not None else None
     assemble_enabled = (not bool(getattr(args, "no_assemble", False))) and (
         cfg_asm is None or bool(getattr(cfg_asm, "enabled", True))
@@ -1304,16 +1317,34 @@ def validate_run_args(args, config=None) -> None:
     eff_cellranger_dir = getattr(args, "cellranger_dir", None) or (
         getattr(cfg_asm, "cellranger_dir", None) if cfg_asm is not None else None
     )
-    has_contig_source = bool(eff_contigs_dir or eff_cellranger_dir)
+    has_sheet_vdj = False
+    if needs_contig_leaders and not (eff_contigs_dir or eff_cellranger_dir) and not bool(
+        getattr(args, "no_sheet_contigs", False)
+    ):
+        try:
+            from .sample_sheet import load_sample_sheet
+
+            sheet_obj = load_sample_sheet(args.sample_sheet)
+            sheet_dir = Path(args.sample_sheet).resolve().parent
+            for sample_entry in sheet_obj.samples:
+                if not sample_entry.vdj_dir:
+                    continue
+                vdj_path = Path(sample_entry.vdj_dir)
+                if not vdj_path.is_absolute():
+                    vdj_path = sheet_dir / vdj_path
+                if vdj_path.exists():
+                    has_sheet_vdj = True
+                    break
+        except Exception:
+            has_sheet_vdj = False
+    has_contig_source = bool(eff_contigs_dir or eff_cellranger_dir or has_sheet_vdj)
     if needs_contig_leaders and not has_contig_source:
         raise TCRsiftValidationError(
             "--contigs-dir is required when extracting leaders from contigs "
-            "(with --leaders-from-contigs or --*-leader=from_contig), unless --cellranger-dir is provided",
-            hint="Provide --contigs-dir <path> or --cellranger-dir <path>.",
+            "(with --leaders-from-contigs or --*-leader=from_contig), unless --cellranger-dir "
+            "is provided or the sample sheet populates vdj_dir",
+            hint="Provide --contigs-dir <path>, --cellranger-dir <path>, or populate vdj_dir in your sample sheet.",
         )
-
-    # Validate sample sheet exists
-    validate_file_exists(args.sample_sheet, "sample sheet (--sample-sheet)")
 
     # Prevent ambiguous TIL source selection in run command
     if getattr(args, "til_samples", None) and getattr(args, "til_sample", None):

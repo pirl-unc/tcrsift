@@ -74,44 +74,63 @@ NONCANON_J_END_MOUSE: dict[str, list[str]] = {
 NONCANON_J_END = NONCANON_J_END_MOUSE  # backward-compatible union constant
 
 
-def _is_mouse_row(r: pd.Series) -> bool:
-    """Detect whether an assembled row has murine VDJ provenance."""
+__all__ = [
+    "BatteryCheckResult",
+    "EXPECTED_T2A",
+    "NONCANON_J_END",
+    "NONCANON_J_END_HUMAN",
+    "NONCANON_J_END_MOUSE",
+    "check_assembly",
+    "check_cdr3_ref",
+    "check_contigs",
+    "check_germline",
+    "check_source",
+    "check_synth",
+    "contig_cdr3_map",
+    "infer_row_vdj_species",
+    "qc_summary_markdown",
+    "run_qc_battery",
+]
+
+
+def infer_row_vdj_species(row: pd.Series) -> str:
+    """Infer whether an assembled row's VDJ segments are ``"mouse"`` or ``"human"``."""
     for sp_col in ("vdj_species", "species"):
-        raw_sp = r.get(sp_col)
+        raw_sp = row.get(sp_col)
         if raw_sp is not None and pd.notna(raw_sp):
             sp = str(raw_sp).strip().lower()
             if sp in ("mouse", "mus_musculus", "mm", "mm10", "mm39"):
-                return True
+                return "mouse"
             if sp in ("human", "homo_sapiens", "hs", "hg38", "grch38"):
-                return False
+                return "human"
     for src_col in ("alpha_constant_source", "beta_constant_source"):
-        raw_src = r.get(src_col)
+        raw_src = row.get(src_col)
         if raw_src is not None and pd.notna(raw_src):
             src = str(raw_src).strip().lower()
             if src.startswith("chimeric:mouse:"):
-                return False
+                return "human"
             if src.startswith("chimeric:human:"):
-                return True
+                return "mouse"
     for c_col in ("alpha_c_gene", "beta_c_gene"):
-        val = str(r.get(c_col, "")).strip()
+        val = str(row.get(c_col, "")).strip()
         if val in ("Trac", "Trbc1", "Trbc2"):
-            return True
+            return "mouse"
     for v_col in ("alpha_v_gene", "beta_v_gene", "alpha_j_gene", "beta_j_gene"):
-        val = str(r.get(v_col, "")).strip()
+        val = str(row.get(v_col, "")).strip()
         if val.startswith(("Trav", "Trbv", "Traj", "Trbj")) or "D-" in val.upper():
-            return True
+            return "mouse"
     # Fallback for uppercased mouse gene tables: require species-unique constant
     # tails (mouse TRAC ends in MGLRILLLKVAGFNLLMTLRLWSS vs human
     # IGFRILLLKVAGFNLLMTLRLWSS; mouse TRBC ends in VKRKNS/VKKKNS vs human
     # VKRKDF/VKRKDSRG). Do not match the shared LLMTLRLWSS tail alone.
-    fa = _nz(r.get("full_alpha_aa", ""))
-    fb = _nz(r.get("full_beta_aa", ""))
+    fa = _strip_trailing_stop(row.get("full_alpha_aa", ""))
+    fb = _strip_trailing_stop(row.get("full_beta_aa", ""))
     if fa.endswith("MGLRILLLKVAGFNLLMTLRLWSS") or fb.endswith(("VKRKNS", "VKKKNS")):
-        return True
-    return False
+        return "mouse"
+    return "human"
 
 
-def _tr(nt: str) -> str:
+def _translate_frame0(nt: str) -> str:
     """Translate a DNA/RNA string frame-0, 'X' on any unknown codon."""
     nt = str(nt).upper().replace("U", "T")
     return "".join(
@@ -119,7 +138,7 @@ def _tr(nt: str) -> str:
     )
 
 
-def _nz(a) -> str:
+def _strip_trailing_stop(a) -> str:
     """Stringify and strip a trailing stop ('*') so a translated CDS with its
     terminal stop compares equal to the stored stop-free AA."""
     if a is None or pd.isna(a):
@@ -146,7 +165,7 @@ class BatteryCheckResult:
         return {"PASS": "PASS ✅", "FAIL": "FAIL ❌", "SKIP": "SKIP ⚪"}[self.status]
 
 
-def _missing(d: pd.DataFrame, cols) -> list[str]:
+def _missing_columns(d: pd.DataFrame, cols) -> list[str]:
     """Columns the check needs but the frame lacks (so it SKIPs, not crashes)."""
     return [c for c in cols if c not in d.columns]
 
@@ -180,7 +199,7 @@ _CDR3_COLS = [
 
 def check_assembly(d: pd.DataFrame) -> BatteryCheckResult:
     """A. Every translation exact, recomposition byte-for-byte, M-start, 2A linker."""
-    miss = _missing(d, _ASSEMBLY_COLS)
+    miss = _missing_columns(d, _ASSEMBLY_COLS)
     if miss:
         return BatteryCheckResult(
             "A. Assembly integrity", "SKIP", f"missing columns: {', '.join(miss)}"
@@ -194,36 +213,48 @@ def check_assembly(d: pd.DataFrame) -> BatteryCheckResult:
     linkers: set[str] = set()
     n_sc = 0
     for _, r in d.iterrows():
-        for ntc, aac in [
-            ("single_chain_nt", "single_chain_aa"),
-            ("single_chain_nt_optimized", "single_chain_aa"),
-            ("full_beta_nt", "full_beta_aa"),
-            ("full_beta_nt_optimized", "full_beta_aa"),
-            ("full_alpha_nt", "full_alpha_aa"),
-            ("full_alpha_nt_optimized", "full_alpha_aa"),
-            ("VDJ_beta_nt", "VDJ_beta_aa"),
-            ("VDJ_alpha_nt", "VDJ_alpha_aa"),
-            ("beta_leader_nt", "beta_leader_aa"),
-            ("alpha_leader_nt", "alpha_leader_aa"),
+        for ntc, aac, allow_splice_overhang in [
+            ("single_chain_nt", "single_chain_aa", False),
+            ("single_chain_nt_optimized", "single_chain_aa", False),
+            ("full_beta_nt", "full_beta_aa", False),
+            ("full_beta_nt_optimized", "full_beta_aa", False),
+            ("full_alpha_nt", "full_alpha_aa", False),
+            ("full_alpha_nt_optimized", "full_alpha_aa", False),
+            ("vdj_beta_nt", "vdj_beta_aa", False),
+            ("vdj_alpha_nt", "vdj_alpha_aa", False),
+            # Raw CellRanger v7+ fwr1..fwr4 VDJ nucleotide strings carry the
+            # 1-nt J->C splice-donor overhang (len == 3 * len(AA) + 1); assembled
+            # vdj_*_nt / full_*_nt / single_chain_nt above are strictly in-frame.
+            ("VDJ_beta_nt", "VDJ_beta_aa", True),
+            ("VDJ_alpha_nt", "VDJ_alpha_aa", True),
+            ("beta_leader_nt", "beta_leader_aa", False),
+            ("alpha_leader_nt", "alpha_leader_aa", False),
         ]:
             if pd.notna(r.get(ntc)) and pd.notna(r.get(aac)):
                 nt_str = str(r[ntc]).strip()
+                aa_str = _strip_trailing_stop(r[aac])
                 if nt_str != "":
-                    if len(nt_str) % 3 != 0 or _nz(_tr(nt_str)) != _nz(r[aac]):
+                    if allow_splice_overhang and len(nt_str) == 3 * len(aa_str) + 1:
+                        nt_check = nt_str[:-1]
+                    else:
+                        nt_check = nt_str
+                    if len(nt_check) % 3 != 0 or _strip_trailing_stop(_translate_frame0(nt_check)) != aa_str:
                         bad += 1
         for ch in ("alpha", "beta"):
-            full = _nz(r.get(f"full_{ch}_aa"))
+            full = _strip_trailing_stop(r.get(f"full_{ch}_aa"))
             if not full:
                 continue
-            lead = _nz(r.get(f"{ch}_leader_aa"))
-            vdj = _nz(r.get(f"VDJ_{ch}_aa"))
-            const = _nz(r.get(f"{ch}_constant_aa"))
+            lead = _strip_trailing_stop(r.get(f"{ch}_leader_aa"))
+            vdj = _strip_trailing_stop(r.get(f"VDJ_{ch}_aa"))
+            const = _strip_trailing_stop(r.get(f"{ch}_constant_aa"))
             if lead + vdj + const != full:
                 bad += 1
-        sc, fb, fa = _nz(r.get("single_chain_aa")), _nz(r.get("full_beta_aa")), _nz(r.get("full_alpha_aa"))
+        sc = _strip_trailing_stop(r.get("single_chain_aa"))
+        fb = _strip_trailing_stop(r.get("full_beta_aa"))
+        fa = _strip_trailing_stop(r.get("full_alpha_aa"))
         if sc:
             n_sc += 1
-            expect_m = bool(_nz(r.get("beta_leader_aa")))
+            expect_m = bool(_strip_trailing_stop(r.get("beta_leader_aa")))
             if not (sc.startswith(fb) and sc.endswith(fa) and (not expect_m or sc.startswith("M"))):
                 bad += 1
             if sc.startswith(fb) and sc.endswith(fa) and len(sc) >= len(fb) + len(fa):
@@ -231,7 +262,7 @@ def check_assembly(d: pd.DataFrame) -> BatteryCheckResult:
         elif fb and fa:
             bad += 1
         for c in ["full_beta_aa", "full_alpha_aa", "single_chain_aa"]:
-            val = _nz(r.get(c))
+            val = _strip_trailing_stop(r.get(c))
             if val and ("*" in val or "X" in val):
                 bad += 1
     linkers_ok = (not n_sc) or (bool(linkers) and linkers <= valid_linkers)
@@ -245,20 +276,24 @@ def check_assembly(d: pd.DataFrame) -> BatteryCheckResult:
 
 def check_cdr3_ref(d: pd.DataFrame) -> BatteryCheckResult:
     """B. CDR3 ⊂ VDJ, canonical C…[F/W] (TRAJ35 allow-list), valid gene names."""
-    miss = _missing(d, _CDR3_COLS)
+    miss = _missing_columns(d, _CDR3_COLS)
     if miss:
         return BatteryCheckResult(
             "B. CDR3 + reference", "SKIP", f"missing columns: {', '.join(miss)}"
         )
     bad, noncanon, lens = 0, 0, []
     for _, r in d.iterrows():
-        allow_map = NONCANON_J_END_MOUSE if _is_mouse_row(r) else NONCANON_J_END_HUMAN
+        allow_map = (
+            NONCANON_J_END_MOUSE
+            if infer_row_vdj_species(r) == "mouse"
+            else NONCANON_J_END_HUMAN
+        )
         for ch in ("alpha", "beta"):
             raw_cdr = r[f"CDR3_{ch}"]
             if pd.isna(raw_cdr) or str(raw_cdr).strip() == "":
                 continue
             cdr = str(raw_cdr).strip()
-            vdj = _nz(r[f"VDJ_{ch}_aa"])
+            vdj = _strip_trailing_stop(r[f"VDJ_{ch}_aa"])
             jg = "" if pd.isna(r[f"{ch}_j_gene"]) else str(r[f"{ch}_j_gene"])
             lens.append(len(cdr))
             if cdr not in vdj or not cdr.startswith("C"):

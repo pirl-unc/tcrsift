@@ -120,6 +120,7 @@ class PrioritizeConfig:
     treg_foxp3_fraction: float = 0.5
     assemble: bool = False
     germline_vdj_fallback: bool = False
+    allow_canonical_fallback: bool = True
     single_chain_linker: str | None = "T2A"
     call_multimers: bool = False
     multimer_min_umi: float = 10.0
@@ -199,6 +200,7 @@ def resolve_signatures(
             result.append(lookup[name.lower()])
         return list(dict.fromkeys(result))
 
+    tcell_type = str(tcell_type).strip().lower()
     ctx_map = (
         CONTEXT_SIGNATURES_MOUSE
         if normalize_species(species) == "mouse"
@@ -375,7 +377,8 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
     signature, then the sample, with the fewest turns in that round.
     """
     scores = scores.reset_index(drop=True)
-    result = clones.copy()
+    orig_index = clones.index
+    result = clones.reset_index(drop=True)
     result["selection_rank"] = pd.Series(pd.NA, index=result.index, dtype="Int64")
     for col in ("selected_signature", "selected_sample", "selected_lineage", "selected_evidence"):
         result[col] = ""
@@ -462,4 +465,8 @@ def select_round_robin(clones, scores, signatures, max_clones=200, quantile=0.9,
     result["selected_for_review"] = result.selection_rank.notna()
     for col in ("selected_cells", "selected_high_cells"):
         result[col] = result[col].astype("Int64")
-    return result.sort_values(["selection_rank", "donor", "CDR3ab"], na_position="last")
+    sorted_result = result.sort_values(
+        ["selection_rank", "donor", "CDR3ab"], na_position="last"
+    )
+    sorted_result.index = orig_index.take(sorted_result.index.to_numpy())
+    return sorted_result

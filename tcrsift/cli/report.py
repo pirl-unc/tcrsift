@@ -108,10 +108,29 @@ def cmd_report_selected(args):
         )
     if args.cellranger_dir:
         assemble_kwargs["cellranger_dir"] = args.cellranger_dir
+        if not args.contigs_dir:
+            assemble_kwargs["contigs_dir"] = None
     if args.contigs_dir:
         assemble_kwargs["contigs_dir"] = args.contigs_dir
+        if not args.cellranger_dir:
+            assemble_kwargs["cellranger_dir"] = None
     if args.sample_name_from:
         assemble_kwargs["sample_name_from"] = args.sample_name_from
+    if getattr(args, "sample_sheet", None):
+        from ..validation import validate_file_exists
+
+        validate_file_exists(args.sample_sheet, "sample sheet (--sample-sheet)")
+        assemble_kwargs["sample_sheet"] = args.sample_sheet
+    if (
+        assemble_kwargs.get("sample_name_from") == "sheet"
+        and not assemble_kwargs.get("sample_sheet")
+    ):
+        from ..validation import TCRsiftValidationError
+
+        raise TCRsiftValidationError(
+            "--sample-sheet is required when --sample-name-from sheet is used",
+            hint="Provide --sample-sheet <path> or use --sample-name-from parent/grandparent.",
+        )
     if getattr(args, "species", None) is not None:
         assemble_kwargs["species"] = args.species
     assemble_kwargs.setdefault("species", "auto")
@@ -335,7 +354,14 @@ def register(subparsers) -> None:
     ps.add_argument(
         "--sample-name-from",
         choices=["parent", "grandparent", "sheet"],
-        help="Contig sample-name policy (overrides config, #196)",
+        help="Contig sample-name policy (overrides config, #196); 'sheet' requires --sample-sheet",
+    )
+    ps.add_argument(
+        "--sample-sheet",
+        metavar="FILE",
+        default=None,
+        help="Sample sheet CSV/YAML mapping vdj_dir paths to sample names "
+        "(required when --sample-name-from sheet)",
     )
     ps.add_argument(
         "--species",

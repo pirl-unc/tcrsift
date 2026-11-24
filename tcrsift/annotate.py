@@ -2459,23 +2459,22 @@ def _annotate_match(
     for group_col in ("db_protein_canonical", "antigen_gene"):
         if group_col not in matches.columns:
             continue
-        group_values = matches[group_col].dropna()
+        raw_col = matches[group_col]
+        non_empty_mask = raw_col.notna() & (raw_col.astype(str).str.strip() != "")
+        group_values = raw_col[non_empty_mask]
         if len(group_values) == 0:
             continue
         picked = group_values.mode().iloc[0]
-        antigen_matches = matches[matches[group_col] == picked]
+        antigen_matches = matches[non_empty_mask & (raw_col == picked)]
         break
 
-    if (
-        "db_protein_canonical" in antigen_matches.columns
-        and antigen_matches["db_protein_canonical"].nunique(dropna=True) > 1
-    ):
-        canonicals = antigen_matches["db_protein_canonical"].dropna()
-        if len(canonicals) > 0:
+    if "db_protein_canonical" in antigen_matches.columns:
+        canon_col = antigen_matches["db_protein_canonical"]
+        canon_mask = canon_col.notna() & (canon_col.astype(str).str.strip() != "")
+        canonicals = canon_col[canon_mask]
+        if canonicals.nunique() > 1:
             picked_canonical = canonicals.mode().iloc[0]
-            antigen_matches = antigen_matches[
-                antigen_matches["db_protein_canonical"] == picked_canonical
-            ]
+            antigen_matches = antigen_matches[canon_mask & (canon_col == picked_canonical)]
 
     if "host_species" in antigen_matches.columns:
         hs = canonicalize_species_labels(antigen_matches["host_species"]).dropna()

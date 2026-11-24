@@ -10,12 +10,54 @@ release. Full release history is on
 
 ## 3.37.2
 
-- Fixed `qc_battery._is_mouse_row` misclassifying every assembled human TCR as
-  mouse because the shared `LLMTLRLWSS` TRAC C-terminal tail matched both human
-  and murine `TRAC`. Now uses mouse-specific constant signatures
-  (`MGLRILLLKVAGFNLLMTLRLWSS` / `VKRKNS` / `VKKKNS`) and respects explicit
-  species and chimeric constant-source metadata so human constructs enforce
-  `NONCANON_J_END_HUMAN`.
+Bug-fix release addressing 25 correctness, safety-control, CLI/config, plotting,
+and edge-case issues across QC, assembly, prioritization, annotation, filtering,
+and documentation:
+
+- **QC battery & species inference**: Replaced `qc_battery._is_mouse_row` with
+  public `infer_row_vdj_species(row) -> "human" | "mouse"` using species-unique
+  TRAC/TRBC tails (`MGLRILLLKVAGFNLLMTLRLWSS` / `VKRKNS` / `VKKKNS`) plus
+  explicit species and chimeric constant-source metadata so human constructs no
+  longer fall into mouse J-anchor rules. Updated `check_assembly` to tolerate
+  CellRanger v7+'s standard +1 nt J→C splice-donor overhang on raw `VDJ_*_nt`
+  columns while keeping assembled `vdj_*_nt`, `full_*_nt`, and
+  `single_chain_nt` strictly in-frame.
+- **Assembly & codon optimization**: Extended `optimize_codons` with bounded
+  multi-codon lookahead so 3-codon restriction sites (such as `NcoI` `CCATGG`
+  across `T-M-E` in mouse `TRAC`) are eliminated, and propagated
+  `forbidden_motifs` into explicit-allele override and chimeric constant
+  branches in `_add_constant_regions`.
+- **Prioritization & pipeline safety controls**: Added
+  `allow_canonical_fallback` to `PrioritizeConfig` so
+  `--no-allow-canonical-fallback` is preserved; passed `clone_scores=til_matched`
+  to `select_from_clone_sample_long` in `run_pipeline` so `percentile_rank`
+  selection rules rank by actual scores instead of `inf`; fixed
+  `select_round_robin` non-unique index corruption; normalized `tcell_type` case
+  in `resolve_signatures`.
+- **Cell & TCR annotation / signatures**: Resolved `gene_symbols` in
+  `annotate_cells.top_markers` on Ensembl-indexed AnnData so clonal TCR/Ig
+  segments are excluded and cluster suffixes emit readable gene symbols; ignored
+  blank `antigen_gene` / `db_protein_canonical` strings in
+  `annotate._annotate_match`; aligned `score_by_name` `zscore`/`weighted_z`
+  implicit-`log1p` gating with `geneset_enrichment` to avoid double-logging
+  log-normalized matrices lacking `uns["log1p"]`.
+- **CLI, config, and validation**: Added `--sample-sheet` support to
+  `tcrsift assemble` and `tcrsift report selected` (and accepted file paths in
+  `load_contigs(..., sample_name_from="sheet")`), enabled sample-sheet `vdj_dir`
+  auto-discovery for `--sample-name-from sheet` in `run_pipeline`, cleared the
+  mutually exclusive `contigs_dir` / `cellranger_dir` counterpart on CLI
+  override, and allowed sample-sheet `vdj_dir`s in `validate_run_args`.
+- **Edge-case hardening & plots**: Fixed empty/β-only DB crash in
+  `til_select.match_clonotypes`, duplicate-index crash in
+  `filter_clonotypes_stimulation`, raw `KeyError` on β-only tables in
+  `filter_clonotypes_threshold`, zero-division on all-doublet input in
+  `aggregate_clonotypes`, empty-frame `KeyError` in `calculate_clone_frequencies`,
+  `NaN` clone-ID `IndexError` in `select_freq_prism_per_condition`, missing
+  `"sample"` crash in `identify_til_specific_clones`, 0-cell crashes in
+  `phenotype.py`, `publicness_col` coloring in `plot_pgen_distribution`,
+  duplicate-`CDR3ab` crashes in `plots/ranks.py`, missing-`CDR3ab` guard in
+  `plot_vgene_usage_by_method`, and stale `reports`/`pdfkit` extra docs in
+  `README.md` and `docs/getting-started/installation.md`.
 
 ## 3.37.1
 

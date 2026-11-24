@@ -721,6 +721,14 @@ class TCRsiftConfig:
                 value = None
             cli_overrides[key] = value
 
+        # CLI override of one contig source clears the mutually exclusive
+        # counterpart inherited from YAML config so assemble_full_sequences
+        # doesn't fail with "pass exactly one of contigs_dir or cellranger_dir".
+        if "cellranger_dir" in cli_overrides and "contigs_dir" not in cli_overrides:
+            cli_overrides["contigs_dir"] = None
+        elif "contigs_dir" in cli_overrides and "cellranger_dir" not in cli_overrides:
+            cli_overrides["cellranger_dir"] = None
+
         return TCRsiftConfig._from_dict(merged_data, _overrides=cli_overrides)
 
 

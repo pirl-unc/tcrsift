@@ -311,13 +311,18 @@ def optimize_codons(
                 return True
         return False
 
-    def _has_valid_next(next_aa: str, new_buffer: str) -> bool:
-        next_alts = codon_alts.get(next_aa)
+    def _has_valid_continuation(pos: int, new_buffer: str, depth: int) -> bool:
+        if depth <= 0 or pos >= len(aa_sequence):
+            return True
+        next_alts = codon_alts.get(aa_sequence[pos])
         if not next_alts:
             return True
         for next_codon in next_alts:
             if not _creates_motif(new_buffer, next_codon):
-                return True
+                if depth == 1 or _has_valid_continuation(
+                    pos + 1, (new_buffer + next_codon)[-eff_window:], depth - 1
+                ):
+                    return True
         return False
 
     def _gc_in_range(codon: str, gc_buffer: str) -> bool:
@@ -333,6 +338,8 @@ def optimize_codons(
     nt_parts: list[str] = []
     buffer = prefix_up[-eff_window:] if prefix_up else ""
     gc_buffer = prefix_up[-gc_target_window:] if prefix_up else ""
+    max_motif_len = max((len(m) for m in motifs_up), default=0)
+    lookahead_depth = max(1, (max_motif_len - 1 + 2) // 3) if motifs_up else 0
     for i, aa in enumerate(aa_sequence):
         alternatives = codon_alts.get(aa)
         if not alternatives:
@@ -341,7 +348,6 @@ def optimize_codons(
             buffer = (buffer + codon)[-eff_window:]
             gc_buffer = (gc_buffer + codon)[-gc_target_window:]
             continue
-        next_aa = aa_sequence[i + 1] if i + 1 < len(aa_sequence) else None
         # Filter 1 (hard): motif-free across the prefix+codon boundary
         motif_free = [
             c for c in alternatives
@@ -366,13 +372,18 @@ def optimize_codons(
 
             chosen = min(alternatives, key=_badness)
         else:
-            # Filter 2 (soft): lookahead-valid. Refine motif_free; if
-            # the refined set is empty, fall back to motif_free.
-            lookahead_valid = [
-                c for c in motif_free
-                if next_aa is None
-                or _has_valid_next(next_aa, (buffer + c)[-eff_window:])
-            ] or motif_free
+            # Filter 2 (soft): bounded multi-codon lookahead so 6–8 bp sites
+            # spanning 3 codons (e.g. mouse TRAC T-M-E -> ACC-ATG-GAG = NcoI)
+            # are avoided proactively. Fall back to motif_free if empty.
+            if lookahead_depth > 0 and i + 1 < len(aa_sequence):
+                lookahead_valid = [
+                    c for c in motif_free
+                    if _has_valid_continuation(
+                        i + 1, (buffer + c)[-eff_window:], min(lookahead_depth, 2)
+                    )
+                ] or motif_free
+            else:
+                lookahead_valid = motif_free
             # Filter 3 (soft): GC-in-range. Refine; fall back to
             # lookahead_valid if every option is out of range.
             gc_balanced = [

@@ -565,6 +565,12 @@ def plot_vgene_usage_by_method(
     output_path = Path(output_path)
     if long_df is None or clonotypes is None or long_df.empty or clonotypes.empty:
         return None
+    if (
+        method_col not in long_df.columns
+        or clone_col not in long_df.columns
+        or clone_col not in clonotypes.columns
+    ):
+        return None
     present = [(c, p) for c, p in vgene_cols if c in clonotypes.columns]
     if not present:
         return None

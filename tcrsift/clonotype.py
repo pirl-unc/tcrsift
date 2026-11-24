@@ -197,8 +197,9 @@ def aggregate_clonotypes(
     # Filter to complete clones
     df_complete = df[df["is_complete_clone"]].copy()
     if verbose:
+        complete_pct = (len(df_complete) / len(df) * 100) if len(df) > 0 else 0.0
         logger.info(
-            f"  Found {len(df_complete):,} cells with complete TCR ({len(df_complete) / len(df) * 100:.1f}%)"
+            f"  Found {len(df_complete):,} cells with complete TCR ({complete_pct:.1f}%)"
         )
 
     if len(df_complete) == 0:
@@ -869,7 +870,13 @@ def calculate_clone_frequencies(
             }
         )
 
-    freq_df = pd.DataFrame(freq_data)
+    freq_df = (
+        pd.DataFrame(freq_data)
+        if freq_data
+        else pd.DataFrame(
+            columns=["CDR3ab", "sample_frequencies", "max_frequency", "n_conditions_present"]
+        )
+    )
 
     # Merge back
     clonotypes = clonotypes.merge(

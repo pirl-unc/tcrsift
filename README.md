@@ -179,8 +179,7 @@ pip install -e .
 pip install "tcrsift[full]"     # All optional extras below
 pip install "tcrsift[tcrpeg]"   # Deep autoregressive TCRpeg/PyTorch sequence probability
 pip install "tcrsift[atlas]"    # Harmony + Leiden clustering (`tcrsift cells embed`)
-pip install "tcrsift[plots]"    # UpSet set-overlap plots
-pip install "tcrsift[reports]"  # Legacy pdfkit HTML-to-PDF helper
+pip install "tcrsift[plots]"    # UpSet and Venn set-overlap plots (`upsetplot`, `matplotlib-venn`)
 ```
 
 Sequence assembly, Excel support, `reportlab` PDF sequence reports, `oncoref`

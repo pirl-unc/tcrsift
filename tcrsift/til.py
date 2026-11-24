@@ -690,15 +690,23 @@ def identify_til_specific_clones(
         )
 
     # Aggregate TIL clones
-    til_clones = (
-        til_df.groupby("CDR3ab", observed=True)
-        .agg(
+    if "sample" in til_df.columns:
+        til_clones = (
+            til_df.groupby("CDR3ab", observed=True)
+            .agg(
+                {
+                    "sample": "first",
+                }
+            )
+            .reset_index()
+        )
+    else:
+        til_clones = pd.DataFrame(
             {
-                "sample": "first",
+                "CDR3ab": til_df["CDR3ab"].drop_duplicates().tolist(),
+                "sample": "unknown",
             }
         )
-        .reset_index()
-    )
 
     # Map by CDR3ab key rather than positional ``.values`` so the count
     # doesn't rely on the two groupbys producing groups in the same order.
