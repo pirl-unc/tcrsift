@@ -46,6 +46,8 @@ plugins:
             show_signature_annotations: true
 
 markdown_extensions:
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
@@ -62,6 +64,10 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
   - Home: index.md
@@ -85,7 +91,7 @@ nav:
     - Signature Reproducibility Map: reproducibility_map.md
   - Reference:
     - CLI Reference: user-guide/cli.md
-    - Prioritization Release Notes: release-notes.md
+    - Release Notes: release-notes.md
     - Pipeline & Prioritization API: api/pipeline.md
     - Loading and cells:
       - Sample Sheet: api/sample_sheet.md

@@ -22,7 +22,7 @@ from .version import __version__
 # deliverable. scipy is transitive (via scanpy) but result-relevant, so kept.
 _PROVENANCE_PACKAGES = (
     "numpy", "pandas", "scipy", "scanpy", "anndata",
-    "matplotlib", "seaborn", "pyensembl", "reportlab",
+    "matplotlib", "seaborn", "pyensembl", "reportlab", "oncoref",
 )
 
 

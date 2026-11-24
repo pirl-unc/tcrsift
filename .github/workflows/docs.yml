@@ -8,10 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Allow only one concurrent deployment
+# Scope PR concurrency per-PR so PR builds never cancel a live main Pages deploy.
 concurrency:
-  group: "pages"
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.event.pull_request.number) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -33,6 +33,7 @@ jobs:
         run: mkdocs build --strict
 
       - name: Upload artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site/

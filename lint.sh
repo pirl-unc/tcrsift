@@ -8,7 +8,7 @@ set -e
 # older releases), making it a fragile blocker on shared dev envs.
 
 echo "Running ruff..."
-ruff check tcrsift/
+ruff check tcrsift/ tests/ benchmarks/ docs/figures/
 echo "Ruff check passed!"
 
 if [[ "${TCRSIFT_LINT_INCLUDE_PYLINT:-0}" == "1" ]]; then

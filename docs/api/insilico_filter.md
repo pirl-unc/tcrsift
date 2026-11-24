@@ -23,7 +23,8 @@ compared before and after in-silico filtering.
   in `[0, 1]` (`0` = best). Setting `direction="high"` ranks values in
   descending order so high values rank near `0`.
 - Equal values share a tied rank (`average` or `min`) rather than being
-  dropped, preserving `Ppost == 0` as a valid minimum.
+  dropped, preserving exact boundary values cleanly on log-probability (`ln P`)
+  and expression scales.
 - A clone passes a predicate when its percentile rank is `<= percentile`; `NaN`
   values always fail.
 - When `group_col` is supplied, percentile ranks are computed independently
@@ -37,7 +38,7 @@ compared before and after in-silico filtering.
 insilico_filter:
   label: IS
   predicates:
-    - {score: log10_ppost,                direction: low,  percentile: 0.5}
+    - {score: ppost_beta,                 direction: low,  percentile: 0.5}
     - {score: signature_naive_stem,       direction: low,  percentile: 0.5}
     - {score: signature_antigen_response, direction: high, percentile: 0.5}
 ```

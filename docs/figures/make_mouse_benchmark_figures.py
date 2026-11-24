@@ -338,7 +338,7 @@ def mouse_assembly_and_shortlist() -> None:
         ax2.text(
             x,
             tot + 0.02,
-            f"{row.n_complete_single_chain}/{row.n_candidates} (100%)\n{row.median_single_chain_aa_len} aa median",
+            f"{row.n_complete_single_chain}/{row.n_candidates} ({tot:.0%})\n{row.median_single_chain_aa_len} aa median",
             ha="center",
             va="bottom",
             fontsize=8.5,
@@ -352,7 +352,13 @@ def mouse_assembly_and_shortlist() -> None:
     ax2.set_title(f"Murine germline V+J + C assembly ({n_err} validation errors)", fontsize=10.2)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
-    ax2.legend(frameon=False, fontsize=8.4, loc="lower right")
+    ax2.legend(
+        frameon=False,
+        fontsize=8.4,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=1,
+    )
     save_tight(fig2, "mouse_assembly_breakdown")
 
 

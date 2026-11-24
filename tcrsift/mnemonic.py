@@ -10,8 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 """Generate pronounceable mnemonic names from CDR3 sequences.
 
 This module converts CDR3 amino acid sequences into human-readable names
@@ -25,6 +23,8 @@ Key design choices:
 - Different consonant cluster rules for word start, middle, and end positions
 - Diphthong choice is based on surrounding consonants for natural-sounding names
 """
+
+from __future__ import annotations
 
 # Common CDR3 prefixes/suffixes (data-driven from typical TCR sequences)
 DEFAULT_PREFIXES = ["CASS", "CAS", "CAV", "CA"]

@@ -367,6 +367,10 @@ class AssembleConfig:
     def __post_init__(self):
         from .species import normalize_species
 
+        if isinstance(self.alpha_leader, str) and self.alpha_leader.strip().lower() == "none":
+            self.alpha_leader = None
+        if isinstance(self.beta_leader, str) and self.beta_leader.strip().lower() == "none":
+            self.beta_leader = None
         if self.constant_species is not None:
             self.constant_species = normalize_species(self.constant_species)
         if self.codon_species is not None:

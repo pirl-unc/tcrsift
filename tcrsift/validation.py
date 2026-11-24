@@ -1228,8 +1228,10 @@ def validate_assemble_args(args) -> None:
     TCRsiftValidationError
         If required arguments are missing
     """
-    needs_contig_leaders = bool(getattr(args, "leaders_from_contigs", False)) or (
-        getattr(args, "alpha_leader", None) == "from_contig"
+    no_leaders = bool(getattr(args, "no_leaders", False))
+    needs_contig_leaders = (not no_leaders) and (
+        bool(getattr(args, "leaders_from_contigs", False))
+        or getattr(args, "alpha_leader", None) == "from_contig"
         or getattr(args, "beta_leader", None) == "from_contig"
     )
     has_contig_source = bool(
@@ -1284,17 +1286,25 @@ def validate_run_args(args, config=None) -> None:
     TCRsiftValidationError
         If required arguments are missing
     """
-    needs_contig_leaders = bool(getattr(args, "leaders_from_contigs", False)) or (
-        getattr(args, "alpha_leader", None) == "from_contig"
-        or getattr(args, "beta_leader", None) == "from_contig"
-    )
     cfg_asm = getattr(config, "assemble", None) if config is not None else None
-    has_contig_source = bool(
-        getattr(args, "contigs_dir", None)
-        or getattr(args, "cellranger_dir", None)
-        or (cfg_asm is not None and getattr(cfg_asm, "contigs_dir", None))
-        or (cfg_asm is not None and getattr(cfg_asm, "cellranger_dir", None))
+    assemble_enabled = (not bool(getattr(args, "no_assemble", False))) and (
+        cfg_asm is None or bool(getattr(cfg_asm, "enabled", True))
     )
+    no_leaders = bool(getattr(args, "no_leaders", False))
+    needs_contig_leaders = assemble_enabled and (not no_leaders) and (
+        bool(getattr(args, "leaders_from_contigs", False))
+        or getattr(args, "alpha_leader", None) == "from_contig"
+        or getattr(args, "beta_leader", None) == "from_contig"
+        or (cfg_asm is not None and getattr(cfg_asm, "alpha_leader", None) == "from_contig")
+        or (cfg_asm is not None and getattr(cfg_asm, "beta_leader", None) == "from_contig")
+    )
+    eff_contigs_dir = getattr(args, "contigs_dir", None) or (
+        getattr(cfg_asm, "contigs_dir", None) if cfg_asm is not None else None
+    )
+    eff_cellranger_dir = getattr(args, "cellranger_dir", None) or (
+        getattr(cfg_asm, "cellranger_dir", None) if cfg_asm is not None else None
+    )
+    has_contig_source = bool(eff_contigs_dir or eff_cellranger_dir)
     if needs_contig_leaders and not has_contig_source:
         raise TCRsiftValidationError(
             "--contigs-dir is required when extracting leaders from contigs "
@@ -1313,11 +1323,11 @@ def validate_run_args(args, config=None) -> None:
             "or repeat --til-sample (direct source specs), not both.",
         )
 
-    # Validate contigs-dir / cellranger-dir exists if provided
-    if getattr(args, "contigs_dir", None):
-        validate_directory_exists(args.contigs_dir, "contigs directory (--contigs-dir)")
-    if getattr(args, "cellranger_dir", None):
-        validate_directory_exists(args.cellranger_dir, "CellRanger directory (--cellranger-dir)")
+    # Validate contigs-dir / cellranger-dir exists if provided (CLI or YAML config)
+    if eff_contigs_dir:
+        validate_directory_exists(eff_contigs_dir, "contigs directory (--contigs-dir)")
+    if eff_cellranger_dir:
+        validate_directory_exists(eff_cellranger_dir, "CellRanger directory (--cellranger-dir)")
 
     # Validate direct TIL sample specs if provided
     if getattr(args, "til_sample", None):

@@ -62,8 +62,23 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-./lint.sh
+# ./test.sh already runs ./lint.sh before pytest.
 ./test.sh
+
+# Handle --dry-run before mutating version.py, committing, or pushing.
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  if [[ -n "${VERSION_INPUT}" && "${VERSION}" != "${CURRENT_VERSION}" ]]; then
+    echo "Dry run: would bump version to ${VERSION} (no files modified, nothing pushed)"
+  fi
+  rm -rf dist
+  if [[ "${UV_AVAILABLE}" -eq 1 ]]; then
+    uv build --out-dir dist
+  else
+    python3 -m build
+  fi
+  echo "Dry run: ready to release v${VERSION}"
+  exit 0
+fi
 
 # Bump version, commit, and push if version was provided.
 if [[ -n "${VERSION_INPUT}" && "${VERSION}" != "${CURRENT_VERSION}" ]]; then
@@ -99,14 +114,6 @@ else
   python3 -m build
 fi
 git --version
-
-if [[ "${DRY_RUN}" -eq 1 ]]; then
-  if [[ -n "${VERSION_INPUT}" && "${VERSION}" != "${CURRENT_VERSION}" ]]; then
-    echo "Dry run: would bump version to ${VERSION}"
-  fi
-  echo "Dry run: ready to release v${VERSION}"
-  exit 0
-fi
 
 if [[ "${UV_AVAILABLE}" -eq 1 ]]; then
   uv tool run twine upload dist/*

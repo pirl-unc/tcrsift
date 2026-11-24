@@ -5,7 +5,11 @@
 # 1. Activates the virtual environment if not already active
 # 2. Installs the package in editable mode using uv
 
-set -e
+# Only enable set -e when executed directly; sourcing must not leak set -e
+# into the caller's interactive shell.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    set -e
+fi
 
 # Colors for output
 RED='\033[0;31m'

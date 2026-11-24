@@ -54,7 +54,7 @@ def simulated_cell_scores(n=3000, seed=0):
 
 def save(fig, name):
     OUT.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUT / f"{name}.svg", metadata={"Date": None})
+    fig.savefig(OUT / f"{name}.svg", bbox_inches="tight", pad_inches=0.08, metadata={"Date": None})
     plt.close(fig)
 
 

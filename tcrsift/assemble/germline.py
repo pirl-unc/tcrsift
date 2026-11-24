@@ -46,6 +46,7 @@ import re
 import pandas as pd
 
 from ..leaders import GERMLINE_MIN_IDENTITY, normalize_vgene
+from ..species import normalize_species
 from ..vregion import (
     germline_jregion_sequences,
     germline_vregion_sequences,
@@ -326,10 +327,12 @@ def reconstruct_germline_vdj_chain(
     chain: str,
     *,
     species: str = "human",
-    codon_species: str = "human",
+    codon_species: str | None = None,
     data_dir=None,
 ) -> tuple[str | None, str | None, str | None, str | None]:
     """Resolve ``(vdj_aa, vdj_nt, vdj_source, germline_allele)`` for one chain."""
+    sp = normalize_species(species)
+    codon_sp = normalize_species(codon_species) if codon_species is not None else sp
     existing_aa = row.get(f"VDJ_{chain}_aa")
     existing_nt = row.get(f"VDJ_{chain}_nt")
     if isinstance(existing_aa, str) and existing_aa.strip() and "*" not in existing_aa:
@@ -337,7 +340,7 @@ def reconstruct_germline_vdj_chain(
         if isinstance(existing_nt, str) and existing_nt.strip():
             nt_clean = existing_nt.strip()
         else:
-            nt_clean = back_translate(aa_clean, species=codon_species).lower()
+            nt_clean = back_translate(aa_clean, species=codon_sp).lower()
         return aa_clean, nt_clean, VDJ_SOURCE_CONTIG_FULL, None
 
     cdr3_val = row.get(f"CDR3_{chain}")
@@ -369,8 +372,8 @@ def reconstruct_germline_vdj_chain(
             picked = _pick_v_for_partial(
                 v_gene,
                 donor_fr_suffix,
-                species=species,
-                codon_species=codon_species,
+                species=sp,
+                codon_species=codon_sp,
                 data_dir=data_dir,
             )
         if picked is not None:
@@ -378,7 +381,7 @@ def reconstruct_germline_vdj_chain(
             p_nt = _ensure_nt_for_aa(
                 p_aa,
                 str(partial_nt_raw).strip() if isinstance(partial_nt_raw, str) else "",
-                codon_species=codon_species,
+                codon_species=codon_sp,
             )
             rescued_aa = prefix_aa + p_aa
             rescued_nt = (prefix_nt + p_nt).lower()
@@ -394,8 +397,8 @@ def reconstruct_germline_vdj_chain(
             cdr3_aa,
             j_gene,
             cdr3_nt_raw=cdr3_nt_col,
-            species=species,
-            codon_species=codon_species,
+            species=sp,
+            codon_species=codon_sp,
             data_dir=data_dir,
         )
         if bare is not None:

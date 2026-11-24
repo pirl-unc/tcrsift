@@ -1,6 +1,6 @@
 # Benchmark overview and head-to-head comparisons
 
-This page summarizes TCRsift's evaluation across 15 public human and mouse single-cell datasets and compares each pipeline stage against open-source baselines (`Scanpy score_genes`, single-gene `CXCL13`, `stitchr`, `OLGA`, and per-cell, CLR, and Gaussian-mixture multimer callers). Per-patient tables and sensitivity analyses are on the cohort pages for [solid-tumor CD8 TILs](benchmarks.md), [infectious disease and blood](benchmarks-infectious.md), [paired blood-tumor, post-ACT, and CD4 TILs](benchmarks-blood-cd4.md), and [murine models](benchmarks-mouse.md).
+This page summarizes TCRsift's evaluation across 13 public human and mouse single-cell datasets (15 cohort evaluations, with Pulliam `GSE227708` and Chiffelle `GSE222448` each evaluated in two distinct clinical contexts; recorded on `tcrsift 3.32.0–3.34.0`) and compares each pipeline stage against open-source baselines (`Scanpy score_genes`, single-gene `CXCL13`, `stitchr`, `OLGA`, and per-cell, CLR, and Gaussian-mixture multimer callers). Per-patient tables and sensitivity analyses are on the cohort pages for [solid-tumor CD8 TILs](benchmarks.md), [infectious disease and blood](benchmarks-infectious.md), [paired blood-tumor, post-ACT, and CD4 TILs](benchmarks-blood-cd4.md), and [murine models](benchmarks-mouse.md).
 
 ## Choosing a command and flags
 
@@ -15,7 +15,7 @@ All workflows load Cell Ranger VDJ and GEX inputs, classify CD4/CD8 lineage, sco
 | Peptide-stimulated culture or 16 h restimulation | `tcrsift run -s samples.yaml -o out/ [--method stimulation] [--germline-vdj-fallback]` | Expansion tiers (`threshold` or `logistic`), or paired within-clone `ΔAIM` over `source: control` (`stimulation`) |
 | Mouse tumor, autoimmune, or viral cohorts | Add `--species mouse` (auto-detected) and `--germline-vdj-fallback` when contig FASTAs are absent | MGI *Ccl3*/*Ccl4* `TumorReactive`, `MusMusculus` `strict_ab` matching, `-dv` V-gene normalization, `Trbj`/`Trbc` parity |
 
-## Summary across 15 public cohorts
+## Summary across 15 cohort evaluations (13 public datasets)
 
 | Setting | Cohorts | Main finding | Cohort page |
 | --- | --- | --- | --- |
@@ -125,11 +125,11 @@ Because `select_round_robin` produces a discrete shortlist rather than a single 
 | | `OLGA 1.3.0` `mouse_T_beta` exact DP | 1.000 | 1.000 | 0.617 (0.542–0.686) | 159.1 / s | 1.0x |
 
 - **Human blood.** `tcrsift` k-mer `pgen_beta` correlates with `OLGA` at $r = 0.954$ ($\rho = 0.957$), reaches similar cross-donor public sharing AUROC (0.735 `Pgen` and 0.739 `Ppost` vs 0.744 `OLGA`), and runs 451x faster (0.035 s vs 15.71 s).
-- **Mouse fallback.** Because `tcrsift` does not ship a pre-trained mouse V(D)J k-mer table (`tcrsift pgen train --species mouse` fits one from repertoire data), it logs a fallback notice and scores mouse chains with its gene-agnostic amino-acid Markov model. Correlation with `OLGA mouse_T_beta` is low ($r = 0.198$), though empirical cross-mouse public sharing AUROC across the five Khatun C57BL/6 mice is similar (0.620 vs 0.617).
+- **Mouse fallback.** Because `tcrsift` does not ship a pre-trained mouse V(D)J k-mer table (`tcrsift pgen train --species mouse` fits one from repertoire data), it logs a fallback notice and scores mouse chains with the bundled human-fitted amino-acid Markov table. Correlation with `OLGA mouse_T_beta` is low ($r = 0.198$), though empirical cross-mouse public sharing AUROC across the five Khatun C57BL/6 mice is similar (0.620 vs 0.617).
 
 ### Multiplexed pMHC multimer calling
 
-On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD8 clones stained with 44 viral/cancer dextramers and 6 negative-control dextramers), four callers are compared.
+On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD8 clones passing `CD3 >= 3` and `UMI >= 2` stained with 44 viral/cancer dextramers and 6 negative-control dextramers), four callers are compared. Note that the [infectious-disease page](benchmarks-infectious.md) evaluates all paired VDJ clones prior to CD8/CD3/UMI filtering (reporting 1,023 → 39 sticky `KLGGALQAK` clones), whereas the head-to-head table below evaluates the CD8/CD3/UMI-filtered expanded repertoire with modal per-cell calls (837 → 31 sticky `KLGGALQAK` clones).
 
 ![Sticky KLGGALQAK and HIV Gag false positives vs canonical viral clones](assets/figures/h2h_multimer_counts.svg)
 
@@ -151,13 +151,14 @@ On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD
 
 ## Reproducing
 
-```bash
-.venv/bin/python -m venv --system-site-packages /tmp/h2h_venv
-/tmp/h2h_venv/bin/pip install stitchr==1.3.1 olga==1.3.0
-/tmp/h2h_venv/bin/stitchrdl -s HUMAN && /tmp/h2h_venv/bin/stitchrdl -s MOUSE
+Run the four cohort benchmark suites first so their cached datasets and scored clone tables exist (see each cohort page below), then install the comparator tools and execute the head-to-head script:
 
-MPLCONFIGDIR=/tmp/mpl_cache /tmp/h2h_venv/bin/python benchmarks/head_to_head/run.py
-MPLCONFIGDIR=/tmp/mpl_cache .venv/bin/python docs/figures/make_overview_benchmark_figures.py
+```bash
+pip install stitchr==1.3.1 olga==1.3.0
+stitchrdl -s HUMAN && stitchrdl -s MOUSE
+
+python benchmarks/head_to_head/run.py
+python docs/figures/make_overview_benchmark_figures.py
 ```
 
 Cohort-specific methods, downloads, and patient-level tables are documented on each benchmark page:

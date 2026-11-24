@@ -149,19 +149,19 @@ TCRsift includes `gd_cd8_relabel` for separating γδ T cells from αβ CD8 T
 cells:
 
 ```python
-from tcrsift import gd_cd8_relabel, refine_cluster
+from tcrsift import MARKER_PANEL_HGNC, gd_cd8_relabel, refine_cluster
 
 # Populate a boolean obs column indicating paired/productive αβ VDJ capture:
-s = atlas.obs["CDR3a/b"].astype(str)
+s = atlas.obs["CDR3ab"].fillna("").astype(str)
 atlas.obs["has_ab_contig"] = (
-    (s != "/") & (s != "") & s.str.contains("[A-Z]", regex=True)
+    (s != "_") & (s != "") & s.str.contains("[A-Z]", regex=True)
 )
 
 refine_cluster(
     atlas,                          # modified in place
     "CD8 T",                        # label in label_col, bool mask, index, or callable
     relabel_fn=gd_cd8_relabel(),    # mean TRDC >= 0.9 (log1p CP10K) and αβ capture < 0.25
-    informative_genes=panel,
+    informative_genes=MARKER_PANEL_HGNC,
     resolution=0.5,
     n_pcs=30,
     min_cells=51,                   # skip compartments smaller than min_cells
