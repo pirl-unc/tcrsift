@@ -25,7 +25,9 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     "numpy>=2.0.0,<3.0.0",
-    "pandas>=2.1.4",
+    "pandas>=2.1.4,<3.0.0",
+    "scipy>=1.10.0,<2.0.0",
+    "h5py>=3.8.0,<4.0.0",
     "scanpy>=1.10.2,<2.0.0",
     # concat_on_disk remains experimental; validate each new AnnData minor.
     # The 0.13 series is covered by our concatenation and expression tests.
@@ -44,7 +46,7 @@ dependencies = [
     "pypdf>=4.0.0,<7.0.0",
     # Core, not extras (one library, shared deps): pyensembl is the shared
     # Ensembl↔HGNC mapping behind tcrsift.genes (used by all expression
-    # lookups); openpyxl backs Excel export. Both permissively licensed.
+    # lookups); openpyxl reads SCT Excel (.xlsx) inputs. Both permissively licensed.
     "pyensembl>=2.0.0,<3.0.0",
     "openpyxl>=3.0.0,<4.0.0",
     # Cancer-testis-antigen panels for tumor typing. tcrsift owns the counting +
@@ -95,14 +97,12 @@ plots = [
 atlas = [
     "harmonypy>=0.0.9",
     "igraph>=0.10",
-    "leidenalg>=0.9",
 ]
 full = [
     "upsetplot>=0.8",
     "matplotlib-venn>=0.11",
     "harmonypy>=0.0.9",
     "igraph>=0.10",
-    "leidenalg>=0.9",
     "tcrpeg>=1.0.0",
     "torch>=2.0.0",
 ]

@@ -33,7 +33,7 @@ from tcrsift.embed import embed_cells
 # module cleanly when it isn't installed so a base `pip install -e .[dev]` still
 # runs; CI installs `.[dev,atlas]` so these actually execute.
 pytest.importorskip("igraph")
-pytest.importorskip("leidenalg")
+pytest.importorskip("igraph")
 
 # harmonypy logs verbosely at INFO; keep the test output clean.
 logging.getLogger("harmonypy").setLevel(logging.WARNING)

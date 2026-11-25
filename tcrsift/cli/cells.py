@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 from .common import setup_logging
 
@@ -123,7 +124,11 @@ def cmd_cells_embed(args):
         n_neighbors=args.n_neighbors,
         seed=args.seed,
     )
-    atlas = embed_cells(adata, config)
+    try:
+        atlas = embed_cells(adata, config)
+    except ImportError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     atlas.uns["species"] = resolved_sp
     atlas.write_h5ad(args.output)
     print(

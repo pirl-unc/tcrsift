@@ -168,7 +168,7 @@ class TestCellsAnnotateCommand:
 class TestCellsEmbedCommand:
     def test_embed_produces_leiden(self, tmp_path):
         pytest.importorskip("igraph")
-        pytest.importorskip("leidenalg")
+        pytest.importorskip("igraph")
 
         inp = tmp_path / "raw.h5ad"
         out = tmp_path / "embed.h5ad"

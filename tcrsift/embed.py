@@ -21,9 +21,9 @@ ambient noise — then PCA → optional Harmony batch integration → neighbors 
 UMAP → Leiden. Signature scoring and labeling stay on log1p CP10K
 (:mod:`tcrsift.gex`); this step only computes structure.
 
-Heavy, optional dependencies (scanpy is already core; harmonypy + igraph +
-leidenalg are the ``atlas`` extra) are imported lazily so a plain
-``import tcrsift`` stays light.
+Heavy, optional dependencies (scanpy is already core; harmonypy + igraph
+are the ``atlas`` extra) are imported lazily so a plain ``import tcrsift``
+stays light.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ import logging
 import warnings
 
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ def embed_cells(adata, config=None):
     emb = pool[:, panel].copy()
     emb.X = emb.layers["counts"].copy()
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
         sc.experimental.pp.normalize_pearson_residuals(emb)
     emb.X = np.nan_to_num(np.asarray(emb.X), nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -155,13 +156,26 @@ def embed_cells(adata, config=None):
         else:
             import inspect
 
-            import harmonypy
+            try:
+                import harmonypy
+            except ImportError as exc:
+                raise ImportError(
+                    "Batch-corrected embedding requires the optional 'harmonypy' package. "
+                    "Install with: pip install 'tcrsift[atlas]'"
+                ) from exc
 
-            harmony_kwargs = {"max_iter_harmony": 20}
-            if "random_state" in inspect.signature(harmonypy.run_harmony).parameters:
+            harmony_params = inspect.signature(harmonypy.run_harmony).parameters
+            harmony_kwargs: dict = {"max_iter_harmony": 20}
+            if "random_state" in harmony_params:
                 harmony_kwargs["random_state"] = config.seed
+            if "verbose" in harmony_params:
+                harmony_kwargs["verbose"] = False
+            # harmonypy 2.0.0 picks nclust=1 when n_obs < 60, leaving sigma as a
+            # scalar float and crashing inside run_harmony; enforce nclust >= 2.
+            if "nclust" in harmony_params and emb.n_obs < 60:
+                harmony_kwargs["nclust"] = min(2, emb.n_obs)
             with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
                 ho = harmonypy.run_harmony(
                     emb.obsm["X_pca"], emb.obs, [config.batch_key],
                     **harmony_kwargs,
@@ -177,10 +191,16 @@ def embed_cells(adata, config=None):
         emb, use_rep=rep, n_neighbors=n_neighbors, random_state=config.seed
     )
     sc.tl.umap(emb, random_state=config.seed)
-    sc.tl.leiden(
-        emb, resolution=config.leiden_resolution, random_state=config.seed,
-        flavor="igraph", n_iterations=2, directed=False,
-    )
+    try:
+        sc.tl.leiden(
+            emb, resolution=config.leiden_resolution, random_state=config.seed,
+            flavor="igraph", n_iterations=2, directed=False,
+        )
+    except ImportError as exc:
+        raise ImportError(
+            "Leiden clustering requires the optional 'igraph' package. "
+            "Install with: pip install 'tcrsift[atlas]'"
+        ) from exc
 
     # Write structure back to the full-gene adata (same cells, same order).
     adata.obsm["X_pca"] = emb.obsm["X_pca"]
@@ -267,7 +287,7 @@ def _reembed_leiden(
     counts = _counts(emb)
     emb.X = counts.copy() if hasattr(counts, "copy") else np.asarray(counts)
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
         sc.experimental.pp.normalize_pearson_residuals(emb)
     emb.X = np.nan_to_num(np.asarray(emb.X), nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -275,10 +295,16 @@ def _reembed_leiden(
     sc.pp.pca(emb, n_comps=n_comps, random_state=random_state)
     k = min(n_neighbors, max(2, emb.n_obs - 1))
     sc.pp.neighbors(emb, use_rep="X_pca", n_neighbors=k, random_state=random_state)
-    sc.tl.leiden(
-        emb, resolution=resolution, random_state=random_state,
-        flavor="igraph", n_iterations=2, directed=False,
-    )
+    try:
+        sc.tl.leiden(
+            emb, resolution=resolution, random_state=random_state,
+            flavor="igraph", n_iterations=2, directed=False,
+        )
+    except ImportError as exc:
+        raise ImportError(
+            "Leiden sub-clustering requires the optional 'igraph' package. "
+            "Install with: pip install 'tcrsift[atlas]'"
+        ) from exc
     return emb.obs["leiden"].to_numpy()
 
 
@@ -510,7 +536,8 @@ def gd_cd8_relabel(
             col = sub[:, vname].X
             col = col.toarray() if hasattr(col, "toarray") else np.asarray(col)
             trdc_mean = float(col.mean()) if col.size else 0.0
-        ab_mean = float(np.asarray(sub.obs[ab_col], dtype=float).mean())
+        ab_vals = pd.to_numeric(sub.obs[ab_col], errors="coerce").to_numpy(dtype=float)
+        ab_mean = float(np.nanmean(ab_vals)) if np.isfinite(ab_vals).any() else 0.0
         is_gd = (trdc_mean >= trdc_min) and (ab_mean < ab_max)
         if lo < ab_mean < hi:
             logger.warning(

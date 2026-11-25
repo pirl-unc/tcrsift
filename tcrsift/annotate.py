@@ -1701,19 +1701,37 @@ def _load_iedb_v3(path: Path) -> pd.DataFrame:
     if receptor_type is not None:
         raw = raw[receptor_type == "alphabeta"].copy()
 
-    def _pick(col_section: str, *field_options: str) -> pd.Series:
-        """Pull the first present (section, field) combo, else NaN."""
+    def _pick_optional(col_section: str, *field_options: str) -> pd.Series | None:
+        """Pull the first present (section, field) combo, else None."""
         for field in field_options:
             key = (col_section, field)
             if key in raw.columns:
                 return raw[key]
-        return pd.Series([pd.NA] * len(raw), index=raw.index)
+        return None
 
-    cdr3_alpha_raw = _pick("Chain 1", "CDR3 Curated").combine_first(
-        _pick("Chain 1", "CDR3 Calculated")
+    def _pick(col_section: str, *field_options: str) -> pd.Series:
+        """Pull the first present (section, field) combo, else all-NA Series."""
+        found = _pick_optional(col_section, *field_options)
+        if found is not None:
+            return found
+        return pd.Series([pd.NA] * len(raw), index=raw.index, dtype="object")
+
+    def _coalesce(primary: pd.Series | None, fallback: pd.Series | None) -> pd.Series:
+        if primary is None and fallback is None:
+            return pd.Series([pd.NA] * len(raw), index=raw.index, dtype="object")
+        if primary is None:
+            return fallback
+        if fallback is None:
+            return primary
+        return primary.combine_first(fallback)
+
+    cdr3_alpha_raw = _coalesce(
+        _pick_optional("Chain 1", "CDR3 Curated"),
+        _pick_optional("Chain 1", "CDR3 Calculated"),
     )
-    cdr3_beta_raw = _pick("Chain 2", "CDR3 Curated").combine_first(
-        _pick("Chain 2", "CDR3 Calculated")
+    cdr3_beta_raw = _coalesce(
+        _pick_optional("Chain 2", "CDR3 Curated"),
+        _pick_optional("Chain 2", "CDR3 Calculated"),
     )
     cdr3_alpha = _upgrade_iedb_cdr3_with_junction(
         cdr3_alpha_raw, _pick("Chain 1", "Junction Calculated", "Junction Curated")
@@ -1721,18 +1739,22 @@ def _load_iedb_v3(path: Path) -> pd.DataFrame:
     cdr3_beta = _upgrade_iedb_cdr3_with_junction(
         cdr3_beta_raw, _pick("Chain 2", "Junction Calculated", "Junction Curated")
     )
-    v_alpha = _pick("Chain 1", "Curated V Gene").combine_first(
-        _pick("Chain 1", "Calculated V Gene")
+    v_alpha = _coalesce(
+        _pick_optional("Chain 1", "Curated V Gene"),
+        _pick_optional("Chain 1", "Calculated V Gene"),
     )
-    v_beta = _pick("Chain 2", "Curated V Gene").combine_first(
-        _pick("Chain 2", "Calculated V Gene")
+    v_beta = _coalesce(
+        _pick_optional("Chain 2", "Curated V Gene"),
+        _pick_optional("Chain 2", "Calculated V Gene"),
     )
     mhc_allele = _pick("Assay", "MHC Allele Names")
-    host_name = _pick("Host", "Name").combine_first(
-        _pick("Assay", "Host Name", "Host")
+    host_name = _coalesce(
+        _pick_optional("Host", "Name"),
+        _pick_optional("Assay", "Host Name", "Host"),
     )
-    host_iri = _pick("Host", "IRI", "IEDB IRI").combine_first(
-        _pick("Assay", "Host IRI")
+    host_iri = _coalesce(
+        _pick_optional("Host", "IRI", "IEDB IRI"),
+        _pick_optional("Assay", "Host IRI"),
     )
     host_species = _infer_iedb_host_species(
         host_name,
@@ -1953,15 +1975,17 @@ _TUMOR_SELF_CANONICAL_LABELS = frozenset(
 
 
 def _match_viral_species_lower(species_lower: pd.Series) -> pd.Series:
-    """Match viral organism names while avoiding bacterial/non-flu false hits."""
+    """Match viral organism names while avoiding bacterial/non-flu false hits.
+
+    Uses RE2-compatible word boundaries (no Perl lookarounds) so the matcher
+    works identically on object-dtype Series and Pandas 3 / PyArrow StringDtype.
+    """
     is_viral = pd.Series(False, index=species_lower.index)
     for pattern in VIRAL_SPECIES_PATTERNS:
         if pattern == "flu":
-            is_viral |= species_lower.str.contains(r"(?<!\w)flu\b", na=False, regex=True)
+            is_viral |= species_lower.str.contains(r"\bflu\b", na=False, regex=True)
         elif pattern == "influenza":
-            is_viral |= species_lower.str.contains(
-                r"(?<!para)\binfluenza\b(?!e\b)", na=False, regex=True
-            )
+            is_viral |= species_lower.str.contains(r"\binfluenza\b", na=False, regex=True)
         else:
             is_viral |= species_lower.str.contains(pattern, na=False, regex=False)
     return is_viral

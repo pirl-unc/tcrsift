@@ -535,8 +535,10 @@ def plot_cross_donor_venn(
                 ax.set_ylabel("clones")
                 for i, h in enumerate(heights):
                     ax.text(i, h, str(h), ha="center", va="bottom", fontsize=8)
-                ax.set_title(f"{label}: {a} vs {b}\n(install 'matplotlib_venn' for Venn view)",
-                             fontsize=9)
+                ax.set_title(
+                    f"{label}: {a} vs {b}\n(install 'tcrsift[plots]' / 'matplotlib-venn' for Venn view)",
+                    fontsize=9,
+                )
     fig.suptitle(title)
     fig.tight_layout()
     save_figure(fig, output_path, dpi=150)
