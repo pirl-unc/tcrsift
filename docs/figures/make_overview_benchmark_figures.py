@@ -59,9 +59,9 @@ def h2h_prioritize_figures() -> None:
     method_specs = [
         ("clone_size", "Clone size", NEUTRAL),
         ("raw_CXCL13", "Single-gene CXCL13", ORANGE),
-        ("scanpy_score_genes_NeoTCR", "Scanpy score_genes (NeoTCR)", AQUA),
-        ("scanpy_composite_topk", "Scanpy composite top-K", INK2),
-        ("tcrsift", "TCRsift default", BLUE),
+        ("scanpy_score_genes_NeoTCR", "Uncalibrated Scanpy top-K (NeoTCR)", AQUA),
+        ("scanpy_composite_topk", "Uncalibrated Scanpy composite top-K", INK2),
+        ("tcrsift", "TCRsift (context preset)", BLUE),
     ]
 
     # Figure 1: Grouped horizontal bars of AUROC across the 5 cohorts
@@ -107,17 +107,17 @@ def h2h_prioritize_figures() -> None:
     ax1.set_yticks(y_centers, [lbl for _, lbl in cohort_order])
     ax1.set_xlim(0.0, 0.98)
     ax1.set_xlabel("Clone-level AUROC")
-    ax1.set_title("Ex vivo ranking AUROC across 5 human cohorts", fontsize=10.2)
+    ax1.set_title("Ex vivo ranking AUROC: raw gene sets vs TCRsift context presets", fontsize=10.0)
     ax1.grid(axis="x", lw=0.6)
     ax1.set_axisbelow(True)
     ax1.spines["left"].set_visible(False)
     ax1.tick_params(axis="y", length=0)
     ax1.legend(
         frameon=False,
-        fontsize=8.3,
+        fontsize=8.1,
         loc="upper center",
         bbox_to_anchor=(0.45, -0.14),
-        ncol=3,
+        ncol=2,
     )
     save_tight(fig1, "h2h_prioritize_auroc")
 
@@ -167,7 +167,7 @@ def h2h_prioritize_figures() -> None:
     ax2.set_xticks(xs, [lbl for _, lbl in cd4_cohorts])
     ax2.set_ylim(0, max(ymax * 1.28, 0.35))
     ax2.set_ylabel("Treg fraction in top-K shortlist (lower is better)")
-    ax2.set_title("CD4 shortlist Treg fraction (--exclude-treg)", fontsize=10.2)
+    ax2.set_title("CD4 shortlist Treg fraction: uncalibrated top-K vs TCRsift --exclude-treg", fontsize=9.8)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
     ax2.legend(frameon=False, fontsize=8.2, loc="upper right")
