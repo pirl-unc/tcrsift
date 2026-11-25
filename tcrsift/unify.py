@@ -215,8 +215,6 @@ def merge_experiments(
     # Add prefixes to each DataFrame
     prefixed_dfs = []
     source_names = []
-    sources_with_counts = []
-    sources_with_gex = []
 
     for df, name in experiments:
         df_copy = df.copy()
@@ -227,12 +225,6 @@ def merge_experiments(
                 if fallback_cnt in df_copy.columns:
                     df_copy["total_cells.count"] = df_copy[fallback_cnt]
                     break
-
-        # Track which sources have count/gex columns
-        if "total_cells.count" in df_copy.columns:
-            sources_with_counts.append(name)
-        if any("gex." in c and ".sum" in c for c in df_copy.columns):
-            sources_with_gex.append(name)
 
         # Rename columns with prefix (except key columns)
         rename_dict = {col: f"{name}.{col}" for col in df_copy.columns if col not in key_cols}

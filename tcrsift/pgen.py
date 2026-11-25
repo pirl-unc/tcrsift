@@ -242,8 +242,6 @@ def _j_usage_log(gene: str, chain: str, species: str = "human") -> float:
         table = _TRBJ_USAGE if chain == "beta" else _TRAJ_USAGE
         pool_sizes = _GENE_POOL_SIZE
     base = _strip_allele(gene)
-    if species == "mouse" and chain == "alpha":
-        base = _MOUSE_TRAV_ALIASES.get(base, base)
     if base in table:
         p = table[base]
     else:

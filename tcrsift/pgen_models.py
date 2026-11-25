@@ -332,14 +332,6 @@ def _observed_repertoire_df(
     return pd.read_csv(path)
 
 
-def _observed_seqs(
-    chain: str, *, url: str | None = None, species: str = "human"
-) -> list[str]:
-    """CDR3s for Ppost training: cached file → fetch (url/bundled)."""
-    df = _observed_repertoire_df(chain, url=url, species=species)
-    return df["seq"].dropna().astype(str).tolist()
-
-
 # ---------------------------------------------------------------------------
 # Train + cache
 # ---------------------------------------------------------------------------

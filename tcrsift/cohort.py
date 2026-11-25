@@ -195,14 +195,11 @@ def run_cohort_analysis(
 
 
 def _emit_heatmaps(matrices: dict[str, pd.DataFrame], output_dir: Path) -> None:
-    """Render one heatmap PDF per matrix; no-op if matplotlib missing."""
-    try:
-        import matplotlib
+    """Render one heatmap PDF per matrix."""
+    import matplotlib
 
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:  # pragma: no cover - matplotlib optional
-        return
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
 
     for name, mat in matrices.items():
         if mat.empty:

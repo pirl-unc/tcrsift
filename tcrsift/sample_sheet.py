@@ -479,12 +479,7 @@ def _reject_duplicate_samples(samples: list) -> None:
 
 def _load_yaml_sample_sheet(path: Path) -> SampleSheet:
     """Load sample sheet from YAML file."""
-    try:
-        import yaml
-    except ImportError:
-        raise ImportError(
-            "PyYAML is required to load YAML sample sheets. Install with: pip install pyyaml"
-        )
+    import yaml
 
     with open(path) as f:
         data = yaml.safe_load(f)

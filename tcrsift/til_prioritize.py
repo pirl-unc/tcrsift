@@ -34,7 +34,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ._schema import truthy_flag_series
+from ._schema import paired_cdr3ab_key, truthy_flag_series
 from .prioritize import (
     CONTEXT_SIGNATURES,
     PRIORITY_CONTEXT_SIGNATURES,
@@ -132,12 +132,8 @@ def _ensure_clone_key(adata) -> None:
     required = {"CDR3_alpha", "CDR3_beta"}
     if not required.issubset(adata.obs):
         raise ValueError("Loaded cells have no CDR3ab or paired CDR3_alpha/CDR3_beta columns")
-    alpha = adata.obs["CDR3_alpha"].fillna("").astype(str).str.strip()
-    beta = adata.obs["CDR3_beta"].fillna("").astype(str).str.strip()
-    adata.obs["CDR3ab"] = (alpha + "_" + beta).where(
-        alpha.ne("") & beta.ne(""),
-        other=pd.NA,
-    )
+    keys, valid = paired_cdr3ab_key(adata.obs, "CDR3_alpha", "CDR3_beta")
+    adata.obs["CDR3ab"] = keys.where(valid, other=pd.NA)
 
 
 def _known_mart1_mask(df: pd.DataFrame) -> pd.Series:

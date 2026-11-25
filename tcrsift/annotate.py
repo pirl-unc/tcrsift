@@ -1520,12 +1520,6 @@ def _pick_vdjdb_source(dir_path: Path) -> Path | tuple[Path, Path]:
     )
 
 
-def _pick_vdjdb_file(dir_path: Path) -> Path:
-    """Back-compat wrapper returning a single Path (or chains.tsv.gz for relational dirs)."""
-    res = _pick_vdjdb_source(dir_path)
-    return res[0] if isinstance(res, tuple) else res
-
-
 def load_iedb(
     path: str | Path,
     epitope_path: str | Path | None = None,

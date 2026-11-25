@@ -68,7 +68,7 @@ from .signatures import (
 from .signatures import (  # noqa: F401  (back-compat re-export; #303 retired the enrichment branch)
     TUMOR_REACTIVE_GENES_HGNC as ENRICHMENT_GENES_DEFAULT,
 )
-from .validation import TCRsiftValidationError, validate_file_exists
+from .validation import TCRsiftValidationError, most_common, validate_file_exists
 
 logger = logging.getLogger(__name__)
 
@@ -95,22 +95,6 @@ def _timepoint_sort_key(label: str) -> tuple[int, str]:
     if m:
         return (int(m.group(1)), str(label))
     return (10**9, str(label))
-
-
-def _truthy_mask(series: pd.Series) -> pd.Series:
-    """Convert a mixed-typed boolean-like series to bool mask."""
-    return truthy_flag_series(series)
-
-
-def _mode_or_nan(series: pd.Series):
-    """Return the most frequent non-null value, else NaN."""
-    values = series.dropna()
-    if len(values) == 0:
-        return np.nan
-    mode = values.mode()
-    if len(mode) == 0:
-        return np.nan
-    return mode.iloc[0]
 
 
 def _normalize_til_select_db(df: pd.DataFrame, label: str, path: str | Path) -> pd.DataFrame:
@@ -201,18 +185,18 @@ def match_clonotypes(
         key_cols = ["CDR3_alpha", "CDR3_beta"]
 
     # db_epitope and db_species must come from the same DB row (#88
-    # / #94 archetype): independent ``_mode_or_nan`` calls on coupled
+    # / #94 archetype): independent ``most_common`` calls on coupled
     # columns can produce inconsistent (epitope, species) pairs when
     # the per-CDR3 match set spans multiple antigens. Pick a
     # representative row per group based on the (epitope, species)
     # mode and read both fields off it.
     def _agg_group(g: pd.DataFrame) -> pd.Series:
-        epi = _mode_or_nan(g["epitope"])
+        epi = most_common(g["epitope"], default=np.nan)
         if pd.notna(epi):
             sub = g[g["epitope"] == epi]
         else:
             sub = g
-        spe = _mode_or_nan(sub["species"])
+        spe = most_common(sub["species"], default=np.nan)
         return pd.Series(
             {
                 "db_epitope": epi,
@@ -567,9 +551,9 @@ def _extract_paired_cdr3_from_consensus_df(
     work = work[work["chain_simple"].isin(["TRA", "TRB"])]
 
     if "full_length" in work.columns:
-        work = work[_truthy_mask(work["full_length"])]
+        work = work[truthy_flag_series(work["full_length"])]
     if "productive" in work.columns:
-        work = work[_truthy_mask(work["productive"])]
+        work = work[truthy_flag_series(work["productive"])]
 
     umis_col = "umis" if "umis" in work.columns else None
     reads_col = "reads" if "reads" in work.columns else None
@@ -912,11 +896,11 @@ def _load_barcode_to_clonotype(contig_csv_path: Path) -> pd.DataFrame:
 
     keep_mask = pd.Series(True, index=contigs.index)
     if "productive" in contigs.columns:
-        prod_mask = _truthy_mask(contigs["productive"])
+        prod_mask = truthy_flag_series(contigs["productive"])
         if prod_mask.any():
             keep_mask &= prod_mask
     if "high_confidence" in contigs.columns:
-        hc_mask = _truthy_mask(contigs["high_confidence"])
+        hc_mask = truthy_flag_series(contigs["high_confidence"])
         if hc_mask.any():
             keep_mask &= hc_mask
     filtered_contigs = contigs[keep_mask].copy()
@@ -957,9 +941,9 @@ def _compute_marker_scores_from_adata(
         )
     keep = contigs[[clonotype_col, "barcode"]].copy()
     if "productive" in contigs.columns:
-        keep = keep[_truthy_mask(contigs["productive"])]
+        keep = keep[truthy_flag_series(contigs["productive"])]
     if "high_confidence" in contigs.columns:
-        keep = keep[_truthy_mask(contigs["high_confidence"])]
+        keep = keep[truthy_flag_series(contigs["high_confidence"])]
     keep = keep.rename(columns={clonotype_col: "clonotype_id"}).drop_duplicates()
     keep["clonotype_id"] = normalize_clonotype_id(keep["clonotype_id"])
     keep = keep.merge(clone_map, on="clonotype_id", how="inner")
@@ -2579,7 +2563,7 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
         out_selected_report,
         timepoint_order,
         marker_genes,
-        pyensembl_release=int(args.pyensembl_release),
+        pyensembl_release=int(getattr(args, "pyensembl_release", 110)),
     )
 
     primary_title = f"Top {args.top_k} abTCRs (ranked by {args.rank_by})"
@@ -2694,15 +2678,13 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
                 title=f"Top {args.top_k} abTCRs (ranked by {rank_metric}, annotated)",
             )
 
-    # Summary CSV + additional expected artifact filenames.
+    # Summary CSV
     summary_rows = []
-    sets_by_timepoint: dict[str, set[str]] = {}
     for label in timepoint_order:
         df = samples[label]
         n_clonotypes = len(df)
         total_cells = int(pd.to_numeric(df["cell_count"], errors="coerce").fillna(0).sum())
         summary_rows.append({"timepoint": label, "n_clonotypes": n_clonotypes, "total_cells": total_cells})
-        sets_by_timepoint[label] = set(df["CDR3ab"].dropna())
     summary_df = pd.DataFrame(summary_rows)
     summary_df["timepoint"] = pd.Categorical(summary_df["timepoint"], categories=timepoint_order, ordered=True)
     summary_df = summary_df.sort_values("timepoint")
@@ -2713,22 +2695,6 @@ def run_til_select(args: argparse.Namespace) -> pd.DataFrame:
     # intratumoral clones, with the final candidates highlighted. Falls back
     # to a placeholder when the score columns aren't available.
     _plot_til_signature_map(master_df, fig_dir / "selection_scatter_panels.png")
-    _save_placeholder_plot(fig_dir / "marker_gene_histograms_cp10k_mean.png", "Marker gene histograms")
-    for i in range(1, 6):
-        _save_placeholder_plot(
-            fig_dir / f"marker_gene_pair_scatter_cp10k_mean_page{i}.png",
-            f"Marker gene pair scatter page {i}",
-        )
-    _save_placeholder_plot(fig_dir / "tcr_timepoint_summary.png", "TCR summary")
-    _save_placeholder_plot(fig_dir / "tcr_clone_size_bins.png", "Clone size bins")
-    _save_placeholder_plot(fig_dir / "tcr_clone_size_bins_log.png", "Clone size bins (log)")
-    _save_placeholder_plot(fig_dir / "tcr_frequency_bins.png", "Frequency bins")
-    _save_placeholder_plot(fig_dir / "tcr_frequency_bins_log.png", "Frequency bins (log)")
-    _save_placeholder_plot(fig_dir / "tcr_trend_categories.png", "Trend categories")
-    _save_placeholder_plot(fig_dir / "tcr_umis_distribution.png", "UMI distribution")
-    _save_placeholder_plot(fig_dir / "tcr_reads_distribution.png", "Read distribution")
-    if len(sets_by_timepoint) <= 3:
-        _save_placeholder_plot(fig_dir / "tcr_overlap_venn.png", "Timepoint overlap")
 
     export_all_plots_pdf(fig_dir, fig_dir / "all_plots.pdf")
 

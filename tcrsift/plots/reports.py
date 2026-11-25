@@ -724,16 +724,12 @@ def create_tcr_sequence_pdf(
             )
         else:
             logger.warning(msg)
-    try:
-        from itertools import cycle
+    from itertools import cycle
 
-        from reportlab.lib import colors
-        from reportlab.lib.pagesizes import letter
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfgen import canvas
-    except ImportError:
-        logger.warning("reportlab not installed, cannot generate sequence PDF")
-        return
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfgen import canvas
 
     if sequence_columns is None:
         sequence_columns = _default_tcr_sequence_columns(df)
@@ -939,52 +935,48 @@ def generate_report(
     output_dir = Path(output_dir)
 
     if format == "pdf":
-        try:
-            from reportlab.lib.pagesizes import letter
-            from reportlab.lib.utils import ImageReader
-            from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.utils import ImageReader
+        from reportlab.pdfgen import canvas
 
-            # all-figures.pdf carries the donor/run name on the cover so a
-            # per-donor bundle is identifiable on its own (#262 follow-up).
-            pdf_path = output_dir / "all-figures.pdf"
-            c = canvas.Canvas(str(pdf_path), pagesize=letter)
-            width, height = letter
+        # all-figures.pdf carries the donor/run name on the cover so a
+        # per-donor bundle is identifiable on its own (#262 follow-up).
+        pdf_path = output_dir / "all-figures.pdf"
+        c = canvas.Canvas(str(pdf_path), pagesize=letter)
+        width, height = letter
 
-            # Title page
-            c.setFont("Helvetica-Bold", 24)
-            c.drawCentredString(width / 2, height - 100, "TCRsift — all figures")
-            if report_name:
-                c.setFont("Helvetica", 16)
-                c.drawCentredString(width / 2, height - 140, str(report_name))
+        # Title page
+        c.setFont("Helvetica-Bold", 24)
+        c.drawCentredString(width / 2, height - 100, "TCRsift — all figures")
+        if report_name:
+            c.setFont("Helvetica", 16)
+            c.drawCentredString(width / 2, height - 140, str(report_name))
+        c.showPage()
+
+        # Add each plot
+        for png_file in sorted(output_dir.glob("*.png")):
+            img = ImageReader(str(png_file))
+            img_width, img_height = img.getSize()
+
+            # Scale to fit page
+            scale = min((width - 100) / img_width, (height - 100) / img_height)
+            scaled_width = img_width * scale
+            scaled_height = img_height * scale
+
+            x = (width - scaled_width) / 2
+            y = (height - scaled_height) / 2
+
+            c.drawImage(
+                img,
+                x,
+                y,
+                width=scaled_width,
+                height=scaled_height,
+            )
             c.showPage()
 
-            # Add each plot
-            for png_file in sorted(output_dir.glob("*.png")):
-                img = ImageReader(str(png_file))
-                img_width, img_height = img.getSize()
-
-                # Scale to fit page
-                scale = min((width - 100) / img_width, (height - 100) / img_height)
-                scaled_width = img_width * scale
-                scaled_height = img_height * scale
-
-                x = (width - scaled_width) / 2
-                y = (height - scaled_height) / 2
-
-                c.drawImage(
-                    img,
-                    x,
-                    y,
-                    width=scaled_width,
-                    height=scaled_height,
-                )
-                c.showPage()
-
-            c.save()
-            logger.info(f"Generated PDF report: {pdf_path}")
-
-        except ImportError:
-            logger.warning("reportlab not installed, cannot generate PDF report")
+        c.save()
+        logger.info(f"Generated PDF report: {pdf_path}")
 
     elif format == "html":
         import html as _html

@@ -951,8 +951,8 @@ def _trbc_override_mask(df: pd.DataFrame) -> pd.Series:
     CellRanger's TRBC call.
 
     Returns an all-False Series (aligned to ``df.index``) when either
-    column is missing. Used both by :func:`_count_trbc_overrides` and
-    to emit the per-row ``beta_c_gene_overridden`` audit column.
+    column is missing. Used to emit the per-row ``beta_c_gene_overridden``
+    audit column.
     """
     if "beta_c_gene" not in df.columns or "beta_c_gene_canonical" not in df.columns:
         return pd.Series(False, index=df.index)
@@ -979,13 +979,6 @@ def _ensure_qc_warnings_column(df: pd.DataFrame) -> pd.DataFrame:
         v if isinstance(v, list) else [] for v in df["qc_warnings"]
     ]
     return df
-
-
-def _count_trbc_overrides(df: pd.DataFrame) -> int:
-    """Count rows where :func:`pick_canonical_constant` overrode
-    CellRanger's TRBC call. Thin wrapper over
-    :func:`_trbc_override_mask` for callers that just want a tally."""
-    return int(_trbc_override_mask(df).sum())
 
 
 def _beta_c_base(c_gene: str | None) -> str:

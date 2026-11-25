@@ -111,7 +111,6 @@ from .constants import (  # noqa: F401
     _beta_j_family,
     _classify_leader,
     _count_divergence_positions,
-    _count_trbc_overrides,
     _describe_leader,
     _divergence_positions,
     _ensure_qc_warnings_column,
