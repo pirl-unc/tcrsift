@@ -5,21 +5,20 @@ or more samples using gene-expression state signatures. Include `patient_id` on
 the sample sheet whenever a study spans multiple donors.
 
 ```bash
-# Vaccine or peripheral-blood study (CD8 default)
+# Fresh solid-tumor CD8 TILs (with construct assembly)
+tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor --assemble
+
+# Fresh solid-tumor CD4 TILs (exclude FOXP3+ Tregs)
+tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor --tcell-type cd4 --exclude-treg
+
+# Unstimulated cancer-patient blood
+tcrsift prioritize samples.yaml -o candidates/ --context blood-tumor
+
+# Infection, vaccine, healthy, or heme blood (add --call-multimers if pMHC-barcoded)
 tcrsift prioritize samples.yaml -o candidates/ --context blood
 
-# Malignant pleural effusion, scoring both CD4 and CD8 lineages
-tcrsift prioritize samples.yaml -o candidates/ --context mpe --tcell-type both
-
-# AML or other hematologic malignancy
-tcrsift prioritize samples.yaml -o candidates/ --context heme
-
-# Solid-tumor TIL (these two commands are identical)
-tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
-tcrsift til-prioritize samples.yaml -o candidates/
-
-# Assemble full-length β-T2A-α constructs in the same command
-tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor --assemble
+# Unpaired 6-24 h peptide restimulation
+tcrsift prioritize samples.yaml -o candidates/ --context peptide-stim
 ```
 
 `til-prioritize` and `examples/multi_sample_til.py` run the same workflow with
@@ -227,17 +226,18 @@ Additional boundary rules:
 
 ## Context presets
 
-For multi-day antigen expansion cultures use `tcrsift run`, and for 6–24 h restimulation with a paired unstimulated control use `tcrsift run --method stimulation`. For direct ex vivo samples (or unpaired restimulation), `tcrsift prioritize --context <CONTEXT>` only changes which signatures get Tier-1 priority ahead of the 6 core state panels (**Differentiated, AntigenExperienced, Cytolytic, AcuteActivation, Proliferation, AIM**):
+Each `--context` preset simply chooses which signatures receive Tier-1 priority before falling back to the 6 core state panels (`Differentiated`, `AntigenExperienced`, `Cytolytic`, `AcuteActivation`, `Proliferation`, `AIM`):
 
-| `--context` | Tier-1 priority signatures (human) | When to use |
+| `--context` | Tier-1 signatures | Biological assumption |
 | --- | --- | --- |
-| `solid-tumor` | `TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` | Fresh TILs (add `--exclude-treg` for CD4 TILs) |
-| `blood-tumor` | `NeoTCR_PBL` | Unstimulated cancer-patient blood |
-| `peptide-stim` | `AIM`, `AcuteActivation`, `Proliferation`, `Cytolytic` | Unpaired 6–24 h restimulation |
-| `blood` | *(none; `CirculatingMemory` + core)* | Other blood / marrow (add `--call-multimers` for pMHC barcodes) |
-| `generic` *(default)* | *(none; 6 core panels only)* | Unspecified tissue / exploratory |
+| `solid-tumor` | `TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` | Chronic antigen exposure inside a solid tumor |
+| `blood-tumor` | `NeoTCR_PBL` | Tumor-reactive CD8 T cells recirculating in blood |
+| `peptide-stim` | `AIM`, `AcuteActivation`, `Proliferation`, `Cytolytic` | Acute 6–24 h TCR stimulation (unpaired) |
+| `blood` | None (`CirculatingMemory` + 6 core) | Circulating T cells; no tumor-specific gene set assumed |
+| `generic` *(default)* | None (6 core only) | No compartment or disease assumption |
 
-Orthogonal modifiers — `pre_sorted: CD4|CD8` on the sample sheet, `--tcell-type cd4|cd8|both`, `--exclude-treg`, `--call-multimers`, and `--assemble` — combine freely with any context. Compatibility variants `--context heme` (alias for `blood`) and `--context mpe` (effusion variant of `solid-tumor` without `ITGAE`/`TumorReactive`) remain supported, and presets are exposed via `tcrsift.PRIMARY_CONTEXTS` and `tcrsift.CONTEXT_ONTOLOGY`. When `--tcell-type cd4` or `both` is used with `--context solid-tumor` or `mpe` and `--exclude-treg` is disabled, `tcrsift prioritize` warns if `FOXP3+` Treg-like clones are detected.
+- **Assay-level workflows:** use `tcrsift run` for multi-day antigen expansion cultures, `tcrsift run --method stimulation` for 6–24 h restimulation with a paired unstimulated control, or add `--call-multimers` for pMHC-barcoded libraries.
+- **Common flags:** set `pre_sorted: CD4` or `CD8` in `samples.yaml` for FACS-sorted libraries, pass `--exclude-treg` for CD4 TILs (a warning is logged if `FOXP3+` clones are detected without it), and pass `--assemble` to build full-length constructs. Compatibility presets `--context heme` (alias for `blood`) and `--context mpe` (effusion variant of `solid-tumor` without `ITGAE`/`TumorReactive`) remain supported.
 
 Context applies to the entire run and is never inferred from sample names,
 `tissue`, or `source`.

@@ -8,29 +8,7 @@ The evaluation is organized from **objective sequence and antigen-binding ground
 2. **[Stage 2 — Identifying expected / known antigen-specific TCRs](#stage-2-do-we-identify-expected-antigen-specific-tcrs)**: Do we accurately call known cognate TCRs via public database matching (`strict_ab`), multiplexed pMHC multimers (`--call-multimers`), sequence publicness (`Pgen`/`Ppost` vs `OLGA`), and overnight peptide restimulation (`ΔAIM`/`Δcytokines`)?
 3. **[Stage 3 — Expression signatures & context-dependent selection heuristics](#stage-3-expression-signatures-and-selection-heuristics)**: How well do transcriptional signatures and calibrated shortlist selection recover experimentally verified reactive clones across fresh TILs, cancer blood, post-ACT biopsies, CD4 TILs, and murine tissues?
 
-Per-patient tables and sensitivity analyses live on the cohort pages for [solid-tumor CD8 TILs](benchmarks.md), [infectious disease and blood](benchmarks-infectious.md), [paired blood-tumor, post-ACT, and CD4 TILs](benchmarks-blood-cd4.md), and [murine models](benchmarks-mouse.md).
-
----
-
-## Choosing a command and mode
-
-Pick the first rule that applies — ex vivo antigen stimulation overrides tissue of origin, and FACS sorting / multimers / assembly are orthogonal flags:
-
-1. **Multi-day (7–14 d) antigen expansion culture** → `tcrsift run -s samples.yaml -o out/` *(clonal expansion & pool specificity; `--method threshold` or `--method logistic`)*.
-2. **Short-term (6–24 h) peptide restimulation with a paired unstimulated control** → `tcrsift run -s samples.yaml -o out/ --method stimulation` *(within-clone `ΔAIM` and `Δeffector_cytokines` over `source: control`)*.
-3. **Direct ex vivo sequencing, or unpaired restimulation** → `tcrsift prioritize samples.yaml -o out/ --context <CONTEXT>`, where `<CONTEXT>` only changes which gene signatures receive Tier-1 priority:
-   - `solid-tumor` — fresh TILs (`TumorReactive`, `MANAscore`, `NeoTCR8`/`NeoTCR4`; mouse uses MGI `TumorReactive`)
-   - `blood-tumor` — unstimulated cancer-patient blood (`NeoTCR_PBL`)
-   - `peptide-stim` — unpaired 6–24 h restimulation (`AIM`, `AcuteActivation`, `Proliferation`, `Cytolytic`)
-   - `blood` — other blood / marrow (`CirculatingMemory` + 6 core panels)
-   - `generic` *(default if `--context` is omitted)* — 6 core state panels only (`Differentiated`, `AntigenExperienced`, `Cytolytic`, `AcuteActivation`, `Proliferation`, `AIM`)
-4. **Add orthogonal flags only when your data has them:**
-   - **Sorting / lineage**: `pre_sorted: CD4|CD8` in `samples.yaml`, `--tcell-type cd4|cd8|both`, `--exclude-treg` (recommended for CD4 TILs)
-   - **pMHC multimers**: `--call-multimers`
-   - **Construct assembly**: `--assemble` (add `--germline-vdj-fallback` if 5' contigs are truncated)
-   - **Species**: auto-detected (`--species auto|human|mouse`)
-
-*(Compatibility variants `--context heme` [alias for `blood`] and `--context mpe` [effusion variant of `solid-tumor` without `ITGAE`/`TumorReactive`] remain accepted.)*
+Per-patient tables and sensitivity analyses live on the cohort pages for [solid-tumor CD8 TILs](benchmarks.md), [infectious disease and blood](benchmarks-infectious.md), [paired blood-tumor, post-ACT, and CD4 TILs](benchmarks-blood-cd4.md), and [murine models](benchmarks-mouse.md). For CLI usage and context presets, see [Choose a workflow](index.md#choose-a-workflow) and [Clone Prioritization](user-guide/til-signatures.md).
 
 ---
 
