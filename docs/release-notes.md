@@ -8,6 +8,44 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.42.0
+
+Fixed four assembly and murine `Pgen` bugs discovered during a cross-tool audit
+and added `tcrdist3 0.3` to the head-to-head benchmark suite:
+
+- **Codon-aligned germline V-gene leaders (`TRAV41*01` frameshift fix)**:
+  Trimmed trailing 1–2 nt IMGT exon-boundary overhangs in
+  `scripts/build_vgene_leaders.py`, `tcrsift/refseqs/vgene_leaders.csv.gz`, and
+  `tcrsift/assemble/leaders.py` (14 alleles including functional `TRAV41*01`,
+  previously 67 nt = `3*22 + 1`), preventing downstream reading-frame shifts
+  when germline leader fallback is used.
+- **Validated α/β J→C junction seams & Cell Ranger 3 `TRAJ37` boundary rescue**:
+  `_add_constant_regions` now validates contig junction codons against
+  `_VALID_JUNCTION_RESIDUES` (`{N, Y, D, H}` for α, `{E}` for β), rejecting
+  unspliced intronic C-tail reads in favor of germline `_traj_junction_residue`,
+  and cleanly shifts over-extended Cell Ranger 3 `TRAJ37` junction residues
+  (`...LQVKPD` + bare `ATCCAGAAC...`) so `alpha_constant_aa` starts with
+  `DIQNPDPAV` rather than `IIQNPDPAV`. Non-codon 1–2 nt stubs past VDJ are no
+  longer written to `*_constant_nt_contig` or flagged as load-bearing frame
+  errors. On Fischer 2021 (160 5'-truncated clones), load-bearing validation
+  errors dropped from **29 to 0**.
+- **Bundled murine k-mer `Pgen` models (`kmer_pgen_mouse_{alpha,beta}.npz`)**:
+  Generated offline from 500,000 `OLGA` `mouse_T_{alpha,beta}` draws (~30 KB
+  each, Apache-2.0 NumPy tables only). On Khatun 2021 murine GP66 CD4 TCRs
+  ($n=1{,}781$), correlation with `OLGA mouse_T_beta` jumped from $r = 0.198$
+  to **$r = 0.910$** ($\rho = 0.904$, exceeding pretrained `soNNia mouse_T_beta`
+  at $r = 0.877$) while running **266x faster than `OLGA`** and **846x faster
+  than `soNNia`**.
+- **Head-to-head benchmark audit & `tcrdist3 0.3` comparator**: Added
+  `tcrdist3 0.3` (via isolated `tcrdist_worker.py` + `Dockerfile.tcrdist`),
+  aligned Stage 2a Minervina evaluation to the exact 4,212 dextramer-verified
+  SARS-CoV-2 clones with uniform modal-species aggregation (`tcrdist3` paired
+  `r <= 48` reaches 557/596 = 93.5% precision, 13.2% recall vs 210/226 = 92.9%
+  for `tcrsift` paired Lev-1 at 14.9s), calibrated `muon` DSB to the standard
+  `>= 3.0` cutoff (101/103 = 98.1% precision, 369 sticky `KLGGALQAK` FPs) with
+  `n_distinct_epitopes_called`, and added `n_repeat_lt20` / `max_repeat_bp` to
+  the `DNAChisel` codon-optimization table.
+
 ## 3.41.0
 
 Added paired αβ Levenshtein-1 database matching (`ab_near`) and expanded the

@@ -431,9 +431,8 @@ class TestNtTriadColumns:
         vdj_beta = "CASS" + "G" * 60 + "VETA"
         leader_aa = "M" + "A" * 19
         vdj_beta_nt = back_translate(vdj_beta)
-        # Contig: leader + VDJ + first 8 codons of canonical TRBC1.
-        # First codon serves as the junction E (HUMAN_TRBC1_AA[0]).
-        c_region_start_nt = back_translate(HUMAN_TRBC1_AA[:8])
+        # Contig: leader + VDJ + junction E + first 7 codons of bare mature TRBC1.
+        c_region_start_nt = back_translate("E" + HUMAN_TRBC1_AA[:7])
         beta_contig_seq = (
             back_translate(leader_aa) + vdj_beta_nt + c_region_start_nt
         )
@@ -729,8 +728,8 @@ class TestSingleChainTriad:
             HUMAN_TRBC1_AA,
         )
 
-        beta_c_start_nt = back_translate(HUMAN_TRBC1_AA[:8])
-        alpha_c_start_nt = back_translate(HUMAN_TRAC_AA[:8])
+        beta_c_start_nt = back_translate("E" + HUMAN_TRBC1_AA[:7])
+        alpha_c_start_nt = back_translate("N" + HUMAN_TRAC_AA[:7])
         beta_contig_seq = (
             back_translate(leader_aa)
             + back_translate(vdj_beta)

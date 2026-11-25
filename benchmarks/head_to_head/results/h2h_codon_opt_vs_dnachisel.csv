@@ -1,4 +1,4 @@
-cohort,tool,n_constructs,n_inframe_exact_aa,n_restriction_free,n_homopolymer_lt9,n_gc_window_ok,mean_donor_vdj_codon_preserved,elapsed_sec
-minervina_2022_human_46_constructs,tcrsift_focal_opt,46,46,46,46,46,0.978,1.143
-minervina_2022_human_46_constructs,tcrsift_full_opt,46,46,46,46,46,0.4094,1.466
-minervina_2022_human_46_constructs,dnachisel_v3.2,46,46,46,46,46,0.4617,1.924
+cohort,tool,n_constructs,n_inframe_exact_aa,n_restriction_free,n_homopolymer_lt9,n_repeat_lt20,max_repeat_bp,n_gc_window_ok,mean_donor_vdj_codon_preserved,elapsed_sec
+minervina_2022_human_46_constructs,tcrsift_focal_opt,46,46,46,46,46,13,46,0.978,1.275
+minervina_2022_human_46_constructs,tcrsift_full_opt,46,46,46,46,44,22,46,0.4094,1.621
+minervina_2022_human_46_constructs,dnachisel_v3.2,46,46,46,46,46,19,46,0.4619,2.838

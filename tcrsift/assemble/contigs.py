@@ -33,6 +33,7 @@ from .codons import (
 )
 from .constants import (
     _DEFAULT_MIN_PICKER_POSITIONS,
+    _VALID_JUNCTION_RESIDUES,
     ALLELE_REASON_AUTO_DETECTED,
     ALLELE_REASON_DIVERGENT_AT_POLYMORPHIC_POSITION,
     ALLELE_REASON_DIVERGENT_CONTIG,
@@ -51,6 +52,7 @@ from .constants import (
     _format_divergence_positions,
     _pick_best_allele,
     _polymorphic_positions,
+    _traj_junction_residue,
     _verify_first_codon_frame,
     pick_canonical_constant,
     verify_canonical_constant_start,
@@ -344,6 +346,46 @@ def _add_constant_regions(
             else None
         )
 
+        # Older Cell Ranger JSON annotations (e.g. TRAJ37 in Cell Ranger 3)
+        # occasionally include the J→C junction residue (D) at the 3' end of
+        # VDJ_alpha_aa so `contig_nt_past_vdj` starts directly with bare TRAC
+        # (`ATCCAGAAC...` = `IQNP...`). Shift that 1-aa/3-nt junction codon from
+        # VDJ onto the front of `contig_nt_past_vdj` so the junction residue is
+        # neither duplicated nor misread as `I` (`IIQNPDPAV`).
+        if (
+            chain == "alpha"
+            and not is_chimeric
+            and contig_nt_past_vdj
+            and len(contig_nt_past_vdj) >= 3
+        ):
+            vdj_aa_cur = result.get("vdj_alpha_aa", "")
+            vdj_nt_cur = result.get("vdj_alpha_nt", "")
+            expected_j = _traj_junction_residue(j_gene, species=vdj_species)
+            first_aa = CODON_TABLE.get(contig_nt_past_vdj[:3], "")
+            valid_j_set = _VALID_JUNCTION_RESIDUES.get("alpha", frozenset())
+            if (
+                expected_j
+                and isinstance(vdj_aa_cur, str)
+                and vdj_aa_cur.endswith(expected_j)
+                and isinstance(vdj_nt_cur, str)
+                and len(vdj_nt_cur) == 3 * len(vdj_aa_cur)
+                and first_aa == canonical_aa[0]
+                and first_aa not in valid_j_set
+            ):
+                n_cod_check = min(len(contig_nt_past_vdj) // 3, 5)
+                c_aa_check, _ = translate_dna(contig_nt_past_vdj[: 3 * n_cod_check])
+                rem_nt = contig_nt_past_vdj[3 * n_cod_check :]
+                partial_ok = True
+                if n_cod_check == 1 and rem_nt and len(canonical_aa) > 1:
+                    partial_ok = any(
+                        aa == canonical_aa[1] and cdn.startswith(rem_nt)
+                        for cdn, aa in CODON_TABLE.items()
+                    )
+                if c_aa_check == canonical_aa[:n_cod_check] and partial_ok:
+                    result["vdj_alpha_aa"] = vdj_aa_cur[:-1]
+                    result["vdj_alpha_nt"] = vdj_nt_cur[:-3]
+                    contig_nt_past_vdj = vdj_nt_cur[-3:].upper() + contig_nt_past_vdj
+
         allele_choice = allele_overrides.get(canonical_name, "auto")
         allele_pool = species_allele_pools.get(canonical_name, {})
         allele_called: str | None = None
@@ -509,12 +551,21 @@ def _add_constant_regions(
             else:
                 junction_codon = contig_nt_past_vdj[:3]
                 translated = CODON_TABLE.get(junction_codon, "X")
-                if translated and translated not in {"*", "X"}:
+                valid_j_set = _VALID_JUNCTION_RESIDUES.get(chain, frozenset())
+                if (
+                    translated
+                    and translated not in {"*", "X"}
+                    and (not valid_j_set or translated in valid_j_set)
+                ):
                     junction_residue = translated
                     junction_from_contig = True
                 else:
                     fallback_reason = (
                         f"contig junction codon {junction_codon!r} translates to "
+                        f"{translated!r} (expected one of {sorted(valid_j_set)} — "
+                        "possible unspliced intron or frame shift)"
+                        if valid_j_set and translated not in {"*", "X"}
+                        else f"contig junction codon {junction_codon!r} translates to "
                         f"{translated!r}"
                     )
                     contig_nt_past_vdj = None
@@ -592,7 +643,9 @@ def _add_constant_regions(
         )
 
         result[f"{chain}_constant_nt_contig"] = (
-            contig_nt_past_vdj if (contig_nt_past_vdj and not is_chimeric) else None
+            contig_nt_past_vdj
+            if (contig_nt_past_vdj and len(contig_nt_past_vdj) >= 3 and not is_chimeric)
+            else None
         )
         result[f"{chain}_constant_nt_optimized"] = canonical_nt_codon_opt
         result[f"{chain}_constant_nt"] = blended_nt

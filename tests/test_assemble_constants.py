@@ -1109,7 +1109,7 @@ class TestAssembleEndToEndContigBlend:
         # actually fires); the contig itself is codon-aligned.
         overshoot = "A"
         c_region_start_nt = "".join(
-            HUMAN_PREFERRED_CODONS[r] for r in HUMAN_TRBC1_AA[:8]
+            HUMAN_PREFERRED_CODONS[r] for r in ("E" + HUMAN_TRBC1_AA[:7])
         )
         beta_contig_seq = (
             "".join(HUMAN_PREFERRED_CODONS[r] for r in leader_aa)

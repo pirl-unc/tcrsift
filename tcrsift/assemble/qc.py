@@ -1269,7 +1269,7 @@ def _validate_nt_aa_roundtrip(df: pd.DataFrame, _lb) -> None:
             for idx, row in df.iterrows():
                 nt = row.get(nt_col)
                 aa = row.get(aa_col)
-                if isinstance(nt, str) and nt and isinstance(aa, str) and aa:
+                if isinstance(nt, str) and len(nt) >= 3 and isinstance(aa, str) and aa:
                     if not _nt_contig_in_frame_no_premature_stop(nt, aa):
                         _lb(idx,
                             f"{nt_col} is out-of-frame or hits a premature "

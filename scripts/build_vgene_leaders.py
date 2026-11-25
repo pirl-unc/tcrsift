@@ -71,7 +71,11 @@ def _build():
             # (pseudogene) leader, skipped, not a transcription error.
             if not aa.startswith("M") or len(aa) != len(nt) // 3:
                 continue
-            rows.append((gene, allele, functionality, aa, nt))
+            # Trim any trailing 1–2 nt IMGT exon-boundary overhang (e.g.
+            # TRAV41*01 is 67 nt = 22 codons + 1 nt) so leader_nt is always
+            # codon-aligned and never frameshifts downstream VDJ+C assembly.
+            nt_trimmed = nt[: 3 * len(aa)]
+            rows.append((gene, allele, functionality, aa, nt_trimmed))
 
     rows.sort(key=lambda r: (r[0], r[1]))
     with gzip.open(OUT, "wt", newline="") as fh:
