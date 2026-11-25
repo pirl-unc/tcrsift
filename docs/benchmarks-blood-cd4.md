@@ -14,63 +14,16 @@ see the [Benchmark overview](benchmarks-overview.md)):
    --tcell-type cd4`, `NeoTCR4`, FACS `pre_sorted: CD4` coreceptor-dropout
    rescue, and `FOXP3+` regulatory T-cell exclusion via `--exclude-treg`).
 
-## Summary
+## At-a-glance results
 
-- **`NeoTCR_PBL` separates circulating polyomavirus tumor-specific CD8+ T cells
-  from common antiviral memory T cells in cancer-patient blood.** Across 46
-  multimer-verified peripheral-blood CD8+ clonotypes in Merkel cell carcinoma
-  patients (Pulliam et al. 2024; 32 `MCPyV` antitumor vs 14 `CMV`/`EBV`/`Flu`
-  control viral clones), `NeoTCR_PBL` reaches an AUROC of 0.82 (95% CI
-  0.69 to 0.93; 0.83 on expanded ≥2-cell clones), ahead of general
-  activation panels (`AcuteActivation` 0.71, `AIM` 0.67, `Cytolytic`
-  0.66) and `CirculatingMemory` (0.33, which enriches for
-  resting `CMV`/`EBV`/`Flu` memory). Against unlabeled expanded blood clones
-  (21 vs 63), `NeoTCR_PBL` drops to 0.62 (0.46 to 0.77). Within the two
-  patients who have sequenced matched tumor hashtag libraries (`Z1249` and
-  `Z1308`; 18 tumor-shared α/β blood clones vs 37 blood-only clones),
-  clones shared with the tumor biopsy are enriched for clonal
-  expansion and differentiated cytolytic effector state (`clone_size` 0.83,
-  `Differentiated` 0.79, `AntigenExperienced` 0.72, `Cytolytic` 0.70)
-  rather than `NeoTCR_PBL` (0.18), reflecting vascular and bystander effector
-  infiltration alongside antitumor clones.
-- **Pre-infusion (`T0`) melanoma biopsies outperform Day-30 post-ACT (`T30`)
-  biopsies for identifying tumor-reactive clones.** Across six melanoma patients
-  with paired `T0` and `T30` biopsies (Chiffelle/Barras et al. 2024),
-  `TumorReactive` and `NeoTCR8` separate autologous tumor-reactive (`TR`) from
-  non-reactive (`NTR`) clones at `T0` (0.74 and 0.70 across 31 `TR` vs
-  49 `NTR`; shortlist tested precision 62.5%, 10 `TR` of 16), and drop
-  30 days after lymphodepletion, ex vivo TIL expansion, and high-dose
-  IL-2 (`T30` AUROC 0.61 and 0.42 across 18 `TR` vs 32 `NTR`;
-  shortlist tested precision 28.6%, 2 `TR` of 7), as systemic ACT
-  shifts infused non-reactive bystander clones toward similar effector and exhausted
-  states.
-- **`NeoTCR4` and `TumorReactive` enrich for verified neoantigen-specific human
-  CD4+ TILs, and co-select intratumoral `FOXP3+` Tregs unless `--exclude-treg` is
-  enabled.** Across 28 experimentally verified neoantigen-specific CD4+ TIL
-  clones in four melanoma patients (Veatch et al. 2022; 1,163 expanded Vβ
-  clones on a 397-gene panel covering 9 of 40 `NeoTCR4` and 8 of 9 `TumorReactive`
-  genes), `NeoTCR4` reaches 0.76 (0.67 to 0.83) and `TumorReactive` reaches
-  0.73 (0.78 vs non-Treg clones). Without Treg filtering, `FOXP3+`
-  regulatory clones (≥50% `FOXP3+` cells) make up 38.1% (61 of 160) of the
-  shortlist; enabling `--exclude-treg` removes 100% (61 to 0) of `FOXP3+`
-  Treg picks while retaining 100% (9 of 9 `CD4_neo` and 5 of 5 `CD4_self`) of
-  shortlisted tumor-antigen clones. Within Patient `X205`, `CD4_neo` and
-  melanoma self-antigen `CD4_self` clones (12 vs 13) share the same chronic
-  activation state (`TumorReactive` 0.48, `NeoTCR4` 0.62).
-- **Whole-transcriptome FACS-sorted human CD4+ 10x libraries require
-  `pre_sorted: CD4` to prevent *CD4* mRNA-dropout loss and benefit from
-  cytolytic and Treg-aware filtering.** Across seven bladder tumors (Oh et al.
-  2020; whole-transcriptome 40 of 40 `NeoTCR4` genes), 88.5% of `CD3`-gated
-  FACS-sorted CD4+ T cells have zero `CD4` UMIs (708 vs 6,144 cells
-  retained); setting `pre_sorted: CD4` on the sample sheet increases shortlisted
-  `CD4CXCL13` and cytotoxic (`CD4GZMB`/`CD4GZMK`) clones 10-fold (6 to 61).
-  `NeoTCR4` (0.80) and `TumorReactive` (0.78) rank `CD4CXCL13`
-  clones above `CD4CM`/`CD4TH17` (47 vs 119), while `AntigenExperienced`
-  (0.86), `Differentiated` (0.83), and `Cytolytic` (0.72)
-  separate combined `CD4CXCL13` and cytotoxic effectors from `FOXP3+`
-  `CD4IL2RAHI` Tregs (where `AIM` is inverted at 0.16).
+| Setting / cohort | Headline result | Takeaway & limitation |
+| --- | --- | --- |
+| **Cancer-patient blood CD8** (Pulliam MCC, `--context blood-tumor`) | `NeoTCR_PBL` reaches **0.82** AUROC (32 MCPyV vs 14 CMV/EBV/Flu; **0.83** on ≥2-cell clones) vs `CirculatingMemory` **0.33** and `CXCL13` **0.50**. | Drops to **0.62** against unlabeled expanded blood clones; tumor-shared blood clones (`Z1249`/`Z1308`) enrich for `clone_size` (**0.83**) and `Differentiated` (**0.79**) rather than `NeoTCR_PBL` (**0.18**). |
+| **Pre- vs post-ACT melanoma TIL** (Chiffelle `T0` vs `T30`) | `TumorReactive` drops from **0.74** at `T0` (shortlist precision **62.5%**, 10/16) to **0.61** at `T30` (**28.6%**, 2/7); `NeoTCR8` drops **0.70 → 0.42**; `AntigenExperienced` **0.33**. | **Negative result at `T30`:** lymphodepletion, ex vivo rapid expansion, and IL-2 shift non-reactive bystander TILs into effector/exhausted states, degrading all ex vivo signatures. |
+| **Human CD4+ TIL neoantigen ranking & Tregs** (Veatch melanoma CD4) | `NeoTCR4` reaches **0.76** and `TumorReactive` **0.73** (28 verified `CD4_neo` clones). `--exclude-treg` cuts `FOXP3+` Treg shortlist slots from **38.1% (61/160) → 0%** while keeping **9/9 `CD4_neo`** and **5/5 `CD4_self`**. | Cannot separate `CD4_neo` from melanoma self-antigen `CD4_self` clones in `X205` (`TumorReactive` 0.48, `NeoTCR4` 0.62) because both experience chronic intratumoral antigen. |
+| **FACS-sorted CD4 mRNA dropout & whole-transcriptome CD4** (Oh bladder CD4) | **88.5%** of FACS-sorted CD4 T cells have 0 *CD4* UMIs; `pre_sorted: CD4` increases retention **8.7x** (708 → 6,144 cells; shortlisted effectors **6 → 61**). `NeoTCR4` **0.80**, `AntigenExperienced` **0.86** vs Tregs (`AIM` inverted at **0.16**). | Always set `pre_sorted: CD4` on sorted CD4 libraries; `hg19` symbol harmonization recovers all 40/40 `NeoTCR4` genes. |
 
-All results are from TCRsift 3.38.1 and VDJdb `2026-11-06`, generated by
+All results are from TCRsift 3.40.1 and VDJdb `2026-11-06`, generated by
 `benchmarks/public_blood_cd4/` ([how to reproduce](#reproducing); full
 ground-truth file and assay provenance in
 `benchmarks/public_blood_cd4/PROVENANCE.md`). None of TCRsift's gene signatures
@@ -78,18 +31,20 @@ was trained on any cohort on this page.
 
 ---
 
-## Source studies and ground-truth provenance
+## Why these four datasets were included
+
+Each cohort targets a specific clinical compartment or technical pitfall missing from fresh CD8 solid-tumor TIL benchmarks:
+
+| Study | Setting | Why included (what it tests) | Raw GEX & VDJ Deposit | Ground-Truth Labels |
+| --- | --- | --- | --- | --- |
+| Pulliam et al. 2024 | Paired peripheral blood + Merkel cell carcinoma (`MCPyV`) | **Circulating antitumor CD8 without *CXCL13*** — tests `--context blood-tumor` (`NeoTCR_PBL`) against viral blood controls and matched autologous tumor infiltration. | [GSE227708](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE227708) (10 blood & 2 tumor hashed libraries, 4 patients) | `MCPyV` (32) vs `CMV`/`EBV`/`Flu` (14) multimers + tumor-shared blood clones (18) |
+| Chiffelle / Barras et al. 2024 | Melanoma before (`T0`) and 30 days after (`T30`) TIL-ACT | **Longitudinal therapy perturbation** — directly measures how much ex vivo TIL signatures degrade after rapid ex vivo expansion, lymphodepletion, and high-dose IL-2. | [GSE222448](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE222448) (6 paired patients: 8 `T0`, 6 `T30` biopsies) | Autologous `TR` (31 `T0`, 18 `T30`) vs `NTR` (49 `T0`, 32 `T30`) |
+| Veatch et al. 2022 | Melanoma CD4+ TILs (targeted 397-gene BD Rhapsody) | **Verified human CD4+ neoantigen vs self-antigen & Treg confounding** — tests `NeoTCR4`, `--exclude-treg`, and graceful degradation on a targeted 397-gene panel. | [GSE198265](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE198265) (4 patients, 1,163 expanded Vβ clones) | Verified `CD4_neo` (28) & `CD4_self` (13 in `X205`) vs 477 `FOXP3+` Tregs & untested clones |
+| Oh et al. 2020 | Bladder cancer CD4+ TILs (whole-transcriptome 10x `hg19`) | **FACS *CD4* mRNA dropout + full 40-gene `NeoTCR4` + `hg19` aliases** — quantifies `pre_sorted: CD4` rescue and effector-vs-Treg separation on standard droplet 10x data. | [GSE149652](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE149652) (7 bladder tumors, 6,144 retained CD4 cells) | `CD4CXCL13` / cytotoxic effectors vs `CD4CM`/`CD4TH17` & `CD4IL2RAHI` Tregs |
 
 ![Paired blood-tumor, ACT, and CD4+ TIL cohorts](assets/figures/blood_cd4_benchmark_datasets.svg)
 
 *Summary schematic of the four open-access human cancer cohorts evaluated on this page.*
-
-| Study | Setting | Raw GEX & VDJ Deposit | Ground-Truth Label Source | Positives | Negatives / Contrasts | How TCRsift ran |
-| --- | --- | --- | --- | --- | --- | --- |
-| Pulliam et al. 2024 | Paired peripheral blood + Merkel cell carcinoma (`MCPyV`) | [GSE227708](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE227708) (5 hashed 10x runs across 4 patients: 10 blood & 2 tumor libraries with ≥20 cells; 1,014 retained blood CD8 cells, 548 clones) | Table S4 (`mmc5.xlsx` multimer calls) + matched autologous tumor VDJ | `MCPyV` multimer+ blood clones (32 total, 21 ≥2 cells) and tumor-infiltrating α/β blood clones (18 total / 12 ≥2 cells in `Z1249`+`Z1308`) | `CMV`/`EBV`/`Flu` multimer+ viral control clones (14 total, 5 ≥2 cells) and unlabeled (63 ≥2 cells) or blood-only (37 in `Z1249`+`Z1308`) clones | Default `prioritize --context blood-tumor` and `--context blood` |
-| Chiffelle / Barras et al. 2024 | Melanoma before (`T0`) and 30 days after (`T30`) TIL-ACT | [GSE222448](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE222448) (6 patients `P1, P5, P7, P8, P10, P13`: 8 `T0` biopsies, 4,933 cells / 3,032 clones; 6 `T30` biopsies, 5,595 cells / 2,004 clones) | Table S3 (`mmc3.xlsx`, autologous melanoma reactivity `yes` vs `no` and `ACTP` expansion) | Autologous tumor-reactive `TR` clones (31 at `T0`, 18 at `T30`) | Autologous tumor-non-reactive `NTR` clones (49 at `T0`, 32 at `T30`) | Default `prioritize --context solid-tumor` at `T0` and `T30` |
-| Veatch et al. 2022 | Melanoma intratumoral CD4+ TILs | [GSE198265](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE198265) (4 patients `X197, X198, X205, X422`; 397-gene BD Rhapsody mRNA + AbSeq + TCR Vβ; 9,705 CD4 cells, 5,121 clones) | Deposited VDJ annotations (`CD4_neo` / `Neoantigen` and `CD4_self` from autologous APC screening) | Verified neoantigen-specific `CD4_neo` clones (28 ≥2 cells) | Unlabeled ≥2-cell CD4 TILs (1,122 total; 646 non-Treg) and `X205` self-antigen `CD4_self` (13 clones) | `score_by_name`, `calibrate_signature_background`, `signature_pass_mask`, and `select_round_robin` (`cd4`) |
-| Oh et al. 2020 | Bladder cancer + matched normal sorted CD4+ T cells | [GSE149652](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE149652) (7 tumors + 6 matched normals; whole-transcriptome 10x GEX + paired α/β TCR; 6,144 retained tumor CD4 cells, 4,755 clones) | Author `cellinfo` subtypes (`CD4CXCL13`, `CD4GZMB`, `CD4GZMK`, `CD4IL2RAHI`, `CD4CM`, `CD4TH17`) + matched normal VDJ | `CD4CXCL13` (47) + cytotoxic `CD4GZMB`/`CD4GZMK` (116; 163 combined ≥2-cell clones) and tumor-exclusive clones (272) | `CD4CM`/`CD4TH17` bystanders (119), `FOXP3+` `CD4IL2RAHI` Tregs (163), and normal-shared clones (22) | Default `prioritize --context solid-tumor --tcell-type cd4` |
 
 ---
 

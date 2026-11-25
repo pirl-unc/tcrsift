@@ -6,48 +6,15 @@ datasets across 33 patients and reports both where the method works and where
 it fails (for cross-cohort and external-tool comparisons, see the
 [Benchmark overview](benchmarks-overview.md)).
 
-## Summary
+## At-a-glance results
 
-- **Ranking separates tumor-reactive from non-reactive clones where both were
-  tested.** The TumorReactive signature reaches an AUROC of 0.81 in pancreatic
-  cancer (149 tested clones) and 0.78 in melanoma (166 tested clones). NeoTCR8
-  follows at 0.79 and 0.73.
-- **Lung cancer is weaker and has few labels.** Across 31 labeled tumor clones,
-  TumorReactive reaches 0.69 (95% CI 0.50 to 0.86). Eleven of those clones have
-  a median of one cell and score below chance; on the remaining 20 clones,
-  TumorReactive reaches 0.87.
-- **Expression signatures do not enrich for virus-specific clones in the two
-  virus-driven tumors.** In HPV-positive head and neck cancer and in Merkel
-  cell carcinoma, clones that bind viral multimers score no higher than
-  unlabeled clones (TumorReactive AUROC 0.47 and 0.58, both intervals spanning
-  0.5). Neither dataset has tested negatives, and Merkel cell carcinoma
-  contributes only five labeled clones, so neither supports using these
-  signatures to find viral tumor antigens.
-- **Clone size alone does not separate tumor-reactive from non-reactive clones**
-  where reactivity was tested directly against tumor (AUROC 0.34 to 0.49). In
-  the two virus-driven tumors, virus-multimer-binding clones are larger than
-  unlabeled ones (0.74 and 0.73).
-- **Default cutoffs enrich for reactive clones in both datasets with tested
-  negatives.** In
-  pancreatic cancer, 73% of reactive clones and 31% of non-reactive clones pass
-  at least one default cutoff; in melanoma, the rates are 44% and 25%.
-- **Priority-tiered round-robin scheduling prevents small-budget signature
-  dilution while preserving broad recall at larger budgets.** Scheduling the
-  three tumor-reactivity signatures (`TumorReactive`, `MANAscore`, `NeoTCR8`) in
-  Tier 1 ahead of Tier-2 general state backfill (`--round-robin-mode tiered`,
-  default since 3.32.0) picks 27 reactive and 2 non-reactive clones at a
-  50-clone budget in pancreatic cancer (matching the three tumor-reactivity
-  signatures alone, versus 11 reactive and 3 non-reactive under
-  `--round-robin-mode flat`), and reaches 58 reactive clones (12
-  non-reactive) at a 200-clone budget versus 50 (4 non-reactive) when
-  general state panels are omitted (123 qualify).
-- **The default CD3 count floor is 3 (lowered from 10 in 3.27.0).** A floor of
-  10 discarded 65% to 92% of CD8 cells without ranking surviving clones more
-  accurately. Lowering it recovers reactive clones on the shortlist in
-  melanoma (24 vs 15), Merkel cell carcinoma (2 vs 0), and non-tumor
-  lung tissue (7 vs 4), while reducing the lung tumor shortlist from 5
-  neoantigen-specific clones (1 viral) to 4 (0 viral)
-  ([section 4](#4-what-do-the-cell-filters-drop)).
+| Question / cohort | Headline result | Takeaway & limitation |
+| --- | --- | --- |
+| **Autologous tumor-reactivity ranking** (Meng PDAC, Chiffelle melanoma) | `TumorReactive` AUROC **0.81** (PDAC, $n=149$) and **0.78** (melanoma, $n=166$); `NeoTCR8` **0.79** and **0.73**; `clone_size` **0.34** and **0.49**. | Chronic tumor-reactivity signatures strongly outperform clone abundance where both positives and negatives were tested directly. |
+| **Neoantigen vs viral bystanders** (Caushi NSCLC) | `TumorReactive` AUROC **0.69** across all 31 labeled clones (**0.87** on the 20 clones with >1 cell; 11 single-cell-median clones score below chance). | Small label set; `MANAscore` is marked **circular** here because its 3 genes were selected on this lung cohort. |
+| **Virus-driven tumors** (Eberhardt HPV+ HNSCC, Pulliam MCC) | `TumorReactive` AUROC **0.47** and **0.58** (both CIs span 0.50) vs `clone_size` **0.74** and **0.73**. | **Negative result:** expression signatures do not enrich viral-multimer clones over unlabeled TILs (and neither cohort has tested negatives). |
+| **Default cutoff enrichment & tiered scheduling** | Default cutoffs pass **73% TR vs 31% NTR** (PDAC) and **44% vs 25%** (melanoma). Tiered round-robin (`--round-robin-mode tiered`) picks **27 TR / 2 NTR** at budget 50 in PDAC vs **11 TR / 3 NTR** under flat scheduling. | Tier-1 scheduling prevents general state panels from diluting small budgets while still backfilling larger budgets (58 TR / 12 NTR at budget 200). |
+| **Cell QC floor (`--min-cd3 3` vs `10`)** | Lowering `--min-cd3` from 10 to 3 avoids dropping 65%–92% of CD8 cells and recovers reactive clones in melanoma (**24 vs 15**), MCC (**2 vs 0**), and normal lung (**7 vs 4**). | Slightly trades 1 lung tumor neoantigen pick (5 → 4) while eliminating 1 viral pick ([section 4](#4-what-do-the-cell-filters-drop)). |
 
 !!! warning "One result is circular"
     TCRsift's **MANAscore** proxy uses three genes selected by a model that was
@@ -56,31 +23,28 @@ it fails (for cross-cohort and external-tool comparisons, see the
     marked **circular** and should be ignored when judging performance. No
     other signature was derived from any dataset on this page.
 
-All results are from TCRsift 3.38.1 and VDJdb `2026-11-06` (used for default
+All results are from TCRsift 3.40.1 and VDJdb `2026-11-06` (used for default
 `--exclude-known-mart1` filtering under `--database-match strict_ab`), generated
 by `benchmarks/public_til/`
 ([how to reproduce](#reproducing); full ground-truth file, sheet, and assay
 provenance in `benchmarks/public_til/PROVENANCE.md`). No thresholds, weights,
 or gene lists were fitted to these datasets.
 
-## Source studies and ground-truth provenance
+## Why these five datasets were included
 
-Each dataset comes from a study that profiled tumor-infiltrating T cells by
-single-cell RNA and TCR sequencing and experimentally tested what a subset of
-receptors recognize. This benchmark evaluates TCRsift against those published
-experimental labels.
+Each cohort tests a distinct tumor biology or ground-truth assay structure so the benchmark covers both high-confidence positives/negatives and known failure modes:
+
+| Study | Tumor | Why included (what it tests) | Raw GEX & VDJ deposit | Ground-truth labels |
+| --- | --- | --- | --- | --- |
+| Meng et al. 2023 | Pancreatic adenocarcinoma | **Gold-standard low-TMB solid tumor with tested negatives** — autologous tumor co-culture of 94 reactive vs 55 non-reactive CD8 clones across 9 PDAC patients. | [GSE254250](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE254250) (9 patients, 14,396 CD8 cells) | `TR` (94) vs `NTR` (55) |
+| Chiffelle et al. 2024 | Melanoma, before TIL therapy | **Gold-standard high-TMB solid tumor with tested negatives** — end-to-end unmodified `prioritize` run against autologous melanoma reactivity (`T0` biopsies, 11 patients). | [GSE222448](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE222448) (11 patients, 13 `T0` samples) | `TR` (72) vs `NTR` (94) |
+| Caushi et al. 2021 | Non-small-cell lung, post-anti-PD-1 | **Multi-compartment neoantigen vs viral bystander contrast** across tumor, metastasis, lymph node, and normal lung — also explicitly isolates `MANAscore` training circularity. | [GSE176021](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE176021) (8 patients, 57 samples) | `MANA` neoantigen vs Flu/EBV/CMV β chains |
+| Eberhardt et al. 2021 | HPV-positive head and neck | **Virus-driven tumor stress test** — tests whether chronic exhaustion signatures enrich HPV16 E2 tetramer-sorted clones in primary tumors and metastatic lymph nodes. | [GSE180268](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE180268) (3 patients, 6 PD-1+ CD8 samples) | HPV16 E2 tetramer-enriched β chains vs unlabeled (≥2 cells) |
+| Pulliam et al. 2024 | Merkel cell carcinoma | **Second virus-driven tumor + low-count edge case** — DNA-barcoded MCPyV T-antigen multimer calls in hashed tumors (5 labeled clones; pairs with the [blood benchmark](benchmarks-blood-cd4.md)). | [GSE227708](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE227708) (2 patients, 2 tumor samples) | MCPyV multimer+ β chains vs unlabeled (≥2 cells) |
 
 ![Study designs](assets/figures/benchmark_datasets.svg)
 
 *Summary schematic compiled from each paper and data deposit.*
-
-| Study | Tumor | Raw GEX & VDJ deposit | Ground-truth label source | Positives | Negatives | How TCRsift ran |
-| --- | --- | --- | --- | --- | --- | --- |
-| Meng et al. 2023 | Pancreatic adenocarcinoma | [GSE254250](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE254250) (9 patients, 14,396 CD8 cells) | `GSE254250_PDAC_9sample_CD8_RNA_metadata_matrix.csv.gz` (`TR` vs `NTR` from autologous tumor co-culture) | 94 tumor-reactive clones | 55 tumor-non-reactive clones | Scoring, cutoff, and selection functions on the authors' filtered CD8 cells |
-| Chiffelle et al. 2024 | Melanoma, before TIL therapy | [GSE222448](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE222448) (11 patients, 13 `T0` tumor samples) | Table S3 (`mmc3.xlsx`, `Tumor-reactivity` `yes` vs `no` against autologous melanoma lines) | 72 tumor-reactive clones | 94 tumor-non-reactive clones | Unmodified `prioritize` command |
-| Caushi et al. 2021 | Non-small-cell lung, after anti-PD-1 | [GSE176021](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE176021) (8 patients, 57 samples: tumor, metastasis, lymph node, normal lung) | Supplementary Table 8 (`MOESM8_ESM.xlsx`, MANAFEST peptide expansion) | Neoantigen-specific beta chains (`MANA`) | Virus-specific beta chains (Influenza, EBV, CMV) | Unmodified `prioritize` command |
-| Eberhardt et al. 2021 | HPV-positive head and neck | [GSE180268](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE180268) (3 patients, 6 bulk PD-1+ CD8 samples: 3 primary tumor, 3 metastatic lymph node) | Paired `GSE180268` HLA-A\*01:01 HPV16 E2 tetramer-sorted VDJ libraries (`>=5` sorted cells, enriched over bulk) | Beta chains enriched in HPV-tetramer sorts | None; compared against unlabeled `>=2`-cell clones | Unmodified `prioritize` command |
-| Pulliam et al. 2024 | Merkel cell carcinoma | [GSE227708](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE227708) (2 patients, 2 hashtag-demultiplexed tumor samples) | Table S4 (`mmc5.xlsx`, DNA-barcoded MCPyV T-antigen multimer calls) | Beta chains of polyomavirus-multimer-binding clones | None in the same tumor; compared against unlabeled `>=2`-cell clones | Unmodified `prioritize` command |
 
 ### Meng et al. 2023: pancreatic cancer
 

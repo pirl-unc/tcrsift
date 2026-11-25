@@ -1,14 +1,36 @@
 # Benchmark overview and head-to-head comparisons
 
-This page evaluates TCRsift across 13 public human and mouse single-cell datasets (15 cohort evaluations, with Pulliam `GSE227708` and Chiffelle `GSE222448` each evaluated in two distinct clinical contexts; all five benchmark suites regenerated on `tcrsift 3.38.1`) and compares each pipeline stage against external open-source tools (`stitchr`, `OLGA`, per-cell/CLR/GMM multimer callers, and uncalibrated `Scanpy score_genes`).
+This page evaluates TCRsift across 13 public human and mouse single-cell datasets (15 cohort evaluations, with Pulliam `GSE227708` and Chiffelle `GSE222448` each evaluated in two clinical contexts) and compares each stage against external open-source tools (`stitchr`, `OLGA`, per-cell/CLR/GMM multimer callers, and uncalibrated `Scanpy score_genes`).
 
-The evaluation is organized from **objective sequence and antigen-binding ground truth** out to **context-dependent transcriptional heuristics**:
+The benchmarks are ordered from **objective sequence and antigen-binding ground truth** out to **context-dependent transcriptional heuristics**:
 
-1. **[Stage 1 — Construct assembly correctness](#stage-1-do-we-assemble-correct-tcrs)**: Do we build valid, donor-faithful full-length TCR constructs (`tcrsift assemble` vs `stitchr`)?
-2. **[Stage 2 — Identifying expected / known antigen-specific TCRs](#stage-2-do-we-identify-expected-antigen-specific-tcrs)**: Do we accurately call known cognate TCRs via public database matching (`strict_ab`), multiplexed pMHC multimers (`--call-multimers`), sequence publicness (`Pgen`/`Ppost` vs `OLGA`), and overnight peptide restimulation (`ΔAIM`/`Δcytokines`)?
-3. **[Stage 3 — Expression signatures & context-dependent selection heuristics](#stage-3-expression-signatures-and-selection-heuristics)**: How well do transcriptional signatures and calibrated shortlist selection recover experimentally verified reactive clones across fresh TILs, cancer blood, post-ACT biopsies, CD4 TILs, and murine tissues?
+1. **[Stage 1 — Construct assembly correctness](#stage-1-do-we-assemble-correct-tcrs)** (`tcrsift assemble` vs `stitchr`)
+2. **[Stage 2 — Identifying expected / known antigen-specific TCRs](#stage-2-do-we-identify-expected-antigen-specific-tcrs)** (`strict_ab` database matching, `--call-multimers`, `Pgen`/`Ppost` vs `OLGA`, and paired 16 h restimulation)
+3. **[Stage 3 — Expression signatures & selection heuristics](#stage-3-expression-signatures-and-selection-heuristics)** (`tcrsift prioritize` context presets vs `clone_size`, raw `CXCL13`, and uncalibrated `Scanpy score_genes`)
 
-Per-patient tables and sensitivity analyses live on the cohort pages for [solid-tumor CD8 TILs](benchmarks.md), [infectious disease and blood](benchmarks-infectious.md), [paired blood-tumor, post-ACT, and CD4 TILs](benchmarks-blood-cd4.md), and [murine models](benchmarks-mouse.md). For CLI usage and context presets, see [Choose a workflow](index.md#choose-a-workflow) and [Clone Prioritization](user-guide/til-signatures.md).
+## High-level results summary
+
+| Stage | Capability | Headline result | Where it degrades / caveat |
+| --- | --- | --- | --- |
+| **1** | Construct assembly (`tcrsift assemble` vs `stitchr`) | **100%** complete constructs across intact human CR6 (46/46; **9 donor V-variants kept** vs 0 in `stitchr`), 5'-truncated human (160/160 vs 135/160), and mouse Cell Ranger (101/101, **52 `Trbc` fixed** vs 78/101 & 37 chimeras in `stitchr -sc`). | Imputed chains set `construct_contig_verified=False` and require cached IMGT V/J refs; pass `--no-germline-vdj-fallback` for strict contig-only ordering. |
+| **2a** | Public DB matching (`strict_ab` vs partial/β-only) | **100%** epitope precision on held-out 10x donors (44/44, 65/65) and **92.1%** SARS-CoV-2 precision on held-out Minervina vs **49.9%** under `ab_with_partial` (237 off-target β hits). Cuts false mouse MC38 DB hits from 7.7% to **0.06%**. | Lower recall when DB records lack paired α chains (e.g., older `MusMusculus` VDJdb); public DBs ingest published cohorts, so independent evaluation requires study holdout. |
+| **2b** | Multiplexed pMHC multimer calling (`--call-multimers`) | **100%** cognate precision on held-out VDJdb (109/109), **0** HIV Gag FPs, and **−96.3%** sticky `KLGGALQAK` clones (837 → 31 vs 10x per-cell threshold). | Clonal concordance requires ≥2 cells per clone, so singleton binders (e.g. naive `MART-1`) cannot be rescued by clonal concordance alone. |
+| **2c** | Sequence publicness (`Pgen`/`Ppost` vs `OLGA`) | Human β correlates at **$r=0.954$** ($\rho=0.957$) with `OLGA`, matches cross-donor public AUROC (**0.739** vs 0.744), and runs **414x faster** (44.5k vs 108 clones/s). | No bundled mouse VDJ k-mer table (fallback $r=0.198$ vs `OLGA mouse_T_beta`, though empirical cross-mouse public AUROC is 0.620 vs 0.617). |
+| **2d** | Paired 16 h peptide restimulation (`--method stimulation`) | Detects **11/73** cytokine-induced Spike-reactive clones (`Δ > 0.5`, `ΔAIM` up to `+2.47`) where count-based Fisher expansion tests find **0/73** (no overnight division). | Requires a paired unstimulated control well from the same donor. |
+| **3** | Expression-based prioritization (`tcrsift prioritize`) | Separates tested tumor-reactive CD8 TILs (**AUROC 0.81** PDAC, **0.78** melanoma vs clone size **0.34–0.49**), circulating antitumor CD8 in cancer blood (**0.82** `NeoTCR_PBL` vs **0.50** `CXCL13`), CD4 neoantigen TILs (**0.76** `NeoTCR4`; `--exclude-treg` cuts Treg shortlist share **38.1% → 0%**), and mouse target-organ CD8 (**0.99** MC38, **0.97** NOD islet). | Does **not** enrich viral-antigen clones in virus-driven tumors (AUROC 0.47–0.58), degrades in Day-30 post-ACT melanoma biopsies (0.74 → 0.61), and rises transiently in blood after acute vaccination (`TumorReactive` 0.74). |
+
+## Why these 13 datasets were included
+
+Each dataset was chosen to test a specific biological setting, experimental ground truth, or known failure mode rather than to maximize favorable scores:
+
+| Cohort group | Datasets included | Why included (what it tests) | Detail page |
+| --- | --- | --- | --- |
+| **Fresh solid-tumor CD8 TILs** | Meng 2023 (PDAC), Chiffelle 2024 (melanoma `T0`), Caushi 2021 (NSCLC), Eberhardt 2021 (HPV+ HNSCC), Pulliam 2024 (MCC tumor) | Tests `--context solid-tumor` against **direct autologous tumor-reactivity screens with tested negatives** (Meng, Chiffelle), **neoantigen vs viral peptide contrasts** (Caushi, also documenting `MANAscore` circularity), and **virus-driven tumors** (Eberhardt, Pulliam) as negative-result stress tests where chronic exhaustion signatures fail to beat clone size. | [Solid-tumor CD8 TILs](benchmarks.md) |
+| **Healthy/infectious blood & restimulation** | 10x Healthy Donors 1 & 2, Minervina 2022 (longitudinal SARS-CoV-2), Fischer 2021 (16 h Spike restimulation) | Tests **outside-tumor calibration**: resting memory vs naive `MART-1` and sticky pMHC dextramers (10x), acute post-vaccine activation confounding `TumorReactive` + CR6 donor V-allele preservation + VDJdb circularity (Minervina), and **overnight restimulation without division + 5'-truncated contigs** (Fischer). | [Infectious & blood](benchmarks-infectious.md) |
+| **Cancer blood, post-ACT, & CD4 TILs** | Pulliam 2024 (MCC blood + tumor), Chiffelle 2024 (`T0` vs `T30` ACT), Veatch 2022 (melanoma CD4), Oh 2020 (bladder CD4) | Tests **four non-default edge cases**: circulating `CXCL13`-negative antitumor blood CD8 (`--context blood-tumor`, Pulliam), **post-ACT signature attenuation** (Chiffelle `T30`), **intratumoral `FOXP3+` Treg confounding** in CD4 TILs (`--exclude-treg`, Veatch/Oh), and **88.5% *CD4* mRNA dropout** in FACS-sorted 10x libraries (`pre_sorted: CD4`, Oh). | [Blood-tumor, ACT & CD4](benchmarks-blood-cd4.md) |
+| **Murine models (`--species mouse`)** | MC38 multi-organ (`GSE168944`), Kasmani 2022 (NOD `IGRP`), Khatun 2021 (LCMV `GP66` CD4) | Tests **cross-species biology & plumbing**: mouse CD8 TILs lack *Cxcl13* (0.11%+) and rely on *Ccl3*/*Ccl4* (MC38); **within-clone tissue vs spleen control** on identical paired TCRs (Kasmani); pre-CR6 Ensembl `-dv` V-genes, `Trbc1`/`Trbc2` miscalls, and `MusMusculus` VDJdb circularity (MC38, Kasmani, Khatun). | [Murine models](benchmarks-mouse.md) |
+
+For CLI usage and context presets, see [Choose a workflow](index.md#choose-a-workflow) and [Clone Prioritization](user-guide/til-signatures.md).
 
 ---
 
@@ -24,12 +46,12 @@ Per-patient tables and sensitivity analyses live on the cohort pages for [solid-
 
 | Cohort | Tool / mode | Clones ($n$) | Complete `M...` constructs | Donor V-framework variants kept | Mismatched `Trbc` shipped | Contig / build QC flags | Runtime (s) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minervina 2022 human CR6 shortlist | `tcrsift_assemble_default` (donor contigs intact) | 46 | 46 (100.0%) | 9 (19.6%) | 0 | 0 | 1.17 |
-| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 46 | 46 (100.0%) | 0 (uses `*01`) | 0 | 0 | 0.12 |
-| Fischer 2021 human 5'-truncated | `tcrsift_assemble_default` (auto-rescue) | 160 | 160 (100.0%) | 32 (partial 5' contigs) | 0 | 29 (raw JSON C-tail flags) | 11.69 |
-| | `tcrsift_strict_contig_only` (`--no-germline-vdj-fallback`) | 160 | 0 (0.0%) | 0 | 0 | 0 | 0.49 |
-| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 160 | 135 (84.4%) | 0 | 0 | 25 (unbuilt) | 0.17 |
-| Mouse Cell Ranger shortlists (MC38 + Khatun) | `tcrsift_assemble_default_mouse` (`--species mouse`) | 101 | 101 (100.0%) | 0 | 0 (52 `Trbc` fixed) | 0 | 3.69 |
+| Minervina 2022 human CR6 shortlist | `tcrsift_assemble_default` (donor contigs intact) | 46 | 46 (100.0%) | 9 (19.6%) | 0 | 0 | 1.19 |
+| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 46 | 46 (100.0%) | 0 (uses `*01`) | 0 | 0 | 0.13 |
+| Fischer 2021 human 5'-truncated | `tcrsift_assemble_default` (auto-rescue) | 160 | 160 (100.0%) | 32 (partial 5' contigs) | 0 | 29 (raw JSON C-tail flags) | 11.16 |
+| | `tcrsift_strict_contig_only` (`--no-germline-vdj-fallback`) | 160 | 0 (0.0%) | 0 | 0 | 0 | 0.48 |
+| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 160 | 135 (84.4%) | 0 | 0 | 25 (unbuilt) | 0.15 |
+| Mouse Cell Ranger shortlists (MC38 + Khatun) | `tcrsift_assemble_default_mouse` (`--species mouse`) | 101 | 101 (100.0%) | 0 | 0 (52 `Trbc` fixed) | 0 | 3.33 |
 | | `stitchr / thimble 1.3.1` (`-s MOUSE` default) | 101 | 78 (77.2%) | 0 | 0 | 23 (unbuilt) | 0.11 |
 | | `stitchr / thimble 1.3.1` (`-s MOUSE -sc` skip C check) | 101 | 78 (77.2%) | 0 | 37 (47.4% of built) | 23 (unbuilt) | 0.10 |
 
@@ -80,14 +102,14 @@ On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD
 
 | Repertoire (`public >=2 donors`) | Model | Pearson $r$ vs `OLGA` ($\beta$ / $\alpha$) | Spearman $\rho$ vs `OLGA` ($\beta$ / $\alpha$) | Public sharing AUROC (95% CI) | Throughput (clones/s) | Speedup vs `OLGA` |
 | --- | --- | --- | --- | --- | ---: | ---: |
-| Human blood ($n = 1{,}500$; 420 public) | `tcrsift` k-mer `pgen_beta` | 0.954 / 0.763 | 0.957 / 0.755 | 0.735 (0.704–0.766) | 43,373 / s | 465x |
-| | `tcrsift` k-mer `ppost_beta` | — | — | 0.739 (0.708–0.770) | 43,373 / s | 465x |
-| | `OLGA 1.3.0` exact VDJ `pgen_beta` | 1.000 | 1.000 | 0.744 (0.712–0.774) | 93.2 / s | 1.0x |
-| Mouse GP66 CD4 ($n = 1{,}781$; 72 public) | `tcrsift` AA-Markov fallback `pgen_beta` | 0.198 / 0.224 | 0.235 / 0.208 | 0.620 (0.555–0.680) | 41,813 / s | 271x |
-| | `tcrsift` AA-Markov fallback `ppost_beta` | — | — | 0.613 (0.550–0.674) | 41,813 / s | 271x |
-| | `OLGA 1.3.0` `mouse_T_beta` exact DP | 1.000 | 1.000 | 0.617 (0.542–0.686) | 154.2 / s | 1.0x |
+| Human blood ($n = 1{,}500$; 420 public) | `tcrsift` k-mer `pgen_beta` | 0.954 / 0.763 | 0.957 / 0.755 | 0.735 (0.704–0.766) | 44,511 / s | 414x |
+| | `tcrsift` k-mer `ppost_beta` | — | — | 0.739 (0.708–0.770) | 44,511 / s | 414x |
+| | `OLGA 1.3.0` exact VDJ `pgen_beta` | 1.000 | 1.000 | 0.744 (0.712–0.774) | 107.6 / s | 1.0x |
+| Mouse GP66 CD4 ($n = 1{,}781$; 72 public) | `tcrsift` AA-Markov fallback `pgen_beta` | 0.198 / 0.224 | 0.235 / 0.208 | 0.620 (0.555–0.680) | 54,087 / s | 302x |
+| | `tcrsift` AA-Markov fallback `ppost_beta` | — | — | 0.613 (0.550–0.674) | 54,087 / s | 302x |
+| | `OLGA 1.3.0` `mouse_T_beta` exact DP | 1.000 | 1.000 | 0.617 (0.542–0.686) | 179.2 / s | 1.0x |
 
-- **Human blood.** `tcrsift` k-mer `pgen_beta` correlates with `OLGA` at $r = 0.954$ ($\rho = 0.957$), reaches similar cross-donor public sharing AUROC (0.735 `Pgen` and 0.739 `Ppost` vs 0.744 `OLGA`), and runs 465x faster (0.035 s vs 16.09 s).
+- **Human blood.** `tcrsift` k-mer `pgen_beta` correlates with `OLGA` at $r = 0.954$ ($\rho = 0.957$), reaches similar cross-donor public sharing AUROC (0.735 `Pgen` and 0.739 `Ppost` vs 0.744 `OLGA`), and runs 414x faster (0.034 s vs 13.93 s).
 - **Mouse fallback.** Because `tcrsift` does not ship a pre-trained mouse V(D)J k-mer table (`tcrsift pgen train --species mouse` fits one from repertoire data), it logs a fallback notice and scores mouse chains with the bundled human-fitted amino-acid Markov table. Correlation with `OLGA mouse_T_beta` is low ($r = 0.198$), though empirical cross-mouse public sharing AUROC across the five Khatun C57BL/6 mice is similar (0.620 vs 0.617).
 
 ### 2d. Overnight (16 h) peptide restimulation (direct functional assay)
