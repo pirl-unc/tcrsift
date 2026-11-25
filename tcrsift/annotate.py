@@ -367,10 +367,20 @@ MATCH_STRICTNESS_MODES = ("strict_ab", "ab_with_partial", "b_only")
 
 # Valid match modes for match_clonotypes (#57). ``"exact"`` is the
 # pre-2.1 behaviour; ``"levenshtein"`` adds O(L) deletion-canonical neighbor
-# search at ``max_distance`` for clones that don't hit exactly (paired αβ
-# neighbor search ``ab_near`` under ``strict_ab`` and ``ab_with_partial``, plus
-# β-only neighbor search ``b_only_near`` when β-only fallback is enabled).
-MATCH_MODES = ("exact", "levenshtein")
+# search at ``max_distance`` for clones that don't hit exactly; ``"tcrdist"``
+# uses Dash/tcrdist3-compatible V-gene CDR1/CDR2/CDR2.5 + BLOSUM62 trimmed-CDR3
+# similarity (pure Python + NumPy via :mod:`tcrsift.tcrdist`).
+MATCH_MODES = ("exact", "levenshtein", "tcrdist")
+
+
+def _pick_v_gene_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
+    """Return the first V-gene column present in ``df`` with at least one non-empty string."""
+    for col in candidates:
+        if col in df.columns:
+            s = df[col].dropna().astype(str).str.strip()
+            if (s != "").any():
+                return col
+    return None
 
 
 def _canonical_v_gene(value: object) -> str:
@@ -2117,7 +2127,7 @@ def match_clonotypes(
     match_by: str = "CDR3ab",
     match_strictness: str | None = None,
     match_mode: str = "exact",
-    max_distance: int = 1,
+    max_distance: int | None = None,
     verbose: bool = True,
     show_progress: bool = True,
     *,
@@ -2148,17 +2158,18 @@ def match_clonotypes(
         - ``"b_only"`` — β-only across the board (equivalent to legacy
           ``match_by="CDR3b_only"``).
     match_mode : str, default ``"exact"``
-        Distance regime for the β-only match (#57). When ``"exact"``,
-        only exact-string β matches are recorded — pre-2.1 behaviour.
-        When ``"levenshtein"``, clones that don't hit exactly fall
-        through to a Levenshtein-≤``max_distance`` neighbor search
-        against the database's β CDR3s. αβ matching stays strict-exact
-        in both modes — fuzzy αβ is too noisy biologically.
-    max_distance : int, default 1
-        Maximum edit distance for fuzzy β matching (only used when
-        ``match_mode == "levenshtein"``). Currently capped at 1 in
-        the implementation; higher values fall back to 1 with a
-        warning.
+        Similarity/distance regime. ``"exact"`` requires exact CDR3 string
+        matches; ``"levenshtein"`` adds Levenshtein-≤1 neighbor search;
+        ``"tcrdist"`` uses Dash/tcrdist3-compatible V-gene CDR1/CDR2/CDR2.5 +
+        BLOSUM62 trimmed-CDR3 distance (gracefully degrading to BLOSUM62
+        trimmed-CDR3 distance when V-gene columns are absent).
+    max_distance : int, optional
+        Maximum allowed match distance. When omitted (``None``), defaults to
+        ``1`` for ``"levenshtein"``, ``48`` for paired ``"tcrdist"``
+        (``strict_ab`` / ``ab_with_partial``), and ``12`` for β-only
+        ``"tcrdist"`` (``b_only``). ``0`` is valid for ``"tcrdist"`` (exact
+        V-gene loops + trimmed CDR3). For ``"levenshtein"``, values above 1
+        fall back to 1 with a warning.
     verbose : bool
         Print progress information
     show_progress : bool
@@ -2216,7 +2227,18 @@ def match_clonotypes(
             f"Invalid match_mode: {match_mode!r}",
             hint=f"Valid options are: {list(MATCH_MODES)}",
         )
-    validate_numeric_param(max_distance, "max_distance", min_value=1)
+    if max_distance is None:
+        if match_mode == "tcrdist":
+            from .tcrdist import DEFAULT_BETA_RADIUS, DEFAULT_PAIRED_RADIUS
+
+            max_distance = (
+                DEFAULT_BETA_RADIUS if strictness == "b_only" else DEFAULT_PAIRED_RADIUS
+            )
+        else:
+            max_distance = 1
+    min_dist = 0 if match_mode == "tcrdist" else 1
+    validate_numeric_param(max_distance, "max_distance", min_value=min_dist)
+    max_distance = int(max_distance)
     if match_mode == "levenshtein" and max_distance > 1:
         logger.warning(
             "match_mode='levenshtein' currently supports max_distance=1 "
@@ -2347,6 +2369,132 @@ def match_clonotypes(
     # Pre-index positional row slices by CDR3β and paired (CDR3α, CDR3β) once
     # so per-clone lookups run in O(1) instead of scanning a 140k-row DataFrame.
     import numpy as np
+
+    if match_mode == "tcrdist":
+        from .tcrdist import DEFAULT_BETA_RADIUS, TCRDistIndex
+
+        q_va_col = _pick_v_gene_col(df, ("alpha_v_gene", "v_alpha", "TRA_1_v_gene", "v_a_gene"))
+        q_vb_col = _pick_v_gene_col(df, ("beta_v_gene", "v_beta", "TRB_1_v_gene", "v_b_gene"))
+        use_va = q_va_col is not None and "v_alpha" in database.columns
+        use_vb = q_vb_col is not None and "v_beta" in database.columns
+
+        beta_tcrdist_index: TCRDistIndex | None = None
+        if strictness in ("ab_with_partial", "b_only"):
+            valid_b = database["cdr3_beta"].notna() & (database["cdr3_beta"].astype(str) != "")
+            if valid_b.any():
+                b_positions = np.flatnonzero(valid_b.to_numpy())
+                beta_tcrdist_index = TCRDistIndex(
+                    b_positions,
+                    database.loc[valid_b, "cdr3_beta"].astype(str).tolist(),
+                    v_beta=database.loc[valid_b, "v_beta"].tolist() if use_vb else None,
+                    species=query_species,
+                    paired=False,
+                )
+
+        paired_tcrdist_index: TCRDistIndex | None = None
+        if strictness in ("strict_ab", "ab_with_partial"):
+            valid_ab = (
+                database["cdr3_alpha"].notna()
+                & (database["cdr3_alpha"].astype(str) != "")
+                & database["cdr3_beta"].notna()
+                & (database["cdr3_beta"].astype(str) != "")
+            )
+            if valid_ab.any():
+                ab_positions = np.flatnonzero(valid_ab.to_numpy())
+                paired_tcrdist_index = TCRDistIndex(
+                    ab_positions,
+                    database.loc[valid_ab, "cdr3_beta"].astype(str).tolist(),
+                    v_beta=database.loc[valid_ab, "v_beta"].tolist() if use_vb else None,
+                    cdr3_alpha=database.loc[valid_ab, "cdr3_alpha"].astype(str).tolist(),
+                    v_alpha=database.loc[valid_ab, "v_alpha"].tolist() if use_va else None,
+                    species=query_species,
+                    paired=True,
+                )
+
+        allow_b_fallback = strictness == "ab_with_partial"
+        b_fallback_radius = min(max_distance, DEFAULT_BETA_RADIUS)
+
+        row_iter = df.iterrows()
+        if show_progress:
+            row_iter = tqdm(
+                list(df.iterrows()),
+                desc="Matching clonotypes",
+                unit="clone",
+            )
+
+        for idx, row in row_iter:
+            raw_a = row.get("CDR3_alpha", "")
+            raw_b = row.get("CDR3_beta", "")
+            alpha = raw_a.strip().upper() if isinstance(raw_a, str) else ""
+            beta = raw_b.strip().upper() if isinstance(raw_b, str) else ""
+            q_va = row.get(q_va_col) if q_va_col is not None else None
+            q_vb = row.get(q_vb_col) if q_vb_col is not None else None
+
+            if strictness in ("strict_ab", "ab_with_partial"):
+                hit = (
+                    paired_tcrdist_index.query_nearest(
+                        beta,
+                        v_beta=q_vb,
+                        cdr3_alpha=alpha,
+                        v_alpha=q_va,
+                        max_distance=max_distance,
+                    )
+                    if (paired_tcrdist_index is not None and alpha and beta)
+                    else None
+                )
+                if hit is not None:
+                    best_d, pos = hit
+                    _annotate_match(
+                        df,
+                        idx,
+                        database.iloc[pos],
+                        strength="ab" if best_d == 0 else "ab_near",
+                        partial=False,
+                        distance=best_d,
+                        query_species=query_species,
+                    )
+                elif allow_b_fallback and beta_tcrdist_index is not None and beta:
+                    b_hit = beta_tcrdist_index.query_nearest(
+                        beta,
+                        v_beta=q_vb,
+                        max_distance=b_fallback_radius,
+                    )
+                    if b_hit is not None:
+                        best_d, pos = b_hit
+                        _annotate_match(
+                            df,
+                            idx,
+                            database.iloc[pos],
+                            strength="b_only" if best_d == 0 else "b_only_near",
+                            partial=True,
+                            distance=best_d,
+                            query_species=query_species,
+                        )
+            else:
+                if beta_tcrdist_index is not None and beta:
+                    b_hit = beta_tcrdist_index.query_nearest(
+                        beta,
+                        v_beta=q_vb,
+                        max_distance=max_distance,
+                    )
+                    if b_hit is not None:
+                        best_d, pos = b_hit
+                        _annotate_match(
+                            df,
+                            idx,
+                            database.iloc[pos],
+                            strength="b_only" if best_d == 0 else "b_only_near",
+                            partial=False,
+                            distance=best_d,
+                            query_species=query_species,
+                        )
+
+        df.index = orig_index
+        n_matches = df["db_match"].sum()
+        n_viral = df["is_viral"].sum()
+        if verbose:
+            logger.info(f"  Found {n_matches:,} matches ({n_viral:,} viral)")
+        return df
 
     b_to_pos: dict[str, np.ndarray] = {}
     if strictness in ("ab_with_partial", "b_only"):
@@ -2626,7 +2774,13 @@ def _annotate_match(
     # downstream code can recognise "couldn't be checked" vs "checked
     # and found no agreement".
     if "v_beta" in matches.columns:
-        clone_v_beta = _canonical_v_gene(df.loc[idx].get("beta_v_gene"))
+        row_s = df.loc[idx]
+        clone_v_beta = ""
+        for vcol in ("beta_v_gene", "v_beta", "TRB_1_v_gene", "v_b_gene"):
+            cand_v = _canonical_v_gene(row_s.get(vcol))
+            if cand_v:
+                clone_v_beta = cand_v
+                break
         if clone_v_beta:
             db_v_betas = matches["v_beta"].dropna().map(_canonical_v_gene)
             db_v_betas = db_v_betas[db_v_betas != ""]
@@ -2738,7 +2892,7 @@ def annotate_clonotypes(
     match_by: str = "CDR3ab",
     match_strictness: str | None = None,
     match_mode: str = "exact",
-    max_distance: int = 1,
+    max_distance: int | None = None,
     exclude_viral: bool = False,
     flag_only: bool = False,
     *,

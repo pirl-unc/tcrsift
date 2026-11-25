@@ -364,6 +364,12 @@ _MODULE_EXPORTS = {
         "sort_signature_consistency_from_adata",
     ),
     ".mnemonic": ("tcr_name",),
+    ".tcrdist": (
+        "TCRDistIndex",
+        "cdr3_distance",
+        "tcr_distance",
+        "v_gene_distance",
+    ),
     ".validation": (
         "TCRsiftValidationError",
         "validate_cdr3_sequence",

@@ -14,7 +14,7 @@ The benchmarks are ordered from **objective sequence and antigen-binding ground 
 | --- | --- | --- | --- |
 | **1a** | Construct assembly (`tcrsift assemble` vs `stitchr`) | **100%** complete constructs with **0** validation errors across intact human CR6 (46/46; **9 donor V-variants kept** vs 0 in `stitchr`), 5'-truncated human (160/160 vs 135/160), and mouse Cell Ranger (101/101, **52 `Trbc` fixed** vs 78/101 & 37 chimeras in `stitchr -sc`). | Imputed chains set `construct_contig_verified=False` and require cached IMGT V/J refs; pass `--no-germline-vdj-fallback` for strict contig-only ordering. |
 | **1b** | Synthesis codon optimization (`tcrsift` vs `DNAChisel`) | `tcrsift` focal mode achieves **46/46 (100%)** in-frame, restriction-free, homopolymer-free, repeat-free (`max 13 bp`), GC-valid constructs while keeping **97.8%** of donor VDJ codons verbatim (vs **46.2%** in `DNAChisel`) and running **2.2x faster** (1.28s vs 2.84s). | Greedy `codon_optimization="full"` introduced ≥20 bp repeats in **2/46** constructs (`max 22 bp`) while `focal` (`max 13 bp`) and `DNAChisel` (`max 19 bp`) stayed repeat-free. |
-| **2a** | Held-out public DB matching (`tcrsift` vs `scirpy` & `tcrdist3`) | Exact `strict_ab` matches `scirpy` 1:1 (**92.1%** Minervina 35/38, **100%** 10x D1 56/56); paired Lev-1 (`ab_near`) matches `scirpy` on **226** Minervina (**92.9%**, 210/226) & **110** 10x D1 (**99.1%**, 109/110) while running **14.3x faster** (14.9s vs 213.3s). **`tcrdist3` paired αβ (`r <= 48`)** pushes recall **2.7x higher** on Minervina (**557/596**, 93.5%, 13.2% recall) and **143/144** (99.3%, 58.1% recall) on 10x D1 at 276.7s / 13.2s. | `tcrsift` currently compares CDR3 edit distance without V-gene CDR1/CDR2 weighting, so `tcrdist3` wins deep paired-similarity recall; public DBs ingest published cohorts, so independent evaluation requires study holdout. |
+| **2a** | Held-out public DB matching (`tcrsift` vs `scirpy` & `tcrdist3`) | Exact `strict_ab` matches `scirpy` 1:1 (**92.1%** Minervina 35/38, **100%** 10x D1 56/56); paired Lev-1 matches `scirpy` (**210/226** Minervina, **109/110** 10x D1) **18.4x faster** (10.9s vs 200.2s). Native **`tcrsift --match-mode tcrdist`** (`r <= 48`, zero external deps) matches/exceeds `tcrdist3 0.3` on both cohorts (**567/607** = 93.4%, 13.5% recall vs 557/596 on Minervina; **143/145** = 98.6%, 58.1% recall vs 143/144 on 10x D1) while running **15.8x faster** end-to-end (12.9s vs 204.1s). | Public DBs ingest published cohorts, so independent evaluation requires study holdout; V-gene loop scoring requires `alpha_v_gene`/`beta_v_gene` (gracefully degrades to BLOSUM62 CDR3-only when absent). |
 | **2b** | Multiplexed pMHC multimer calling (`--call-multimers` vs 10x/CLR/`muon` DSB/GMM) | **100%** cognate precision on held-out VDJdb (109/109), **0** HIV Gag FPs, and **−96.3%** sticky `KLGGALQAK` clones (837 → 31; vs 369 in `muon` DSB `>= 3.0`, which reaches 98.1% precision 101/103). Per-multimer GMM hits 0 `KLGGALQAK` but detects only **6** mega-abundant donor-epitopes vs **20** in `tcrsift`. | Clonal concordance requires ≥2 cells per clone, so singleton binders (e.g. naive `MART-1`) cannot be rescued by clonal concordance alone. |
 | **2c** | Sequence publicness (`Pgen`/`Ppost` vs `OLGA` & `soNNia`) | Matches `OLGA` `Pgen` on **both human** ($r=0.954$, AUROC 0.739 vs `soNNia` 0.740 & `OLGA` 0.744) and **mouse** ($r=0.910$ vs `soNNia` $r=0.877$; AUROC 0.600–0.613 vs `OLGA` 0.617 & `soNNia` 0.583) while running **266x–325x faster than `OLGA`** and **846x–943x faster than `soNNia`**. | Bundled mouse model is `Pgen` only (mouse `Ppost` falls back to gene-agnostic Markov unless trained via `tcrsift pgen train --species mouse`). |
 | **2d** | Paired 16 h peptide restimulation (`--method stimulation`) | Detects **11/73** cytokine-induced Spike-reactive clones (`Δ > 0.5`, `ΔAIM` up to `+2.47`) where count-based Fisher expansion tests find **0/73** (no overnight division). | Requires a paired unstimulated control well from the same donor. |
@@ -82,7 +82,7 @@ On the 46 Minervina 2022 human single-chain constructs (`β-T2A-α`), we benchma
 
 ### 2a. Held-out public TCR database matching: `tcrsift annotate` vs `scirpy 0.26.1` & `tcrdist3 0.3`
 
-Across study-held-out VDJdb (`vdjdb-2026-11-06`, holding out `PMID:35383307` for the **4,212 dextramer-verified SARS-CoV-2 paired clones** in Minervina 2022 and holding out all 10x entries for the **246 canonical viral clones** in 10x Healthy Donor 1), we compare `tcrsift annotate` (`strict_ab` exact, `ab_with_partial` exact, and `strict_ab` paired Levenshtein-1 `ab_near`) against `scirpy` (`ir.pp.ir_dist` + `ir.tl.ir_query`, Sturm et al., *Bioinformatics* 2020) and `tcrdist3` (`TCRrep` paired αβ and β-only CDR1/CDR2/pMHC+CDR3 distance, Mayer-Blackwell et al., *eLife* 2021) using identical modal-consensus species aggregation on Minervina and cognate epitope matching on 10x Donor 1:
+Across study-held-out VDJdb (`vdjdb-2026-11-06`, holding out `PMID:35383307` for the **4,212 dextramer-verified SARS-CoV-2 paired clones** in Minervina 2022 and holding out all 10x entries for the **246 canonical viral clones** in 10x Healthy Donor 1), we compare `tcrsift annotate` (`strict_ab` exact, `ab_with_partial` exact, `strict_ab` paired Levenshtein-1 `ab_near`, and native zero-dependency `--match-mode tcrdist` at paired `r <= 24`, `r <= 48`, and TRB `r = 0`) against `scirpy` (`ir.pp.ir_dist` + `ir.tl.ir_query`, Sturm et al., *Bioinformatics* 2020) and `tcrdist3` (`TCRrep` paired αβ and β-only CDR1/CDR2/pMHC+CDR3 distance, Mayer-Blackwell et al., *eLife* 2021) using identical modal-consensus species aggregation on Minervina and cognate epitope matching on 10x Donor 1:
 
 ![Held-out VDJdb matching precision, hits, and runtime: TCRsift vs scirpy and tcrdist3](assets/figures/h2h_db_matching_scirpy.svg)
 
@@ -90,29 +90,35 @@ Across study-held-out VDJdb (`vdjdb-2026-11-06`, holding out `PMID:35383307` for
 
 | Cohort (study held out of VDJdb) | Tool / mode | Query clones ($n$) | Matched clones | Cognate hits | Cognate precision | Cognate recall | Runtime (s) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minervina 2022 SARS-CoV-2 (verified) | `tcrsift_strict_ab_exact` | 4,212 | 38 | 35 | **92.1%** | 0.8% | 9.48 |
-| | `scirpy 0.26` paired exact (`identity`, `all`) | 4,212 | 38 | 35 | **92.1%** | 0.8% | 8.45 |
-| | `tcrsift_strict_ab_lev1` (`ab_near`, ≤1/chain) | 4,212 | 226 | 210 | **92.9%** | 5.0% | **14.91** |
-| | `scirpy 0.26` paired Lev-1 (`cutoff=1`, `all`) | 4,212 | 226 | 208 | 92.0% | 4.9% | 213.29 |
-| | `tcrdist3 0.3` paired αβ (`r <= 24`) | 4,212 | 305 | 288 | **94.4%** | 6.8% | 276.72* |
-| | `tcrdist3 0.3` paired αβ (`r <= 48`) | 4,212 | 596 | **557** | **93.5%** | **13.2%** | 276.72* |
-| | `tcrdist3 0.3` TRB-only (`r = 0`, CDR3β + TRBV) | 4,212 | 291 | 239 | 82.1% | 5.7% | 284.33 |
-| | `tcrsift_ab_with_partial_exact` | 4,212 | 473 | 236 | 49.9% | 5.6% | 12.05 |
-| | `scirpy 0.26` TRB-only (`identity`, `VDJ`) | 4,212 | 473 | 235 | 49.7% | 5.6% | 6.11 |
-| 10x Donor 1 canonical viral | `tcrsift_strict_ab_exact` | 246 | 56 | 56 | **100.0%** | 22.8% | 6.53 |
-| | `scirpy 0.26` paired exact (`identity`, `all`) | 246 | 56 | 56 | **100.0%** | 22.8% | 6.36 |
-| | `tcrsift_strict_ab_lev1` (`ab_near`, ≤1/chain) | 246 | 110 | 109 | **99.1%** | 44.3% | **9.41** |
-| | `scirpy 0.26` paired Lev-1 (`cutoff=1`, `all`) | 246 | 110 | 109 | **99.1%** | 44.3% | 19.92 |
-| | `tcrdist3 0.3` paired αβ (`r <= 24`) | 246 | 114 | 114 | **100.0%** | 46.3% | 13.16* |
-| | `tcrdist3 0.3` paired αβ (`r <= 48`) | 246 | 144 | **143** | **99.3%** | **58.1%** | 13.16* |
-| | `tcrdist3 0.3` TRB-only (`r = 0`, CDR3β + TRBV) | 246 | 137 | 134 | 97.8% | 54.5% | 9.03 |
-| | `tcrsift_ab_with_partial_exact` | 246 | 138 | 129 | 93.5% | 52.4% | 6.89 |
-| | `scirpy 0.26` TRB-only (`identity`, `VDJ`) | 246 | 138 | 129 | 93.5% | 52.4% | 4.44 |
+| Minervina 2022 SARS-CoV-2 (verified) | `tcrsift_strict_ab_exact` | 4,212 | 38 | 35 | **92.1%** | 0.8% | 7.34 |
+| | `scirpy 0.26` paired exact (`identity`, `all`) | 4,212 | 38 | 35 | **92.1%** | 0.8% | 6.96 |
+| | `tcrsift_strict_ab_lev1` (`ab_near`, ≤1/chain) | 4,212 | 226 | 210 | **92.9%** | 5.0% | **10.86** |
+| | `scirpy 0.26` paired Lev-1 (`cutoff=1`, `all`) | 4,212 | 226 | 208 | 92.0% | 4.9% | 200.23 |
+| | `tcrsift_strict_ab_tcrdist_r24` (`--match-mode tcrdist`) | 4,212 | 308 | **291** | **94.5%** | **6.9%** | **9.79** |
+| | `tcrdist3 0.3` paired αβ (`r <= 24`) | 4,212 | 305 | 288 | **94.4%** | 6.8% | 204.05* |
+| | `tcrsift_strict_ab_tcrdist_r48` (`--match-mode tcrdist`) | 4,212 | 607 | **567** | **93.4%** | **13.5%** | **12.89** |
+| | `tcrdist3 0.3` paired αβ (`r <= 48`) | 4,212 | 596 | 557 | **93.5%** | 13.2% | 204.05* |
+| | `tcrsift_trb_tcrdist_r0` (`b_only`, `tcrdist`, `r = 0`) | 4,212 | 291 | 238 | 81.8% | 5.7% | **9.34** |
+| | `tcrdist3 0.3` TRB-only (`r = 0`, CDR3β + TRBV) | 4,212 | 291 | 239 | 82.1% | 5.7% | 194.50 |
+| | `tcrsift_ab_with_partial_exact` | 4,212 | 473 | 236 | 49.9% | 5.6% | 10.04 |
+| | `scirpy 0.26` TRB-only (`identity`, `VDJ`) | 4,212 | 473 | 235 | 49.7% | 5.6% | 5.01 |
+| 10x Donor 1 canonical viral | `tcrsift_strict_ab_exact` | 246 | 56 | 56 | **100.0%** | 22.8% | 7.40 |
+| | `scirpy 0.26` paired exact (`identity`, `all`) | 246 | 56 | 56 | **100.0%** | 22.8% | 6.06 |
+| | `tcrsift_strict_ab_lev1` (`ab_near`, ≤1/chain) | 246 | 110 | 109 | **99.1%** | 44.3% | **10.53** |
+| | `scirpy 0.26` paired Lev-1 (`cutoff=1`, `all`) | 246 | 110 | 109 | **99.1%** | 44.3% | 13.70 |
+| | `tcrsift_strict_ab_tcrdist_r24` (`--match-mode tcrdist`) | 246 | 115 | **115** | **100.0%** | **46.7%** | **7.45** |
+| | `tcrdist3 0.3` paired αβ (`r <= 24`) | 246 | 114 | 114 | **100.0%** | 46.3% | 8.70* |
+| | `tcrsift_strict_ab_tcrdist_r48` (`--match-mode tcrdist`) | 246 | 145 | **143** | 98.6% | **58.1%** | **7.98** |
+| | `tcrdist3 0.3` paired αβ (`r <= 48`) | 246 | 144 | **143** | **99.3%** | **58.1%** | 8.70* |
+| | `tcrsift_trb_tcrdist_r0` (`b_only`, `tcrdist`, `r = 0`) | 246 | 137 | 134 | 97.8% | 54.5% | 8.05 |
+| | `tcrdist3 0.3` TRB-only (`r = 0`, CDR3β + TRBV) | 246 | 137 | 134 | 97.8% | 54.5% | 6.04 |
+| | `tcrsift_ab_with_partial_exact` | 246 | 138 | 129 | 93.5% | 52.4% | 9.37 |
+| | `scirpy 0.26` TRB-only (`identity`, `VDJ`) | 246 | 138 | 129 | 93.5% | 52.4% | 4.02 |
 
 *\*One paired `tcrdist3` distance computation yields both `r <= 24` and `r <= 48`.*
 
-- **Exact agreement & 14.3x faster paired Levenshtein-1 vs `scirpy`.** Under identical modal-consensus aggregation on the 4,212 verified SARS-CoV-2 clones, `tcrsift` and `scirpy` match the exact same clone sets across paired exact (`35/38 = 92.1%` Minervina, `56/56 = 100.0%` 10x), TRB-only (`473` Minervina, `138` 10x), and paired Levenshtein-1 (`226` Minervina, `110` 10x). `tcrsift`'s deletion-canonical index finishes paired Levenshtein-1 in **14.9 s** vs **213.3 s** in `scirpy` (**14.3x faster**), lifting recall **6x** on Minervina (`92.9%` precision) and **2x** on 10x Donor 1 (`99.1%` precision).
-- **`tcrdist3` leads deep similarity recall via V-gene loop weighting.** Because `tcrdist3` scores CDR1/CDR2/pMHC loops (from `TRAV`/`TRBV`) together with BLOSUM62-weighted CDR3 alignment, paired `r <= 48` recovers **557/596 (93.5% precision, 13.2% recall)** on Minervina (**2.7x** more hits than paired Lev-1) and **143/144 (99.3% precision, 58.1% recall)** on 10x Donor 1, at the cost of a heavier runtime (`276.7 s` on 4.2k × 151k paired DB entries) and `parasail` dependency. Even for β-only exact matching (`r = 0`), requiring `TRBV` agreement cuts Minervina single-chain false positives from 237 (`49.9%` precision) down to 52 (**`82.1%` precision**).
+- **Exact agreement & 18.4x faster paired Levenshtein-1 vs `scirpy`.** Under identical modal-consensus aggregation on the 4,212 verified SARS-CoV-2 clones, `tcrsift` and `scirpy` match the exact same clone sets across paired exact (`35/38 = 92.1%` Minervina, `56/56 = 100.0%` 10x), TRB-only (`473` Minervina, `138` 10x), and paired Levenshtein-1 (`226` Minervina, `110` 10x). `tcrsift`'s deletion-canonical index finishes paired Levenshtein-1 in **10.9 s** vs **200.2 s** in `scirpy` (**18.4x faster**).
+- **Native zero-dependency `tcrsift --match-mode tcrdist` matches `tcrdist3` 15.8x faster.** `tcrsift.tcrdist` implements Dash/tcrdist3 V-gene CDR1/CDR2/CDR2.5 loop weighting + BLOSUM62 trimmed-CDR3 alignment in pure Python + NumPy (using bundled 4.3 KB human/mouse IMGT V-gene loops and admissible V-gene + CDR3-length branch-and-bound pruning, without `parasail` or `tcrdist3`). On Minervina, native `tcrsift` `r <= 48` recovers **567/607 (93.4% precision, 13.5% recall)** in **12.9 s** end-to-end (vs **557/596 = 93.5%** in **204.1 s** for `tcrdist3`, **15.8x faster**; ~7.3 s of `tcrsift`'s runtime is shared DB species/antigen canonicalization). The +10 extra cognate hits vs `tcrdist3` come from `tcrsift`'s V-gene canonicalization resolving `TRAV14DV4`/`TRAV14/DV4` and allele variants that `tcrdist3` drops. For β-only exact matching (`r = 0`), requiring `TRBV` agreement cuts Minervina single-chain false positives from 237 (`49.9%` precision) down to 53 (**`81.8%` precision** in **9.3 s** vs **194.5 s** in `tcrdist3`).
 - **Database circularity.** Because public VDJdb (`2026-11-06`) ingests published single-cell cohorts (including 10x dextramers, Minervina `PMID:35383307`, and Kasmani `PMID:35667687`), full-DB evaluation measures self-retrieval rather than out-of-sample recall (e.g., Kasmani NOD IGRP recall drops from 91.4% on full VDJdb to 0.0% once `PMID:35667687` is held out). All precision claims in TCRsift benchmarks therefore hold out the evaluated study.
 
 ### 2b. Multiplexed pMHC multimer calling

@@ -89,3 +89,15 @@ valid `from_contig` leaders, IMGT sequences serve as an alignment anchor to
 locate start codons and leader boundaries while retaining the donor's native
 contig sequence; rejected contig leaders fall back to the germline V-gene leader
 by default (`--leader-fallback germline`).
+
+## IMGT V-gene CDR1 / CDR2 / CDR2.5 loops (TCRdist)
+
+`vgene_cdr_loops.csv.gz` stores fixed-width IMGT-aligned CDR1, CDR2, and CDR2.5
+("pMHC-facing") amino-acid loop sequences for **448 canonicalized human and mouse
+`TRAV` and `TRBV` genes** (human α: 58, human β: 116, mouse α: 125, mouse β: 149),
+used by `tcrsift.tcrdist` (`match_mode="tcrdist"`).
+
+- Source: Derived from the MIT-licensed `tcrdist3` IMGT-aligned V-gene reference
+  table (`alphabeta_gammadelta_db.tsv`, Dash et al., *Nature* 2017;
+  Mayer-Blackwell et al., *eLife* 2021), deduplicated to canonical gene symbols
+  via `tcrsift.genes.canonicalize_gene` (preferring `*01` primary alleles).

@@ -52,9 +52,7 @@ def cmd_annotate(args):
         match_by=args.match_by if hasattr(args, "match_by") else "CDR3ab",
         match_strictness=getattr(args, "database_match", None),
         match_mode=getattr(args, "match_mode", None) or "exact",
-        max_distance=(
-            args.max_distance if getattr(args, "max_distance", None) is not None else 1
-        ),
+        max_distance=getattr(args, "max_distance", None),
         exclude_viral=args.exclude_viral,
         flag_only=args.flag_only,
         species=getattr(args, "species", "auto") or "auto",
@@ -415,15 +413,16 @@ def register_annotate(subparsers) -> None:
     )
     p_annot.add_argument(
         "--match-mode",
-        choices=["exact", "levenshtein"],
+        choices=["exact", "levenshtein", "tcrdist"],
         default="exact",
-        help="CDR3β distance mode: 'exact' (default) or 'levenshtein' (edit distance <= --max-distance).",
+        help="CDR3/TCR distance mode: 'exact' (default), 'levenshtein' (edit distance <= 1), "
+        "or 'tcrdist' (V-gene CDR1/2/2.5 + BLOSUM62 trimmed-CDR3 distance).",
     )
     p_annot.add_argument(
         "--max-distance",
         type=int,
-        default=1,
-        help="Maximum Levenshtein edit distance for --match-mode levenshtein (default: 1).",
+        default=None,
+        help="Maximum match distance (defaults: 1 for levenshtein; 48 paired / 12 b_only for tcrdist).",
     )
     p_annot.add_argument("--exclude-viral", action="store_true", help="Remove viral clones")
     p_annot.add_argument("--flag-only", action="store_true", help="Just flag, don't remove")

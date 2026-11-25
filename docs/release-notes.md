@@ -8,6 +8,36 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.43.0
+
+Added native, zero-dependency **TCRdist** (`--match-mode tcrdist`) similarity
+scoring and public TCR database matching:
+
+- **Native `tcrsift.tcrdist` module (pure Python + NumPy, human & mouse)**:
+  Implements the Dash (*Nature* 2017) / `tcrdist3` (*eLife* 2021) distance
+  metric — IMGT V-gene CDR1/CDR2/CDR2.5 loop distance (weight 1) plus
+  BLOSUM62-weighted trimmed CDR3 single-gap alignment (weight 3, `ntrim=3`,
+  `ctrim=2`, `gap_penalty=4`) — backed by a compact 4.3 KB bundled V-gene loop
+  table (`tcrsift/refseqs/vgene_cdr_loops.csv.gz`, 448 canonicalized human and
+  mouse `TRAV`/`TRBV` genes) and an exact admissible-bound branch-and-bound
+  index (`TCRDistIndex`). Exports `cdr3_distance`, `v_gene_distance`,
+  `tcr_distance`, and `TCRDistIndex` lazily from `tcrsift`.
+- **Database matching via `--match-mode tcrdist`**: Wired into
+  `match_clonotypes`, `annotate_clonotypes`, `AnnotateConfig`, `tcrsift annotate`,
+  and `tcrsift run`. Supports `strict_ab`, `ab_with_partial`, and `b_only`
+  strictness, allows `--max-distance 0` (exact V-gene loops + trimmed CDR3),
+  auto-defaults `--max-distance` to `48` (paired) or `12` (`b_only`), and
+  gracefully degrades to BLOSUM62 trimmed-CDR3 distance when V-gene columns are
+  absent.
+- **Head-to-head parity & 15.8x speedup vs `tcrdist3 0.3`**: On study-held-out
+  VDJdb (`vdjdb-2026-11-06`), native `tcrsift --match-mode tcrdist` (`r <= 48`)
+  recovers **567/607 (93.4% precision, 13.5% recall)** on Minervina 2022
+  verified SARS-CoV-2 clones ($n=4{,}212$) in **12.9 s** end-to-end (vs
+  557/596 = 93.5% in **204.1 s** for `tcrdist3 0.3`, **15.8x faster**, with no
+  `parasail`/`tcrdist3` dependency) and **143/145 (98.6% precision, 58.1%
+  recall)** on 10x Donor 1 canonical viral clones ($n=246$) in **8.0 s**
+  (**115/115 = 100.0%** at `r <= 24`).
+
 ## 3.42.0
 
 Fixed four assembly and murine `Pgen` bugs discovered during a cross-tool audit
