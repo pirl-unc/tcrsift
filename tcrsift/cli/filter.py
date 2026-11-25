@@ -196,8 +196,15 @@ def cmd_select(args):
                     "No condition column in the long table.",
                     hint="Pass --condition-col (e.g. method or sample).",
                 )
-        score_cols = [c for c in clone_scores.columns if c != "CDR3ab"]
-        feat = long_df.merge(clone_scores[["CDR3ab", *score_cols]], on="CDR3ab", how="left")
+        long_cols = set(long_df.columns)
+        score_cols = [
+            c for c in clone_scores.columns if c != "CDR3ab" and c not in long_cols
+        ]
+        feat = (
+            long_df.merge(clone_scores[["CDR3ab", *score_cols]], on="CDR3ab", how="left")
+            if score_cols
+            else long_df.copy()
+        )
         tie_break = None
         if args.config:
             tie_break = (TCRsiftConfig.from_yaml(args.config).selection or {}).get("tie_break")

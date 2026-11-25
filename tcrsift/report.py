@@ -121,11 +121,13 @@ def _image_reader(img_path: Path, header: str):
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
+    from .format import pdf_safe
+
     w, h = _LETTER
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=_LETTER)
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(40, h - 40, header)
+    c.drawString(40, h - 40, pdf_safe(header))
     im = ImageReader(str(img_path))
     iw, ih = im.getSize()
     scale = min((w - 80) / iw, (h - 110) / ih)
@@ -244,8 +246,9 @@ def bundle_figure_pdf(
         img = Path(img)
         if img.is_file():
             _add(_image_reader(img, header))
+            total_figures += 1
 
-    if total_figures == 0 and not (extra_images or []):
+    if total_figures == 0:
         raise FileNotFoundError(
             f"No figures found under {[str(d) for d in run_dirs]}. Run the "
             "pipeline with generate_plots first (plot_format: pdf for vector)."
@@ -356,6 +359,8 @@ def expand_dual_alpha_variants(
         return out.reset_index(drop=True), {}
     if partners_col not in out.columns or obs is None:
         out["dual_alpha_variant"] = None
+        if "selected_clone" not in out.columns:
+            out["selected_clone"] = out["CDR3ab"] if "CDR3ab" in out.columns else None
         return out.reset_index(drop=True), {}
 
     rows = []

@@ -24,6 +24,7 @@ Provides validation checks for TCR sequences including:
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -372,7 +373,7 @@ def validate_clonotypes(
 
     # CDR3 alpha length check
     if "CDR3_alpha" in df.columns:
-        cdr3a = df["CDR3_alpha"].fillna("")
+        cdr3a = df["CDR3_alpha"].astype("string").fillna("")
         too_short = cdr3a.str.len() < min_cdr3_length
         too_long = cdr3a.str.len() > max_cdr3_length
         invalid_cdr3a = (too_short | too_long) & (cdr3a != "")
@@ -390,7 +391,7 @@ def validate_clonotypes(
 
     # CDR3 beta length check
     if "CDR3_beta" in df.columns:
-        cdr3b = df["CDR3_beta"].fillna("")
+        cdr3b = df["CDR3_beta"].astype("string").fillna("")
         too_short = cdr3b.str.len() < min_cdr3_length
         too_long = cdr3b.str.len() > max_cdr3_length
         invalid_cdr3b = (too_short | too_long) & (cdr3b != "")
@@ -406,13 +407,17 @@ def validate_clonotypes(
             )
         )
 
-    # Read count check (supports both per-cell *_reads and clonotype *_reads_mean)
+    # Read count check (supports both per-cell *_reads and clonotype *_reads_mean).
+    # Secondary chain slots (TRA_2_reads, TRB_2_reads, ...) are NaN on normal
+    # single-chain cells; only evaluate rows where a secondary chain is present.
     read_cols = [
         c for c in df.columns if c.endswith(("_reads", "_reads_mean")) or c == "reads"
     ]
     if read_cols:
         for col in read_cols:
-            low_reads = df[col].fillna(0) < min_reads
+            is_secondary = bool(re.search(r"_[2-9]_(?:reads|reads_mean)$", col))
+            vals = pd.to_numeric(df[col], errors="coerce")
+            low_reads = (vals.notna() & (vals < min_reads)) if is_secondary else (vals.fillna(0) < min_reads)
             add_flag(low_reads, f"low_{col}")
             n_low = low_reads.sum()
             if n_low > 0:
@@ -424,7 +429,9 @@ def validate_clonotypes(
     ]
     if umi_cols:
         for col in umi_cols:
-            low_umis = df[col].fillna(0) < min_umis
+            is_secondary = bool(re.search(r"_[2-9]_(?:umis|umis_mean)$", col))
+            vals = pd.to_numeric(df[col], errors="coerce")
+            low_umis = (vals.notna() & (vals < min_umis)) if is_secondary else (vals.fillna(0) < min_umis)
             add_flag(low_umis, f"low_{col}")
             n_low = low_umis.sum()
             if n_low > 0:
@@ -450,7 +457,7 @@ def validate_clonotypes(
         for chain in ["alpha", "beta"]:
             seq_col = f"full_{chain}_aa"
             if seq_col in df.columns:
-                seqs = df[seq_col].fillna("")
+                seqs = df[seq_col].astype("string").fillna("")
                 too_short = (seqs.str.len() < min_chain_length) & (seqs != "")
                 too_long = seqs.str.len() > max_chain_length
 
@@ -474,7 +481,7 @@ def validate_clonotypes(
                 else f"full_{chain}_nt"
             )
             if dna_col in df.columns:
-                dna_seqs = df[dna_col].fillna("")
+                dna_seqs = df[dna_col].astype("string").fillna("")
                 valid_dna = dna_seqs != ""
 
                 # Frame check
@@ -1006,9 +1013,28 @@ def cross_lineage_doublets(
         if not present:
             continue
         n_programs += 1
-        ctrl = min(50, max(1, tmp.n_vars - len(present) - 1))
-        sc.tl.score_genes(tmp, present, score_name="_lin", ctrl_size=ctrl)
-        on += (tmp.obs["_lin"].to_numpy() > score_min).astype(int)
+        n_pool = tmp.n_vars - len(present)
+        if n_pool < 1:
+            gx = tmp[:, present].X
+            g_arr = np.asarray(gx.toarray() if hasattr(gx, "toarray") else gx, dtype=float)
+            lin_scores = g_arr.mean(axis=1)
+        else:
+            ctrl = min(50, max(1, n_pool))
+            n_bins = min(25, max(2, tmp.n_vars - 1))
+            try:
+                sc.tl.score_genes(
+                    tmp, present, score_name="_lin", ctrl_size=ctrl, n_bins=n_bins
+                )
+                lin_scores = tmp.obs["_lin"].to_numpy()
+            except (RuntimeError, ZeroDivisionError):
+                present_set = set(present)
+                pool = [v for v in tmp.var_names if v not in present_set]
+                gx = tmp[:, present].X
+                px = tmp[:, pool].X
+                g_arr = np.asarray(gx.toarray() if hasattr(gx, "toarray") else gx, dtype=float)
+                p_arr = np.asarray(px.toarray() if hasattr(px, "toarray") else px, dtype=float)
+                lin_scores = g_arr.mean(axis=1) - p_arr.mean(axis=1)
+        on += (lin_scores > score_min).astype(int)
 
     if n_programs < min_programs:
         return np.zeros(adata.n_obs, dtype=bool)

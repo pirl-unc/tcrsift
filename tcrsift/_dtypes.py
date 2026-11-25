@@ -186,7 +186,12 @@ def rehydrate_obs(adata: ad.AnnData) -> ad.AnnData:
                 elif all(isinstance(x, (bool, np.bool_)) for x in non_na):
                     obs[col] = s.astype("boolean")
                 else:
-                    obs[col] = s.where(pd.notna(s), np.nan).infer_objects(copy=False)
+                    inferred = s.where(pd.notna(s), np.nan).infer_objects(copy=False)
+                    if pd.api.types.is_object_dtype(inferred):
+                        # Mixed scalar types (e.g. int + str + None) cannot be
+                        # serialized by anndata.write_h5ad; stringify non-null values.
+                        inferred = inferred.map(lambda x: None if pd.isna(x) else str(x))
+                    obs[col] = inferred
 
     if isinstance(obs.index.dtype, pd.StringDtype):
         obs.index = obs.index.astype(object)

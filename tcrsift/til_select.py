@@ -621,7 +621,8 @@ def _extract_paired_cdr3_from_consensus_df(
         if "TRB" in pivot_part.columns:
             rename_map["TRB"] = f"beta_{suffix}"
         pivot_part = pivot_part.rename(columns=rename_map)
-        base = base.join(pivot_part, how="left")
+        if not pivot_part.empty and pivot_part.notna().any().any():
+            base = base.join(pivot_part, how="left")
 
     base = base.reset_index().rename(columns={"index": "clonotype_id"})
     if "alpha_cdr3_aa" not in base.columns or "beta_cdr3_aa" not in base.columns:
@@ -1944,15 +1945,12 @@ def select_top_monotonic_increase_clones(
     if len(freq_cols) < 2:
         return pd.DataFrame(), freq_cols
 
-    mask_nonzero, _mask_all = compute_increasing_masks_from_frequencies(
+    mask_nonzero, mask_all = compute_increasing_masks_from_frequencies(
         df[freq_cols],
         ratio_nonzero_min=increase_ratio_nonzero_min,
         ratio_all_timepoints_min=increase_ratio_all_timepoints_min,
     )
-    mask = mask_nonzero
-    if require_positive_all_timepoints:
-        # Unified v2 rule keeps this alias behavior identical.
-        mask = mask_nonzero
+    mask = mask_all if require_positive_all_timepoints else mask_nonzero
     selected = df.loc[mask].copy()
     if selected.empty:
         return selected, freq_cols
@@ -2048,21 +2046,49 @@ def plot_annotated_heatmap(
     annotation_cols: list[str],
     title: str,
 ) -> None:
-    """Plot top-k heatmap with optional annotation sidecar columns."""
+    """Plot top-k heatmap with optional annotation sidecar labels."""
     if not count_cols:
         return
     top = df.head(top_k).copy()
     if top.empty:
         return
-    matrix = top.set_index("CDR3ab")[count_cols].copy()
+    present_ann = [c for c in (annotation_cols or []) if c in top.columns]
+    row_labels = []
+    for _, r in top.iterrows():
+        label = str(r["CDR3ab"])
+        if present_ann:
+            tags = []
+            for col in present_ann:
+                val = r[col]
+                if pd.isna(val):
+                    continue
+                if isinstance(val, (bool, np.bool_)):
+                    if val:
+                        tags.append(col.removeprefix("db_").removeprefix("is_"))
+                else:
+                    s_val = str(val).strip()
+                    if s_val and s_val.lower() not in ("false", "0", "none", "nan"):
+                        tags.append(
+                            col.removeprefix("db_").removeprefix("is_")
+                            if s_val.lower() in ("true", "1")
+                            else s_val
+                        )
+            if tags:
+                label = f"{label} [{'/'.join(tags)}]"
+        row_labels.append(label)
+    matrix = top[count_cols].copy()
+    matrix.index = row_labels
     matrix.columns = [c.replace("cell_count_", "") for c in matrix.columns]
     fig, ax = plt.subplots(
-        figsize=(max(7, 1.5 * len(count_cols) + 2), max(4, 0.4 * len(top) + 2))
+        figsize=(
+            max(8, 1.5 * len(count_cols) + (4 if present_ann else 2)),
+            max(4, 0.4 * len(top) + 2),
+        )
     )
     sns.heatmap(matrix, cmap="YlOrRd", ax=ax, cbar_kws={"label": "Cell count"})
     ax.set_title(title)
     ax.set_xlabel("Time point")
-    ax.set_ylabel("CDR3ab")
+    ax.set_ylabel("CDR3ab" + (" [annotations]" if present_ann else ""))
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=200)
@@ -2283,13 +2309,27 @@ def dominant_specificity_from_master(
 
     use_lineage_col = None
     if per_lineage_min:
-        if lineage_col and lineage_col in master_df.columns:
-            lin = master_df.set_index(clone_col)[lineage_col]
-        elif "cd4_to_cd8_ratio" in master_df.columns:
-            ratio = pd.to_numeric(
-                master_df.set_index(clone_col)["cd4_to_cd8_ratio"], errors="coerce"
+        key_df = master_df.drop_duplicates(subset=[clone_col], keep="first").set_index(clone_col)
+        if lineage_col and lineage_col in key_df.columns:
+            lin = key_df[lineage_col]
+        elif "cd4_to_cd8_ratio" in key_df.columns:
+            ratio = pd.to_numeric(key_df["cd4_to_cd8_ratio"], errors="coerce")
+            cd8_max = (
+                pd.to_numeric(key_df["cd8_cp10k_max"], errors="coerce").fillna(0.0)
+                if "cd8_cp10k_max" in key_df.columns
+                else pd.Series(1.0, index=key_df.index)
             )
-            lin = pd.Series(np.where(ratio < 1.0, "CD8", "CD4"), index=ratio.index)
+            cd4_max = (
+                pd.to_numeric(key_df["cd4_cp10k_max"], errors="coerce").fillna(0.0)
+                if "cd4_cp10k_max" in key_df.columns
+                else pd.Series(0.0, index=key_df.index)
+            )
+            is_cd8 = (cd8_max > 0) & (ratio < 1.0)
+            is_cd4 = (cd4_max > 0) & (~is_cd8)
+            lin = pd.Series(
+                np.where(is_cd8, "CD8", np.where(is_cd4, "CD4", "DN")),
+                index=ratio.index,
+            )
         else:
             lin = None
         if lin is not None:

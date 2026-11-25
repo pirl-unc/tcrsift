@@ -251,15 +251,11 @@ def aggregate_sct(
         if col in df.columns:
             agg_dict[col] = ["min", "median", "max"]
 
+    from ._schema import truthy_flag_series
+
     for col in boolean_cols:
         if col in df.columns:
-            # Convert Yes/No to boolean if needed
-            if pd.api.types.is_string_dtype(df[col].dtype):
-                df[f"{col}_bool"] = df[col].map(
-                    {"Yes": True, "No": False, True: True, False: False}
-                )
-            else:
-                df[f"{col}_bool"] = df[col].astype(bool)
+            df[f"{col}_bool"] = truthy_flag_series(df[col])
             agg_dict[f"{col}_bool"] = ["any", "all"]
 
     # Aggregate
@@ -318,11 +314,6 @@ def aggregate_sct(
         if "mutation" in result.columns:
             n_with_mutation = result["mutation"].notna().sum()
             logger.info(f"  With consistent mutation: {n_with_mutation:,}")
-
-    # Clean up temp columns
-    for col in boolean_cols:
-        if f"{col}_bool" in df.columns:
-            del df[f"{col}_bool"]
 
     return result
 

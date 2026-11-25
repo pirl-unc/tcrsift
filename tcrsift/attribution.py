@@ -103,7 +103,7 @@ def _attribute_single_pool(
 
     bc = np.asarray(df.index.astype(str))
     sample = (
-        np.asarray(df["sample"].fillna("").astype(str))
+        df["sample"].astype("string").fillna("").to_numpy(dtype=str)
         if "sample" in df.columns
         else np.array([""] * n)
     )

@@ -655,12 +655,20 @@ def resolve_adata_var_map(
             by_sym.setdefault(key, []).append(idx)
 
     X = getattr(adata, "X", None)
+    n_obs = getattr(adata, "n_obs", 0)
     sym_to_var: dict[str, str] = {}
     for sym, indices in by_sym.items():
-        if len(indices) == 1 or X is None:
+        if len(indices) == 1 or X is None or n_obs == 0:
             chosen = indices[0]
         else:
-            means = np.asarray(X[:, indices].mean(axis=0)).ravel()
+            sub_x = X[:, indices]
+            if hasattr(sub_x, "toarray"):
+                means = np.asarray(sub_x.mean(axis=0)).ravel().astype(float)
+            else:
+                arr = np.asarray(sub_x, dtype=float)
+                with np.errstate(all="ignore"):
+                    means = np.nanmean(arr, axis=0)
+            means = np.where(np.isfinite(means), means, -np.inf)
             chosen = indices[int(np.argmax(means))]
         sym_to_var[sym] = str(var_names[chosen])
     if wanted_genes is not None:

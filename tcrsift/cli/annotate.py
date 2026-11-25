@@ -134,39 +134,50 @@ def cmd_annotate_gex(args):
         )
 
     if augmented_df is not None:
-        from ..species import resolve_species
-
-        resolved_gex_sp = gex_species
-        if resolved_gex_sp == "auto":
-            try:
-                import scanpy as sc
-
-                from ..species import detect_adata_species
-
-                resolved_gex_sp = (
-                    detect_adata_species(sc.read_10x_h5(str(args.gex_file)))
-                    or resolve_species("auto", df=augmented_df, warn_mismatch=False)
-                )
-            except Exception:
-                resolved_gex_sp = resolve_species("auto", df=augmented_df, warn_mismatch=False)
-        else:
-            resolved_gex_sp = resolve_species(gex_species, df=augmented_df, warn_mismatch=False)
-        print("\nComputing per-clonotype signature scores...")
-        sig_df = compute_signature_scores_per_clonotype(
-            augmented_df,
-            group_col=args.group_col,
-            gex_prefix=args.prefix,
-            cd8_only=True,
-            species=resolved_gex_sp,
-            verbose=args.verbose,
+        sig_group_col = (
+            args.group_col
+            if args.group_col in augmented_df.columns
+            else ("CDR3ab" if "CDR3ab" in augmented_df.columns else None)
         )
-        sig_cols = [c for c in sig_df.columns if c.startswith("signature_")]
-        if sig_cols:
-            df = df.merge(
-                sig_df[[args.group_col, *sig_cols]],
-                on=args.group_col,
-                how="left",
+        if sig_group_col is None:
+            print(
+                f"Warning: '{args.group_col}' not in input table — "
+                "skipping per-clonotype signature aggregation (pass --group-col to specify)."
             )
+        else:
+            from ..species import resolve_species
+
+            resolved_gex_sp = gex_species
+            if resolved_gex_sp == "auto":
+                try:
+                    import scanpy as sc
+
+                    from ..species import detect_adata_species
+
+                    resolved_gex_sp = (
+                        detect_adata_species(sc.read_10x_h5(str(args.gex_file)))
+                        or resolve_species("auto", df=augmented_df, warn_mismatch=False)
+                    )
+                except Exception:
+                    resolved_gex_sp = resolve_species("auto", df=augmented_df, warn_mismatch=False)
+            else:
+                resolved_gex_sp = resolve_species(gex_species, df=augmented_df, warn_mismatch=False)
+            print("\nComputing per-clonotype signature scores...")
+            sig_df = compute_signature_scores_per_clonotype(
+                augmented_df,
+                group_col=sig_group_col,
+                gex_prefix=args.prefix,
+                cd8_only=True,
+                species=resolved_gex_sp,
+                verbose=args.verbose,
+            )
+            sig_cols = [c for c in sig_df.columns if c.startswith("signature_")]
+            if sig_cols and sig_group_col in df.columns:
+                df = df.merge(
+                    sig_df[[sig_group_col, *sig_cols]],
+                    on=sig_group_col,
+                    how="left",
+                )
 
     if args.cd4_cd8_counts:
         if augmented_df is None:

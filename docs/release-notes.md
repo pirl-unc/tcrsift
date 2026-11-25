@@ -8,6 +8,40 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.37.5
+
+Core I/O, QC, GEX, multimer, report, `til-select`, and plotting bugfixes:
+
+- **SCT & GEX**: Fixed `sct.aggregate_sct` inverted boolean aggregation
+  (`any=False, all=True`) by normalizing with `truthy_flag_series`; gated CP10K
+  normalization in `gex.compute_signature_scores_per_cell` on the full matrix
+  rather than the queried signature subset; resolved `GENE_SYNONYMS` pairs via
+  `sym_to_var` in `gex.augment_with_gex`; guarded empty DataFrames in
+  `gex.compute_cd4_cd8_counts`; and guarded 0-cell sparse `ZeroDivisionError`
+  and `NaN` column selection in `genes.resolve_adata_var_map`.
+- **QC, attribution & h5ad serialization**: Excluded `NaN` secondary-chain
+  slots (`TRA_2_*`, `TRB_2_*`) from falsely failing `qc.validate_clonotypes`,
+  fixed `Categorical` `.fillna("")` crashes in `qc.py` and `attribution.py`,
+  added fallback scoring for small/targeted panels in `cross_lineage_doublets`,
+  and stringified mixed-type object columns in `_dtypes.rehydrate_obs` so
+  `write_h5ad` never fails on mixed-scalar `obs` columns.
+- **Multimers, reports & datacache**: Fixed `_DEFAULT_NC_RE` to recognize
+  `NC_1_TotalSeqC`, `dCODE_NC_1_PE`, and `NC_ctrl` while still excluding
+  NCBI accessions; implemented sample-prefix stripping (`S1_ACGT-1` → `ACGT-1`)
+  in `call_multimers_for_adata`; wrapped `_image_reader` headers in `pdf_safe`,
+  validated `extra_images` existence in `bundle_figure_pdf`, and emitted
+  `selected_clone` on the early-return path of `expand_dual_alpha_variants`;
+  converted `zipfile.BadZipFile` into `DownloadError` in `datacache._extract_zip`.
+- **CLI, `til-select` & plots**: Excluded overlapping columns when merging
+  `--clone-scores` in `tcrsift select --prism`; allowed `tcrsift annotate-gex`
+  to fall back to `CDR3ab` or skip signature aggregation when `CDR3_pair` is
+  absent; stopped `--exhaustion-genes` default from masking `--enrichment-genes`;
+  fixed `dominant_specificity_from_master` double-negative lineage assignment
+  and deduplication, `select_top_monotonic_increase_clones(..., require_positive_all_timepoints=True)`,
+  `plot_annotated_heatmap` annotation tags, duplicate-`CDR3ab` crashes in
+  `plots/ranks.py` and `plots/annotations.py`, empty/missing-`cell_count`
+  handling in `plot_filter`, and `'<NA>'` leakage in `plot_provenance`.
+
 ## 3.37.4
 
 Assembly and pipeline correctness fixes:

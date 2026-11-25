@@ -540,10 +540,10 @@ def plot_clone_tracking_slopes(
         x_pos = np.arange(len(x_order))
 
         mat = wide.loc[present.index, x_order].clip(lower=floor)
-        for i, cdr3 in enumerate(mat.index):
+        for i in range(len(mat)):
             ax.plot(
                 x_pos,
-                mat.loc[cdr3].values,
+                mat.iloc[i].to_numpy(),
                 color=palette[i],
                 linewidth=1.1,
                 alpha=0.85,

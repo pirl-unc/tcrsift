@@ -524,8 +524,9 @@ or auto-discovered from --data-dir.
     p_til_select.add_argument(
         "--exhaustion-genes",
         type=str,
-        default=",".join(EXHAUSTION_GENES_HGNC),
-        help="Comma-separated genes for the exhaustion score branch (#303).",
+        default=None,
+        help="Comma-separated genes for the exhaustion score branch (#303; "
+        f"default: {','.join(EXHAUSTION_GENES_HGNC)}).",
     )
     p_til_select.add_argument(
         "--enrichment-genes",
