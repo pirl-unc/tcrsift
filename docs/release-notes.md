@@ -8,6 +8,36 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.37.4
+
+Assembly and pipeline correctness fixes:
+
+- **AA-only VDJ nucleotide assembly**: Back-translate missing `vdj_*_nt` /
+  `*_leader_nt` segments in `_build_full_sequences` when AA sequences are
+  present so `full_*_nt` and `single_chain_nt` never splice `leader_nt` +
+  `constant_nt` directly while omitting the V(D)J region.
+- **Mouse germline leader cache forwarding**: Propagated `data_dir` /
+  `--cache-dir` through `_assemble_clone`, `_extract_leader_from_contigs_single`,
+  `_record_leader`, and `apply_leader_policy` so custom-cached murine IMGT
+  leader references resolve cleanly.
+- **2A linker enzyme avoidance**: Recoded `P2A`/`F2A` linker DNA against
+  `avoid_enzymes` (including β–linker and linker–α seams) in
+  `single_chain_nt_optimized`, eliminating the reverse-strand `BsmBI` site.
+- **Assembly QC & fidelity gates**: Made `validate_sequences` and
+  `build_assembly_qc_report` recognize VDJ-only (`include_constant=False`)
+  assemblies without failing 200-aa / TRAC/TRBC constant-tail checks; reported
+  `from-data` constants accurately in `enforce_contig_fidelity` and skipped
+  unpaired chains in `_add_constant_from_row`; flagged length discrepancies in
+  `germline_compare_vregion` instead of labeling truncated germlines
+  `"identical"`; and fixed non-unique index and all-NaN `float64` assignment
+  errors in `apply_leader_policy`.
+- **Pipeline (`run` & `prioritize --assemble`)**: Applied
+  `--min-til-cells-per-donor` after `match_til` populates
+  `max_til_cells_per_donor` in Step 6, resolved relative sample-sheet `vdj_dir`
+  paths against the sample sheet's directory, and guarded stimulation scoring in
+  `run_pipeline` against double-`normalize_total`/`log1p` on pre-logged `h5ad`
+  inputs.
+
 ## 3.37.3
 
 Dependency hardening, Pandas 3 / `harmonypy 2.0` compatibility, and optional

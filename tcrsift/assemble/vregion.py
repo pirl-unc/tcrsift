@@ -459,5 +459,10 @@ def germline_compare_vregion(
     if best is None or best[1] < GERMLINE_MIN_IDENTITY:
         return None
     _score, identity, allele, g_overlap = best
-    diff = _diff_vs_germline(fr, g_overlap) or "identical"
+    diff = _diff_vs_germline(fr, g_overlap)
+    if len(g_overlap) < len(fr):
+        len_note = f"len:{len(fr)}vs{len(g_overlap)}"
+        diff = f"{diff},{len_note}" if diff else len_note
+    elif not diff:
+        diff = "identical"
     return allele, g_overlap, identity, diff

@@ -216,16 +216,29 @@ def enforce_contig_fidelity(
         "alpha_junction_residue_source" in df.columns
         and (df["alpha_junction_residue_source"] == "canonical_fallback").any()
     )
-    junction_note = (
-        "J→C junction residues defaulted (α blanket N is wrong for ~30% of J genes)"
-        if has_blanket_alpha or "alpha_junction_residue_source" not in df.columns
-        else "J→C junction residues germline-inferred (not contig-read)"
-    )
+    all_from_data = True
+    for ch in ("alpha", "beta"):
+        col = f"{ch}_junction_residue_source"
+        if col in df.columns:
+            non_contig = df[col].dropna()
+            non_contig = non_contig[non_contig != "contig"]
+            if len(non_contig) and not (non_contig == "from-data").all():
+                all_from_data = False
+        elif s[f"{ch}_fallback"] > 0:
+            all_from_data = False
+    if all_from_data:
+        detail_note = "caller-supplied from-data constants (not verified against CellRanger contigs)"
+    else:
+        junction_note = (
+            "J→C junction residues defaulted (α blanket N is wrong for ~30% of J genes)"
+            if has_blanket_alpha or "alpha_junction_residue_source" not in df.columns
+            else "J→C junction residues germline-inferred (not contig-read)"
+        )
+        detail_note = f"reference constants, {junction_note}, donor alleles unverified"
     summary = (
         f"{s['n_unverified']}/{s['n_total']} constructs assembled with NO contig "
         f"verification (α fallback: {s['alpha_fallback']}, β fallback: "
-        f"{s['beta_fallback']}) — reference constants, {junction_note}, donor alleles "
-        f"unverified."
+        f"{s['beta_fallback']}) — {detail_note}."
     )
     if not allow_canonical_fallback:
         raise TCRsiftValidationError(
@@ -342,7 +355,17 @@ def validate_sequences(
             if not seq or not isinstance(seq, str):
                 continue
 
-            if len(seq) < 200:
+            const_val = row.get(f"{chain}_constant_aa")
+            has_const = isinstance(const_val, str) and bool(const_val)
+            vdj_val = row.get(f"vdj_{chain}_aa") or row.get(f"VDJ_{chain}_aa")
+            const_omitted = (
+                (not has_const)
+                and isinstance(vdj_val, str)
+                and bool(vdj_val)
+                and seq.rstrip("*").endswith(vdj_val.strip().rstrip("*"))
+            )
+            min_len = 80 if const_omitted else 200
+            if len(seq) < min_len:
                 _lb(idx, f"{chain} chain too short ({len(seq)} aa)")
             elif len(seq) > 450:
                 _lb(idx, f"{chain} chain too long ({len(seq)} aa)")
@@ -470,42 +493,43 @@ def validate_sequences(
                         f"full_{chain}_aa != leader+vdj+constant "
                         f"(len {len(seq)} vs {len(expected)})")
 
-            c_gene = _resolve_c_gene(row, chain)
-            c_gene_base = c_gene.strip().upper().split("*")[0]
-            endings_map = CONSTANT_REGION_ENDINGS_BY_SPECIES[row_const_sp]
-            if c_gene_base in endings_map:
-                expected_end = endings_map[c_gene_base]
-                seq_no_stop = seq.rstrip("*")
-                if not seq_no_stop.endswith(expected_end):
-                    _lb(idx,
-                        f"{chain} doesn't end with canonical "
-                        f"{c_gene_base} C-terminus ({expected_end!r}); "
-                        f"got {seq_no_stop[-len(expected_end):]!r}")
-                expected_const = row.get(f"{chain}_constant_aa")
-                used_bare_fallback = False
-                if not isinstance(expected_const, str) or not expected_const:
-                    expected_const = CONSTANT_REGIONS_AA_BY_SPECIES[row_const_sp].get(c_gene_base)
-                    used_bare_fallback = True
-                if expected_const:
-                    obs_start = _expected_constant_start_from_full(seq_no_stop, row, chain)
-                    ok_start = verify_canonical_constant_start(
-                        obs_start, expected_const, min_match=8
-                    ) or (
-                        used_bare_fallback
-                        and len(obs_start) > 1
-                        and verify_canonical_constant_start(
-                            obs_start[1:], expected_const, min_match=8
-                        )
-                    )
-                    if not ok_start:
+            if not const_omitted:
+                c_gene = _resolve_c_gene(row, chain)
+                c_gene_base = c_gene.strip().upper().split("*")[0]
+                endings_map = CONSTANT_REGION_ENDINGS_BY_SPECIES[row_const_sp]
+                if c_gene_base in endings_map:
+                    expected_end = endings_map[c_gene_base]
+                    seq_no_stop = seq.rstrip("*")
+                    if not seq_no_stop.endswith(expected_end):
                         _lb(idx,
-                            f"{chain} constant start doesn't match canonical "
-                            f"{c_gene_base} (expected start "
-                            f"{expected_const[:15]!r})")
-            else:
-                _info(idx,
-                    f"{chain} c_gene={c_gene!r} not in "
-                    "CONSTANT_REGION_ENDINGS — canonical ending/start unverifiable")
+                            f"{chain} doesn't end with canonical "
+                            f"{c_gene_base} C-terminus ({expected_end!r}); "
+                            f"got {seq_no_stop[-len(expected_end):]!r}")
+                    expected_const = row.get(f"{chain}_constant_aa")
+                    used_bare_fallback = False
+                    if not isinstance(expected_const, str) or not expected_const:
+                        expected_const = CONSTANT_REGIONS_AA_BY_SPECIES[row_const_sp].get(c_gene_base)
+                        used_bare_fallback = True
+                    if expected_const:
+                        obs_start = _expected_constant_start_from_full(seq_no_stop, row, chain)
+                        ok_start = verify_canonical_constant_start(
+                            obs_start, expected_const, min_match=8
+                        ) or (
+                            used_bare_fallback
+                            and len(obs_start) > 1
+                            and verify_canonical_constant_start(
+                                obs_start[1:], expected_const, min_match=8
+                            )
+                        )
+                        if not ok_start:
+                            _lb(idx,
+                                f"{chain} constant start doesn't match canonical "
+                                f"{c_gene_base} (expected start "
+                                f"{expected_const[:15]!r})")
+                else:
+                    _info(idx,
+                        f"{chain} c_gene={c_gene!r} not in "
+                        "CONSTANT_REGION_ENDINGS — canonical ending/start unverifiable")
 
     # 2. β-chain J→C in-cis parity disagreement (#67).
     if "beta_j_gene" in df.columns:
@@ -736,53 +760,86 @@ def build_assembly_qc_report(df: pd.DataFrame) -> AssemblyQCReport:
         sub_full = full[present_mask]
         chain_label = "α" if chain == "alpha" else "β"
 
-        # Terminal residue (against canonical for the row's c_gene and constant species).
-        def _ends_canonical(row, _chain=chain):
-            s = row.get(f"full_{_chain}_aa", "")
-            if not isinstance(s, str) or not s:
-                return False
-            c = _resolve_c_gene(row, _chain)
-            base = c.strip().upper().split("*")[0]
-            csp = _infer_constant_species(
-                row.get(f"{_chain}_constant_aa"), s, base, default="human"
-            )
-            endings = CONSTANT_REGION_ENDINGS_BY_SPECIES[csp]
-            s_clean = s.rstrip("*")
-            if base in endings:
-                return s_clean.endswith(endings[base])
-            all_ends = set(CONSTANT_REGION_ENDINGS.values()) | set(
-                MOUSE_CONSTANT_REGION_ENDINGS.values()
-            )
-            return any(s_clean.endswith(end) for end in all_ends)
-
-        end_pass = sub.apply(_ends_canonical, axis=1)
-        _add(
-            f"{chain}_terminal_residue",
-            f"{chain_label} terminal residue",
-            chain,
-            end_pass,
-            total,
-            df_for_examples=sub,
-            failure_formatter=lambda row, idx, c=chain: (
-                f"clone {idx}: tail {row[f'full_{c}_aa'][-10:]!r}"
-            ),
+        # Detect VDJ-only assembly (include_constant=False): no constant column
+        # populated and every full sequence ends with its VDJ_aa.
+        const_col = f"{chain}_constant_aa"
+        has_any_const = (
+            const_col in df.columns
+            and sub[const_col].apply(lambda s: isinstance(s, str) and bool(s)).any()
+        )
+        vdj_col_qc = f"vdj_{chain}_aa" if f"vdj_{chain}_aa" in sub.columns else f"VDJ_{chain}_aa"
+        all_vdj_only = (
+            not has_any_const
+            and vdj_col_qc in sub.columns
+            and sub.apply(
+                lambda r: isinstance(r.get(vdj_col_qc), str)
+                and bool(r.get(vdj_col_qc))
+                and str(r.get(f"full_{chain}_aa", "")).rstrip("*").endswith(
+                    str(r.get(vdj_col_qc, "")).strip().rstrip("*")
+                ),
+                axis=1,
+            ).all()
         )
 
-        # Length floor (200 aa).
-        lengths = sub_full.str.len()
-        len_pass = lengths >= 200
-        _add(
-            f"{chain}_length_floor",
-            f"{chain_label} length ≥ 200",
-            chain,
-            len_pass,
-            total,
-            median_value=float(lengths.median()),
-            unit="aa",
-        )
+        # Terminal residue & 200-aa length floor apply when constants are assembled.
+        if not all_vdj_only:
+            def _ends_canonical(row, _chain=chain):
+                s = row.get(f"full_{_chain}_aa", "")
+                if not isinstance(s, str) or not s:
+                    return False
+                c = _resolve_c_gene(row, _chain)
+                base = c.strip().upper().split("*")[0]
+                csp = _infer_constant_species(
+                    row.get(f"{_chain}_constant_aa"), s, base, default="human"
+                )
+                endings = CONSTANT_REGION_ENDINGS_BY_SPECIES[csp]
+                s_clean = s.rstrip("*")
+                if base in endings:
+                    return s_clean.endswith(endings[base])
+                all_ends = set(CONSTANT_REGION_ENDINGS.values()) | set(
+                    MOUSE_CONSTANT_REGION_ENDINGS.values()
+                )
+                return any(s_clean.endswith(end) for end in all_ends)
+
+            end_pass = sub.apply(_ends_canonical, axis=1)
+            _add(
+                f"{chain}_terminal_residue",
+                f"{chain_label} terminal residue",
+                chain,
+                end_pass,
+                total,
+                df_for_examples=sub,
+                failure_formatter=lambda row, idx, c=chain: (
+                    f"clone {idx}: tail {row[f'full_{c}_aa'][-10:]!r}"
+                ),
+            )
+
+            # Length floor (200 aa).
+            lengths = sub_full.str.len()
+            len_pass = lengths >= 200
+            _add(
+                f"{chain}_length_floor",
+                f"{chain_label} length ≥ 200",
+                chain,
+                len_pass,
+                total,
+                median_value=float(lengths.median()),
+                unit="aa",
+            )
+        else:
+            lengths = sub_full.str.len()
+            len_pass = lengths >= 80
+            _add(
+                f"{chain}_length_floor",
+                f"{chain_label} VDJ length ≥ 80",
+                chain,
+                len_pass,
+                total,
+                median_value=float(lengths.median()),
+                unit="aa",
+            )
 
         # Constant length floor.
-        const_col = f"{chain}_constant_aa"
         if const_col in df.columns:
             const_lens = sub[const_col].apply(
                 lambda s: len(s) if isinstance(s, str) else 0

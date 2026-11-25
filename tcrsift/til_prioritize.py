@@ -630,19 +630,24 @@ def run_til_prioritize(
         linker_arg = None if raw_linker in (None, "", "NONE") else raw_linker
 
         if len(candidates) > 0:
-            existing_vdj_dirs = [
-                str(s.vdj_dir)
-                for s in sheet
-                if s.vdj_dir and Path(s.vdj_dir).exists()
-            ]
+            sheet_base_dir = Path(args.sample_sheet).resolve().parent
+            resolved_sheet_vdj: list[tuple[str, Path]] = []
+            for s in sheet:
+                if not s.vdj_dir:
+                    continue
+                p_vdj = Path(str(s.vdj_dir))
+                if not p_vdj.is_absolute():
+                    p_vdj = (sheet_base_dir / p_vdj).resolve()
+                if p_vdj.exists():
+                    resolved_sheet_vdj.append((s.sample, p_vdj))
+            existing_vdj_dirs = [str(p) for _, p in resolved_sheet_vdj]
             has_contigs = any(_has_contig_source(d) for d in existing_vdj_dirs)
             contig_root = _common_contig_root(existing_vdj_dirs) if has_contigs else None
             contig_sheet = (
                 pd.DataFrame(
                     [
-                        {"sample": s.sample, "vdj_dir": s.vdj_dir}
-                        for s in sheet
-                        if s.vdj_dir and Path(s.vdj_dir).exists()
+                        {"sample": sample_name, "vdj_dir": str(p)}
+                        for sample_name, p in resolved_sheet_vdj
                     ]
                 )
                 if contig_root

@@ -637,7 +637,12 @@ def find_longest_orf(dna_seq: str) -> tuple[str, int, str]:
     return longest_aa, longest_offset, longest_ragged
 
 
-def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
+def _add_single_chain(
+    df: pd.DataFrame,
+    linker: str,
+    *,
+    recode: CodonOptimization | None = None,
+) -> pd.DataFrame:
     """Add single-chain construct (β-linker-α) including the NT triad.
 
     Emits four columns:
@@ -692,15 +697,15 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
         return seq
 
     if linker_nt:
+        sites = recode.restriction_sites() if recode is not None else ()
         # Build the triad. Each variant uses its matching beta/alpha
         # input column; if either input is missing or contains None
         # (contig view when contig didn't cover the C region) the
         # output is None — splicing a None into a 2A construct would
         # be silently wrong.
-        # No ``_contig`` single-chain variant: the stitched contig construct is
-        # truncated at contig coverage (not a CDS, not synthesis-ready) and adds
-        # nothing over the per-chain ``{chain}_constant_nt_contig`` /
-        # ``full_{chain}_nt_contig`` provenance columns it's built from.
+        # For single_chain_nt_optimized, recode the linker DNA against any
+        # requested avoid_enzymes (e.g. P2A/F2A contain reverse-strand BsmBI
+        # GAGACG) with the flanking beta/alpha seam contexts.
         for suffix, out_col in (
             ("", "single_chain_nt"),
             ("_optimized", "single_chain_nt_optimized"),
@@ -710,12 +715,22 @@ def _add_single_chain(df: pd.DataFrame, linker: str) -> pd.DataFrame:
             if beta_col not in df.columns or alpha_col not in df.columns:
                 continue
 
-            def _build_row(row, b=beta_col, a=alpha_col):
+            def _build_row(row, b=beta_col, a=alpha_col, is_opt=(suffix == "_optimized")):
                 bv = row.get(b)
                 av = row.get(a)
                 if not isinstance(bv, str) or not isinstance(av, str):
                     return None
-                return strip_stop_codon_dna(bv) + linker_nt + av
+                bv_clean = strip_stop_codon_dna(bv)
+                eff_linker_nt = linker_nt
+                if is_opt and recode is not None and (sites or recode.mode == "full"):
+                    eff_linker_nt, _ = recode_codons(
+                        linker_nt,
+                        max_codon_repeats=recode.max_codon_repeats,
+                        restriction_sites=sites,
+                        species=recode.codon_species,
+                        right_context=av[:12],
+                    )
+                return bv_clean + eff_linker_nt + av
 
             df[out_col] = df.apply(_build_row, axis=1)
 
