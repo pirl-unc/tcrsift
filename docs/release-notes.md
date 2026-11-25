@@ -8,6 +8,37 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.40.0
+
+Enabled automatic truncation detection and IMGT germline VDJ fallback by default
+across construct assembly:
+
+- **`germline_vdj_fallback=True` by default**: `assemble_full_sequences()`,
+  `AssembleConfig`, `PrioritizeConfig`, `tcrsift assemble`, `tcrsift run`,
+  `tcrsift prioritize`, and `tcrsift report selected` now automatically detect
+  per-chain truncation (`partial_VDJ_*`) or bare `(v_gene, CDR3, j_gene)` rows
+  and rescue them against cached IMGT V-REGION and J-REGION references.
+- **Intact donor contigs untouched**: Full-length donor VDJ sequences
+  (`VDJ_{chain}_aa` present) remain a complete no-op (`{chain}_vdj_source =
+  "contig_full"`), preserving non-`*01` donor V-region alleles verbatim and
+  never injecting back-translated codons into AA-only intact inputs. Every
+  germline-imputed chain continues to stamp `{chain}_vdj_source`,
+  `{chain}_vdj_germline_allele`, `qc_warnings`, and
+  `construct_contig_verified=False`.
+- **Fail-closed strict opt-out**: Pass `--no-germline-vdj-fallback` (or
+  `germline_vdj_fallback=False`) to disable germline VDJ imputation and require
+  5'-complete donor contigs. When truncated or missing chains cannot be rescued
+  because IMGT references are uncached, assembly logs a warning pointing to
+  `tcrsift data download --group germline` (or `germline_mouse`) /
+  `--auto-download-germline`.
+- **Head-to-head assembly benchmark updated**: Regenerated
+  `benchmarks/head_to_head` (`h2h_assembly_vs_stitchr.csv` and
+  `h2h_assembly_stitchr.svg`) showing default `tcrsift assemble` achieving 100%
+  completion across Minervina CR6 (46/46, 9 donor V-variants kept), Fischer
+  5'-truncated (160/160, 32 partial 5' contigs rescued), and Mouse Cell Ranger
+  (101/101, 52 `Trbc` miscalls fixed) alongside `--no-germline-vdj-fallback`
+  strict mode.
+
 ## 3.39.2
 
 Cleaned up benchmark and prioritization documentation:

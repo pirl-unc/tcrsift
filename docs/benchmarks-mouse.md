@@ -332,10 +332,11 @@ automatically since 3.33.0:
   `Proliferation`, `AIM`).
 - **Germline fallback imputes framework regions on pre-Cell Ranger 6 deposits.**
   When `fwr1_nt`–`fwr4_nt` and contig FASTAs are absent from public deposits,
-  `--germline-vdj-fallback` reconstructs full `V-REGION` + `CDR3` + `J-REGION`
-  sequences from `*01` IMGT alleles (`construct_contig_verified = False`). When
+  default germline fallback reconstructs full `V-REGION` + `CDR3` + `J-REGION`
+  sequences from `*01` IMGT alleles (`construct_contig_verified = False`; pass
+  `--no-germline-vdj-fallback` for strict contig-only mode). When
   full `all_contig.fasta` or Cell Ranger 6+ `airr_rearrangement.tsv` files are
-  available, donor-read VDJ assembly remains preferred to preserve non-`*01`
+  available, donor-read VDJ assembly is used automatically to preserve non-`*01`
   allelic polymorphisms.
 - **Historical `TRB`-only gaps in `MusMusculus` VDJdb.** Only 9,647 of
   14,008 `MusMusculus` VDJdb entries include paired `TRA` chains; `strict_ab`

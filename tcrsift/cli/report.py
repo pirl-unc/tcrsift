@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from ..validation import TCRsiftValidationError
@@ -100,7 +101,7 @@ def cmd_report_selected(args):
             species=getattr(cfg, "species", "auto") or "auto",
             constant_species=getattr(asm, "constant_species", None),
             codon_species=getattr(asm, "codon_species", None),
-            germline_vdj_fallback=bool(getattr(asm, "germline_vdj_fallback", False)),
+            germline_vdj_fallback=bool(getattr(asm, "germline_vdj_fallback", True)),
             auto_download_germline=bool(
                 getattr(asm, "auto_download_germline", False)
                 or getattr(cfg.annotate, "auto_download", False)
@@ -144,8 +145,8 @@ def cmd_report_selected(args):
         assemble_kwargs["max_codon_repeats"] = args.max_codon_repeats
     if getattr(args, "avoid_enzymes", None) is not None:
         assemble_kwargs["avoid_enzymes"] = tuple(args.avoid_enzymes)
-    if getattr(args, "germline_vdj_fallback", False):
-        assemble_kwargs["germline_vdj_fallback"] = True
+    if getattr(args, "germline_vdj_fallback", None) is not None:
+        assemble_kwargs["germline_vdj_fallback"] = bool(args.germline_vdj_fallback)
     if getattr(args, "auto_download_germline", False):
         assemble_kwargs["auto_download_germline"] = True
     if getattr(args, "cache_dir", None):
@@ -403,13 +404,15 @@ def register(subparsers) -> None:
     )
     ps.add_argument(
         "--germline-vdj-fallback",
-        action="store_true",
-        help="Reconstruct missing or 5'-truncated VDJ chains from cached IMGT V+J germlines",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Auto-detect and rescue missing or 5'-truncated VDJ chains from cached IMGT V+J germlines "
+        "(default: enabled; pass --no-germline-vdj-fallback for strict contig-only assembly)",
     )
     ps.add_argument(
         "--auto-download-germline",
         action="store_true",
-        help="Automatically fetch missing IMGT germline V/J references when --germline-vdj-fallback is set",
+        help="Automatically fetch missing IMGT germline V/J references when germline VDJ fallback is enabled",
     )
     ps.add_argument(
         "--cache-dir",

@@ -100,7 +100,7 @@ def cmd_assemble(args):
         species=getattr(args, "species", "auto") or "auto",
         constant_species=getattr(args, "constant_species", None),
         codon_species=getattr(args, "codon_species", None),
-        germline_vdj_fallback=bool(getattr(args, "germline_vdj_fallback", False)),
+        germline_vdj_fallback=bool(getattr(args, "germline_vdj_fallback", True)),
         data_dir=getattr(args, "cache_dir", None),
         auto_download_germline=bool(getattr(args, "auto_download_germline", False)),
     )
@@ -418,17 +418,20 @@ CONDITIONALLY REQUIRED:
     )
     asm_seq.add_argument(
         "--germline-vdj-fallback",
-        action="store_true",
-        help="Rescue 5'-truncated contigs and bare (v_gene, CDR3, j_gene) rows "
-        "from cached IMGT V-REGION + J-REGION germline references (`tcrsift data "
-        "download --group germline` / `--group germline_mouse`). Stamps "
-        "{chain}_vdj_source and qc_warnings, and sets construct_contig_verified=False.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-detect and rescue 5'-truncated contigs and bare (v_gene, CDR3, j_gene) "
+        "rows from cached IMGT V-REGION + J-REGION germline references (`tcrsift data "
+        "download --group germline` / `--group germline_mouse`). Intact donor contigs are "
+        "preserved verbatim; imputed chains stamp {chain}_vdj_source and qc_warnings and "
+        "set construct_contig_verified=False. Pass --no-germline-vdj-fallback for strict "
+        "contig-only assembly (default: enabled).",
     )
     asm_seq.add_argument(
         "--auto-download-germline",
         action="store_true",
-        help="With --germline-vdj-fallback, automatically download missing IMGT "
-        "V-REGION and J-REGION germline references into the cache.",
+        help="Automatically download missing IMGT V-REGION and J-REGION germline "
+        "references into the cache when germline VDJ fallback is enabled.",
     )
     asm_seq.add_argument(
         "--cache-dir",

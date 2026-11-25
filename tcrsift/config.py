@@ -361,7 +361,7 @@ class AssembleConfig:
     trbc1_allele: str = "auto"
     trbc2_allele: str = "auto"
     stop_codons: list[str] = field(default_factory=lambda: ["TAA", "TGA"])
-    germline_vdj_fallback: bool = False
+    germline_vdj_fallback: bool = True
     auto_download_germline: bool = False
 
     def __post_init__(self):

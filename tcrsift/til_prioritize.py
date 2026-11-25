@@ -940,8 +940,8 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
     parser.add_argument(
         "--germline-vdj-fallback",
         action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Impute missing 5' framework/J residues from cached IMGT V/J-REGION references when --assemble is enabled",
+        default=True,
+        help="Auto-detect and rescue 5'-truncated contigs or bare (v_gene, CDR3, j_gene) rows from cached IMGT V/J-REGION references when --assemble is enabled (default: enabled; pass --no-germline-vdj-fallback for strict contig-only assembly)",
     )
     parser.add_argument(
         "--single-chain-linker",

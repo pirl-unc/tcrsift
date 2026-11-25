@@ -5,12 +5,13 @@ single-chain (`β-2A-α`) protein and DNA sequences from clonotype tables.
 
 ## Overview
 
-By default, input tables carry full-length V(D)J variable-region sequences
-(`VDJ_alpha_aa`, `VDJ_beta_aa`) from `aggregate_clonotypes`. When working with
-5'-truncated contigs (`partial_VDJ_{chain}_aa`/`_nt`, where sequencing begins
-downstream of the leader start codon) or bare `(v_gene, CDR3, j_gene)` tables,
-pass `germline_vdj_fallback=True` (`--germline-vdj-fallback` on the CLI, after
-`tcrsift data download --group germline` or `--auto-download-germline`):
+By default, `assemble_full_sequences` preserves full-length donor V(D)J variable-region sequences
+(`VDJ_alpha_aa`, `VDJ_beta_aa`) verbatim (`{chain}_vdj_source = "contig_full"`), and automatically
+detects 5'-truncated contigs (`partial_VDJ_{chain}_aa`/`_nt`, where sequencing begins
+downstream of the leader start codon) or bare `(v_gene, CDR3, j_gene)` rows to rescue them
+against cached IMGT references (`germline_vdj_fallback=True` by default, after
+`tcrsift data download --group germline` or `--auto-download-germline`; pass
+`germline_vdj_fallback=False` / `--no-germline-vdj-fallback` for strict contig-only assembly):
 
 - **5'-partial contig rescue (`contig_5prime_germline_rescued`):** prepends only
   the missing N-terminal FR1/CDR1 segment from the best-matching IMGT `V-REGION`

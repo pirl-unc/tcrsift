@@ -806,7 +806,7 @@ def run_assembly_vs_stitchr(
     rows.append(
         {
             "cohort": "minervina_2022_human_cr6_vdj",
-            "tool": "tcrsift_donor_contig",
+            "tool": "tcrsift_assemble_default",
             "n_clones": len(min_cands),
             "n_complete": int(tcr_min["single_chain_aa"].notna().sum()),
             "complete_rate": round(float(tcr_min["single_chain_aa"].notna().mean()), 4),
@@ -863,7 +863,6 @@ def run_assembly_vs_stitchr(
         leader_fallback="germline",
         species="human",
         linker="T2A",
-        germline_vdj_fallback=True,
         data_dir=cache_dir,
         verbose=False,
         show_progress=False,
@@ -884,19 +883,7 @@ def run_assembly_vs_stitchr(
         [
             {
                 "cohort": "fischer_2021_5prime_truncated_human",
-                "tool": "tcrsift_donor_contig_only",
-                "n_clones": len(f_clones),
-                "n_complete": int(tcr_f_strict["single_chain_aa"].notna().sum()),
-                "complete_rate": round(float(tcr_f_strict["single_chain_aa"].notna().mean()), 4),
-                "donor_vdj_polymorphic_clones_preserved": 0,
-                "mismatched_trbc_shipped": 0,
-                "validation_errors": 0,
-                "distinct_germline_variants_logged": 0,
-                "elapsed_sec": round(t_f_strict, 3),
-            },
-            {
-                "cohort": "fischer_2021_5prime_truncated_human",
-                "tool": "tcrsift_germline_vdj_fallback",
+                "tool": "tcrsift_assemble_default",
                 "n_clones": len(f_clones),
                 "n_complete": int(tcr_f_germ["single_chain_aa"].notna().sum()),
                 "complete_rate": round(float(tcr_f_germ["single_chain_aa"].notna().mean()), 4),
@@ -905,6 +892,18 @@ def run_assembly_vs_stitchr(
                 "validation_errors": len(val_f_germ),
                 "distinct_germline_variants_logged": int(len(collect_germline_variants(tcr_f_germ))),
                 "elapsed_sec": round(t_f_germ, 3),
+            },
+            {
+                "cohort": "fischer_2021_5prime_truncated_human",
+                "tool": "tcrsift_strict_contig_only",
+                "n_clones": len(f_clones),
+                "n_complete": int(tcr_f_strict["single_chain_aa"].notna().sum()),
+                "complete_rate": round(float(tcr_f_strict["single_chain_aa"].notna().mean()), 4),
+                "donor_vdj_polymorphic_clones_preserved": 0,
+                "mismatched_trbc_shipped": 0,
+                "validation_errors": 0,
+                "distinct_germline_variants_logged": 0,
+                "elapsed_sec": round(t_f_strict, 3),
             },
             {
                 "cohort": "fischer_2021_5prime_truncated_human",
@@ -932,7 +931,6 @@ def run_assembly_vs_stitchr(
         mouse_cands.copy(),
         species="mouse",
         linker="T2A",
-        germline_vdj_fallback=True,
         data_dir=cache_dir,
         verbose=False,
         show_progress=False,
@@ -959,7 +957,7 @@ def run_assembly_vs_stitchr(
         [
             {
                 "cohort": "mouse_cellranger_101_mc38_khatun",
-                "tool": "tcrsift_mouse_germline_fallback",
+                "tool": "tcrsift_assemble_default_mouse",
                 "n_clones": len(mouse_cands),
                 "n_complete": int(tcr_mouse["single_chain_aa"].notna().sum()),
                 "complete_rate": round(float(tcr_mouse["single_chain_aa"].notna().mean()), 4),

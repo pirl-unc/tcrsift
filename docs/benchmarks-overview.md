@@ -16,7 +16,7 @@ Per-patient tables and sensitivity analyses live on the cohort pages for [solid-
 
 ### Full-length construct assembly: `tcrsift assemble` vs `stitchr` (`thimble 1.3.1`)
 
-`stitchr` (`thimble`, Heather et al., *Nucleic Acids Res* 2022) builds TCR coding sequences from `(TRAV, TRAJ, CDR3α, TRBV, TRBJ, CDR3β)` calls using `*01` IMGT germline references. `tcrsift assemble` uses sequenced donor V(D)J contigs (`fwr1_nt`–`fwr4_nt` and native contig leaders) when present and falls back to cached IMGT V+J germlines and germline `M...` leaders when `--germline-vdj-fallback` is set.
+`stitchr` (`thimble`, Heather et al., *Nucleic Acids Res* 2022) builds TCR coding sequences from `(TRAV, TRAJ, CDR3α, TRBV, TRBJ, CDR3β)` calls using `*01` IMGT germline references. `tcrsift assemble` preserves intact sequenced donor V(D)J contigs (`fwr1_nt`–`fwr4_nt` and native contig leaders) verbatim whenever present, and by default automatically detects 5'-truncated or missing contigs to rescue them from cached IMGT V+J germlines (`{chain}_vdj_source`, `qc_warnings`, and `construct_contig_verified=False` always audit imputed chains; pass `--no-germline-vdj-fallback` for strict contig-only mode).
 
 ![Construct assembly completion rates: TCRsift vs stitchr](assets/figures/h2h_assembly_stitchr.svg)
 
@@ -24,17 +24,17 @@ Per-patient tables and sensitivity analyses live on the cohort pages for [solid-
 
 | Cohort | Tool / mode | Clones ($n$) | Complete `M...` constructs | Donor V-framework variants kept | Mismatched `Trbc` shipped | Contig / build QC flags | Runtime (s) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minervina 2022 human CR6 shortlist | `tcrsift_donor_contig` | 46 | 46 (100.0%) | 9 (19.6%) | 0 | 0 | 1.20 |
-| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 46 | 46 (100.0%) | 0 (uses `*01`) | 0 | 0 | 0.13 |
-| Fischer 2021 human 5'-truncated | `tcrsift_donor_contig_only` (strict default) | 160 | 0 (0.0%) | 0 | 0 | 0 | 0.55 |
-| | `tcrsift_germline_vdj_fallback` | 160 | 160 (100.0%) | 32 (partial 5' contigs) | 0 | 29 (raw JSON C-tail flags) | 13.12 |
-| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 160 | 135 (84.4%) | 0 | 0 | 25 (unbuilt) | 0.19 |
-| Mouse Cell Ranger shortlists (MC38 + Khatun) | `tcrsift_mouse_germline_fallback` (`--species mouse`) | 101 | 101 (100.0%) | 0 | 0 (52 `Trbc` fixed) | 0 | 3.91 |
-| | `stitchr / thimble 1.3.1` (`-s MOUSE` default) | 101 | 78 (77.2%) | 0 | 0 | 23 (unbuilt) | 0.14 |
-| | `stitchr / thimble 1.3.1` (`-s MOUSE -sc` skip C check) | 101 | 78 (77.2%) | 0 | 37 (47.4% of built) | 23 (unbuilt) | 0.14 |
+| Minervina 2022 human CR6 shortlist | `tcrsift_assemble_default` (donor contigs intact) | 46 | 46 (100.0%) | 9 (19.6%) | 0 | 0 | 1.17 |
+| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 46 | 46 (100.0%) | 0 (uses `*01`) | 0 | 0 | 0.12 |
+| Fischer 2021 human 5'-truncated | `tcrsift_assemble_default` (auto-rescue) | 160 | 160 (100.0%) | 32 (partial 5' contigs) | 0 | 29 (raw JSON C-tail flags) | 11.69 |
+| | `tcrsift_strict_contig_only` (`--no-germline-vdj-fallback`) | 160 | 0 (0.0%) | 0 | 0 | 0 | 0.49 |
+| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 160 | 135 (84.4%) | 0 | 0 | 25 (unbuilt) | 0.17 |
+| Mouse Cell Ranger shortlists (MC38 + Khatun) | `tcrsift_assemble_default_mouse` (`--species mouse`) | 101 | 101 (100.0%) | 0 | 0 (52 `Trbc` fixed) | 0 | 3.69 |
+| | `stitchr / thimble 1.3.1` (`-s MOUSE` default) | 101 | 78 (77.2%) | 0 | 0 | 23 (unbuilt) | 0.11 |
+| | `stitchr / thimble 1.3.1` (`-s MOUSE -sc` skip C check) | 101 | 78 (77.2%) | 0 | 37 (47.4% of built) | 23 (unbuilt) | 0.10 |
 
-- **Donor V-region alleles on Cell Ranger 6+ human contigs.** Nine of 46 (19.6%) shortlisted human clones in Minervina 2022 carry donor V-region amino-acid differences from IMGT `*01`; `tcrsift` retains the sequenced donor VDJ, whereas `stitchr` substitutes `*01` framework residues.
-- **5'-truncated deposits (Fischer 2021).** Strict `tcrsift` refuses to build incomplete contigs (0/160). Adding `--germline-vdj-fallback` builds 160 of 160 complete `M...` single-chain constructs (vs 135/160 = 84.4% in `stitchr`), rescuing 32 partial 5' donor contigs, logging 15 germline and constant-allele variants (including 3 donor constant-allele divergences), and flagging 29 clones where unfiltered `all_contig_annotations.json.gz` reads carry 3' C-region primer or junction errors (`single_chain_nt_optimized` remains in-frame for all 160).
+- **Donor V-region alleles on Cell Ranger 6+ human contigs.** Nine of 46 (19.6%) shortlisted human clones in Minervina 2022 carry donor V-region amino-acid differences from IMGT `*01`; default `tcrsift assemble` retains every intact donor VDJ verbatim (`contig_full`), whereas `stitchr` substitutes `*01` framework residues.
+- **5'-truncated deposits (Fischer 2021).** Default `tcrsift assemble` auto-detects the 5' truncation and builds 160 of 160 complete `M...` single-chain constructs (vs 135/160 = 84.4% in `stitchr`), rescuing 32 partial 5' donor contigs, logging 15 germline and constant-allele variants (including 3 donor constant-allele divergences), and flagging 29 clones where unfiltered `all_contig_annotations.json.gz` reads carry 3' C-region primer or junction errors (`single_chain_nt_optimized` remains in-frame for all 160). Passing `--no-germline-vdj-fallback` enforces strict contig-only assembly (0/160).
 - **Mouse Cell Ranger outputs (`-dv` names and `Trbc` parity).** Default `stitchr -s MOUSE` fails on 23 of 101 (22.8%) mouse candidates due to Ensembl `-dv` V-gene names (`TRAV13-4-dv7`, `TRAV16d-dv11`) and C-gene checks; adding `-sc` (`--skip_c_checks`) still fails on the 23 `-dv` clones and ships 37 `Trbj2+Trbc1` or `Trbj1+Trbc2` chimeras. `tcrsift --species mouse` normalizes `-dv` names and enforces `Trbj1->Trbc1` / `Trbj2->Trbc2` parity (52 Cell Ranger miscalls corrected), building 101 of 101 constructs with 0 validation errors.
 
 ---

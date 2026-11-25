@@ -230,7 +230,7 @@ class PrioritizeConfig:
     exclude_treg: bool = False
     treg_foxp3_fraction: float = 0.5
     assemble: bool = False
-    germline_vdj_fallback: bool = False
+    germline_vdj_fallback: bool = True
     allow_canonical_fallback: bool = True
     single_chain_linker: str | None = "T2A"
     call_multimers: bool = False

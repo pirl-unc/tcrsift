@@ -12,9 +12,13 @@
 
 """IMGT germline V+J reconstruction and 5'-truncated contig rescue.
 
-Supports two opt-in modes (enabled via ``germline_vdj_fallback=True`` on
-:func:`tcrsift.assemble.assemble_full_sequences` or directly via
-:func:`reconstruct_germline_vdj`):
+Enabled by default via ``germline_vdj_fallback=True`` on
+:func:`tcrsift.assemble.assemble_full_sequences` (pass
+``germline_vdj_fallback=False`` / ``--no-germline-vdj-fallback`` for strict
+contig-only assembly) or called directly via :func:`reconstruct_germline_vdj`.
+Intact full-length donor contigs (``VDJ_{chain}_aa`` present) are preserved
+verbatim (``{chain}_vdj_source = "contig_full"``); chains with truncated or
+missing contigs automatically fall back to:
 
 1. **5'-partial contig rescue** (``{chain}_vdj_source = "contig_5prime_germline_rescued"``):
    Targeted TCR / Cell Ranger 2–3 libraries (such as Fischer et al. 2021,
@@ -327,7 +331,11 @@ def reconstruct_germline_vdj_chain(
     sp = normalize_species(species)
     codon_sp = normalize_species(codon_species) if codon_species is not None else sp
     existing_aa = row.get(f"VDJ_{chain}_aa")
+    if not (isinstance(existing_aa, str) and existing_aa.strip()):
+        existing_aa = row.get(f"vdj_{chain}_aa")
     existing_nt = row.get(f"VDJ_{chain}_nt")
+    if not (isinstance(existing_nt, str) and existing_nt.strip()):
+        existing_nt = row.get(f"vdj_{chain}_nt")
     if isinstance(existing_aa, str) and existing_aa.strip() and "*" not in existing_aa:
         aa_clean = existing_aa.strip()
         if isinstance(existing_nt, str) and existing_nt.strip():
@@ -481,8 +489,12 @@ def reconstruct_germline_vdj(
                 codon_species=cod_sp,
                 data_dir=data_dir,
             )
-            aa_out.append(vdj_aa if vdj_aa is not None else row.get(aa_col))
-            nt_out.append(vdj_nt if vdj_nt is not None else row.get(nt_col))
+            if src == VDJ_SOURCE_CONTIG_FULL:
+                aa_out.append(row.get(aa_col) if aa_col in df.columns else vdj_aa)
+                nt_out.append(row.get(nt_col) if nt_col in df.columns else None)
+            else:
+                aa_out.append(vdj_aa if vdj_aa is not None else row.get(aa_col))
+                nt_out.append(vdj_nt if vdj_nt is not None else row.get(nt_col))
             src_out.append(src)
             allele_out.append(g_allele)
             if src in GERMLINE_IMPUTED_VDJ_SOURCES:
@@ -490,8 +502,10 @@ def reconstruct_germline_vdj(
                 if tag not in existing_qcs[row_pos]:
                     existing_qcs[row_pos].append(tag)
 
-        df[aa_col] = aa_out
-        df[nt_col] = nt_out
+        if aa_col in df.columns or any(v is not None for v in aa_out):
+            df[aa_col] = aa_out
+        if nt_col in df.columns or any(v is not None for v in nt_out):
+            df[nt_col] = nt_out
         df[f"{chain}_vdj_source"] = src_out
         df[f"{chain}_vdj_germline_allele"] = allele_out
 

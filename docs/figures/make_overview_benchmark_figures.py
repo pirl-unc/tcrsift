@@ -182,12 +182,12 @@ def h2h_assembly_and_pgen_figures() -> None:
     # Figure 3: Construct assembly completion rate & variant/error annotations
     fig1, ax1 = plt.subplots(figsize=(7.8, 4.9), constrained_layout=True)
     asm_bars = [
-        ("minervina_2022_human_cr6_vdj", "tcrsift_donor_contig", "Minervina CR6\nTCRsift donor contig", BLUE),
+        ("minervina_2022_human_cr6_vdj", "tcrsift_assemble_default", "Minervina CR6\nTCRsift default (donor contig)", BLUE),
         ("minervina_2022_human_cr6_vdj", "stitchr_thimble_v1.3.1", "Minervina CR6\nstitchr 1.3.1 (*01)", NEUTRAL),
-        ("fischer_2021_5prime_truncated_human", "tcrsift_donor_contig_only", "Fischer 5'-trunc\nTCRsift strict contig", INK2),
-        ("fischer_2021_5prime_truncated_human", "tcrsift_germline_vdj_fallback", "Fischer 5'-trunc\nTCRsift --germline-vdj-fallback", BLUE),
+        ("fischer_2021_5prime_truncated_human", "tcrsift_assemble_default", "Fischer 5'-trunc\nTCRsift default (auto-rescue)", BLUE),
+        ("fischer_2021_5prime_truncated_human", "tcrsift_strict_contig_only", "Fischer 5'-trunc\nTCRsift --no-germline-vdj-fallback", INK2),
         ("fischer_2021_5prime_truncated_human", "stitchr_thimble_v1.3.1", "Fischer 5'-trunc\nstitchr 1.3.1", NEUTRAL),
-        ("mouse_cellranger_101_mc38_khatun", "tcrsift_mouse_germline_fallback", "Mouse CR\nTCRsift --species mouse", BLUE),
+        ("mouse_cellranger_101_mc38_khatun", "tcrsift_assemble_default_mouse", "Mouse CR\nTCRsift --species mouse", BLUE),
         ("mouse_cellranger_101_mc38_khatun", "stitchr_thimble_v1.3.1_default", "Mouse CR\nstitchr default", ORANGE),
         ("mouse_cellranger_101_mc38_khatun", "stitchr_thimble_v1.3.1_skip_c_checks", "Mouse CR\nstitchr -sc (skip C check)", NEUTRAL),
     ]
@@ -206,7 +206,7 @@ def h2h_assembly_and_pgen_figures() -> None:
         labels.append(f"{head} (n={n_tot})\n{tail}")
         poly = int(r["donor_vdj_polymorphic_clones_preserved"])
         misc = int(r["mismatched_trbc_shipped"])
-        if tool == "tcrsift_donor_contig" and poly > 0:
+        if cohort == "minervina_2022_human_cr6_vdj" and tool == "tcrsift_assemble_default" and poly > 0:
             notes.append(f"{rate:.1%} ({poly} donor V-variants kept)")
         elif misc > 0:
             notes.append(f"{rate:.1%} ({misc} Trbj/Trbc mismatches)")

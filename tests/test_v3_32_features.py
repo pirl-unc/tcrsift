@@ -367,20 +367,24 @@ class TestGermlineVDJReconstruction:
         assert "VDJ_alpha_aa" not in clones.columns or pd.isna(clones["VDJ_alpha_aa"].iloc[0])
         assert clones["partial_VDJ_alpha_aa"].iloc[0] == alpha_partial_aa
 
-        # Default assembly (germline_vdj_fallback=False) leaves alpha unassembled (never a VDJ-less leader+C stub).
-        asm_default = assemble_full_sequences(
-            clones, contigs_dir=tmp_path, verbose=False, show_progress=False
+        # Strict contig-only assembly (germline_vdj_fallback=False) leaves alpha unassembled (never a VDJ-less leader+C stub).
+        asm_strict = assemble_full_sequences(
+            clones,
+            contigs_dir=tmp_path,
+            germline_vdj_fallback=False,
+            verbose=False,
+            show_progress=False,
         )
         assert (
-            "full_alpha_aa" not in asm_default.columns
-            or pd.isna(asm_default["full_alpha_aa"].iloc[0])
+            "full_alpha_aa" not in asm_strict.columns
+            or pd.isna(asm_strict["full_alpha_aa"].iloc[0])
         )
 
-        # With germline_vdj_fallback=True, missing 5' FR1 is rescued AND donor FR3 SNP + donor J->C junction survive!
+        # Default assembly (germline_vdj_fallback=True) auto-detects 5' truncation,
+        # rescues missing 5' FR1, AND preserves donor FR3 SNP + donor J->C junction!
         asm_rescued = assemble_full_sequences(
             clones,
             contigs_dir=tmp_path,
-            germline_vdj_fallback=True,
             data_dir=tmp_path,
             verbose=False,
             show_progress=False,
