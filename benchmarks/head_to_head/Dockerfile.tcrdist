@@ -1,0 +1,14 @@
+# Minimal reproducible container for running tcrdist3 in head-to-head benchmarks.
+# Build:  docker build -f benchmarks/head_to_head/Dockerfile.tcrdist -t tcrsift-tcrdist3 .
+# Or natively on macOS arm64 / Linux without Docker:
+#   micromamba create -y -p /tmp/tcrdist_env -c conda-forge -c bioconda python=3.11 numpy scipy pandas parasail-python
+#   /tmp/tcrdist_env/bin/pip install tcrdist3
+FROM mambaorg/micromamba:1.5.10
+
+USER root
+RUN micromamba install -y -n base -c conda-forge -c bioconda \
+        python=3.11 numpy scipy pandas parasail-python pip && \
+    micromamba clean --all --yes && \
+    /opt/conda/bin/pip install --no-cache-dir tcrdist3==0.3
+
+ENTRYPOINT ["/opt/conda/bin/python"]

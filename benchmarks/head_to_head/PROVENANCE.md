@@ -1,6 +1,6 @@
 # Ground-Truth & Comparator Provenance (`benchmarks/head_to_head`)
 
-This directory contains reproducible head-to-head comparisons of `tcrsift` against eight open-source bioinformatics tools and baselines across all six algorithmic stages of single-cell TCR construct generation, antigen-specificity annotation, and transcriptional prioritization:
+This directory contains reproducible head-to-head comparisons of `tcrsift` against nine open-source bioinformatics tools and baselines across all six algorithmic stages of single-cell TCR construct generation, antigen-specificity annotation, and transcriptional prioritization:
 
 1. **Ex vivo TIL & Cancer-Blood Clonotype Prioritization (`h2h_prioritize_baselines.csv`)**:
    - **Comparators**:
@@ -21,10 +21,10 @@ This directory contains reproducible head-to-head comparisons of `tcrsift` again
      - `mouse_cellranger_101`: All `101` shortlisted murine clones (`41` MC38 CD8+ from `GSE168944` + `60` Khatun GP66 CD4+ from `GSE158896`, `PMID:33201171`) fed with raw Cell Ranger V/J/C annotations.
 
 3. **Synthesis Codon Optimization & Hazard Clearance (`h2h_codon_opt_vs_dnachisel.csv`)**:
-   - **Comparator**: **`DNAChisel` `v3.2.16`** (Zulkower & Rosser, *Bioinformatics* 2020; `DnaOptimizationProblem` with `EnforceTranslation`, `AvoidPattern` for `EcoRI`/`BamHI`/`XhoI`/`BsaI`/`BsmBI` and 9-nt homopolymers, `EnforceGCContent(0.30, 0.70, 50)`, and `CodonOptimize(species="h_sapiens")`) vs `tcrsift assemble` `codon_optimization="focal"` (default) and `"full"` on the `46` Minervina 2022 human single-chain constructs.
+   - **Comparator**: **`DNAChisel` `v3.2.16`** (Zulkower & Rosser, *Bioinformatics* 2020; `DnaOptimizationProblem` with `EnforceTranslation`, `AvoidPattern` for `EcoRI`/`BamHI`/`XhoI`/`BsaI`/`BsmBI` and 9-nt homopolymers, `EnforceGCContent(0.30, 0.70, 50)`, and `CodonOptimize(species="h_sapiens")`) vs `tcrsift assemble` `codon_optimization="focal"` (default) and `"full"` on the `46` Minervina 2022 human single-chain constructs, additionally auditing direct repeats (`< 20 bp`, `max_repeat_bp`).
 
 4. **Held-Out Public TCR Database Matching (`h2h_db_matching_vs_scirpy.csv`)**:
-   - **Comparator**: **`scirpy` `v0.26.1`** (Sturm et al., *Bioinformatics* 2020; `ir.pp.ir_dist` + `ir.tl.ir_query` with `metric="identity"` paired/`VDJ` and `metric="levenshtein", cutoff=1` paired) vs `tcrsift annotate` (`strict_ab` exact, `ab_with_partial` exact, and `strict_ab` paired Levenshtein-1 `ab_near`) on study-held-out VDJdb (`vdjdb-2026-11-06`) across Minervina 2022 SARS-CoV-2 (`7,317` paired clones) and 10x Healthy Donor 1 canonical viral multimer clones (`246` expanded clones).
+   - **Comparators**: **`scirpy` `v0.26.1`** (Sturm et al., *Bioinformatics* 2020; `ir.pp.ir_dist` + `ir.tl.ir_query` with `metric="identity"` paired/`VDJ` and `metric="levenshtein", cutoff=1` paired) and **`tcrdist3` `v0.3`** (Mayer-Blackwell et al., *eLife* 2021; `TCRrep` paired αβ `rw_alpha + rw_beta` at `r <= 24` and `r <= 48` plus TRB-only `rw_beta == 0` via isolated `tcrdist_worker.py` / `Dockerfile.tcrdist`) vs `tcrsift annotate` (`strict_ab` exact, `ab_with_partial` exact, and `strict_ab` paired Levenshtein-1 `ab_near`) on study-held-out VDJdb (`vdjdb-2026-11-06`) across the `4,212` dextramer-verified Minervina 2022 SARS-CoV-2 paired clones (using uniform modal-consensus species aggregation across all tools) and `246` 10x Healthy Donor 1 canonical viral multimer clones.
 
 5. **TCR Generation Probability & Post-Selection Publicness (`h2h_pgen_vs_olga.csv`)**:
    - **Comparators**: **`OLGA` `v1.3.0`** (Sethna et al., *Bioinformatics* 2019; exact V(D)J recombination `Pgen`) and **`soNNia` `v0.4.0`** (Isacchini et al., *PNAS* 2021; `Sonia(ppost_model="human_T_beta"|"mouse_T_beta")` pretrained post-selection `Ppost = Q * Pgen`).
@@ -34,6 +34,6 @@ This directory contains reproducible head-to-head comparisons of `tcrsift` again
    - **Comparators** (on expanded `>=2`-cell paired α/β CD8+ clones in 10x Healthy Donors 1 & 2 across `44` pMHC dextramers + `6` negative controls):
      - `10x_per_cell_threshold`: `UMI >= 10` & `>= 5x max(NC, 1)` single-binder in `>=1` cell.
      - `clr_z3_per_cell`: Centered log-ratio across the `44` pMHCs + `z >= 3.0` & `UMI >= 5` in `>=1` cell.
-     - `muon_dsb_per_cell`: **`muon` `v0.2.1`** (`muon.prot.pp.dsb`, Mulè et al., *Nat Commun* 2022) using TCR-negative cells in the same library as background + the `6` `*_NC` multimers as `isotype_controls`, calling single-dominant binders with `DSB >= 8.0` & `UMI >= 10`.
+     - `muon_dsb_per_cell`: **`muon` `v0.2.1`** (`muon.prot.pp.dsb`, Mulè et al., *Nat Commun* 2022) using TCR-negative cells in the same library as background + the `6` `*_NC` multimers as `isotype_controls`, calling single-dominant binders at the standard Mulè et al. cutoff `DSB >= 3.0` & `UMI >= 10`.
      - `gmm_bimodal_per_cell`: Per-dextramer 2-component Gaussian Mixture Model (`log1p(UMI)` posterior `>= 0.95` + `UMI >= 10` + `> 5x max(NC, 1)`).
      - `tcrsift_clonal_concordance`: `call_multimer_specificity` + `summarize_clone_multimer_specificity` (`UMI >= 10`, `>= 5x max(NC, 1)`, `min_specific_cells=2`, `min_concordance=0.5`).

@@ -1,22 +1,22 @@
 # Benchmark overview and head-to-head comparisons
 
-This page evaluates TCRsift across 13 public human and mouse single-cell datasets (15 cohort evaluations, with Pulliam `GSE227708` and Chiffelle `GSE222448` each evaluated in two clinical contexts) and compares every pipeline stage against eight external open-source Python tools (`stitchr`, `DNAChisel`, `scirpy`, `muon` DSB, `OLGA`, `soNNia`, `Scanpy score_genes`, and `pyucell` UCell).
+This page evaluates TCRsift across 13 public human and mouse single-cell datasets (15 cohort evaluations, with Pulliam `GSE227708` and Chiffelle `GSE222448` each evaluated in two clinical contexts) and compares every pipeline stage against nine external open-source Python tools (`stitchr`, `DNAChisel`, `scirpy`, `tcrdist3`, `muon` DSB, `OLGA`, `soNNia`, `Scanpy score_genes`, and `pyucell` UCell).
 
 The benchmarks are ordered from **objective sequence and antigen-binding ground truth** out to **context-dependent transcriptional heuristics**:
 
 1. **[Stage 1 — Construct assembly & codon optimization](#stage-1-do-we-assemble-correct-tcrs)** (`tcrsift assemble` vs `stitchr` and `DNAChisel`)
-2. **[Stage 2 — Identifying expected / known antigen-specific TCRs](#stage-2-do-we-identify-expected-antigen-specific-tcrs)** (`tcrsift annotate` vs `scirpy`, `--call-multimers` vs 10x/CLR/`muon` DSB/GMM, `Pgen`/`Ppost` vs `OLGA` & `soNNia`, and paired 16 h restimulation)
+2. **[Stage 2 — Identifying expected / known antigen-specific TCRs](#stage-2-do-we-identify-expected-antigen-specific-tcrs)** (`tcrsift annotate` vs `scirpy` & `tcrdist3`, `--call-multimers` vs 10x/CLR/`muon` DSB/GMM, `Pgen`/`Ppost` vs `OLGA` & `soNNia`, and paired 16 h restimulation)
 3. **[Stage 3 — Expression signatures & selection heuristics](#stage-3-expression-signatures-and-selection-heuristics)** (`tcrsift prioritize` context presets vs `clone_size`, raw `CXCL13`, `Scanpy score_genes`, and `pyucell` UCell)
 
 ## High-level results summary
 
 | Stage | Capability | Headline result | Where it degrades / caveat |
 | --- | --- | --- | --- |
-| **1a** | Construct assembly (`tcrsift assemble` vs `stitchr`) | **100%** complete constructs across intact human CR6 (46/46; **9 donor V-variants kept** vs 0 in `stitchr`), 5'-truncated human (160/160 vs 135/160), and mouse Cell Ranger (101/101, **52 `Trbc` fixed** vs 78/101 & 37 chimeras in `stitchr -sc`). | Imputed chains set `construct_contig_verified=False` and require cached IMGT V/J refs; pass `--no-germline-vdj-fallback` for strict contig-only ordering. |
-| **1b** | Synthesis codon optimization (`tcrsift` vs `DNAChisel`) | Both achieve **46/46 (100%)** in-frame, restriction-free, homopolymer-free, GC-valid constructs; `tcrsift` focal mode keeps **97.8%** of donor VDJ codons verbatim (vs **46.2%** in `DNAChisel`) and runs **1.7x faster** (1.14s vs 1.92s). | Use `codon_optimization="full"` if maximum host CAI across the entire ORF is preferred over preserving native donor codons. |
-| **2a** | Held-out public DB matching (`tcrsift annotate` vs `scirpy`) | Exact `strict_ab` matches `scirpy` paired identity (**100%** precision on 10x Donor 1, 56/56); paired Levenshtein-1 (`ab_near`) matches `scirpy` Lev-1 on the exact same **292** Minervina & **110** 10x Donor 1 clones (**99.1%** precision, **2x–6x** recall) while running **31.7x faster** (10.2s vs 323.9s). | Lower recall when DB records lack paired α chains (e.g., older `MusMusculus` VDJdb); public DBs ingest published cohorts, so independent evaluation requires study holdout. |
-| **2b** | Multiplexed pMHC multimer calling (`--call-multimers` vs 10x/CLR/`muon` DSB/GMM) | **100%** cognate precision on held-out VDJdb (109/109), **0** HIV Gag FPs, and **−96.3%** sticky `KLGGALQAK` clones (837 → 31). CITE-seq `muon` DSB suppresses `KLGGALQAK` (0) but over-corrects single-binder pMHC libraries (29 HIV FPs, 37.5% precision). | Clonal concordance requires ≥2 cells per clone, so singleton binders (e.g. naive `MART-1`) cannot be rescued by clonal concordance alone. |
-| **2c** | Sequence publicness (`Pgen`/`Ppost` vs `OLGA` & `soNNia`) | Human β matches `OLGA` `Pgen` ($r=0.954$) and pretrained `soNNia` `Ppost` (**AUROC 0.739** vs `soNNia` **0.740** & `OLGA` **0.744**), running **414x faster than `OLGA`** and **1,003x faster than `soNNia`** (44.2k vs 44 clones/s). | No bundled mouse VDJ k-mer table (fallback $r=0.198$ vs `OLGA mouse_T_beta`, though empirical cross-mouse public AUROC is 0.620 vs `OLGA` 0.617 & `soNNia` 0.583). |
+| **1a** | Construct assembly (`tcrsift assemble` vs `stitchr`) | **100%** complete constructs with **0** validation errors across intact human CR6 (46/46; **9 donor V-variants kept** vs 0 in `stitchr`), 5'-truncated human (160/160 vs 135/160), and mouse Cell Ranger (101/101, **52 `Trbc` fixed** vs 78/101 & 37 chimeras in `stitchr -sc`). | Imputed chains set `construct_contig_verified=False` and require cached IMGT V/J refs; pass `--no-germline-vdj-fallback` for strict contig-only ordering. |
+| **1b** | Synthesis codon optimization (`tcrsift` vs `DNAChisel`) | `tcrsift` focal mode achieves **46/46 (100%)** in-frame, restriction-free, homopolymer-free, repeat-free (`max 13 bp`), GC-valid constructs while keeping **97.8%** of donor VDJ codons verbatim (vs **46.2%** in `DNAChisel`) and running **2.2x faster** (1.28s vs 2.84s). | Greedy `codon_optimization="full"` introduced ≥20 bp repeats in **2/46** constructs (`max 22 bp`) while `focal` (`max 13 bp`) and `DNAChisel` (`max 19 bp`) stayed repeat-free. |
+| **2a** | Held-out public DB matching (`tcrsift` vs `scirpy` & `tcrdist3`) | Exact `strict_ab` matches `scirpy` 1:1 (**92.1%** Minervina 35/38, **100%** 10x D1 56/56); paired Lev-1 (`ab_near`) matches `scirpy` on **226** Minervina (**92.9%**, 210/226) & **110** 10x D1 (**99.1%**, 109/110) while running **14.3x faster** (14.9s vs 213.3s). **`tcrdist3` paired αβ (`r <= 48`)** pushes recall **2.7x higher** on Minervina (**557/596**, 93.5%, 13.2% recall) and **143/144** (99.3%, 58.1% recall) on 10x D1 at 276.7s / 13.2s. | `tcrsift` currently compares CDR3 edit distance without V-gene CDR1/CDR2 weighting, so `tcrdist3` wins deep paired-similarity recall; public DBs ingest published cohorts, so independent evaluation requires study holdout. |
+| **2b** | Multiplexed pMHC multimer calling (`--call-multimers` vs 10x/CLR/`muon` DSB/GMM) | **100%** cognate precision on held-out VDJdb (109/109), **0** HIV Gag FPs, and **−96.3%** sticky `KLGGALQAK` clones (837 → 31; vs 369 in `muon` DSB `>= 3.0`, which reaches 98.1% precision 101/103). Per-multimer GMM hits 0 `KLGGALQAK` but detects only **6** mega-abundant donor-epitopes vs **20** in `tcrsift`. | Clonal concordance requires ≥2 cells per clone, so singleton binders (e.g. naive `MART-1`) cannot be rescued by clonal concordance alone. |
+| **2c** | Sequence publicness (`Pgen`/`Ppost` vs `OLGA` & `soNNia`) | Matches `OLGA` `Pgen` on **both human** ($r=0.954$, AUROC 0.739 vs `soNNia` 0.740 & `OLGA` 0.744) and **mouse** ($r=0.910$ vs `soNNia` $r=0.877$; AUROC 0.600–0.613 vs `OLGA` 0.617 & `soNNia` 0.583) while running **266x–325x faster than `OLGA`** and **846x–943x faster than `soNNia`**. | Bundled mouse model is `Pgen` only (mouse `Ppost` falls back to gene-agnostic Markov unless trained via `tcrsift pgen train --species mouse`). |
 | **2d** | Paired 16 h peptide restimulation (`--method stimulation`) | Detects **11/73** cytokine-induced Spike-reactive clones (`Δ > 0.5`, `ΔAIM` up to `+2.47`) where count-based Fisher expansion tests find **0/73** (no overnight division). | Requires a paired unstimulated control well from the same donor. |
 | **3** | Expression-based prioritization (`tcrsift` vs `Scanpy` & `pyucell`) | Matches `Scanpy` & `pyucell` on single-signature AUROC (0.81 PDAC, 0.78 melanoma, 0.82 MCC blood), doubles multi-patient Chiffelle recall (**24** vs 15 `pyucell` / 12 `Scanpy`), and cuts Veatch CD4 Treg contamination to **0%** (vs **41.4%** `pyucell` / **23.2%** `Scanpy`). | Does **not** enrich viral-antigen clones in virus-driven tumors (AUROC 0.47–0.58), degrades in Day-30 post-ACT melanoma biopsies (0.74 → 0.61), and rises transiently in blood after acute vaccination (`TumorReactive` 0.74). |
 
@@ -45,70 +45,79 @@ For CLI usage and context presets, see [Choose a workflow](index.md#choose-a-wor
 
 *Fraction of complete single-chain TCR constructs built by `tcrsift assemble` and `stitchr` (`thimble 1.3.1`) across human Cell Ranger 6 contigs (Minervina 2022, $n=46$), 5'-truncated human deposits (Fischer 2021, $n=160$), and mouse Cell Ranger shortlists (MC38 and Khatun, $n=101$).*
 
-| Cohort | Tool / mode | Clones ($n$) | Complete `M...` constructs | Donor V-framework variants kept | Mismatched `Trbc` shipped | Contig / build QC flags | Runtime (s) |
+| Cohort | Tool / mode | Clones ($n$) | Complete `M...` constructs | Donor V-framework variants kept | Mismatched `Trbc` shipped | Load-bearing validation errors | Runtime (s) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minervina 2022 human CR6 shortlist | `tcrsift_assemble_default` (donor contigs intact) | 46 | 46 (100.0%) | 9 (19.6%) | 0 | 0 | 1.19 |
-| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 46 | 46 (100.0%) | 0 (uses `*01`) | 0 | 0 | 0.13 |
-| Fischer 2021 human 5'-truncated | `tcrsift_assemble_default` (auto-rescue) | 160 | 160 (100.0%) | 32 (partial 5' contigs) | 0 | 29 (raw JSON C-tail flags) | 11.16 |
-| | `tcrsift_strict_contig_only` (`--no-germline-vdj-fallback`) | 160 | 0 (0.0%) | 0 | 0 | 0 | 0.48 |
-| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 160 | 135 (84.4%) | 0 | 0 | 25 (unbuilt) | 0.15 |
-| Mouse Cell Ranger shortlists (MC38 + Khatun) | `tcrsift_assemble_default_mouse` (`--species mouse`) | 101 | 101 (100.0%) | 0 | 0 (52 `Trbc` fixed) | 0 | 3.33 |
-| | `stitchr / thimble 1.3.1` (`-s MOUSE` default) | 101 | 78 (77.2%) | 0 | 0 | 23 (unbuilt) | 0.11 |
-| | `stitchr / thimble 1.3.1` (`-s MOUSE -sc` skip C check) | 101 | 78 (77.2%) | 0 | 37 (47.4% of built) | 23 (unbuilt) | 0.10 |
+| Minervina 2022 human CR6 shortlist | `tcrsift_assemble_default` (donor contigs intact) | 46 | 46 (100.0%) | 9 (19.6%) | 0 | **0** | 2.24 |
+| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 46 | 46 (100.0%) | 0 (uses `*01`) | 0 | 0 | 0.23 |
+| Fischer 2021 human 5'-truncated | `tcrsift_assemble_default` (auto-rescue) | 160 | 160 (100.0%) | 32 (partial 5' contigs) | 0 | **0** | 18.80 |
+| | `tcrsift_strict_contig_only` (`--no-germline-vdj-fallback`) | 160 | 0 (0.0%) | 0 | 0 | 0 | 0.59 |
+| | `stitchr / thimble 1.3.1` (`-s HUMAN`) | 160 | 135 (84.4%) | 0 | 0 | 25 (unbuilt) | 0.52 |
+| Mouse Cell Ranger shortlists (MC38 + Khatun) | `tcrsift_assemble_default_mouse` (`--species mouse`) | 101 | 101 (100.0%) | 0 | 0 (52 `Trbc` fixed) | **0** | 4.92 |
+| | `stitchr / thimble 1.3.1` (`-s MOUSE` default) | 101 | 78 (77.2%) | 0 | 0 | 23 (unbuilt) | 0.21 |
+| | `stitchr / thimble 1.3.1` (`-s MOUSE -sc` skip C check) | 101 | 78 (77.2%) | 0 | 37 (47.4% of built) | 23 (unbuilt) | 0.17 |
 
 - **Donor V-region alleles on Cell Ranger 6+ human contigs.** Nine of 46 (19.6%) shortlisted human clones in Minervina 2022 carry donor V-region amino-acid differences from IMGT `*01`; default `tcrsift assemble` retains every intact donor VDJ verbatim (`contig_full`), whereas `stitchr` substitutes `*01` framework residues.
-- **5'-truncated deposits (Fischer 2021).** Default `tcrsift assemble` auto-detects the 5' truncation and builds 160 of 160 complete `M...` single-chain constructs (vs 135/160 = 84.4% in `stitchr`), rescuing 32 partial 5' donor contigs, logging 15 germline and constant-allele variants (including 3 donor constant-allele divergences), and flagging 29 clones where unfiltered `all_contig_annotations.json.gz` reads carry 3' C-region primer or junction errors (`single_chain_nt_optimized` remains in-frame for all 160). Passing `--no-germline-vdj-fallback` enforces strict contig-only assembly (0/160).
+- **5'-truncated deposits (Fischer 2021).** Default `tcrsift assemble` auto-detects the 5' truncation and builds 160 of 160 complete `M...` single-chain constructs with **0** load-bearing validation errors (vs 135/160 = 84.4% in `stitchr`), rescuing 32 partial 5' donor contigs, rejecting unspliced intronic C-tail reads, normalizing Cell Ranger 3 `TRAJ37` J→C boundaries, and logging 15 germline and constant-allele variants. Passing `--no-germline-vdj-fallback` enforces strict contig-only assembly (0/160).
 - **Mouse Cell Ranger outputs (`-dv` names and `Trbc` parity).** Default `stitchr -s MOUSE` fails on 23 of 101 (22.8%) mouse candidates due to Ensembl `-dv` V-gene names (`TRAV13-4-dv7`, `TRAV16d-dv11`) and C-gene checks; adding `-sc` (`--skip_c_checks`) still fails on the 23 `-dv` clones and ships 37 `Trbj2+Trbc1` or `Trbj1+Trbc2` chimeras. `tcrsift --species mouse` normalizes `-dv` names and enforces `Trbj1->Trbc1` / `Trbj2->Trbc2` parity (52 Cell Ranger miscalls corrected), building 101 of 101 constructs with 0 validation errors.
 
 ### 1b. Synthesis codon optimization: `tcrsift` vs `DNAChisel 3.2.16`
 
-On the 46 Minervina 2022 human single-chain constructs (`β-T2A-α`), we benchmark `tcrsift`'s focal (default) and full codon optimizers against `DNAChisel` (Zulkower & Rosser, *Bioinformatics* 2020) under identical synthesis constraints: avoiding 5 cloning/Golden Gate restriction enzymes (`EcoRI`, `BamHI`, `XhoI`, `BsaI`, `BsmBI`), eliminating ≥9-nt homopolymers, and keeping 50-bp GC windows within 30%–70%.
+On the 46 Minervina 2022 human single-chain constructs (`β-T2A-α`), we benchmark `tcrsift`'s focal (default) and full codon optimizers against `DNAChisel` (Zulkower & Rosser, *Bioinformatics* 2020) under identical synthesis constraints: avoiding 5 cloning/Golden Gate restriction enzymes (`EcoRI`, `BamHI`, `XhoI`, `BsaI`, `BsmBI`), eliminating ≥9-nt homopolymers, and keeping 50-bp GC windows within 30%–70%, while also auditing direct repeats (`< 20 bp`).
 
 ![Synthesis codon optimization: TCRsift vs DNAChisel](assets/figures/h2h_codon_opt_dnachisel.svg)
 
-*Fraction of native donor V(D)J codons preserved verbatim while clearing all 5 restriction enzymes, ≥9-nt homopolymers, and 50-bp GC-window hazards across the 46 Minervina human single-chain constructs.*
+*Fraction of native donor V(D)J codons preserved verbatim while clearing all 5 restriction enzymes, ≥9-nt homopolymers, ≥20-bp direct repeats, and 50-bp GC-window hazards across the 46 Minervina human single-chain constructs.*
 
-| Optimizer | Constructs ($n$) | Exact in-frame AA | Restriction-free (5 enzymes) | Homopolymer < 9 nt | GC window 30–70% | Donor VDJ codons preserved | Runtime (s) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `tcrsift_focal_opt` (default) | 46 | 46 (100%) | 46 (100%) | 46 (100%) | 46 (100%) | **97.8%** | **1.14** |
-| `tcrsift_full_opt` | 46 | 46 (100%) | 46 (100%) | 46 (100%) | 46 (100%) | 40.9% | 1.47 |
-| `DNAChisel 3.2.16` (`CodonOptimize` + constraints) | 46 | 46 (100%) | 46 (100%) | 46 (100%) | 46 (100%) | 46.2% | 1.92 |
+| Optimizer | Constructs ($n$) | Exact in-frame AA | Restriction-free (5 enzymes) | Homopolymer < 9 nt | Repeat < 20 bp (max bp) | GC window 30–70% | Donor VDJ codons preserved | Runtime (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `tcrsift_focal_opt` (default) | 46 | 46 (100%) | 46 (100%) | 46 (100%) | **46 (13 bp)** | 46 (100%) | **97.8%** | **1.28** |
+| `tcrsift_full_opt` | 46 | 46 (100%) | 46 (100%) | 46 (100%) | 44 (22 bp) | 46 (100%) | 40.9% | 1.62 |
+| `DNAChisel 3.2.16` (`CodonOptimize` + constraints) | 46 | 46 (100%) | 46 (100%) | 46 (100%) | **46 (19 bp)** | 46 (100%) | 46.2% | 2.84 |
 
-All three clear 100% of synthesis constraints with zero translation errors; `tcrsift` focal optimization preserves **97.8%** of native donor V(D)J codons verbatim (making only minimal synonymous swaps where a hazard occurs) while running 1.7x faster than `DNAChisel`.
+`tcrsift` focal optimization clears 100% of all five hazard criteria (including `0/46` repeats ≥20 bp, max `13 bp`), preserves **97.8%** of native donor V(D)J codons verbatim, and runs **2.2x faster** than `DNAChisel` (1.28s vs 2.84s). Greedy full re-coding (`tcrsift_full_opt`) clears the 5 enzymes and homopolymers but introduces 20–22 bp repeats in **2/46** constructs — illustrating why `focal` is the safer default.
 
 ---
 
 ## Stage 2: Do we identify expected antigen-specific TCRs?
 
-### 2a. Held-out public TCR database matching: `tcrsift annotate` vs `scirpy 0.26.1`
+### 2a. Held-out public TCR database matching: `tcrsift annotate` vs `scirpy 0.26.1` & `tcrdist3 0.3`
 
-Across study-held-out VDJdb (`vdjdb-2026-11-06`, holding out `PMID:35383307` for Minervina 2022 and all 10x entries for 10x Healthy Donor 1), we compare `tcrsift annotate` (`strict_ab` exact, `ab_with_partial` exact, and `strict_ab` paired Levenshtein-1 `ab_near`) against `scirpy` (`ir.pp.ir_dist` + `ir.tl.ir_query`, Sturm et al., *Bioinformatics* 2020):
+Across study-held-out VDJdb (`vdjdb-2026-11-06`, holding out `PMID:35383307` for the **4,212 dextramer-verified SARS-CoV-2 paired clones** in Minervina 2022 and holding out all 10x entries for the **246 canonical viral clones** in 10x Healthy Donor 1), we compare `tcrsift annotate` (`strict_ab` exact, `ab_with_partial` exact, and `strict_ab` paired Levenshtein-1 `ab_near`) against `scirpy` (`ir.pp.ir_dist` + `ir.tl.ir_query`, Sturm et al., *Bioinformatics* 2020) and `tcrdist3` (`TCRrep` paired αβ and β-only CDR1/CDR2/pMHC+CDR3 distance, Mayer-Blackwell et al., *eLife* 2021) using identical modal-consensus species aggregation on Minervina and cognate epitope matching on 10x Donor 1:
 
-![Held-out VDJdb matching precision, hits, and runtime: TCRsift vs scirpy](assets/figures/h2h_db_matching_scirpy.svg)
+![Held-out VDJdb matching precision, hits, and runtime: TCRsift vs scirpy and tcrdist3](assets/figures/h2h_db_matching_scirpy.svg)
 
-*Cognate species/epitope precision, matched counts, and query runtime on study-held-out VDJdb (`vdjdb-2026-11-06`) across Minervina 2022 SARS-CoV-2 ($n=7{,}317$ paired clones) and 10x Healthy Donor 1 canonical viral multimer clones ($n=246$ expanded clones).*
+*Cognate species/epitope precision, matched counts, and query runtime on study-held-out VDJdb (`vdjdb-2026-11-06`) across Minervina 2022 verified SARS-CoV-2 paired clones ($n=4{,}212$) and 10x Healthy Donor 1 canonical viral multimer clones ($n=246$).*
 
 | Cohort (study held out of VDJdb) | Tool / mode | Query clones ($n$) | Matched clones | Cognate hits | Cognate precision | Cognate recall | Runtime (s) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minervina 2022 SARS-CoV-2 | `tcrsift_strict_ab_exact` | 7,317 | 58 | 39 | 67.2% | 0.5% | 6.57 |
-| | `scirpy 0.26` paired exact (`identity`, `all`) | 7,317 | 58 | 40 | 69.0% | 0.5% | 6.46 |
-| | `tcrsift_strict_ab_lev1` (`ab_near`, ≤1/chain) | 7,317 | 292 | 231 | 79.1% | 3.2% | **10.22** |
-| | `scirpy 0.26` paired Lev-1 (`cutoff=1`, `all`) | 7,317 | 292 | 244 | 83.6% | 3.3% | 323.87 |
-| | `tcrsift_ab_with_partial_exact` | 7,317 | 698 | 269 | 38.5% | 3.7% | 8.40 |
-| | `scirpy 0.26` TRB-only (`identity`, `VDJ`) | 7,317 | 698 | 338 | 48.4% | 4.6% | 4.33 |
-| 10x Donor 1 canonical viral | `tcrsift_strict_ab_exact` | 246 | 56 | 56 | **100.0%** | 22.8% | 5.95 |
-| | `scirpy 0.26` paired exact (`identity`, `all`) | 246 | 56 | 56 | **100.0%** | 22.8% | 5.61 |
-| | `tcrsift_strict_ab_lev1` (`ab_near`, ≤1/chain) | 246 | 110 | 109 | **99.1%** | 44.3% | **8.59** |
-| | `scirpy 0.26` paired Lev-1 (`cutoff=1`, `all`) | 246 | 110 | 109 | **99.1%** | 44.3% | 13.11 |
-| | `tcrsift_ab_with_partial_exact` | 246 | 138 | 129 | 93.5% | 52.4% | 6.46 |
-| | `scirpy 0.26` TRB-only (`identity`, `VDJ`) | 246 | 138 | 129 | 93.5% | 52.4% | 3.97 |
+| Minervina 2022 SARS-CoV-2 (verified) | `tcrsift_strict_ab_exact` | 4,212 | 38 | 35 | **92.1%** | 0.8% | 9.48 |
+| | `scirpy 0.26` paired exact (`identity`, `all`) | 4,212 | 38 | 35 | **92.1%** | 0.8% | 8.45 |
+| | `tcrsift_strict_ab_lev1` (`ab_near`, ≤1/chain) | 4,212 | 226 | 210 | **92.9%** | 5.0% | **14.91** |
+| | `scirpy 0.26` paired Lev-1 (`cutoff=1`, `all`) | 4,212 | 226 | 208 | 92.0% | 4.9% | 213.29 |
+| | `tcrdist3 0.3` paired αβ (`r <= 24`) | 4,212 | 305 | 288 | **94.4%** | 6.8% | 276.72* |
+| | `tcrdist3 0.3` paired αβ (`r <= 48`) | 4,212 | 596 | **557** | **93.5%** | **13.2%** | 276.72* |
+| | `tcrdist3 0.3` TRB-only (`r = 0`, CDR3β + TRBV) | 4,212 | 291 | 239 | 82.1% | 5.7% | 284.33 |
+| | `tcrsift_ab_with_partial_exact` | 4,212 | 473 | 236 | 49.9% | 5.6% | 12.05 |
+| | `scirpy 0.26` TRB-only (`identity`, `VDJ`) | 4,212 | 473 | 235 | 49.7% | 5.6% | 6.11 |
+| 10x Donor 1 canonical viral | `tcrsift_strict_ab_exact` | 246 | 56 | 56 | **100.0%** | 22.8% | 6.53 |
+| | `scirpy 0.26` paired exact (`identity`, `all`) | 246 | 56 | 56 | **100.0%** | 22.8% | 6.36 |
+| | `tcrsift_strict_ab_lev1` (`ab_near`, ≤1/chain) | 246 | 110 | 109 | **99.1%** | 44.3% | **9.41** |
+| | `scirpy 0.26` paired Lev-1 (`cutoff=1`, `all`) | 246 | 110 | 109 | **99.1%** | 44.3% | 19.92 |
+| | `tcrdist3 0.3` paired αβ (`r <= 24`) | 246 | 114 | 114 | **100.0%** | 46.3% | 13.16* |
+| | `tcrdist3 0.3` paired αβ (`r <= 48`) | 246 | 144 | **143** | **99.3%** | **58.1%** | 13.16* |
+| | `tcrdist3 0.3` TRB-only (`r = 0`, CDR3β + TRBV) | 246 | 137 | 134 | 97.8% | 54.5% | 9.03 |
+| | `tcrsift_ab_with_partial_exact` | 246 | 138 | 129 | 93.5% | 52.4% | 6.89 |
+| | `scirpy 0.26` TRB-only (`identity`, `VDJ`) | 246 | 138 | 129 | 93.5% | 52.4% | 4.44 |
 
-- **Exact agreement & 31.7x faster paired Levenshtein-1.** `tcrsift` and `scirpy` match the exact same clone sets across paired exact (`58` Minervina, `56` 10x), β-only (`698` Minervina, `138` 10x), and paired Levenshtein-1 (`292` Minervina, `110` 10x; note `tcrsift` reports consensus/modal `db_species` on multi-hit clones whereas the `scirpy` join checks any matching species). On 7,317 Minervina clones against 200k+ VDJdb pairs, `tcrsift`'s deletion-canonical index finishes paired Levenshtein-1 in **10.2 s** vs **323.9 s** in `scirpy` (**31.7x faster**), lifting recall **6x** on Minervina and **2x** on 10x Donor 1 (99.1% precision) without the false-positive surge of β-only matching.
+*\*One paired `tcrdist3` distance computation yields both `r <= 24` and `r <= 48`.*
+
+- **Exact agreement & 14.3x faster paired Levenshtein-1 vs `scirpy`.** Under identical modal-consensus aggregation on the 4,212 verified SARS-CoV-2 clones, `tcrsift` and `scirpy` match the exact same clone sets across paired exact (`35/38 = 92.1%` Minervina, `56/56 = 100.0%` 10x), TRB-only (`473` Minervina, `138` 10x), and paired Levenshtein-1 (`226` Minervina, `110` 10x). `tcrsift`'s deletion-canonical index finishes paired Levenshtein-1 in **14.9 s** vs **213.3 s** in `scirpy` (**14.3x faster**), lifting recall **6x** on Minervina (`92.9%` precision) and **2x** on 10x Donor 1 (`99.1%` precision).
+- **`tcrdist3` leads deep similarity recall via V-gene loop weighting.** Because `tcrdist3` scores CDR1/CDR2/pMHC loops (from `TRAV`/`TRBV`) together with BLOSUM62-weighted CDR3 alignment, paired `r <= 48` recovers **557/596 (93.5% precision, 13.2% recall)** on Minervina (**2.7x** more hits than paired Lev-1) and **143/144 (99.3% precision, 58.1% recall)** on 10x Donor 1, at the cost of a heavier runtime (`276.7 s` on 4.2k × 151k paired DB entries) and `parasail` dependency. Even for β-only exact matching (`r = 0`), requiring `TRBV` agreement cuts Minervina single-chain false positives from 237 (`49.9%` precision) down to 52 (**`82.1%` precision**).
 - **Database circularity.** Because public VDJdb (`2026-11-06`) ingests published single-cell cohorts (including 10x dextramers, Minervina `PMID:35383307`, and Kasmani `PMID:35667687`), full-DB evaluation measures self-retrieval rather than out-of-sample recall (e.g., Kasmani NOD IGRP recall drops from 91.4% on full VDJdb to 0.0% once `PMID:35667687` is held out). All precision claims in TCRsift benchmarks therefore hold out the evaluated study.
 
 ### 2b. Multiplexed pMHC multimer calling
 
-On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD8 clones passing `CD3 >= 3` and `UMI >= 2` stained with 44 viral/cancer dextramers and 6 negative-control dextramers), five callers are compared — including `muon 0.2.1` DSB (`muon.prot.pp.dsb`, Mulè et al., *Nat Commun* 2022). Note that the [infectious-disease page](benchmarks-infectious.md) evaluates all paired VDJ clones prior to CD8/CD3/UMI filtering (reporting 1,019 → 39 sticky `KLGGALQAK` clones), whereas the head-to-head table below evaluates the CD8/CD3/UMI-filtered expanded repertoire with modal per-cell calls (837 → 31 sticky `KLGGALQAK` clones).
+On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD8 clones passing `CD3 >= 3` and `UMI >= 2` stained with 44 viral/cancer dextramers and 6 negative-control dextramers), five callers are compared — including `muon 0.2.1` DSB (`muon.prot.pp.dsb` at the standard Mulè et al. 2022 `>= 3.0` cutoff). Note that the [infectious-disease page](benchmarks-infectious.md) evaluates all paired VDJ clones prior to CD8/CD3/UMI filtering (reporting 1,019 → 39 sticky `KLGGALQAK` clones), whereas the head-to-head table below evaluates the CD8/CD3/UMI-filtered expanded repertoire with modal per-cell calls (837 → 31 sticky `KLGGALQAK` clones).
 
 ![Sticky KLGGALQAK and HIV Gag false positives vs canonical viral clones](assets/figures/h2h_multimer_counts.svg)
 
@@ -118,20 +127,20 @@ On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD
 
 *Cognate epitope precision among called clones matching 10x-held-out `strict_ab` VDJdb (`n_concordant / n_matched`).*
 
-| Multimer caller | Called clones (≥2 cells) | Sticky `KLGGALQAK` clones | HIV Gag FP clones | Canonical Flu / EBV / CMV clones | Held-out VDJdb `strict_ab` matches | Cognate precision (held-out VDJdb) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `10x_per_cell_threshold` (`UMI >= 10`, `>=5x max(NC, 1)` in ≥1 cell) | 1,540 | 837 | 8 | 667 | 110 | 99.1% (109/110) |
-| `clr_z3_per_cell` (`CLR z >= 3` across 44 pMHCs, `UMI >= 5` in ≥1 cell) | 627 | 2 | 44 | 319 | 68 | 92.6% (63/68) |
-| `muon_dsb_per_cell` (`muon 0.2.1` DSB `>= 8`, `UMI >= 10`, non-T bg + 6 NC isotypes) | 236 | 0 | 29 | 140 | 16 | 37.5% (6/16) |
-| `gmm_bimodal_per_cell` (2-comp `log1p` EM `P >= 0.95`, `UMI >= 10`, `>5x max(NC, 1)` in ≥1 cell) | 729 | 0 | 0 | 729 | 106 | 100.0% (106/106) |
-| `tcrsift_clonal_concordance` (`UMI >= 10`, `>=5x max(NC, 1)`, ≥2 cells & ≥50% concordance) | 605 | 31 | 0 | 556 | 109 | 100.0% (109/109) |
+| Multimer caller | Called clones (≥2 cells) | Distinct donor-epitopes called | Sticky `KLGGALQAK` clones | HIV Gag FP clones | Canonical Flu / EBV / CMV clones | Held-out VDJdb `strict_ab` matches | Cognate precision (held-out VDJdb) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `10x_per_cell_threshold` (`UMI >= 10`, `>=5x max(NC, 1)` in ≥1 cell) | 1,540 | 28 | 837 | 8 | 667 | 110 | 99.1% (109/110) |
+| `clr_z3_per_cell` (`CLR z >= 3` across 44 pMHCs, `UMI >= 5` in ≥1 cell) | 627 | 61 | 2 | 44 | 319 | 68 | 92.6% (63/68) |
+| `muon_dsb_per_cell` (`muon 0.2.1` DSB `>= 3.0`, `UMI >= 10`, non-T bg + 6 NC isotypes) | 1,095 | 35 | 369 | 16 | 576 | 103 | 98.1% (101/103) |
+| `gmm_bimodal_per_cell` (2-comp `log1p` EM `P >= 0.95`, `UMI >= 10`, `>5x max(NC, 1)` in ≥1 cell) | 729 | **6** | 0 | 0 | 729 | 106 | 100.0% (106/106) |
+| `tcrsift_clonal_concordance` (`UMI >= 10`, `>=5x max(NC, 1)`, ≥2 cells & ≥50% concordance) | 605 | **20** | **31** | **0** | 556 | 109 | **100.0% (109/109)** |
 
-- **Per-cell thresholds, CLR, and CITE-seq DSB.** `10x_per_cell_threshold` labels 837 expanded clones with the sticky `KLGGALQAK` CMV IE-1 reagent (54.4% of called clones). `clr_z3_per_cell` suppresses `KLGGALQAK` but introduces 44 HIV Gag false-positive clones and cuts canonical recall in half (319 vs 556–729). `muon` DSB (designed for CITE-seq panels where each cell expresses 10–30 surface proteins) fits a per-cell 2-component GMM across the 44 pMHC columns; because a T cell binds at most 1 pMHC reagent, step-2 technical-noise regression over-corrects genuine binders, dropping canonical calls to 140 and held-out VDJdb precision to 37.5% (6/16) with 29 HIV Gag FPs.
-- **Bimodal GMM vs clonal concordance.** Fitting a per-multimer 2-component Gaussian mixture (`gmm_bimodal_per_cell`) rejects unimodal `KLGGALQAK` (0 clones) at 100.0% (106/106) held-out VDJdb precision when each multimer has a distinct positive mode. `tcrsift --call-multimers` requires ≥50% of cells in a clone (≥2 cells) to bind the same pMHC, cutting `KLGGALQAK` clones by 96.3% (837 to 31) and HIV Gag false positives to 0 while retaining 109 of 109 (100.0%) held-out VDJdb matches without fitting per-library mixture models.
+- **Per-cell thresholds, CLR, and `muon` DSB.** `10x_per_cell_threshold` labels 837 expanded clones with the sticky `KLGGALQAK` CMV IE-1 reagent (54.4% of called clones). `muon` DSB at the standard `>= 3.0` cutoff achieves strong VDJdb cognate precision (**98.1%**, 101/103) and trims `KLGGALQAK` roughly in half vs 10x (837 → 369), but because it operates per cell it still leaks 369 sticky `KLGGALQAK` and 16 HIV Gag false-positive clones (raising DSB cutoff to `>= 8` suppresses high-background canonical `GILGFVFTL` binders and drops precision to 37.5%). `clr_z3_per_cell` suppresses `KLGGALQAK` (2) but introduces 44 HIV Gag FPs and halves canonical recall (319 vs 556–729).
+- **Bimodal GMM vs clonal concordance.** A per-multimer 2-component Gaussian mixture (`gmm_bimodal_per_cell`) rejects unimodal `KLGGALQAK` (0 clones; Donor 2 `KLGGALQAK` peaked at `P=0.9489`, just under `0.95`) at 100.0% (106/106) precision, **but only detects 6 total donor-epitopes** (the 3 mega-abundant specificities >1,400 cells/donor), silently dropping all rarer epitopes (`CMV pp65`, `MART-1`, minor EBV specificities). `tcrsift --call-multimers` requires ≥50% of cells in a clone (≥2 cells) to bind the same pMHC, detecting **20** donor-epitopes while cutting `KLGGALQAK` clones by **96.3%** vs 10x (837 → 31; **−91.6%** vs `muon` DSB), eliminating HIV Gag FPs (**0**), and keeping **109 of 109 (100.0%)** held-out VDJdb matches.
 
 ### 2c. Generation probability and post-selection publicness: `tcrsift` k-mer vs `OLGA 1.3.0` & `soNNia 0.4.0`
 
-`OLGA` (Sethna et al., *Bioinformatics* 2019; GPLv3) computes exact V(D)J recombination `Pgen` by dynamic programming, and `soNNia` (`Sonia`, Isacchini et al., *PNAS* 2021) multiplies `Pgen` by a pretrained thymic selection factor $Q$ to compute post-selection `Ppost`. `tcrsift` bundles an Apache-2.0 NumPy k-mer `Pgen`/`Ppost` model in the base package.
+`OLGA` (Sethna et al., *Bioinformatics* 2019; GPLv3) computes exact V(D)J recombination `Pgen` by dynamic programming, and `soNNia` (`Sonia`, Isacchini et al., *PNAS* 2021) multiplies `Pgen` by a pretrained thymic selection factor $Q$ to compute post-selection `Ppost`. `tcrsift` bundles Apache-2.0 NumPy k-mer `Pgen` models for both human and mouse (and human `Ppost`) in the base package.
 
 ![Cross-donor public sharing AUROC and speed: TCRsift k-mer vs OLGA and soNNia](assets/figures/h2h_pgen_olga.svg)
 
@@ -139,17 +148,17 @@ On 10x Genomics Healthy Donors 1 and 2 (2,572 expanded ≥2-cell paired α/β CD
 
 | Repertoire (`public >=2 donors`) | Model | Pearson $r$ vs `OLGA` ($\beta$ / $\alpha$) | Spearman $\rho$ vs `OLGA` ($\beta$ / $\alpha$) | Public sharing AUROC (95% CI) | Throughput (clones/s) | Speedup vs `OLGA` / `soNNia` |
 | --- | --- | --- | --- | --- | ---: | ---: |
-| Human blood ($n = 1{,}500$; 420 public) | `tcrsift` k-mer `pgen_beta` | 0.954 / 0.763 | 0.957 / 0.755 | 0.735 (0.704–0.766) | 44,216 / s | 414x / 1,003x |
-| | `tcrsift` k-mer `ppost_beta` | — | — | 0.739 (0.708–0.770) | 44,216 / s | 414x / 1,003x |
-| | `OLGA 1.3.0` exact VDJ `pgen_beta` | 1.000 | 1.000 | 0.744 (0.712–0.774) | 106.8 / s | 1.0x |
-| | `soNNia 0.4.0` pretrained `ppost_beta` | 0.980 | 0.973 | 0.740 (0.709–0.770) | 44.1 / s | 0.4x |
-| Mouse GP66 CD4 ($n = 1{,}781$; 72 public) | `tcrsift` AA-Markov fallback `pgen_beta` | 0.198 / 0.224 | 0.235 / 0.208 | 0.620 (0.555–0.680) | 51,015 / s | 285x / 909x |
-| | `tcrsift` AA-Markov fallback `ppost_beta` | — | — | 0.613 (0.550–0.674) | 51,015 / s | 285x / 909x |
-| | `OLGA 1.3.0` `mouse_T_beta` exact DP | 1.000 | 1.000 | 0.617 (0.542–0.686) | 179.1 / s | 1.0x |
-| | `soNNia 0.4.0` pretrained `mouse_T_beta` `ppost_beta` | 0.877 | 0.828 | 0.583 (0.514–0.649) | 56.1 / s | 0.3x |
+| Human blood ($n = 1{,}500$; 420 public) | `tcrsift` k-mer `pgen_beta` | **0.954** / 0.763 | **0.957** / 0.755 | 0.735 (0.704–0.766) | 30,182 / s | **325x / 943x** |
+| | `tcrsift` k-mer `ppost_beta` | — | — | 0.739 (0.708–0.770) | 30,182 / s | **325x / 943x** |
+| | `OLGA 1.3.0` exact VDJ `pgen_beta` | 1.000 | 1.000 | 0.744 (0.712–0.774) | 92.8 / s | 1.0x |
+| | `soNNia 0.4.0` pretrained `ppost_beta` | 0.980 | 0.973 | 0.740 (0.709–0.770) | 32.0 / s | 0.3x |
+| Mouse GP66 CD4 ($n = 1{,}781$; 72 public) | `tcrsift` mouse k-mer `pgen_beta` | **0.910** / 0.665 | **0.904** / 0.648 | 0.600 (0.528–0.667) | 40,529 / s | **266x / 846x** |
+| | `tcrsift` AA-Markov `ppost_beta` | — | — | 0.613 (0.550–0.674) | 40,529 / s | **266x / 846x** |
+| | `OLGA 1.3.0` `mouse_T_beta` exact DP | 1.000 | 1.000 | 0.617 (0.542–0.686) | 152.5 / s | 1.0x |
+| | `soNNia 0.4.0` pretrained `mouse_T_beta` `ppost_beta` | 0.877 | 0.828 | 0.583 (0.514–0.649) | 47.9 / s | 0.3x |
 
-- **Human blood.** `tcrsift` k-mer `pgen_beta` correlates with `OLGA` at $r = 0.954$ ($\rho = 0.957$), `tcrsift` `ppost_beta` matches pretrained `soNNia` `ppost_beta` on cross-donor public sharing AUROC (**0.739** vs **0.740** `soNNia` and **0.744** `OLGA`), and runs **414x faster than `OLGA`** and **1,003x faster than `soNNia`** (0.034 s vs 14.04 s and 34.05 s).
-- **Mouse fallback.** Because `tcrsift` does not ship a pre-trained mouse V(D)J k-mer table (`tcrsift pgen train --species mouse` fits one from repertoire data), correlation with `OLGA mouse_T_beta` is low ($r = 0.198$), though empirical cross-mouse public sharing AUROC across the five Khatun C57BL/6 mice matches `OLGA` and edges out pretrained `soNNia mouse_T_beta` (0.620 vs 0.617 and 0.583).
+- **Human blood.** `tcrsift` k-mer `pgen_beta` correlates with `OLGA` at $r = 0.954$ ($\rho = 0.957$), `tcrsift` `ppost_beta` matches pretrained `soNNia` `ppost_beta` on cross-donor public sharing AUROC (**0.739** vs **0.740** `soNNia` and **0.744** `OLGA`), and runs **325x faster than `OLGA`** and **943x faster than `soNNia`** (0.050 s vs 16.16 s and 46.84 s).
+- **Mouse GP66 CD4.** With bundled murine `kmer_pgen_mouse_{alpha,beta}.npz` tables (fit offline on 500k `OLGA mouse_T_{alpha,beta}` draws), `tcrsift` `pgen_beta` correlates with `OLGA mouse_T_beta` at **$r = 0.910$** ($\rho = 0.904$; exceeding pretrained `soNNia mouse_T_beta`'s $r = 0.877$) while running **266x faster than `OLGA`** and **846x faster than `soNNia`** (0.044 s vs 11.68 s and 37.14 s), with overlapping cross-mouse public sharing AUROC (0.600–0.613 vs 0.617 `OLGA` and 0.583 `soNNia`).
 
 ### 2d. Overnight (16 h) peptide restimulation (direct functional assay)
 
@@ -240,7 +249,14 @@ pip install stitchr==1.3.1 dnachisel==3.2.16 scirpy==0.26.1 muon==0.2.1 \
     olga==1.3.0 sonnia==0.4.0 pyucell==0.8.0 scanpy
 stitchrdl -s HUMAN && stitchrdl -s MOUSE
 
-KERAS_BACKEND=torch python benchmarks/head_to_head/run.py
+# Isolated tcrdist3 environment (prebuilt bioconda parasail avoids macOS arm64 source builds;
+# alternatively build benchmarks/head_to_head/Dockerfile.tcrdist)
+micromamba create -y -p /tmp/tcrdist_env -c conda-forge -c bioconda \
+    python=3.11 numpy scipy pandas parasail-python
+/tmp/tcrdist_env/bin/pip install tcrdist3==0.3
+
+KERAS_BACKEND=torch python benchmarks/head_to_head/run.py \
+    --tcrdist-python /tmp/tcrdist_env/bin/python
 python docs/figures/make_overview_benchmark_figures.py
 ```
 

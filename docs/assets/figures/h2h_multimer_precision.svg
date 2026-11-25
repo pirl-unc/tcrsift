@@ -217,8 +217,8 @@ z
    <g id="patch_5">
     <path d="M 247.835223 282.595067 
 L 293.571797 282.595067 
-L 293.571797 197.513687 
-L 247.835223 197.513687 
+L 293.571797 60.112932 
+L 247.835223 60.112932 
 z
 " clip-path="url(#p8c0b0ff87c)" style="fill: #6c5ce7; stroke: #fcfcfb; stroke-width: 0.9; stroke-linejoin: miter"/>
    </g>
@@ -257,8 +257,8 @@ L 489.35952 282.595067
     <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(169.442433 67.144861)">(63/68)</text>
    </g>
    <g id="text_15">
-    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(258.795197 184.293671)">37.5%</text>
-    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(259.732979 192.27121)">(6/16)</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(258.795197 46.892915)">98.1%</text>
+    <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(252.726197 54.870454)">(101/103)</text>
    </g>
    <g id="text_16">
     <text style="font-size: 8.4px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(344.414555 42.491372)">100.0%</text>

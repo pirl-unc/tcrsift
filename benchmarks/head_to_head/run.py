@@ -1312,6 +1312,7 @@ def run_multimer_callers(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
     caller_stats: dict[str, dict[str, int]] = {
         k: {
             "total_called_clones_ge2": 0,
+            "n_distinct_epitopes_called": 0,
             "sticky_KLGGALQAK_fp_clones": 0,
             "hiv_gag_fp_clones": 0,
             "canonical_flu_ebv_cmv_clones": 0,
@@ -1326,6 +1327,7 @@ def run_multimer_callers(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
             "tcrsift_clonal_concordance",
         )
     }
+    caller_epitopes: dict[str, set[str]] = {k: set() for k in caller_stats}
 
     for donor in ("donor1", "donor2"):
         ddir = inf_data_dir / "tenx_dextramer" / donor
@@ -1410,7 +1412,8 @@ def run_multimer_callers(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
         dsb_pmhc = np.column_stack(
             [dsb_df[c].to_numpy(dtype=float) if c in dsb_df.columns else np.zeros(len(fb_sub)) for c in pmhc_cols]
         )
-        pos_dsb = (dsb_pmhc >= 8.0) & (pmhc_mat >= 10.0)
+        # Standard Mulè et al. (2022) DSB positive cutoff (~3.0 SD above background) + UMI >= 10
+        pos_dsb = (dsb_pmhc >= 3.0) & (pmhc_mat >= 10.0)
         single_dsb = pos_dsb.sum(axis=1) == 1
         c2b_calls = np.where(single_dsb, np.array(pmhc_cols, dtype=object)[pos_dsb.argmax(axis=1)], None)
         c2b_raw = pd.DataFrame({"CDR3ab": clone_of_bc.to_numpy(), "call": c2b_calls})
@@ -1468,6 +1471,8 @@ def run_multimer_callers(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
             st = caller_stats[cname]
             st["total_called_clones_ge2"] += len(cdf)
             calls_s = cdf["call"].astype(str)
+            for ep in calls_s.dropna().unique():
+                caller_epitopes[cname].add(f"{donor}:{ep}")
             st["sticky_KLGGALQAK_fp_clones"] += int(calls_s.str.contains("KLGGALQAK").sum())
             st["hiv_gag_fp_clones"] += int(calls_s.str.contains("RTLNAWVKV|SLYNTVATL|Gag").sum())
             st["canonical_flu_ebv_cmv_clones"] += int(
@@ -1486,6 +1491,7 @@ def run_multimer_callers(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
 
     out_rows = []
     for cname, st in caller_stats.items():
+        st["n_distinct_epitopes_called"] = len(caller_epitopes[cname])
         n_m = st["vdjdb_strict_matched_clones"]
         n_ok = st["vdjdb_cognate_epitope_concordant"]
         out_rows.append(
@@ -1538,18 +1544,102 @@ def _build_scirpy_adata(
     return adata
 
 
-def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
+def _modal_token(values: list[str]) -> str:
+    """Consensus (modal) semicolon-split token with deterministic alphabetical tie-break."""
+    from collections import Counter
+
+    counts: Counter[str] = Counter()
+    for v in values:
+        for tok in str(v).split(";"):
+            t = tok.strip()
+            if t:
+                counts[t] += 1
+    if not counts:
+        return ""
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+
+def _run_tcrdist_worker(
+    tcrdist_python: Path | None,
+    q_df: pd.DataFrame,
+    r_df: pd.DataFrame,
+    *,
+    cohort: str,
+    mode: str,
+    radii_ab: str = "24,48",
+    radii_b: str = "0",
+) -> tuple[list[dict], str]:
+    if tcrdist_python is None or not Path(tcrdist_python).exists():
+        return [], "unavailable"
+    worker = HERE / "tcrdist_worker.py"
+    with tempfile.TemporaryDirectory() as td:
+        q_tsv = Path(td) / "q.tsv"
+        r_tsv = Path(td) / "r.tsv"
+        out_json = Path(td) / "out.json"
+        q_df.to_csv(q_tsv, sep="\t", index=False)
+        r_df.to_csv(r_tsv, sep="\t", index=False)
+        proc = subprocess.run(
+            [
+                str(tcrdist_python),
+                str(worker),
+                "--query-tsv",
+                str(q_tsv),
+                "--ref-tsv",
+                str(r_tsv),
+                "--cohort",
+                cohort,
+                "--mode",
+                mode,
+                "--radii-ab",
+                radii_ab,
+                "--radii-b",
+                radii_b,
+                "--out-json",
+                str(out_json),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0 or not out_json.exists():
+            raise RuntimeError(f"tcrdist_worker failed (rc={proc.returncode}): {proc.stderr}")
+        payload = json.loads(out_json.read_text())
+        return list(payload.get("rows", [])), str(payload.get("tcrdist3_version", "unknown"))
+
+
+def run_db_matching_vs_scirpy(
+    inf_data_dir: Path,
+    inf_work_dir: Path,
+    tcrdist_python: Path | None = None,
+) -> tuple[list[dict], str]:
     import scirpy as ir
 
     from tcrsift.annotate import load_vdjdb, match_clonotypes
-    from tcrsift.loader import load_cellranger_vdj
+    from tcrsift.loader import _pivot_vdj_by_barcode, load_cellranger_vdj
 
     rows: list[dict] = []
+    tcrdist_ver = "unavailable"
 
-    # --- 5A. Minervina 2022 SARS-CoV-2 paired clones against PMID:35383307-held-out VDJdb ---
-    min_all = pd.read_csv(inf_work_dir / "minervina_blood_default" / "all_scored_clones.csv", low_memory=False)
+    # --- 5A. Minervina 2022 dextramer-verified SARS-CoV-2 paired clones (4,212) against PMID:35383307-held-out VDJdb ---
+    mdir = inf_data_dir / "minervina_2022_covid_flu"
+    agg_dir = mdir / "extracted" / "libs_aggregate_rev"
+    tsv_min = pd.read_csv(mdir / "cd8_only_dextr_rev_clean.tsv", sep="\t", low_memory=False)
+    vdj_m = load_cellranger_vdj(agg_dir, "minervina", verbose=False)
+    piv_m = _pivot_vdj_by_barcode(vdj_m)
+    piv_m = piv_m[
+        piv_m["CDR3ab"].notna()
+        & ~piv_m["CDR3ab"].astype(str).str.startswith("_")
+        & ~piv_m["CDR3ab"].astype(str).str.endswith("_")
+        & (piv_m["CDR3ab"].astype(str) != "")
+    ].copy()
+    piv_m["epitope"] = tsv_min.set_index("barcode")["epitope"].reindex(piv_m.index)
+    sars_cab_set = set(piv_m.dropna(subset=["epitope"])["CDR3ab"])
+
+    min_all = pd.read_csv(inf_work_dir / "minervina_blood" / "all_scored_clones.csv", low_memory=False)
     min_q = (
-        min_all[["CDR3_alpha", "CDR3_beta", "CDR3ab"]]
+        min_all[min_all["CDR3ab"].isin(sars_cab_set)][
+            ["CDR3_alpha", "CDR3_beta", "CDR3ab", "alpha_v_gene", "beta_v_gene"]
+        ]
         .dropna(subset=["CDR3_alpha", "CDR3_beta"])
         .drop_duplicates("CDR3ab")
         .reset_index(drop=True)
@@ -1559,12 +1649,15 @@ def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[di
     ref_hs = ref_raw[ref_raw["species"].astype(str).str.lower().isin(["homosapiens", "human"])].copy()
     ref_hs["cdr3_a"] = ref_hs["cdr3.alpha"].fillna("").astype(str).str.strip()
     ref_hs["cdr3_b"] = ref_hs["cdr3.beta"].fillna("").astype(str).str.strip()
+    ref_hs["v_a"] = ref_hs["v.alpha"].fillna("").astype(str).str.strip()
+    ref_hs["v_b"] = ref_hs["v.beta"].fillna("").astype(str).str.strip()
     ref_hs["antigen_species"] = ref_hs["antigen.species"].fillna("").astype(str).str.strip()
     ref_hs["antigen_epitope"] = ref_hs["antigen.epitope"].fillna("").astype(str).str.strip()
+    # Keep multiplicity in semicolon-joined species so modal consensus matches VDJdb row frequency
     ref_dedup = (
         ref_hs.groupby(["cdr3_a", "cdr3_b"], as_index=False)
         .agg(
-            antigen_species=("antigen_species", lambda s: ";".join(sorted(set(x for x in s if x)))),
+            antigen_species=("antigen_species", lambda s: ";".join(x for x in s if x)),
             antigen_epitope=("antigen_epitope", lambda s: ";".join(sorted(set(x for x in s if x)))),
         )
     )
@@ -1576,7 +1669,7 @@ def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[di
     ):
         t0 = time.perf_counter()
         res = match_clonotypes(
-            min_q.copy(),
+            min_q[["CDR3_alpha", "CDR3_beta", "CDR3ab"]].copy(),
             vdjdb_no_min,
             match_strictness=strictness,
             match_mode=mode,
@@ -1643,8 +1736,11 @@ def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[di
         elapsed = time.perf_counter() - t0
         ann_df = ann_df.reset_index()
         idx_col = ann_df.columns[0]
-        per_q = ann_df.dropna(subset=["antigen_species"]).groupby(idx_col)["antigen_species"].apply(
-            lambda s: ";".join(s.astype(str))
+        # Evaluate using identical modal/consensus species aggregation as tcrsift & tcrdist3
+        per_q = (
+            ann_df.dropna(subset=["antigen_species"])
+            .groupby(idx_col)["antigen_species"]
+            .apply(lambda s: _modal_token(s.astype(str).tolist()))
         )
         n_m = len(per_q)
         n_c = int(per_q.str.contains("SARS-CoV-2", case=False).sum())
@@ -1661,7 +1757,30 @@ def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[di
             }
         )
 
-    # --- 5B. 10x Healthy Donor 1 canonical viral multimer clones against 10x-held-out VDJdb ---
+    td_min_rows, td_ver = _run_tcrdist_worker(
+        tcrdist_python,
+        pd.DataFrame(
+            {
+                "CDR3_alpha": min_q["CDR3_alpha"],
+                "CDR3_beta": min_q["CDR3_beta"],
+                "v_alpha": min_q["alpha_v_gene"],
+                "v_beta": min_q["beta_v_gene"],
+                "truth": "SARS-CoV-2",
+            }
+        ),
+        ref_hs[["cdr3_a", "v_a", "cdr3_b", "v_b", "antigen_species"]].rename(
+            columns={"antigen_species": "target_val"}
+        ),
+        cohort="minervina_2022_sars_cov2_heldout",
+        mode="species",
+        radii_ab="24,48",
+        radii_b="0",
+    )
+    if td_ver != "unavailable":
+        tcrdist_ver = td_ver
+    rows.extend(td_min_rows)
+
+    # --- 5B. 10x Healthy Donor 1 canonical viral multimer clones (246) against 10x-held-out VDJdb ---
     d1_dir = inf_data_dir / "tenx_dextramer" / "donor1"
     bmat = pd.read_csv(d1_dir / "vdj_v1_hs_aggregated_donor1_binarized_matrix.csv", low_memory=False)
     binder_cols = [c for c in bmat.columns if c.endswith("_binder")]
@@ -1673,10 +1792,12 @@ def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[di
     bmap = bmap[bmap["true_epitope"].isin(canonical_peps)]
 
     vdj1 = load_cellranger_vdj(d1_dir, "donor1", verbose=False)
-    tra1 = vdj1[vdj1["chain"].eq("TRA") & vdj1["cdr3"].notna()].sort_values("umis", ascending=False).drop_duplicates("barcode").set_index("barcode")["cdr3"]
-    trb1 = vdj1[vdj1["chain"].eq("TRB") & vdj1["cdr3"].notna()].sort_values("umis", ascending=False).drop_duplicates("barcode").set_index("barcode")["cdr3"]
-    bmap["CDR3_alpha"] = bmap["barcode"].map(tra1)
-    bmap["CDR3_beta"] = bmap["barcode"].map(trb1)
+    tra1 = vdj1[vdj1["chain"].eq("TRA") & vdj1["cdr3"].notna()].sort_values("umis", ascending=False).drop_duplicates("barcode").set_index("barcode")[["cdr3", "v_gene"]]
+    trb1 = vdj1[vdj1["chain"].eq("TRB") & vdj1["cdr3"].notna()].sort_values("umis", ascending=False).drop_duplicates("barcode").set_index("barcode")[["cdr3", "v_gene"]]
+    bmap["CDR3_alpha"] = bmap["barcode"].map(tra1["cdr3"])
+    bmap["CDR3_beta"] = bmap["barcode"].map(trb1["cdr3"])
+    bmap["v_alpha"] = bmap["barcode"].map(tra1["v_gene"])
+    bmap["v_beta"] = bmap["barcode"].map(trb1["v_gene"])
     bmap = bmap.dropna(subset=["CDR3_alpha", "CDR3_beta"]).copy()
     bmap["CDR3ab"] = bmap["CDR3_alpha"] + "_" + bmap["CDR3_beta"]
     d1_q = (
@@ -1688,6 +1809,13 @@ def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[di
         .drop_duplicates("CDR3ab")
         .reset_index(drop=True)
     )
+    # Attach modal V genes per CDR3ab so all 246 clones are queried identically by tcrdist3
+    v_modal = (
+        bmap.groupby("CDR3ab")[["v_alpha", "v_beta"]]
+        .agg(lambda s: s.dropna().mode().iloc[0] if len(s.dropna()) else "")
+        .reset_index()
+    )
+    d1_q = d1_q.merge(v_modal, on="CDR3ab", how="left")
     true_ep_map = dict(zip(d1_q["CDR3ab"], d1_q["true_epitope"]))
 
     vdjdb_no_10x = load_vdjdb(inf_work_dir / "vdjdb_heldout_no_10x.tsv", verbose=False)
@@ -1695,6 +1823,8 @@ def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[di
     ref10_hs = ref10_raw[ref10_raw["species"].astype(str).str.lower().isin(["homosapiens", "human"])].copy()
     ref10_hs["cdr3_a"] = ref10_hs["cdr3.alpha"].fillna("").astype(str).str.strip()
     ref10_hs["cdr3_b"] = ref10_hs["cdr3.beta"].fillna("").astype(str).str.strip()
+    ref10_hs["v_a"] = ref10_hs["v.alpha"].fillna("").astype(str).str.strip()
+    ref10_hs["v_b"] = ref10_hs["v.beta"].fillna("").astype(str).str.strip()
     ref10_hs["antigen_epitope"] = ref10_hs["antigen.epitope"].fillna("").astype(str).str.strip()
     ref10_dedup = (
         ref10_hs.groupby(["cdr3_a", "cdr3_b"], as_index=False)
@@ -1801,7 +1931,30 @@ def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[di
             }
         )
 
-    return rows
+    td_d1_rows, td_ver = _run_tcrdist_worker(
+        tcrdist_python,
+        pd.DataFrame(
+            {
+                "CDR3_alpha": d1_q["CDR3_alpha"],
+                "CDR3_beta": d1_q["CDR3_beta"],
+                "v_alpha": d1_q["v_alpha"],
+                "v_beta": d1_q["v_beta"],
+                "truth": d1_q["true_epitope"],
+            }
+        ),
+        ref10_hs[["cdr3_a", "v_a", "cdr3_b", "v_b", "antigen_epitope"]].rename(
+            columns={"antigen_epitope": "target_val"}
+        ),
+        cohort="tenx_donor1_canonical_viral_heldout",
+        mode="epitope",
+        radii_ab="24,48",
+        radii_b="0",
+    )
+    if td_ver != "unavailable":
+        tcrdist_ver = td_ver
+    rows.extend(td_d1_rows)
+
+    return rows, tcrdist_ver
 
 
 # ---------------------------------------------------------------------------
@@ -1853,6 +2006,8 @@ def run_codon_opt_vs_dnachisel(inf_work_dir: Path, cache_dir: Path) -> list[dict
             "n_inframe_exact_aa": n_inframe,
             "n_restriction_free": n_enz_free,
             "n_homopolymer_lt9": int((tmp["synth_max_homopolymer"] < 9).sum()),
+            "n_repeat_lt20": int((tmp["synth_max_repeat"] < 20).sum()),
+            "max_repeat_bp": int(tmp["synth_max_repeat"].max()),
             "n_gc_window_ok": int(tmp["synth_gc_ok"].sum()),
             "mean_donor_vdj_codon_preserved": round(float(np.mean(donor_codon_fracs)), 4) if donor_codon_fracs else np.nan,
             "elapsed_sec": round(elapsed, 3),
@@ -1944,6 +2099,7 @@ def main() -> None:
     parser.add_argument("--mouse-work-dir", type=Path, default=Path("/tmp/tcrsift_bench_mouse/runs"))
     parser.add_argument("--cache-dir", type=Path, default=Path("/tmp/tcrsift_cache_vdjdb_germline"))
     parser.add_argument("--thimble-bin", type=Path, default=Path("/tmp/h2h_venv/bin/thimble"))
+    parser.add_argument("--tcrdist-python", type=Path, default=Path("/tmp/tcrdist_env/bin/python"))
     parser.add_argument("--stage", choices=("all", "1", "2", "3", "4", "5", "6"), default="all")
     args = parser.parse_args()
 
@@ -1982,9 +2138,12 @@ def main() -> None:
         mult_rows = run_multimer_callers(args.inf_data_dir, args.inf_work_dir)
         pd.DataFrame(mult_rows).to_csv(results_dir / "h2h_multimer_callers.csv", index=False)
 
+    tcrdist_ver = "unavailable"
     if args.stage in ("all", "5"):
-        print("5/6 Running held-out TCR database matching head-to-head (tcrsift vs scirpy)...")
-        db_rows = run_db_matching_vs_scirpy(args.inf_data_dir, args.inf_work_dir)
+        print("5/6 Running held-out TCR database matching head-to-head (tcrsift vs scirpy & tcrdist3)...")
+        db_rows, tcrdist_ver = run_db_matching_vs_scirpy(
+            args.inf_data_dir, args.inf_work_dir, tcrdist_python=args.tcrdist_python
+        )
         pd.DataFrame(db_rows).to_csv(results_dir / "h2h_db_matching_vs_scirpy.csv", index=False)
 
     if args.stage in ("all", "6"):
@@ -1993,9 +2152,12 @@ def main() -> None:
         pd.DataFrame(opt_rows).to_csv(results_dir / "h2h_codon_opt_vs_dnachisel.csv", index=False)
 
     prev_elapsed = None
+    prev_tcrdist_ver = None
     summary_path = results_dir / "summary.json"
     if args.stage != "all" and summary_path.exists():
-        prev_elapsed = json.loads(summary_path.read_text()).get("elapsed_seconds")
+        prev_sum = json.loads(summary_path.read_text())
+        prev_elapsed = prev_sum.get("elapsed_seconds")
+        prev_tcrdist_ver = prev_sum.get("tcrdist3_version")
 
     def _pkg_ver(name: str) -> str:
         try:
@@ -2008,6 +2170,7 @@ def main() -> None:
         "stitchr_version": getattr(st_fxn, "__version__", _pkg_ver("stitchr")),
         "dnachisel_version": _pkg_ver("dnachisel"),
         "scirpy_version": _pkg_ver("scirpy"),
+        "tcrdist3_version": tcrdist_ver if tcrdist_ver != "unavailable" else (prev_tcrdist_ver or "unavailable"),
         "muon_version": _pkg_ver("muon"),
         "olga_version": getattr(olga, "__version__", _pkg_ver("olga")),
         "sonnia_version": _pkg_ver("sonnia"),

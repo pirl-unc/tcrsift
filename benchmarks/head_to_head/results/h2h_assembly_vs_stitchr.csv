@@ -1,9 +1,9 @@
 cohort,tool,n_clones,n_complete,complete_rate,donor_vdj_polymorphic_clones_preserved,mismatched_trbc_shipped,validation_errors,distinct_germline_variants_logged,elapsed_sec
-minervina_2022_human_cr6_vdj,tcrsift_assemble_default,46,46,1.0,9,0,0,0,1.158
-minervina_2022_human_cr6_vdj,stitchr_thimble_v1.3.1,46,46,1.0,0,0,0,0,0.134
-fischer_2021_5prime_truncated_human,tcrsift_assemble_default,160,160,1.0,32,0,29,15,11.135
-fischer_2021_5prime_truncated_human,tcrsift_strict_contig_only,160,0,0.0,0,0,0,0,0.494
-fischer_2021_5prime_truncated_human,stitchr_thimble_v1.3.1,160,135,0.8438,0,0,25,0,0.164
-mouse_cellranger_101_mc38_khatun,tcrsift_assemble_default_mouse,101,101,1.0,0,0,0,52,3.558
-mouse_cellranger_101_mc38_khatun,stitchr_thimble_v1.3.1_default,101,78,0.7723,0,0,23,0,0.117
-mouse_cellranger_101_mc38_khatun,stitchr_thimble_v1.3.1_skip_c_checks,101,78,0.7723,0,37,23,0,0.112
+minervina_2022_human_cr6_vdj,tcrsift_assemble_default,46,46,1.0,9,0,0,0,2.242
+minervina_2022_human_cr6_vdj,stitchr_thimble_v1.3.1,46,46,1.0,0,0,0,0,0.234
+fischer_2021_5prime_truncated_human,tcrsift_assemble_default,160,160,1.0,32,0,0,15,18.802
+fischer_2021_5prime_truncated_human,tcrsift_strict_contig_only,160,0,0.0,0,0,0,0,0.594
+fischer_2021_5prime_truncated_human,stitchr_thimble_v1.3.1,160,135,0.8438,0,0,25,0,0.521
+mouse_cellranger_101_mc38_khatun,tcrsift_assemble_default_mouse,101,101,1.0,0,0,0,52,4.923
+mouse_cellranger_101_mc38_khatun,stitchr_thimble_v1.3.1_default,101,78,0.7723,0,0,23,0,0.209
+mouse_cellranger_101_mc38_khatun,stitchr_thimble_v1.3.1_skip_c_checks,101,78,0.7723,0,37,23,0,0.166

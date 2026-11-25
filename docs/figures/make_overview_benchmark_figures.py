@@ -404,28 +404,29 @@ def h2h_db_and_codon_figures() -> None:
     opt = pd.read_csv(H2H_RESULTS / "h2h_codon_opt_vs_dnachisel.csv")
 
     # Figure 7: Held-out VDJdb precision & matched clones (Minervina SARS-CoV-2 & 10x Donor 1)
-    fig1, ax1 = plt.subplots(figsize=(7.8, 4.6), constrained_layout=True)
+    fig1, ax1 = plt.subplots(figsize=(8.6, 4.7), constrained_layout=True)
     cohorts = [
-        ("minervina_2022_sars_cov2_heldout", "Minervina SARS-CoV-2\n(n=7,317 paired clones)"),
+        ("minervina_2022_sars_cov2_heldout", "Minervina SARS-CoV-2\n(n=4,212 verified clones)"),
         ("tenx_donor1_canonical_viral_heldout", "10x Donor 1 canonical viral\n(n=246 expanded clones)"),
     ]
     methods = [
         ("tcrsift_strict_ab_exact", "TCRsift strict_ab exact", AQUA),
         ("tcrsift_strict_ab_lev1", "TCRsift strict_ab Lev-1", BLUE),
-        ("scirpy_v0.26_identity_paired", "scirpy 0.26 paired exact", NEUTRAL),
         ("scirpy_v0.26_lev1_paired", "scirpy 0.26 paired Lev-1", "#6c5ce7"),
+        ("tcrdist3_v0.3_paired_r48", "tcrdist3 0.3 paired r<=48", "#2a9d8f"),
+        ("tcrdist3_v0.3_trb_r0", "tcrdist3 0.3 TRB+V r=0", NEUTRAL),
         ("tcrsift_ab_with_partial_exact", "TCRsift ab_with_partial", ORANGE),
     ]
     xs = np.arange(len(cohorts))
-    bw = 0.155
-    offs = np.linspace(-2 * bw, 2 * bw, len(methods))
+    bw = 0.132
+    offs = np.linspace(-2.5 * bw, 2.5 * bw, len(methods))
     for m_idx, (m_key, m_lbl, col) in enumerate(methods):
         precs = []
         notes = []
         for c_key, _ in cohorts:
             r = db[db["cohort"].eq(c_key) & db["method"].eq(m_key)].iloc[0]
             precs.append(float(r["cognate_precision"]))
-            notes.append(f"{float(r['cognate_precision']):.0%}\n({int(r['n_cognate'])}/{int(r['n_matched'])})\n{float(r['elapsed_sec']):.1f}s")
+            notes.append(f"{float(r['cognate_precision']):.0%}\n({int(r['n_cognate'])}/{int(r['n_matched'])})\n{float(r['elapsed_sec']):.0f}s")
         ax1.bar(
             xs + offs[m_idx],
             precs,
@@ -442,21 +443,21 @@ def h2h_db_and_codon_figures() -> None:
                 txt,
                 ha="center",
                 va="bottom",
-                fontsize=7.3,
-                fontweight="bold" if col == BLUE else "normal",
-                color=BLUE if col == BLUE else INK,
+                fontsize=7.1,
+                fontweight="bold" if col in (BLUE, "#2a9d8f") else "normal",
+                color=col if col in (BLUE, "#2a9d8f") else INK,
                 linespacing=1.1,
             )
     percent_axis(ax1, "y", decimals=0)
     ax1.set_xticks(xs, [lbl for _, lbl in cohorts])
-    ax1.set_ylim(0, 1.24)
+    ax1.set_ylim(0, 1.25)
     ax1.set_ylabel("Cognate precision on held-out VDJdb")
-    ax1.set_title("Held-out VDJdb matching precision, hits, and runtime: TCRsift vs scirpy 0.26", fontsize=9.8)
+    ax1.set_title("Held-out VDJdb matching precision, hits, and runtime: TCRsift vs scirpy 0.26 & tcrdist3 0.3", fontsize=9.6)
     ax1.grid(axis="y", lw=0.6)
     ax1.set_axisbelow(True)
     ax1.legend(
         frameon=False,
-        fontsize=8.0,
+        fontsize=7.8,
         loc="upper center",
         bbox_to_anchor=(0.5, -0.17),
         ncol=3,
@@ -464,7 +465,7 @@ def h2h_db_and_codon_figures() -> None:
     save_tight(fig1, "h2h_db_matching_scirpy")
 
     # Figure 8: Synthesis codon optimization & donor VDJ codon preservation vs DNAChisel
-    fig2, ax2 = plt.subplots(figsize=(6.8, 3.6), constrained_layout=True)
+    fig2, ax2 = plt.subplots(figsize=(7.2, 3.6), constrained_layout=True)
     opt_specs = [
         ("tcrsift_focal_opt", "TCRsift focal\n(default)", BLUE),
         ("tcrsift_full_opt", "TCRsift full\nrecode", AQUA),
@@ -480,7 +481,7 @@ def h2h_db_and_codon_figures() -> None:
         vals.append(v)
         cols.append(col)
         notes.append(
-            f"{v:.1%} donor codons kept | {int(r['n_restriction_free'])}/{int(r['n_constructs'])} hazard-free | {float(r['elapsed_sec']):.2f}s"
+            f"{v:.1%} donor codons | {int(r['n_restriction_free'])}/46 RE-free | {int(r['n_repeat_lt20'])}/46 repeat<20bp | {float(r['elapsed_sec']):.2f}s"
         )
     ax2.barh(ys, vals, height=0.56, color=cols, edgecolor=SURFACE, linewidth=0.8)
     for yv, vv, txt, col in zip(ys, vals, notes, cols):
@@ -490,15 +491,15 @@ def h2h_db_and_codon_figures() -> None:
             txt,
             va="center",
             ha="left",
-            fontsize=8.0,
+            fontsize=7.8,
             fontweight="bold" if col == BLUE else "normal",
             color=BLUE if col == BLUE else INK,
         )
     percent_axis(ax2, "x", decimals=0)
     ax2.set_yticks(ys, [lbl for _, lbl, _ in opt_specs])
-    ax2.set_xlim(0, 1.85)
+    ax2.set_xlim(0, 2.05)
     ax2.set_xlabel("Fraction of donor VDJ codons preserved verbatim (46 Minervina constructs)")
-    ax2.set_title("Synthesis codon optimization (5 restriction sites + homopolymers + GC): TCRsift vs DNAChisel", fontsize=9.4)
+    ax2.set_title("Synthesis codon optimization (5 enzymes + homopolymers + repeats + GC): TCRsift vs DNAChisel", fontsize=9.2)
     ax2.grid(axis="x", lw=0.6)
     ax2.set_axisbelow(True)
     ax2.spines["left"].set_visible(False)

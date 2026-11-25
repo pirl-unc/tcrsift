@@ -35,11 +35,14 @@ property of sequence generation probability models.
 
 ## `Pgen`: synthetic generation background
 
-`kmer_pgen_alpha.npz` and `kmer_pgen_beta.npz` are fitted on 500,000 synthetic
-CDR3 sequences per chain generated offline using OLGA's default human T-cell α
-and β models. OLGA (GPL-3.0) is invoked **offline during model generation
-only** and is never imported at runtime, keeping the distributed `tcrsift`
-package under Apache-2.0. Only the fitted NumPy transition tables are bundled.
+`kmer_pgen_alpha.npz`, `kmer_pgen_beta.npz`, `kmer_pgen_mouse_alpha.npz`, and
+`kmer_pgen_mouse_beta.npz` are order-2 amino-acid Markov models (with V/J gene
+marginals) fitted on 500,000 synthetic CDR3 sequences per chain generated
+offline using OLGA's default human (`human_T_alpha`, `human_T_beta`) and mouse
+(`mouse_T_alpha`, `mouse_T_beta`) T-cell models. OLGA (GPL-3.0) is invoked
+**offline during model generation only** and is never imported at runtime,
+keeping the distributed `tcrsift` package under Apache-2.0. Only the fitted
+NumPy transition tables (~30–32 KB each) are bundled.
 
 ## Canonical TCR constant regions (human and mouse)
 

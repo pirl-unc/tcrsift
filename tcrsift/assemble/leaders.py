@@ -101,8 +101,14 @@ def _parse_leader_csv_bytes(
             continue
         gene, allele, func, leader_aa, leader_nt = line.split(",")
         gene_u = gene.strip().upper()
+        # Defensively trim any trailing 1–2 nt exon-boundary overhang so
+        # germline leader_nt is always an exact multiple of 3 matching leader_aa.
+        nt_clean = leader_nt.strip()
+        expected_nt_len = 3 * len(leader_aa)
+        if len(nt_clean) > expected_nt_len:
+            nt_clean = nt_clean[:expected_nt_len]
         by_gene.setdefault(gene_u, []).append((allele, func, leader_aa))
-        nt_index[(gene_u, allele)] = leader_nt
+        nt_index[(gene_u, allele)] = nt_clean
     return _alias_slash_genes(by_gene, nt_index), nt_index
 
 
