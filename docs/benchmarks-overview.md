@@ -12,22 +12,26 @@ Per-patient tables and sensitivity analyses live on the cohort pages for [solid-
 
 ---
 
-## Ontology of biological contexts and assays
+## Choosing a command and mode
 
-TCRsift does **not** apply one universal expression heuristic across all T-cell assays. What a transcriptional signature means depends on both the **assay regime** (direct sequencing vs pMHC multimer vs peptide stimulation vs multi-day expansion culture) and the **anatomical compartment / antigen-exposure history** (fresh solid-tumor TIL vs post-ACT biopsy vs cancer blood vs infection blood):
+Pick the first rule that applies — ex vivo antigen stimulation overrides tissue of origin, and FACS sorting / multimers / assembly are orthogonal flags:
 
-| Regime | Biological compartment & exposure | Assay / signal | Command & mode | Primary (Tier-1) expression or selection signal |
-| --- | --- | --- | --- | --- |
-| **Tumor-resident TILs** | Fresh / untreated solid-tumor TIL (chronic in-situ antigen) | Ex vivo 10x VDJ + GEX | `tcrsift prioritize -o out/ --context solid-tumor [--tcell-type cd4 --exclude-treg] --assemble` | `TumorReactive`, `MANAscore`, `NeoTCR8` (CD8) / `NeoTCR4` (CD4); mouse uses MGI `TumorReactive` + 6 core panels |
-| **Tumor-resident TILs** | Post-ACT / infused TIL biopsy (recently infused expanded cells) | Ex vivo 10x VDJ + GEX | `tcrsift prioritize -o out/ --context post-act --assemble` | `AntigenExperienced`, `Cytolytic`, `Differentiated` (does not assume chronic *CXCL13*/*CD39* residency) |
-| **Circulating T cells** | Cancer-patient peripheral blood (circulating antitumor, *CXCL13*-negative) | Ex vivo 10x VDJ + GEX | `tcrsift prioritize -o out/ --context blood-tumor --assemble` | `NeoTCR_PBL` (Tier 1), then `CirculatingMemory` + 6 core panels |
-| **Circulating T cells** | Infection, vaccine, healthy, or hematologic-malignancy blood/marrow | Ex vivo VDJ + GEX (± pMHC multimers) | `tcrsift prioritize -o out/ --context blood [--call-multimers] --assemble` | `CirculatingMemory` + 6 core panels; with `--call-multimers`, clonal pMHC concordance + NC gating |
-| **Peptide-stimulated T cells** | Short-term (6–24 h) restimulation **with paired unstimulated control** | Paired-control acute activation (no division) | `tcrsift run -s samples.yaml -o out/ --method stimulation` | Within-clone `ΔAIM` and `Δeffector_cytokines` vs `source: control` well |
-| **Peptide-stimulated T cells** | Short-term (6–24 h) restimulation **without paired unstimulated control** | Single-sample acute activation | `tcrsift prioritize -o out/ --context peptide-stim --assemble` | `AIM`, `AcuteActivation`, `Proliferation`, `Cytolytic` (no chronic exhaustion assumption) |
-| **Peptide-stimulated T cells** | Multi-day (7–14 d) peptide / minigene expansion culture | Clonal expansion across antigen pools | `tcrsift run -s samples.yaml -o out/ --method threshold` *(or `logistic`)* | Clonal frequency & specificity tiers across culture pools |
-| **Tissue-agnostic fallback** | Unspecified tissue or exploratory run | Ex vivo 10x VDJ + GEX | `tcrsift prioritize -o out/ --context generic` *(CLI default if `--context` is omitted)* | 6 core state panels only (`Differentiated`, `AntigenExperienced`, `Cytolytic`, `AcuteActivation`, `Proliferation`, `AIM`) |
+1. **Multi-day (7–14 d) antigen expansion culture** → `tcrsift run -s samples.yaml -o out/` *(clonal expansion & pool specificity; `--method threshold` or `--method logistic`)*.
+2. **Short-term (6–24 h) peptide restimulation with a paired unstimulated control** → `tcrsift run -s samples.yaml -o out/ --method stimulation` *(within-clone `ΔAIM` and `Δeffector_cytokines` over `source: control`)*.
+3. **Direct ex vivo sequencing, or unpaired restimulation** → `tcrsift prioritize samples.yaml -o out/ --context <CONTEXT>`, where `<CONTEXT>` only changes which gene signatures receive Tier-1 priority:
+   - `solid-tumor` — fresh TILs (`TumorReactive`, `MANAscore`, `NeoTCR8`/`NeoTCR4`; mouse uses MGI `TumorReactive`)
+   - `blood-tumor` — unstimulated cancer-patient blood (`NeoTCR_PBL`)
+   - `peptide-stim` — unpaired 6–24 h restimulation (`AIM`, `AcuteActivation`, `Proliferation`, `Cytolytic`)
+   - `post-act` — post-ACT / infused TIL biopsies (`AntigenExperienced`, `Cytolytic`, `Differentiated`)
+   - `blood` — other blood / marrow (`CirculatingMemory` + 6 core panels)
+   - `generic` *(default if `--context` is omitted)* — 6 core state panels only (`Differentiated`, `AntigenExperienced`, `Cytolytic`, `AcuteActivation`, `Proliferation`, `AIM`)
+4. **Add orthogonal flags only when your data has them:**
+   - **Sorting / lineage**: `pre_sorted: CD4|CD8` in `samples.yaml`, `--tcell-type cd4|cd8|both`, `--exclude-treg` (recommended for CD4 TILs)
+   - **pMHC multimers**: `--call-multimers`
+   - **Construct assembly**: `--assemble` (add `--germline-vdj-fallback` if 5' contigs are truncated)
+   - **Species**: auto-detected (`--species auto|human|mouse`)
 
-Two legacy anatomy-specific variants remain accepted for backward compatibility: `--context heme` (identical alias for `blood`) and `--context mpe` (effusion variant of `solid-tumor` omitting epithelial `ITGAE`-containing `TumorReactive`). For murine datasets, `--species mouse` (auto-detected under `--species auto`) automatically switches to MGI gene symbols, omits primate/human-lncRNA sets (`NeoTCR4`/`NeoTCR8`/`NeoTCR_PBL`/`MANAscore`), normalizes Cell Ranger `-dv` V-gene names, and enforces `Trbj`/`Trbc` constant parity.
+*(Compatibility variants `--context heme` [alias for `blood`] and `--context mpe` [effusion variant of `solid-tumor` without `ITGAE`/`TumorReactive`] remain accepted.)*
 
 ---
 

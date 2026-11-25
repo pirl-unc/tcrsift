@@ -8,6 +8,14 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.39.1
+
+Simplified the mode-selection guide in `docs/benchmarks-overview.md` and
+`docs/user-guide/til-signatures.md` into a 4-step precedence rule focused
+strictly on choices that change what TCRsift computes (assay stimulation >
+direct ex vivo `--context` > orthogonal flags such as `pre_sorted`,
+`--exclude-treg`, `--call-multimers`, and `--assemble`).
+
 ## 3.39.0
 
 Explicit biological-context & assay ontology, new `post-act` and `peptide-stim`
