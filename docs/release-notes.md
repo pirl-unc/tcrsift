@@ -8,6 +8,38 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.39.0
+
+Explicit biological-context & assay ontology, new `post-act` and `peptide-stim`
+prioritization contexts, and restructured benchmark overview:
+
+- **Context & assay ontology (`tcrsift.PRIMARY_CONTEXTS`, `tcrsift.CONTEXT_ONTOLOGY`)**:
+  Organized `tcrsift prioritize --context` into 6 orthogonal primary biological
+  regimes — `solid-tumor` (fresh TIL), `post-act` (new: post-ACT / infused TIL
+  biopsies where chronic *CXCL13*/*CD39* residency is attenuated; Tier 1
+  `AntigenExperienced`, `Cytolytic`, `Differentiated`), `blood-tumor` (cancer
+  blood), `blood` (infection/vaccine/healthy/heme circulation), `peptide-stim`
+  (new: 6–24 h unpaired restimulation; Tier 1 `AIM`, `AcuteActivation`,
+  `Proliferation`, `Cytolytic`; paired-control restimulation remains
+  `tcrsift run --method stimulation` and multi-day culture remains
+  `tcrsift run --method threshold|logistic`), and `generic` (6 core state panels
+  only) — while keeping `heme` (alias for `blood`) and `mpe` (non-epithelial
+  effusion variant) for backward compatibility.
+- **CD4 TIL Treg warning**: `tcrsift prioritize` now logs an explicit warning
+  recommending `--exclude-treg` when `FOXP3+` Treg-like clones are detected
+  under `--tcell-type cd4`/`both` in `solid-tumor` or `mpe` contexts with
+  `--exclude-treg` disabled.
+- **Restructured benchmark overview & clearer figure labels**: Reordered
+  `docs/benchmarks-overview.md` from objective ground truth outward —
+  **Stage 1: Construct assembly correctness → Stage 2: Identifying expected
+  antigen-specific TCRs (VDJdb `strict_ab`, pMHC multimers, `Pgen`/`Ppost` vs
+  `OLGA`, 16 h restimulation) → Stage 3: Context-dependent expression signatures
+  & selection heuristics** — and updated the prioritization table and SVG
+  figures (`h2h_prioritize_auroc.svg`, `h2h_prioritize_cd4_treg.svg`) to label
+  exact `--context` presets rather than `"tcrsift_default"` and clarify that
+  `NeoTCR8`/`NeoTCR4`/`NeoTCR_PBL`/`MANAscore` are built-in `tcrsift`
+  signatures.
+
 ## 3.38.1
 
 Regenerated all five empirical benchmark suites and all documentation figures on

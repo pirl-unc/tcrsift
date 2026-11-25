@@ -44,8 +44,14 @@ CONTEXT_SIGNATURES = {
     "solid-tumor": ("TumorReactive", "MANAscore", "NeoTCR8", "NeoTCR4", *CORE_SIGNATURES),
     # Avoid the epithelial-residency component of TumorReactive in effusions.
     "mpe": ("MANAscore", "NeoTCR8", "NeoTCR4", "CirculatingMemory", *CORE_SIGNATURES),
+    # Recently infused / post-ACT TIL biopsies: chronic residency exhaustion
+    # (CXCL13/CD39/CD103) is attenuated; prioritize effector/experienced states.
+    "post-act": ("AntigenExperienced", "Cytolytic", "Differentiated", "CirculatingMemory", "AcuteActivation", "Proliferation", "AIM"),
     # No leukemia-specific predictor is shipped. Use broad state coverage.
     "heme": ("CirculatingMemory", *CORE_SIGNATURES),
+    # Short-term (6-24 h) ex vivo peptide/antigen restimulation without a paired
+    # unstimulated control (when paired controls exist, use `tcrsift run --method stimulation`).
+    "peptide-stim": ("AIM", "AcuteActivation", "Proliferation", "Cytolytic", "Differentiated", "AntigenExperienced"),
 }
 # Human neoantigen-reactivity signatures (NeoTCR4/8/PBL, MANAscore) contain
 # primate-restricted genes and human lncRNAs, so default mouse presets omit them.
@@ -55,18 +61,140 @@ CONTEXT_SIGNATURES_MOUSE = {
     "blood-tumor": ("CirculatingMemory", *CORE_SIGNATURES),
     "solid-tumor": ("TumorReactive", *CORE_SIGNATURES),
     "mpe": ("CirculatingMemory", *CORE_SIGNATURES),
+    "post-act": ("AntigenExperienced", "Cytolytic", "Differentiated", "CirculatingMemory", "AcuteActivation", "Proliferation", "AIM"),
     "heme": ("CirculatingMemory", *CORE_SIGNATURES),
+    "peptide-stim": ("AIM", "AcuteActivation", "Proliferation", "Cytolytic", "Differentiated", "AntigenExperienced"),
 }
-# Dedicated tumor/neoantigen-reactivity programs receive Tier-1 round-robin
-# priority under round_robin_mode="tiered" (default when --signatures is unset)
-# before broader state panels backfill any remaining budget.
+# Dedicated tumor/neoantigen-reactivity or assay-specific programs receive Tier-1
+# round-robin priority under round_robin_mode="tiered" (default when --signatures
+# is unset) before broader state panels backfill any remaining budget.
 PRIORITY_CONTEXT_SIGNATURES = {
     "generic": (),
     "blood": (),
     "blood-tumor": ("NeoTCR_PBL",),
     "solid-tumor": ("TumorReactive", "MANAscore", "NeoTCR8", "NeoTCR4"),
     "mpe": ("MANAscore", "NeoTCR8", "NeoTCR4"),
+    "post-act": ("AntigenExperienced", "Cytolytic", "Differentiated"),
     "heme": (),
+    "peptide-stim": ("AIM", "AcuteActivation", "Proliferation", "Cytolytic"),
+}
+
+
+@dataclass(frozen=True)
+class ContextSpec:
+    """Structured metadata describing one biological context preset."""
+
+    name: str
+    category: str
+    compartment: str
+    antigen_exposure: str
+    summary: str
+    recommended_flags: tuple[str, ...] = ()
+    primary: bool = True
+    alias_of: str | None = None
+
+
+PRIMARY_CONTEXTS: tuple[str, ...] = (
+    "solid-tumor",
+    "post-act",
+    "blood-tumor",
+    "blood",
+    "peptide-stim",
+    "generic",
+)
+
+
+CONTEXT_ONTOLOGY: dict[str, ContextSpec] = {
+    "solid-tumor": ContextSpec(
+        name="solid-tumor",
+        category="Tumor-resident TIL",
+        compartment="Fresh / untreated solid tumor",
+        antigen_exposure="Chronic in-situ tumor antigen",
+        summary=(
+            "Fresh solid-tumor TILs. Tier 1 scores TumorReactive, MANAscore, "
+            "NeoTCR8 (CD8), and NeoTCR4 (CD4) before backfilling with core state panels."
+        ),
+        recommended_flags=("--exclude-treg (for CD4 TILs)", "--assemble"),
+    ),
+    "post-act": ContextSpec(
+        name="post-act",
+        category="Tumor-resident TIL",
+        compartment="Post-ACT / infused TIL biopsy",
+        antigen_exposure="Recently infused expanded T cells (attenuated residency exhaustion)",
+        summary=(
+            "Post-adoptive-cell-therapy tumor biopsies where chronic CXCL13/CD39 residency "
+            "programs are attenuated. Tier 1 prioritizes AntigenExperienced, Cytolytic, "
+            "and Differentiated states."
+        ),
+    ),
+    "blood-tumor": ContextSpec(
+        name="blood-tumor",
+        category="Circulating T cells",
+        compartment="Cancer-patient peripheral blood",
+        antigen_exposure="Circulating tumor-reactive T cells (CXCL13-negative)",
+        summary=(
+            "Peripheral blood from cancer patients where CXCL13 is absent. "
+            "Tier 1 prioritizes NeoTCR_PBL before CirculatingMemory and core state panels."
+        ),
+    ),
+    "blood": ContextSpec(
+        name="blood",
+        category="Circulating T cells",
+        compartment="Peripheral blood / marrow (infection, vaccine, healthy, or heme)",
+        antigen_exposure="Acute, recall, or steady-state circulating memory",
+        summary=(
+            "Non-solid-tumor circulating T cells (infection, vaccination, healthy donors, "
+            "or hematologic malignancies). Scores CirculatingMemory and core state panels "
+            "without solid-tumor exhaustion/residency genes."
+        ),
+        recommended_flags=("--call-multimers (for pMHC-barcoded libraries)",),
+    ),
+    "peptide-stim": ContextSpec(
+        name="peptide-stim",
+        category="Peptide-stimulated T cells",
+        compartment="Short-term (6-24 h) restimulated PBMCs / T cells (unpaired)",
+        antigen_exposure="Acute TCR restimulation (no cell division required)",
+        summary=(
+            "Short-term (6-24 h) peptide/antigen restimulation scored without a paired "
+            "unstimulated control. Tier 1 prioritizes AIM, AcuteActivation, Proliferation, "
+            "and Cytolytic. When a paired unstimulated control well is present, prefer "
+            "`tcrsift run --method stimulation`; for 7-14 d expansion culture, use "
+            "`tcrsift run --method threshold` or `--method logistic`."
+        ),
+    ),
+    "generic": ContextSpec(
+        name="generic",
+        category="Tissue-agnostic fallback",
+        compartment="Unspecified tissue or assay",
+        antigen_exposure="None assumed",
+        summary=(
+            "Default when --context is omitted. Scores only the 6 core state panels "
+            "(Differentiated, AntigenExperienced, Cytolytic, AcuteActivation, "
+            "Proliferation, AIM) with no tumor-residency or circulation assumptions."
+        ),
+    ),
+    # Retained for backward compatibility (secondary anatomy-specific variants):
+    "mpe": ContextSpec(
+        name="mpe",
+        category="Tumor-resident TIL",
+        compartment="Malignant pleural effusion / ascites",
+        antigen_exposure="Chronic tumor exposure in fluid (non-epithelial)",
+        summary=(
+            "Compatibility variant of solid-tumor for effusions: scores MANAscore, "
+            "NeoTCR8, and NeoTCR4 while omitting epithelial ITGAE/CD103-containing TumorReactive."
+        ),
+        recommended_flags=("--exclude-treg (for CD4)",),
+        primary=False,
+    ),
+    "heme": ContextSpec(
+        name="heme",
+        category="Circulating T cells",
+        compartment="Blood / bone marrow (hematologic malignancy)",
+        antigen_exposure="Systemic / marrow exposure (non-solid)",
+        summary="Compatibility alias for `blood` (identical CirculatingMemory + core panels).",
+        primary=False,
+        alias_of="blood",
+    ),
 }
 SIGNATURE_LINEAGE = {
     "NeoTCR4": "cd4", "NeoTCR8": "cd8", "NeoTCR_PBL": "cd8", "MANAscore": "cd8",

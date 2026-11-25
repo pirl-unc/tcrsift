@@ -560,6 +560,19 @@ def run_til_prioritize(
     if args.exclude_treg:
         excluded |= clonotypes["is_treg_like"]
         exclusion_flags.append(("is_treg_like", "treg_FOXP3"))
+    elif (
+        args.tcell_type in ("cd4", "both")
+        and args.context in ("solid-tumor", "mpe")
+        and bool(clonotypes["is_treg_like"].any())
+    ):
+        n_treg = int(clonotypes["is_treg_like"].sum())
+        logger.warning(
+            "Detected %d FOXP3+ Treg-like clone(s) in %s (%s) with --exclude-treg disabled; "
+            "intratumoral Tregs score high on AIM/TumorReactive. Pass --exclude-treg to filter them.",
+            n_treg,
+            args.context,
+            args.tcell_type,
+        )
     clonotypes["excluded_reason"] = _join_flags(clonotypes, exclusion_flags)
 
     clonotypes["eligible_for_review"] = (
@@ -944,8 +957,20 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
         help="Allow canonical constant fallback when --assemble has unverified contigs (pass --no-allow-canonical-fallback to fail closed)",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose logging and error tracebacks")
-    parser.add_argument("--context", choices=CONTEXT_SIGNATURES, default=context,
-                        help=f"Signature preset (default: {context}); blood includes vaccine studies, heme includes AML")
+    parser.add_argument(
+        "--context",
+        choices=CONTEXT_SIGNATURES,
+        default=context,
+        help=(
+            f"Biological context / antigen-exposure preset (default: {context}). "
+            "TILs: solid-tumor (fresh TIL), post-act (post-ACT/infused TIL). "
+            "Circulating: blood-tumor (cancer blood), blood (infection/vaccine/healthy/heme). "
+            "Peptide stim: peptide-stim (6-24 h unpaired restim; use `tcrsift run --method stimulation` "
+            "with paired unstimulated controls or `tcrsift run --method threshold` for multi-day culture). "
+            "Fallback: generic (6 core state panels only). "
+            "Compatibility variants: mpe (non-epithelial effusion), heme (alias for blood)."
+        ),
+    )
     parser.add_argument("--tcell-type", choices=("cd8", "cd4", "both"), default="cd8",
                         help="Retain classified CD8, CD4, or both (default: cd8); unknown cells are excluded")
     parser.add_argument("--signatures", nargs="+", help="Replace the preset with named signatures in this order")

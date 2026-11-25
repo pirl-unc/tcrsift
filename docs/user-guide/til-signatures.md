@@ -225,20 +225,22 @@ Additional boundary rules:
 - `--signature-background-draws` must be at least 1,000 and leave at least 10
   expected draws above `--signature-background-quantile`.
 
-## Context presets and lineage rules
+## Context presets and biological ontology
 
-Every preset combines the six core state panels (**Differentiated,
-AntigenExperienced, Cytolytic, AcuteActivation, Proliferation, AIM**) with
-context-specific signatures placed **ahead** of the core panels:
+TCRsift separates **assay regime** (ex vivo single-cell state via `tcrsift prioritize`, pMHC barcoding via `--call-multimers`, paired-control overnight restimulation via `tcrsift run --method stimulation`, and multi-day expansion culture via `tcrsift run --method threshold|logistic`) from **biological compartment / antigen-exposure context** (`--context`).
 
-| Context | Context signatures prepended to core | Intended setting |
-| --- | --- | --- |
-| `generic` (default) | None | Unspecified tissue or exploratory state coverage |
-| `blood` | `CirculatingMemory` | Peripheral blood and vaccine studies (no tumor-derived panels) |
-| `blood-tumor` | `NeoTCR_PBL`, `CirculatingMemory` | Circulating antitumor CD8 T cells in cancer patients |
-| `solid-tumor` | `TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` | Solid-tumor TIL |
-| `mpe` | `MANAscore`, `NeoTCR8`, `NeoTCR4`, `CirculatingMemory` | Malignant pleural effusions (omits `ITGAE`-containing `TumorReactive`) |
-| `heme` | `CirculatingMemory` | AML and other hematologic malignancies (same gene sets as `blood`) |
+Every `prioritize` preset combines the six core state panels (**Differentiated, AntigenExperienced, Cytolytic, AcuteActivation, Proliferation, AIM**) with context-appropriate Tier-1 signatures placed ahead of the core panels:
+
+| Regime | Context | Tier-1 priority signatures (human) | Biological compartment & exposure assumption |
+| --- | --- | --- | --- |
+| **Tumor-resident TILs** | `solid-tumor` | `TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` | Fresh / untreated solid-tumor TIL with chronic in-situ antigen exposure (add `--exclude-treg` for CD4 TILs) |
+| **Tumor-resident TILs** | `post-act` | `AntigenExperienced`, `Cytolytic`, `Differentiated` | Post-ACT / infused TIL biopsies where chronic *CXCL13*/*CD39* residency exhaustion is attenuated |
+| **Circulating T cells** | `blood-tumor` | `NeoTCR_PBL` | Circulating antitumor CD8 T cells in cancer-patient blood (*CXCL13*-negative) |
+| **Circulating T cells** | `blood` | *(none; `CirculatingMemory` + core)* | Infection, vaccine, healthy, or hematologic-malignancy peripheral blood / marrow (add `--call-multimers` for pMHC-barcoded libraries) |
+| **Peptide-stimulated T cells** | `peptide-stim` | `AIM`, `AcuteActivation`, `Proliferation`, `Cytolytic` | Short-term (6–24 h) restimulation without a paired unstimulated control (if a paired control well is available, use `tcrsift run --method stimulation`; for 7–14 d expansion culture, use `tcrsift run --method threshold` or `logistic`) |
+| **Tissue-agnostic fallback** | `generic` *(default)* | *(none; 6 core panels only)* | Unspecified tissue or exploratory state coverage (no tumor-residency or circulation assumption) |
+
+Legacy compatibility variants `--context heme` (alias for `blood`) and `--context mpe` (effusion variant of `solid-tumor` omitting epithelial `ITGAE`-containing `TumorReactive`) remain supported. This ontology is exposed programmatically via `tcrsift.PRIMARY_CONTEXTS` and `tcrsift.CONTEXT_ONTOLOGY` (`dict[str, ContextSpec]`). When `--tcell-type cd4` or `both` is used with `--context solid-tumor` or `mpe` and `--exclude-treg` is disabled, `tcrsift prioritize` logs a warning whenever `FOXP3+` Treg-like clones are detected.
 
 Context applies to the entire run and is never inferred from sample names,
 `tissue`, or `source`.

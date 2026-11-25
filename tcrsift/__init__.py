@@ -57,6 +57,9 @@ _MODULE_EXPORTS = {
     ),
     ".prioritize": (
         "PrioritizeConfig",
+        "ContextSpec",
+        "PRIMARY_CONTEXTS",
+        "CONTEXT_ONTOLOGY",
         "CONTEXT_SIGNATURES",
         "PRIORITY_CONTEXT_SIGNATURES",
         "resolve_signatures",
