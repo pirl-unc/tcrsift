@@ -216,6 +216,7 @@ def _record_leader(
     kozak_score: int | None = None,
     support: str | None = None,
     species: str = "human",
+    data_dir=None,
 ) -> None:
     """Central sink for EVERY signal-peptide derivation path (#263/#267)."""
     result[f"{chain}_leader_aa"] = leader_aa
@@ -229,7 +230,7 @@ def _record_leader(
     if support is not None:
         result[f"{chain}_leader_support"] = support
     # Universal germline comparison (always present; NaN when gene absent).
-    cmp = germline_compare_leader(leader_aa, v_gene, species=species)
+    cmp = germline_compare_leader(leader_aa, v_gene, species=species, data_dir=data_dir)
     g_allele = g_aa = identity = diff = None
     if cmp is not None:
         allele, g_aa, identity, diff = cmp

@@ -59,7 +59,15 @@ class PipelineResult:
         return getattr(self, key)
 
 
-def _common_contig_root(vdj_dirs) -> str | None:
+def _resolve_sheet_path(path_val: str | Path, base_dir: Path | None) -> Path:
+    """Resolve a sample-sheet path relative to ``base_dir`` when not absolute."""
+    p = Path(str(path_val))
+    if not p.is_absolute() and base_dir is not None:
+        return (base_dir / p).resolve()
+    return p.resolve()
+
+
+def _common_contig_root(vdj_dirs, *, base_dir: Path | None = None) -> str | None:
     """Common-ancestor directory of the sample sheet's ``vdj_dirs``, to scan for
     contigs in ``'sheet'`` mode (#201). Returns ``None`` when there is no shared
     ancestor or it resolves to the filesystem root (too broad to rglob safely)."""
@@ -67,7 +75,7 @@ def _common_contig_root(vdj_dirs) -> str | None:
     for d in vdj_dirs:
         if not d:
             continue
-        p_raw = Path(os.path.abspath(str(d)))
+        p_raw = _resolve_sheet_path(d, base_dir)
         dir_paths.append(str(p_raw.parent if p_raw.is_file() else p_raw))
     if not dir_paths:
         return None
@@ -349,8 +357,13 @@ def run_pipeline(
                 from .signature_methods import score_by_name
 
                 stim_adata = adata.copy()
-                sc.pp.normalize_total(stim_adata, target_sum=10_000)
-                sc.pp.log1p(stim_adata)
+                already_log1p = "log1p" in getattr(stim_adata, "uns", {})
+                if not already_log1p and stim_adata.n_obs and stim_adata.n_vars:
+                    x_min = float(stim_adata.X.min())
+                    x_max = float(stim_adata.X.max())
+                    if x_min >= 0 and x_max > 25:
+                        sc.pp.normalize_total(stim_adata, target_sum=10_000)
+                        sc.pp.log1p(stim_adata)
                 for sig_name in ("AIM", "AcuteActivation"):
                     try:
                         vals = score_by_name(
@@ -570,7 +583,8 @@ def run_pipeline(
         "min_timepoints_per_donor": config.filter.min_timepoints_per_donor,
         "min_apcs": config.filter.min_apcs,
         "min_apcs_per_donor": config.filter.min_apcs_per_donor,
-        "min_til_cells_per_donor": config.filter.min_til_cells_per_donor,
+        # min_til_cells_per_donor is applied in Step 6 after match_til populates
+        # max_til_cells_per_donor (applying it here would silently no-op).
     }
     mode_kwargs = resolve_filter_mode_kwargs(
         config.filter.filter_mode, user_filter_kwargs
@@ -917,6 +931,27 @@ def run_pipeline(
     else:
         print("\n[6/7] Skipping TIL matching (no TIL samples specified)")
 
+    # Apply min_til_cells_per_donor now that match_til has populated max_til_cells_per_donor.
+    min_til_per_donor = config.filter.min_til_cells_per_donor
+    if min_til_per_donor is not None and min_til_per_donor > 0:
+        if "max_til_cells_per_donor" in til_matched.columns:
+            before_til = len(til_matched)
+            til_matched = til_matched[
+                pd.to_numeric(til_matched["max_til_cells_per_donor"], errors="coerce").fillna(0)
+                >= min_til_per_donor
+            ].copy()
+            til_matched.to_csv(data_dir / "til_matched.csv", index=False)
+            print(
+                f"  Applied min_til_cells_per_donor >= {min_til_per_donor}: "
+                f"{before_til:,} -> {len(til_matched):,} clonotypes"
+            )
+        else:
+            logger.warning(
+                "min_til_cells_per_donor=%s requested but no TIL matching ran "
+                "(column 'max_til_cells_per_donor' absent); skipping.",
+                min_til_per_donor,
+            )
+
     # Step 7: Assemble
     assembled = None
     n_selected_clones: int | None = None
@@ -1008,7 +1043,12 @@ def run_pipeline(
         _explicit_contigs = config.assemble.contigs_dir or getattr(
             config.assemble, "cellranger_dir", None
         )
-        _sheet_vdj_dirs = [s.vdj_dir for s in sheet_obj.samples if s.vdj_dir]
+        _sheet_base_dir = Path(sample_sheet).resolve().parent if sample_sheet else None
+        _sheet_vdj_dirs = [
+            str(_resolve_sheet_path(s.vdj_dir, _sheet_base_dir))
+            for s in sheet_obj.samples
+            if s.vdj_dir
+        ]
         if (
             _sample_name_from in ("parent", "sheet")
             and not _explicit_contigs
@@ -1027,7 +1067,10 @@ def run_pipeline(
         _contig_sheet = (
             pd.DataFrame(
                 [
-                    {"sample": s.sample, "vdj_dir": s.vdj_dir}
+                    {
+                        "sample": s.sample,
+                        "vdj_dir": str(_resolve_sheet_path(s.vdj_dir, _sheet_base_dir)),
+                    }
                     for s in sheet_obj.samples
                     if s.vdj_dir
                 ]

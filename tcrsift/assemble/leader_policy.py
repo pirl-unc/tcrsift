@@ -142,6 +142,7 @@ def _extract_leader_from_contigs_single(
     chain: str,
     *,
     species: str = "human",
+    data_dir=None,
 ):
     """Extract + QC the signal peptide from contigs for a single chain (#263).
 
@@ -196,7 +197,7 @@ def _extract_leader_from_contigs_single(
                 # V-leader. Falls back (None) when the gene/allele is absent or
                 # the contig is too divergent → Kozak + h-region heuristic (#263).
                 anchored = germline_anchor_leader(
-                    orig_leader, v_gene, species=species
+                    orig_leader, v_gene, species=species, data_dir=data_dir
                 )
                 if anchored is not None:
                     leader_aa = anchored[0]
@@ -219,7 +220,7 @@ def _extract_leader_from_contigs_single(
     _record_leader(
         result, chain, leader_aa, leader_nt, source,
         v_gene=v_gene, kozak_score=score, support=f"{support}/{n_total}",
-        species=species,
+        species=species, data_dir=data_dir,
     )
 
 
@@ -231,7 +232,7 @@ _FROM_CONTIG_SOURCES = frozenset(
 
 
 def _resolve_named_leader(
-    name: str, row, chain: str, *, species: str = "human"
+    name: str, row, chain: str, *, species: str = "human", data_dir=None
 ) -> tuple[str, str | None, str] | None:
     """Resolve a leader directive → ``(aa, nt, source_tag)`` for ``chain``."""
     if name == "germline":
@@ -241,17 +242,17 @@ def _resolve_named_leader(
             gene, _, allele = g_allele.partition("*")
             return (
                 g_aa,
-                germline_leader_nt(gene, allele, species=species),
+                germline_leader_nt(gene, allele, species=species, data_dir=data_dir),
                 "germline_reference_leader",
             )
         v_gene = row.get(f"{chain}_v_gene")
-        cands = germline_vgene_leaders(v_gene, species=species)
+        cands = germline_vgene_leaders(v_gene, species=species, data_dir=data_dir)
         if cands:
             allele, _func, cand_aa = cands[0]
             gene_norm = normalize_vgene(v_gene) or str(v_gene)
             return (
                 cand_aa,
-                germline_leader_nt(gene_norm, allele, species=species),
+                germline_leader_nt(gene_norm, allele, species=species, data_dir=data_dir),
                 "germline_reference_leader",
             )
         return None
@@ -300,6 +301,7 @@ def _substitute_chain_leader(
     *,
     species: str = "human",
     recode: CodonOptimization | None = None,
+    data_dir=None,
 ) -> None:
     """In ``target`` (a row dict), replace ``chain``'s leader with ``new_aa`` and
     re-stitch the affected full-sequence columns (including recoded ``_optimized``)."""
@@ -323,7 +325,7 @@ def _substitute_chain_leader(
     target[f"{chain}_sp_score"] = feats["score"]
     target[f"{chain}_sp_features"] = sp_features_summary(feats)
     cmp = germline_compare_leader(
-        new_aa, orig.get(f"{chain}_v_gene"), species=species
+        new_aa, orig.get(f"{chain}_v_gene"), species=species, data_dir=data_dir
     )
     if cmp is not None:
         allele, g_aa, identity, diff = cmp
@@ -539,6 +541,7 @@ def apply_leader_policy(
     verbose: bool = False,
     species: str = "human",
     recode: CodonOptimization | None = None,
+    data_dir=None,
 ) -> pd.DataFrame:
     """Decide the shipped signal peptide for every clone (von Heijne policy, #270)."""
     _validate_leader_directive(leader_fallback, "leader_fallback", allow_keep=True)
@@ -550,7 +553,8 @@ def apply_leader_policy(
     protected = _protected_divergent_leaders(df)
     force = {"alpha": force_alpha, "beta": force_beta}
     secondary = {"alpha": secondary_alpha, "beta": secondary_beta}
-    df = df.copy()
+    orig_index = df.index
+    df = df.reset_index(drop=True)
     n_forced = n_switched = 0
 
     for idx, row in df.iterrows():
@@ -564,7 +568,7 @@ def apply_leader_policy(
                 if not isinstance(full_chain_val, str) or not full_chain_val:
                     continue
                 res = _resolve_named_leader(
-                    force[chain], work, chain, species=species
+                    force[chain], work, chain, species=species, data_dir=data_dir
                 )
                 if res is not None:
                     new_aa, new_nt, src = res
@@ -572,7 +576,7 @@ def apply_leader_policy(
                         _stash_preswitch(work, chain)
                     _substitute_chain_leader(
                         work, work, chain, new_aa, new_nt, f"forced_{src}",
-                        species=species, recode=recode,
+                        species=species, recode=recode, data_dir=data_dir,
                     )
                     changed = True
                     n_forced += 1
@@ -585,7 +589,7 @@ def apply_leader_policy(
                     and leader_fallback != "keep"
                 ):
                     res = _resolve_named_leader(
-                        leader_fallback, work, chain, species=species
+                        leader_fallback, work, chain, species=species, data_dir=data_dir
                     )
                     if res is None:
                         curated_fb = (
@@ -594,13 +598,13 @@ def apply_leader_policy(
                             else ("CD28" if chain == "alpha" else "CD8A")
                         )
                         res = _resolve_named_leader(
-                            curated_fb, work, chain, species=species
+                            curated_fb, work, chain, species=species, data_dir=data_dir
                         )
                     if res is not None:
                         new_aa, new_nt, src = res
                         _substitute_chain_leader(
                             work, work, chain, new_aa, new_nt, src,
-                            species=species, recode=recode,
+                            species=species, recode=recode, data_dir=data_dir,
                         )
                         changed = True
                         n_switched += 1
@@ -624,14 +628,15 @@ def apply_leader_policy(
             if keep:
                 continue
             res = _resolve_named_leader(
-                leader_fallback, work, chain, species=species
+                leader_fallback, work, chain, species=species, data_dir=data_dir
             )
             if res is None:
                 continue
             new_aa, new_nt, src = res
             _stash_preswitch(work, chain)
             _substitute_chain_leader(
-                work, work, chain, new_aa, new_nt, src, species=species, recode=recode
+                work, work, chain, new_aa, new_nt, src,
+                species=species, recode=recode, data_dir=data_dir,
             )
             changed = True
             n_switched += 1
@@ -644,6 +649,8 @@ def apply_leader_policy(
             for k, v in work.items():
                 if k not in df.columns:
                     df[k] = pd.Series([None] * len(df), index=df.index, dtype=object)
+                elif isinstance(v, str) and pd.api.types.is_numeric_dtype(df[k].dtype):
+                    df[k] = df[k].astype(object)
                 df.at[idx, k] = v
 
     twins, orig_idx = [], []
@@ -658,7 +665,7 @@ def apply_leader_policy(
                 if not isinstance(cur_aa, str) or not isinstance(full_chain_val, str) or not full_chain_val:
                     continue
                 res = _resolve_named_leader(
-                    secondary[chain], row, chain, species=species
+                    secondary[chain], row, chain, species=species, data_dir=data_dir
                 )
                 if res is not None and res[0] != cur_aa:
                     sec.append((chain, secondary[chain], res))
@@ -668,7 +675,7 @@ def apply_leader_policy(
             for chain, name, (new_aa, new_nt, src) in sec:
                 _substitute_chain_leader(
                     twin, row, chain, new_aa, new_nt, f"secondary_{src}",
-                    species=species, recode=recode,
+                    species=species, recode=recode, data_dir=data_dir,
                 )
             twin["leader_variant"] = "secondary:" + "+".join(s[1] for s in sec)
             twins.append(twin)
@@ -679,11 +686,13 @@ def apply_leader_policy(
             df["leader_variant"] = pd.NA
         df.loc[orig_idx, "leader_variant"] = "primary"
         df = pd.concat([df, pd.DataFrame(twins)], ignore_index=True)
+    else:
+        df.index = orig_index
 
     # Rebuild single_chain (and refresh synthesis QC if already present) wherever leaders changed.
     if n_forced or n_switched or twins:
         if linker and {"full_beta_aa", "full_alpha_aa"} <= set(df.columns):
-            df = _add_single_chain(df, linker)
+            df = _add_single_chain(df, linker, recode=recode)
         if "synth_gc_ok" in df.columns:
             df = add_synthesis_qc(df)
     if verbose and (n_forced or n_switched or twins):

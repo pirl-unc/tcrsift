@@ -420,6 +420,7 @@ def assemble_full_sequences(
             vdj_species=vdj_sp,
             constant_species=const_sp,
             codon_species=cod_sp,
+            data_dir=data_dir,
         )
         assembly_results.append(result)
 
@@ -438,7 +439,7 @@ def assemble_full_sequences(
     if linker and "full_beta_aa" in df.columns and "full_alpha_aa" in df.columns:
         if verbose:
             logger.info(f"  Creating single-chain constructs with {linker} linker...")
-        df = _add_single_chain(df, linker)
+        df = _add_single_chain(df, linker, recode=recode)
 
     # Leader policy (#270)
     df = apply_leader_policy(
@@ -449,6 +450,7 @@ def assemble_full_sequences(
         verbose=verbose,
         species=vdj_sp,
         recode=recode,
+        data_dir=data_dir,
     )
 
     # Summary
@@ -642,6 +644,7 @@ def _assemble_clone(
     vdj_species: str = "human",
     constant_species: str = "human",
     codon_species: str = "human",
+    data_dir: str | Path | None = None,
 ) -> dict:
     """Assemble full sequence for a single clone."""
     result: dict = {}
@@ -675,7 +678,7 @@ def _assemble_clone(
             continue
         elif chain_leader == "from_contig":
             _extract_leader_from_contigs_single(
-                row, sample_contigs, result, chain, species=vdj_species
+                row, sample_contigs, result, chain, species=vdj_species, data_dir=data_dir
             )
             if not result.get(f"{chain}_leader_aa"):
                 result[f"{chain}_leader_source"] = "missing_from_contig"
@@ -683,7 +686,7 @@ def _assemble_clone(
             _record_leader(
                 result, chain, chain_leader["aa"], chain_leader["dna"],
                 "curated_default", v_gene=row.get(f"{chain}_v_gene"),
-                species=vdj_species,
+                species=vdj_species, data_dir=data_dir,
             )
 
     if include_constant:
@@ -768,19 +771,32 @@ def _build_full_sequences(
 
         if include_leader and f"{chain}_leader_aa" in result:
             parts_aa.append(result[f"{chain}_leader_aa"])
-        if include_leader and f"{chain}_leader_nt" in result:
-            leader_nt = result[f"{chain}_leader_nt"]
-            parts_nt_blend.append(leader_nt)
-            parts_nt_contig.append(leader_nt)
-            opt_leader_nt = leader_nt or ""
+            leader_nt = result.get(f"{chain}_leader_nt")
+            if isinstance(leader_nt, str) and leader_nt:
+                parts_nt_blend.append(leader_nt)
+                parts_nt_contig.append(leader_nt)
+                opt_leader_nt = leader_nt
+            else:
+                # Back-translate AA-only leader so full_{chain}_nt never drops the leader.
+                parts_nt_blend.append(
+                    optimize_codons(result[f"{chain}_leader_aa"], species=recode.codon_species)
+                )
+                parts_nt_contig.append(None)
 
         if f"vdj_{chain}_aa" in result:
             parts_aa.append(result[f"vdj_{chain}_aa"])
-        if f"vdj_{chain}_nt" in result:
-            vdj_nt = result[f"vdj_{chain}_nt"]
-            parts_nt_blend.append(vdj_nt)
-            parts_nt_contig.append(vdj_nt)
-            opt_vdj_nt = vdj_nt or ""
+            vdj_nt = result.get(f"vdj_{chain}_nt")
+            if isinstance(vdj_nt, str) and vdj_nt:
+                parts_nt_blend.append(vdj_nt)
+                parts_nt_contig.append(vdj_nt)
+                opt_vdj_nt = vdj_nt
+            else:
+                # Back-translate AA-only VDJ so full_{chain}_nt / single_chain_nt
+                # never splice leader_nt + constant_nt with the entire VDJ omitted.
+                parts_nt_blend.append(
+                    optimize_codons(result[f"vdj_{chain}_aa"], species=recode.codon_species)
+                )
+                parts_nt_contig.append(None)
 
         if include_constant and f"{chain}_constant_aa" in result:
             parts_aa.append(result[f"{chain}_constant_aa"])

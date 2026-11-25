@@ -977,6 +977,8 @@ def _add_constant_from_row(
 ):
     """Add constant region sequences directly from row columns if present."""
     for chain in ["alpha", "beta"]:
+        if not result.get(f"vdj_{chain}_aa"):
+            continue
         aa_col = f"{chain}_constant_aa"
         nt_col = f"{chain}_constant_nt"
 
