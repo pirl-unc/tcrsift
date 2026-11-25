@@ -862,7 +862,7 @@ def run_pipeline(
             match_by=config.annotate.match_by,
             match_strictness=getattr(config.annotate, "match_strictness", None),
             match_mode=getattr(config.annotate, "match_mode", "exact"),
-            max_distance=getattr(config.annotate, "max_distance", 1),
+            max_distance=getattr(config.annotate, "max_distance", None),
             exclude_viral=config.annotate.exclude_viral,
             flag_only=config.annotate.flag_only,
             species=run_species,

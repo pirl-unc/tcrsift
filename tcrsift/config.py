@@ -200,7 +200,7 @@ class AnnotateConfig:
     match_by: str = "CDR3ab"
     match_strictness: str | None = None
     match_mode: str = "exact"
-    max_distance: int = 1
+    max_distance: int | None = None
     exclude_viral: bool = False
     flag_only: bool = False
     host_species_filter: str = "all"
@@ -226,14 +226,22 @@ class AnnotateConfig:
                 f"Invalid match_strictness: {self.match_strictness!r}; "
                 "expected 'strict_ab', 'ab_with_partial', or 'b_only'"
             )
-        if self.match_mode not in ("exact", "levenshtein"):
+        if self.match_mode not in ("exact", "levenshtein", "tcrdist"):
             raise ValueError(
-                f"Invalid match_mode: {self.match_mode!r}; expected 'exact' or 'levenshtein'"
+                f"Invalid match_mode: {self.match_mode!r}; "
+                "expected 'exact', 'levenshtein', or 'tcrdist'"
             )
-        if not isinstance(self.max_distance, int) or isinstance(self.max_distance, bool) or self.max_distance < 1:
-            raise ValueError(
-                f"Invalid max_distance: {self.max_distance!r}; expected an integer >= 1"
-            )
+        if self.max_distance is not None:
+            min_dist = 0 if self.match_mode == "tcrdist" else 1
+            if (
+                not isinstance(self.max_distance, int)
+                or isinstance(self.max_distance, bool)
+                or self.max_distance < min_dist
+            ):
+                raise ValueError(
+                    f"Invalid max_distance: {self.max_distance!r}; "
+                    f"expected an integer >= {min_dist}"
+                )
 
 
 @dataclass

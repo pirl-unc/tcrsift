@@ -289,15 +289,15 @@ def register_run(subparsers) -> None:
     )
     annot_group.add_argument(
         "--match-mode",
-        choices=["exact", "levenshtein"],
+        choices=["exact", "levenshtein", "tcrdist"],
         default=None,
-        help="CDR3 comparison mode: 'exact' (default) or 'levenshtein'.",
+        help="CDR3/TCR comparison mode: 'exact' (default), 'levenshtein', or 'tcrdist'.",
     )
     annot_group.add_argument(
         "--max-distance",
         type=int,
         default=None,
-        help="Maximum Levenshtein edit distance when --match-mode=levenshtein (default: 1).",
+        help="Maximum match distance (defaults: 1 for levenshtein; 48 paired / 12 b_only for tcrdist).",
     )
     annot_group.add_argument(
         "--exclude-viral", action="store_true", default=None, help="Remove viral clones"

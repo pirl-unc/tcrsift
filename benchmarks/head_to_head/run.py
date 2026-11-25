@@ -1666,10 +1666,13 @@ def run_db_matching_vs_scirpy(
         ("tcrsift_strict_ab_exact", "strict_ab", "exact", 1),
         ("tcrsift_ab_with_partial_exact", "ab_with_partial", "exact", 1),
         ("tcrsift_strict_ab_lev1", "strict_ab", "levenshtein", 1),
+        ("tcrsift_strict_ab_tcrdist_r24", "strict_ab", "tcrdist", 24),
+        ("tcrsift_strict_ab_tcrdist_r48", "strict_ab", "tcrdist", 48),
+        ("tcrsift_trb_tcrdist_r0", "b_only", "tcrdist", 0),
     ):
         t0 = time.perf_counter()
         res = match_clonotypes(
-            min_q[["CDR3_alpha", "CDR3_beta", "CDR3ab"]].copy(),
+            min_q[["CDR3_alpha", "CDR3_beta", "CDR3ab", "alpha_v_gene", "beta_v_gene"]].copy(),
             vdjdb_no_min,
             match_strictness=strictness,
             match_mode=mode,
@@ -1835,10 +1838,13 @@ def run_db_matching_vs_scirpy(
         ("tcrsift_strict_ab_exact", "strict_ab", "exact", 1),
         ("tcrsift_ab_with_partial_exact", "ab_with_partial", "exact", 1),
         ("tcrsift_strict_ab_lev1", "strict_ab", "levenshtein", 1),
+        ("tcrsift_strict_ab_tcrdist_r24", "strict_ab", "tcrdist", 24),
+        ("tcrsift_strict_ab_tcrdist_r48", "strict_ab", "tcrdist", 48),
+        ("tcrsift_trb_tcrdist_r0", "b_only", "tcrdist", 0),
     ):
         t0 = time.perf_counter()
         res = match_clonotypes(
-            d1_q[["CDR3_alpha", "CDR3_beta", "CDR3ab"]].copy(),
+            d1_q[["CDR3_alpha", "CDR3_beta", "CDR3ab", "v_alpha", "v_beta"]].copy(),
             vdjdb_no_10x,
             match_strictness=strictness,
             match_mode=mode,

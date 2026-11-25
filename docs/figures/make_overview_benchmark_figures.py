@@ -411,10 +411,10 @@ def h2h_db_and_codon_figures() -> None:
     ]
     methods = [
         ("tcrsift_strict_ab_exact", "TCRsift strict_ab exact", AQUA),
-        ("tcrsift_strict_ab_lev1", "TCRsift strict_ab Lev-1", BLUE),
+        ("tcrsift_strict_ab_lev1", "TCRsift strict_ab Lev-1", "#4c78a8"),
         ("scirpy_v0.26_lev1_paired", "scirpy 0.26 paired Lev-1", "#6c5ce7"),
+        ("tcrsift_strict_ab_tcrdist_r48", "TCRsift tcrdist r<=48", BLUE),
         ("tcrdist3_v0.3_paired_r48", "tcrdist3 0.3 paired r<=48", "#2a9d8f"),
-        ("tcrdist3_v0.3_trb_r0", "tcrdist3 0.3 TRB+V r=0", NEUTRAL),
         ("tcrsift_ab_with_partial_exact", "TCRsift ab_with_partial", ORANGE),
     ]
     xs = np.arange(len(cohorts))

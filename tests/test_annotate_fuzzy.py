@@ -345,7 +345,7 @@ class TestMatchModeValidation:
         with pytest.raises(TCRsiftValidationError, match="match_mode"):
             match_clonotypes(
                 clones, db,
-                match_mode="tcrdist",  # not in MATCH_MODES
+                match_mode="hamming",  # not in MATCH_MODES
                 verbose=False, show_progress=False,
             )
 

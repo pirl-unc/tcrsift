@@ -258,8 +258,8 @@ tcrsift annotate -i filtered/tier1.csv -o annotated.csv \
 | `--species` | Query TCR species: `auto` (default), `human`, or `mouse` |
 | `--host-species-filter` | `all` (default; marks cross-species matches with `_cross`) or `same` (drop heterologous host entries) |
 | `--database-match` | Chain-matching policy: `ab_with_partial` (default), `strict_ab` (require paired αβ on both query and database entry), or `b_only` |
-| `--match-mode` | CDR3 comparison: `exact` (default) or `levenshtein` |
-| `--max-distance` | Maximum edit distance when `--match-mode levenshtein` is set (default `1`) |
+| `--match-mode` | TCR/CDR3 similarity mode: `exact` (default), `levenshtein`, or `tcrdist` (V-gene CDR1/CDR2/CDR2.5 + BLOSUM62 trimmed-CDR3) |
+| `--max-distance` | Maximum match distance (defaults: `1` for `levenshtein`; `48` paired / `12` `b_only` for `tcrdist`; `0` allowed for `tcrdist`) |
 | `--match-by` | Legacy alias for `--database-match`: `CDR3ab` (`ab_with_partial`) or `CDR3b_only` (`b_only`) |
 | `--exclude-viral` | Drop clonotypes matching viral epitopes |
 | `--flag-only` | Add annotation columns without dropping viral rows |
