@@ -1119,7 +1119,7 @@ def run_pipeline(
             constant_species=getattr(config.assemble, "constant_species", None),
             codon_species=getattr(config.assemble, "codon_species", None),
             germline_vdj_fallback=bool(
-                getattr(config.assemble, "germline_vdj_fallback", False)
+                getattr(config.assemble, "germline_vdj_fallback", True)
             ),
             data_dir=cache_dir,
             auto_download_germline=bool(

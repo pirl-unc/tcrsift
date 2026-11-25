@@ -92,7 +92,7 @@ def assemble_full_sequences(
     species: str = "human",
     constant_species: str | None = None,
     codon_species: str | None = None,
-    germline_vdj_fallback: bool = False,
+    germline_vdj_fallback: bool = True,
     data_dir: str | Path | None = None,
     auto_download_germline: bool = False,
 ) -> pd.DataFrame:
@@ -301,17 +301,35 @@ def assemble_full_sequences(
             data_dir=data_dir,
             auto_download=auto_download_germline,
         )
-        if verbose:
-            for ch in ("alpha", "beta"):
-                sc = df.get(f"{ch}_vdj_source")
-                if sc is not None:
-                    n_5p = int((sc == VDJ_SOURCE_5PRIME_RESCUED).sum())
-                    n_vj = int((sc == VDJ_SOURCE_VJ_RECONSTRUCTED).sum())
-                    if n_5p or n_vj:
-                        logger.info(
-                            f"  Germline VDJ fallback ({ch}): "
-                            f"{n_5p:,} 5'-partial rescued, {n_vj:,} V+J reconstructed"
-                        )
+        n_unresolved = 0
+        for ch in ("alpha", "beta"):
+            sc = df.get(f"{ch}_vdj_source")
+            if sc is not None:
+                n_5p = int((sc == VDJ_SOURCE_5PRIME_RESCUED).sum())
+                n_vj = int((sc == VDJ_SOURCE_VJ_RECONSTRUCTED).sum())
+                if verbose and (n_5p or n_vj):
+                    logger.info(
+                        f"  Germline VDJ fallback ({ch}): "
+                        f"{n_5p:,} 5'-partial rescued, {n_vj:,} V+J reconstructed"
+                    )
+                cdr3_col = f"CDR3_{ch}"
+                if cdr3_col in df.columns:
+                    has_cdr3 = df[cdr3_col].notna() & (df[cdr3_col].astype(str).str.strip() != "")
+                    n_unresolved += int((sc.isna() & has_cdr3).sum())
+        if n_unresolved > 0:
+            from .vregion import reference_is_available as _vregion_ref_available
+
+            if not _vregion_ref_available(data_dir=data_dir, species=vdj_sp):
+                grp = "germline_mouse" if vdj_sp == "mouse" else "germline"
+                logger.warning(
+                    "  %d chain(s) have truncated or missing VDJ sequences and could not be "
+                    "germline-rescued because IMGT %s V/J references are not cached. "
+                    "Run `tcrsift data download --group %s` or pass --auto-download-germline "
+                    "(or --no-germline-vdj-fallback for strict contig-only assembly).",
+                    n_unresolved,
+                    vdj_sp,
+                    grp,
+                )
 
     constant_seqs = {}
     if include_constant and constant_source in ("canonical", "ensembl"):

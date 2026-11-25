@@ -497,17 +497,18 @@ def register_run(subparsers) -> None:
     )
     asm_group.add_argument(
         "--germline-vdj-fallback",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=None,
-        help="Rescue 5'-truncated contigs and bare (v_gene, CDR3, j_gene) rows "
-        "from cached IMGT V-REGION + J-REGION germline references.",
+        help="Auto-detect and rescue 5'-truncated contigs and bare (v_gene, CDR3, j_gene) "
+        "rows from cached IMGT V-REGION + J-REGION germline references "
+        "(default: enabled; pass --no-germline-vdj-fallback for strict contig-only assembly).",
     )
     asm_group.add_argument(
         "--auto-download-germline",
         action="store_true",
         default=None,
-        help="With --germline-vdj-fallback, automatically download missing IMGT "
-        "V-REGION and J-REGION germline references into the cache.",
+        help="Automatically download missing IMGT V-REGION and J-REGION germline "
+        "references into the cache when germline VDJ fallback is enabled.",
     )
 
     out_group = p_run.add_argument_group("Output options")

@@ -537,7 +537,7 @@ def load_cellranger_vdj(
             df["vdj_nt"] = joined_nt.where(nt_complete, other=None)
 
         # Retain contiguous stop-free 3' segment suffixes (at least cdr3+fwr4) on
-        # 5'-partial contigs so opt-in --germline-vdj-fallback can rescue only the
+        # 5'-partial contigs so germline VDJ fallback (default) can rescue only the
         # missing N-terminal framework prefix while keeping sequenced donor codons.
         if (~seg_complete).any():
             partial_aa_vals: list[str | None] = [None] * len(df)

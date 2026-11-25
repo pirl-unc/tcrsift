@@ -330,10 +330,10 @@ Outputs written to `-o`:
   (`β-linker-α`, default `--single-chain-linker T2A`) protein and codon-optimized
   DNA constructs for every shortlisted candidate. When `vdj_dir` entries on the
   sample sheet contain Cell Ranger `*contig*.fasta` files, native V-gene leader
-  peptides (`from_contig`) and J→C junction checks are used automatically; pass
-  `--germline-vdj-fallback` (with cached IMGT `germline` / `germline_mouse`
-  references) when 5' V-regions are truncated or contig FASTAs were not
-  deposited.
+  peptides (`from_contig`) and J→C junction checks are used automatically;
+  5'-truncated or FASTA-less chains are rescued automatically from cached IMGT
+  `germline` / `germline_mouse` references (pass `--no-germline-vdj-fallback`
+  for strict contig-only assembly).
 - `prioritization.json`: package version, CLI arguments, resolved signatures,
   sequential `cell_filters` counts, per-sample retained cell counts,
   reference-database status, and `assembly` summary statistics.

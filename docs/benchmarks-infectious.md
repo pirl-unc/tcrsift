@@ -69,12 +69,13 @@ longitudinal vaccination, and overnight peptide stimulation (see also the
 - **IMGT germline V+J fallback rescues full-length constructs in 5'-truncated VDJ
   deposits.** In Fischer et al. 2021 (`GSE171037`), where 98.7%–99.7% of
   called TCR contigs terminate downstream of the V-leader start codon, 0 of
-  160 paired α/β clones (137 in `GT_6`, 23 in `GT_2`) assemble from contig
-  sequences alone; enabling `--germline-vdj-fallback` against cached IMGT human
-  `V-REGION` and `J-REGION` references rescues 160 of 160 (100%) full-length
-  single-chain constructs (32 rescued from 5'-partial contigs on both chains
-  preserving donor framework/CDR3/FR4 codons, and 23 with donor-contig-verified
-  J→C junctions on both chains), setting `construct_contig_verified = False`.
+  160 paired α/β clones (137 in `GT_6`, 23 in `GT_2`) assemble in strict
+  contig-only mode (`--no-germline-vdj-fallback`); default germline fallback
+  against cached IMGT human `V-REGION` and `J-REGION` references rescues 160 of
+  160 (100%) full-length single-chain constructs (32 rescued from 5'-partial
+  contigs on both chains preserving donor framework/CDR3/FR4 codons, and 23
+  with donor-contig-verified J→C junctions on both chains), setting
+  `construct_contig_verified = False`.
 - **Clonal concordance removes >96% of sticky pMHC multimer calls.** Single-cell
   dextramer calling calibrated against negative-control multimers matches 10x
   Genomics' published calls on 100% of jointly called single-binder cells in
@@ -470,18 +471,17 @@ each paired α/β clone (`summarize_clone_multimer_specificity`):
   cells in a clone; singleton binders (such as naive `MART-1`
   precursors) must be evaluated with stricter per-cell UMI and negative-control
   thresholds or CITE-seq CD45RA/CD45RO gating.
-- **5'-partial VDJ deposits require germline V+J fallback for construct
+- **5'-partial VDJ deposits rely on germline V+J fallback for construct
   assembly.** Retaining validated `productive == "None"` contigs recovers
   clonotype tracking and paired expression analysis in 5'-truncated deposits
   (Fischer 2021, where 98.7%–99.7% of TCR contigs are 5'-incomplete and 0
-  of 160 paired α/β clones span both leader start codons). Passing
-  `--germline-vdj-fallback` against cached IMGT `V-REGION` and `J-REGION`
-  references assembles all 160 paired clones (137 in `GT_6`, 23 in `GT_2`),
-  including 32 clones rescued from 5'-partial contigs on both chains (30 +
-  2) and 23 with donor-contig-verified J→C junctions on both chains (21 +
-  2), while setting `construct_contig_verified = False` because N-terminal
-  framework residues on imputed chains come from IMGT germline rather than
-  5'-complete donor reads.
+  of 160 paired α/β clones span both leader start codons). Default germline
+  fallback against cached IMGT `V-REGION` and `J-REGION` references assembles
+  all 160 paired clones (137 in `GT_6`, 23 in `GT_2`), including 32 clones
+  rescued from 5'-partial contigs on both chains (30 + 2) and 23 with
+  donor-contig-verified J→C junctions on both chains (21 + 2), while setting
+  `construct_contig_verified = False` because N-terminal framework residues on
+  imputed chains come from IMGT germline rather than 5'-complete donor reads.
 - **Other contexts, lineages, and species.** Cancer-patient circulating
   antitumor blood (`--context blood-tumor`), longitudinal post-ACT (`T30`)
   biopsies, and human CD4+ TILs (`--tcell-type cd4`) are evaluated on the

@@ -52,8 +52,8 @@ tcrsift run \
 | `--method` | Tiering method: `threshold` (default), `logistic`, or `stimulation` |
 | `--fdr-scope` | Tiering scope: `auto` (default), `global`, `per-donor`, or `per-sample` |
 | `--call-multimers` | Extract 10x Feature Barcode pMHC multimers and attach clonal concordance columns |
-| `--germline-vdj-fallback` | Rescue 5'-truncated contigs and bare `(v_gene, CDR3, j_gene)` rows from cached IMGT V+J germlines |
-| `--auto-download-germline` | Automatically fetch missing IMGT V-REGION and J-REGION references when `--germline-vdj-fallback` is set |
+| `--[no-]germline-vdj-fallback` | Auto-detect and rescue 5'-truncated contigs and bare `(v_gene, CDR3, j_gene)` rows from cached IMGT V+J germlines (default: enabled; intact donor contigs are preserved verbatim) |
+| `--auto-download-germline` | Automatically fetch missing IMGT V-REGION and J-REGION references into the cache when germline VDJ fallback is enabled |
 | `--no-pgen-ppost` | Skip default k-mer `Pgen`/`Ppost` scoring during clonotyping |
 | `--no-report` | Skip PDF summary report generation |
 | `--skip-plots` | Skip PNG plot generation |
@@ -100,7 +100,7 @@ tcrsift prioritize samples.yaml -o candidates/ --context solid-tumor
 | `--exclude-treg`, `--treg-foxp3-fraction` | Opt-in exclusion of `FOXP3`/`Foxp3`+ Treg-like clones (audited in `risk_flags` as `treg_FOXP3`; default fraction threshold `0.5`) |
 | `--call-multimers` | Call 10x Feature Barcode pMHC multimers and attach clonal specificity/concordance columns |
 | `--assemble` | Assemble validated full-length `β-2A-α` TCR constructs for shortlisted candidates (`candidate_constructs.csv` + `candidate_constructs.fasta`; auto-detects sample `*contig*.fasta` leaders) |
-| `--germline-vdj-fallback` | Reconstruct 5'-truncated or bare `(v_gene, CDR3, j_gene)` chains from cached IMGT V-REGION + J-REGION references when `--assemble` is enabled |
+| `--[no-]germline-vdj-fallback` | Auto-detect and rescue 5'-truncated or bare `(v_gene, CDR3, j_gene)` chains from cached IMGT V-REGION + J-REGION references when `--assemble` is enabled (default: enabled; pass `--no-germline-vdj-fallback` for strict contig-only assembly) |
 | `--single-chain-linker` | 2A linker for `--assemble` constructs: `T2A` (default), `P2A`, `E2A`, `F2A`, or `none` |
 
 See [Clone Prioritization](til-signatures.md) for all QC, VDJ, expression, V/J
@@ -296,8 +296,8 @@ tcrsift assemble -i annotated.csv -o sequences.csv \
 | `--constant-species`, `--codon-species` | Override constant-region or codon-optimization species (e.g. `--constant-species mouse` for chimeric human-VDJ / murine-constant constructs) |
 | `--single-chain` | Emit β-linker-α single-chain construct (`single_chain_aa`, `single_chain_nt`) |
 | `--linker` | 2A peptide: `T2A` (default), `P2A`, `E2A`, or `F2A` |
-| `--germline-vdj-fallback` | Reconstruct missing 5' V-region prefixes (`partial_VDJ_*`) or bare `(v_gene, CDR3, j_gene)` chains from cached IMGT V-REGION + J-REGION references (`construct_contig_verified=False`) |
-| `--auto-download-germline` | Automatically fetch missing IMGT V-REGION and J-REGION references into the cache when `--germline-vdj-fallback` is set |
+| `--[no-]germline-vdj-fallback` | Auto-detect and rescue missing 5' V-region prefixes (`partial_VDJ_*`) or bare `(v_gene, CDR3, j_gene)` chains from cached IMGT V-REGION + J-REGION references (`construct_contig_verified=False`; default: enabled; intact donor contigs are preserved verbatim) |
+| `--auto-download-germline` | Automatically fetch missing IMGT V-REGION and J-REGION references into the cache when germline VDJ fallback is enabled |
 | `--fasta`, `--airr` | Optional FASTA or AIRR output paths |
 
 ---
