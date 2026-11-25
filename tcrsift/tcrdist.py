@@ -431,7 +431,11 @@ class TCRDistIndex:
             va_row = self._v_pw_a.get(qva) if qva else None
             if va_row is None:
                 return None
-            va_cands = [(va_k, va_row[va_k]) for va_k in self._va_keys if va_k in va_row and va_row[va_k] <= radius]
+            va_cands = []
+            for va_k in self._va_keys:
+                d_va = va_row.get(va_k)
+                if d_va is not None and d_va <= radius:
+                    va_cands.append((va_k, d_va))
         else:
             va_cands = [("", 0)] if "" in self._v_keys_by_a else []
 
