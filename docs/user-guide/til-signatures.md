@@ -234,7 +234,6 @@ For multi-day antigen expansion cultures use `tcrsift run`, and for 6–24 h res
 | `solid-tumor` | `TumorReactive`, `MANAscore`, `NeoTCR8`, `NeoTCR4` | Fresh TILs (add `--exclude-treg` for CD4 TILs) |
 | `blood-tumor` | `NeoTCR_PBL` | Unstimulated cancer-patient blood |
 | `peptide-stim` | `AIM`, `AcuteActivation`, `Proliferation`, `Cytolytic` | Unpaired 6–24 h restimulation |
-| `post-act` | `AntigenExperienced`, `Cytolytic`, `Differentiated` | Post-ACT / infused TIL biopsies |
 | `blood` | *(none; `CirculatingMemory` + core)* | Other blood / marrow (add `--call-multimers` for pMHC barcodes) |
 | `generic` *(default)* | *(none; 6 core panels only)* | Unspecified tissue / exploratory |
 

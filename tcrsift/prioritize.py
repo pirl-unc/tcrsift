@@ -44,9 +44,6 @@ CONTEXT_SIGNATURES = {
     "solid-tumor": ("TumorReactive", "MANAscore", "NeoTCR8", "NeoTCR4", *CORE_SIGNATURES),
     # Avoid the epithelial-residency component of TumorReactive in effusions.
     "mpe": ("MANAscore", "NeoTCR8", "NeoTCR4", "CirculatingMemory", *CORE_SIGNATURES),
-    # Recently infused / post-ACT TIL biopsies: chronic residency exhaustion
-    # (CXCL13/CD39/CD103) is attenuated; prioritize effector/experienced states.
-    "post-act": ("AntigenExperienced", "Cytolytic", "Differentiated", "CirculatingMemory", "AcuteActivation", "Proliferation", "AIM"),
     # No leukemia-specific predictor is shipped. Use broad state coverage.
     "heme": ("CirculatingMemory", *CORE_SIGNATURES),
     # Short-term (6-24 h) ex vivo peptide/antigen restimulation without a paired
@@ -61,7 +58,6 @@ CONTEXT_SIGNATURES_MOUSE = {
     "blood-tumor": ("CirculatingMemory", *CORE_SIGNATURES),
     "solid-tumor": ("TumorReactive", *CORE_SIGNATURES),
     "mpe": ("CirculatingMemory", *CORE_SIGNATURES),
-    "post-act": ("AntigenExperienced", "Cytolytic", "Differentiated", "CirculatingMemory", "AcuteActivation", "Proliferation", "AIM"),
     "heme": ("CirculatingMemory", *CORE_SIGNATURES),
     "peptide-stim": ("AIM", "AcuteActivation", "Proliferation", "Cytolytic", "Differentiated", "AntigenExperienced"),
 }
@@ -74,7 +70,6 @@ PRIORITY_CONTEXT_SIGNATURES = {
     "blood-tumor": ("NeoTCR_PBL",),
     "solid-tumor": ("TumorReactive", "MANAscore", "NeoTCR8", "NeoTCR4"),
     "mpe": ("MANAscore", "NeoTCR8", "NeoTCR4"),
-    "post-act": ("AntigenExperienced", "Cytolytic", "Differentiated"),
     "heme": (),
     "peptide-stim": ("AIM", "AcuteActivation", "Proliferation", "Cytolytic"),
 }
@@ -96,7 +91,6 @@ class ContextSpec:
 
 PRIMARY_CONTEXTS: tuple[str, ...] = (
     "solid-tumor",
-    "post-act",
     "blood-tumor",
     "blood",
     "peptide-stim",
@@ -115,17 +109,6 @@ CONTEXT_ONTOLOGY: dict[str, ContextSpec] = {
             "NeoTCR8 (CD8), and NeoTCR4 (CD4) before backfilling with core state panels."
         ),
         recommended_flags=("--exclude-treg (for CD4 TILs)", "--assemble"),
-    ),
-    "post-act": ContextSpec(
-        name="post-act",
-        category="Tumor-resident TIL",
-        compartment="Post-ACT / infused TIL biopsy",
-        antigen_exposure="Recently infused expanded T cells (attenuated residency exhaustion)",
-        summary=(
-            "Post-adoptive-cell-therapy tumor biopsies where chronic CXCL13/CD39 residency "
-            "programs are attenuated. Tier 1 prioritizes AntigenExperienced, Cytolytic, "
-            "and Differentiated states."
-        ),
     ),
     "blood-tumor": ContextSpec(
         name="blood-tumor",

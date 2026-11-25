@@ -264,7 +264,7 @@ def run_prioritize_baselines(
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(m_scores, "raw_cxcl13", k_m)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr8", _topk_mask_among_expanded(m_scores, "sc_neotcr8", k_m)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(m_scores, "sc_composite", k_m)),
-        ("tcrsift_default", "signature_TumorReactive_percentile", sel_tcr_m),
+        ("tcrsift_solid_tumor", "signature_TumorReactive_percentile", sel_tcr_m),
     ):
         rows.append(
             _eval_method_row("meng_pdac_cd8", "TR_vs_NTR", m_name, m_scores[scol].to_numpy(), pos_m, neg_m, sel_mask, pos_m, neg_m)
@@ -335,7 +335,7 @@ def run_prioritize_baselines(
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(ch_tab, "raw_cxcl13", k_ch)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr8", _topk_mask_among_expanded(ch_tab, "sc_neotcr8", k_ch)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(ch_tab, "sc_composite", k_ch)),
-        ("tcrsift_default", "signature_TumorReactive_percentile_max", sel_tcr_ch),
+        ("tcrsift_solid_tumor", "signature_TumorReactive_percentile_max", sel_tcr_ch),
     ):
         rows.append(
             _eval_method_row("chiffelle_melanoma_cd8", "TR_vs_NTR", m_name, ch_tab[scol].to_numpy(), pos_ch, neg_ch, sel_mask, pos_ch, neg_ch)
@@ -410,7 +410,7 @@ def run_prioritize_baselines(
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(pul_tab, "raw_cxcl13", k_pul)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr_pbl", _topk_mask_among_expanded(pul_tab, "sc_neotcr_pbl", k_pul)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(pul_tab, "sc_composite", k_pul)),
-        ("tcrsift_default", "signature_NeoTCR_PBL_percentile_max", sel_tcr_pul),
+        ("tcrsift_blood_tumor", "signature_NeoTCR_PBL_percentile_max", sel_tcr_pul),
     ):
         rows.append(
             _eval_method_row(
@@ -565,7 +565,7 @@ def run_prioritize_baselines(
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(v_clones, "raw_cxcl13", k_v)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr4", _topk_mask_among_expanded(v_clones, "sc_neotcr4", k_v)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(v_clones, "sc_composite", k_v)),
-        ("tcrsift_default_excl_treg", "signature_TumorReactive_percentile_max", sel_tcr_v),
+        ("tcrsift_solid_tumor_cd4_excl_treg", "signature_TumorReactive_percentile_max", sel_tcr_v),
     ):
         rows.append(
             _eval_method_row(
@@ -656,7 +656,7 @@ def run_prioritize_baselines(
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(oh_clones, "raw_cxcl13", k_oh)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr4", _topk_mask_among_expanded(oh_clones, "sc_neotcr4", k_oh)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(oh_clones, "sc_composite", k_oh)),
-        ("tcrsift_default_excl_treg", "signature_TumorReactive_percentile_max", sel_tcr_oh),
+        ("tcrsift_solid_tumor_cd4_excl_treg", "signature_TumorReactive_percentile_max", sel_tcr_oh),
     ):
         rows.append(
             _eval_method_row(
