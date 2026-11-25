@@ -8,6 +8,25 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.38.1
+
+Regenerated all five empirical benchmark suites and all documentation figures on
+the post-`3.38.0` codebase:
+
+- **Full benchmark verification**: Re-ran `benchmarks/public_til/`,
+  `benchmarks/public_infectious/`, `benchmarks/public_blood_cd4/`,
+  `benchmarks/public_mouse/`, and `benchmarks/head_to_head/` end-to-end against
+  VDJdb `2026-11-06`, IMGT human/mouse references, `stitchr/thimble v1.3.1`,
+  `OLGA v1.3.0`, and `Scanpy 1.12.3`. Every scientific metric (AUROCs, recall,
+  precision, clone/shortlist counts, assembly completeness, donor polymorphism
+  preservation, Pgen/Ppost correlation, and multimer concordance) matched
+  `3.37.1` identically.
+- **Figures & runner fix**: Regenerated all SVG figures via all six scripts in
+  `docs/figures/` (including tightened `bbox_inches="tight"` bounds on the five
+  methods/schematic SVGs from `make_figures.py`), and fixed
+  `benchmarks/public_til/run.py` to count entries from the relational VDJdb
+  layout (`chains.tsv.gz` + `records.tsv.gz`) via `load_vdjdb`.
+
 ## 3.38.0
 
 Dead-code removal, internal helper deduplication, and `til-select` cleanup:

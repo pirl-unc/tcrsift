@@ -1,5 +1,5 @@
 {
-  "tcrsift_version": "3.37.1",
+  "tcrsift_version": "3.38.1",
   "vdjdb_release": "vdjdb-2026-11-06",
   "vdjdb_entries": 280894,
   "vdjdb_paired_ab_entries": 200180,
@@ -37,7 +37,7 @@
   },
   "tenx_dextramer": {
     "tenx_donor1": {
-      "seconds": 141.6,
+      "seconds": 97.7,
       "cells_after_gex_qc": 34220,
       "cells_retained": 24887,
       "clones_scored": 15132,
@@ -52,7 +52,7 @@
       "cell_peptide_agreement_vs_10x": 1.0
     },
     "tenx_donor2": {
-      "seconds": 116.9,
+      "seconds": 74.0,
       "cells_after_gex_qc": 67789,
       "cells_retained": 38314,
       "clones_scored": 7741,
