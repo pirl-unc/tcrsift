@@ -3,13 +3,15 @@
 
     python docs/figures/make_overview_benchmark_figures.py
 
-Produces six single-panel SVGs in ``docs/assets/figures/``:
-1. ``h2h_prioritize_auroc.svg`` — clone-level AUROC across 5 human ex vivo cohorts.
+Produces eight single-panel SVGs in ``docs/assets/figures/``:
+1. ``h2h_prioritize_auroc.svg`` — clone-level AUROC across 5 human ex vivo cohorts (incl. ``pyucell``).
 2. ``h2h_prioritize_cd4_treg.svg`` — CD4 shortlist Treg fraction on Veatch 2022 and Oh 2020.
 3. ``h2h_assembly_stitchr.svg`` — construct assembly completion vs ``stitchr`` / ``thimble 1.3.1``.
-4. ``h2h_pgen_olga.svg`` — cross-donor public sharing AUROC and speed vs ``OLGA 1.3.0``.
-5. ``h2h_multimer_counts.svg`` — sticky ``KLGGALQAK`` / HIV Gag false positives vs canonical viral clones.
-6. ``h2h_multimer_precision.svg`` — cognate epitope precision on 10x-held-out ``strict_ab`` VDJdb.
+4. ``h2h_codon_opt_dnachisel.svg`` — synthesis codon optimization & donor codon preservation vs ``DNAChisel 3.2``.
+5. ``h2h_db_matching_scirpy.svg`` — held-out VDJdb matching precision, recall, and speed vs ``scirpy 0.26``.
+6. ``h2h_pgen_olga.svg`` — cross-donor public sharing AUROC and speed vs ``OLGA 1.3.0`` & ``soNNia 0.4.0``.
+7. ``h2h_multimer_counts.svg`` — sticky ``KLGGALQAK`` / HIV Gag FPs vs canonical viral clones (incl. ``muon`` DSB).
+8. ``h2h_multimer_precision.svg`` — cognate epitope precision on 10x-held-out ``strict_ab`` VDJdb.
 """
 
 from __future__ import annotations
@@ -59,16 +61,17 @@ def h2h_prioritize_figures() -> None:
     method_specs = [
         ("clone_size", "Clone size", NEUTRAL),
         ("raw_CXCL13", "Single-gene CXCL13", ORANGE),
-        ("scanpy_score_genes_NeoTCR", "Uncalibrated Scanpy top-K (NeoTCR)", AQUA),
-        ("scanpy_composite_topk", "Uncalibrated Scanpy composite top-K", INK2),
+        ("scanpy_score_genes_NeoTCR", "Scanpy score_genes (NeoTCR)", AQUA),
+        ("pyucell_NeoTCR", "pyucell UCell (NeoTCR)", "#6c5ce7"),
+        ("scanpy_composite_topk", "Scanpy composite top-K", INK2),
         ("tcrsift", "TCRsift (context preset)", BLUE),
     ]
 
     # Figure 1: Grouped horizontal bars of AUROC across the 5 cohorts
-    fig1, ax1 = plt.subplots(figsize=(7.6, 5.2), constrained_layout=True)
+    fig1, ax1 = plt.subplots(figsize=(7.8, 5.5), constrained_layout=True)
     y_centers = np.arange(len(cohort_order))[::-1]
-    bar_h = 0.145
-    offsets = np.linspace(2 * bar_h, -2 * bar_h, len(method_specs))
+    bar_h = 0.125
+    offsets = np.linspace(2.5 * bar_h, -2.5 * bar_h, len(method_specs))
 
     for m_idx, (m_key, m_label, color) in enumerate(method_specs):
         vals = []
@@ -128,8 +131,8 @@ def h2h_prioritize_figures() -> None:
         ("oh_bladder_cd4", "Oh 2020\nBladder CD4 (CD4IL2RAHI Treg)"),
     ]
     xs = np.arange(len(cd4_cohorts))
-    bw = 0.15
-    b_offsets = np.linspace(-2 * bw, 2 * bw, len(method_specs))
+    bw = 0.13
+    b_offsets = np.linspace(-2.5 * bw, 2.5 * bw, len(method_specs))
     ymax = 0.0
     for m_idx, (m_key, m_label, color) in enumerate(method_specs):
         treg_fracs = []
@@ -237,8 +240,8 @@ def h2h_assembly_and_pgen_figures() -> None:
     ax1.tick_params(axis="y", length=0)
     save_tight(fig1, "h2h_assembly_stitchr")
 
-    # Figure 4: Cross-donor public sharing AUROC & throughput vs OLGA 1.3.0
-    fig2, ax2 = plt.subplots(figsize=(6.8, 4.5), constrained_layout=True)
+    # Figure 4: Cross-donor public sharing AUROC & throughput vs OLGA 1.3.0 and soNNia 0.4.0
+    fig2, ax2 = plt.subplots(figsize=(7.6, 4.7), constrained_layout=True)
     pgen_cohorts = [
         ("human_blood_donors_1500", "Human blood\n(n=1,500 clones)"),
         ("mouse_khatun_gp66_1781", "Mouse GP66 CD4\n(n=1,781 clones)"),
@@ -246,11 +249,12 @@ def h2h_assembly_and_pgen_figures() -> None:
     models = [
         ("tcrsift_kmer_pgen_beta", "TCRsift k-mer Pgen", AQUA),
         ("tcrsift_kmer_ppost_beta", "TCRsift k-mer Ppost", BLUE),
-        ("olga_exact_vdj_pgen_beta", "OLGA 1.3.0 exact DP", NEUTRAL),
+        ("olga_exact_vdj_pgen_beta", "OLGA 1.3.0 exact Pgen", NEUTRAL),
+        ("sonia_v0.4_ppost_beta", "soNNia 0.4.0 Ppost", ORANGE),
     ]
     xs = np.arange(len(pgen_cohorts))
-    bw = 0.24
-    offs = [-bw, 0.0, bw]
+    bw = 0.19
+    offs = [-1.5 * bw, -0.5 * bw, 0.5 * bw, 1.5 * bw]
     for m_idx, (m_key, m_lbl, col) in enumerate(models):
         aucs = []
         spds = []
@@ -278,7 +282,7 @@ def h2h_assembly_and_pgen_figures() -> None:
                 f"{av:.2f}\n{spd_txt}{extra}",
                 ha="center",
                 va="bottom",
-                fontsize=8.0,
+                fontsize=7.8,
                 color=INK,
                 linespacing=1.15,
             )
@@ -287,15 +291,15 @@ def h2h_assembly_and_pgen_figures() -> None:
     ax2.set_xticks(xs, [lbl for _, lbl in pgen_cohorts])
     ax2.set_ylim(0.4, 1.06)
     ax2.set_ylabel("Cross-donor public sharing AUROC")
-    ax2.set_title("Publicness AUROC and throughput: TCRsift k-mer vs OLGA 1.3.0", fontsize=10.2)
+    ax2.set_title("Publicness AUROC & throughput: TCRsift k-mer vs OLGA 1.3.0 & soNNia 0.4.0", fontsize=9.8)
     ax2.grid(axis="y", lw=0.6)
     ax2.set_axisbelow(True)
     ax2.legend(
         frameon=False,
-        fontsize=8.3,
+        fontsize=8.2,
         loc="upper center",
         bbox_to_anchor=(0.5, -0.16),
-        ncol=3,
+        ncol=2,
     )
     save_tight(fig2, "h2h_pgen_olga")
 
@@ -306,6 +310,7 @@ def h2h_multimer_figures() -> None:
     caller_order = [
         ("10x_per_cell_threshold", "10x per-cell\nthreshold", NEUTRAL),
         ("clr_z3_per_cell", "CLR z >= 3\nper-cell", INK2),
+        ("muon_dsb_per_cell", "muon DSB\nper-cell", "#6c5ce7"),
         ("gmm_bimodal_per_cell", "2-comp GMM\nper-cell", AQUA),
         ("tcrsift_clonal_concordance", "TCRsift clonal\nconcordance", BLUE),
     ]
@@ -393,11 +398,120 @@ def h2h_multimer_figures() -> None:
     save_tight(fig2, "h2h_multimer_precision")
 
 
+def h2h_db_and_codon_figures() -> None:
+    """Single-panel held-out VDJdb matching vs scirpy and codon opt vs DNAChisel."""
+    db = pd.read_csv(H2H_RESULTS / "h2h_db_matching_vs_scirpy.csv")
+    opt = pd.read_csv(H2H_RESULTS / "h2h_codon_opt_vs_dnachisel.csv")
+
+    # Figure 7: Held-out VDJdb precision & matched clones (Minervina SARS-CoV-2 & 10x Donor 1)
+    fig1, ax1 = plt.subplots(figsize=(7.8, 4.6), constrained_layout=True)
+    cohorts = [
+        ("minervina_2022_sars_cov2_heldout", "Minervina SARS-CoV-2\n(n=7,317 paired clones)"),
+        ("tenx_donor1_canonical_viral_heldout", "10x Donor 1 canonical viral\n(n=246 expanded clones)"),
+    ]
+    methods = [
+        ("tcrsift_strict_ab_exact", "TCRsift strict_ab exact", AQUA),
+        ("tcrsift_strict_ab_lev1", "TCRsift strict_ab Lev-1", BLUE),
+        ("scirpy_v0.26_identity_paired", "scirpy 0.26 paired exact", NEUTRAL),
+        ("scirpy_v0.26_lev1_paired", "scirpy 0.26 paired Lev-1", "#6c5ce7"),
+        ("tcrsift_ab_with_partial_exact", "TCRsift ab_with_partial", ORANGE),
+    ]
+    xs = np.arange(len(cohorts))
+    bw = 0.155
+    offs = np.linspace(-2 * bw, 2 * bw, len(methods))
+    for m_idx, (m_key, m_lbl, col) in enumerate(methods):
+        precs = []
+        notes = []
+        for c_key, _ in cohorts:
+            r = db[db["cohort"].eq(c_key) & db["method"].eq(m_key)].iloc[0]
+            precs.append(float(r["cognate_precision"]))
+            notes.append(f"{float(r['cognate_precision']):.0%}\n({int(r['n_cognate'])}/{int(r['n_matched'])})\n{float(r['elapsed_sec']):.1f}s")
+        ax1.bar(
+            xs + offs[m_idx],
+            precs,
+            width=bw * 0.9,
+            color=col,
+            edgecolor=SURFACE,
+            linewidth=0.8,
+            label=m_lbl,
+        )
+        for xv, pv, txt in zip(xs + offs[m_idx], precs, notes):
+            ax1.text(
+                xv,
+                pv + 0.015,
+                txt,
+                ha="center",
+                va="bottom",
+                fontsize=7.3,
+                fontweight="bold" if col == BLUE else "normal",
+                color=BLUE if col == BLUE else INK,
+                linespacing=1.1,
+            )
+    percent_axis(ax1, "y", decimals=0)
+    ax1.set_xticks(xs, [lbl for _, lbl in cohorts])
+    ax1.set_ylim(0, 1.24)
+    ax1.set_ylabel("Cognate precision on held-out VDJdb")
+    ax1.set_title("Held-out VDJdb matching precision, hits, and runtime: TCRsift vs scirpy 0.26", fontsize=9.8)
+    ax1.grid(axis="y", lw=0.6)
+    ax1.set_axisbelow(True)
+    ax1.legend(
+        frameon=False,
+        fontsize=8.0,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.17),
+        ncol=3,
+    )
+    save_tight(fig1, "h2h_db_matching_scirpy")
+
+    # Figure 8: Synthesis codon optimization & donor VDJ codon preservation vs DNAChisel
+    fig2, ax2 = plt.subplots(figsize=(6.8, 3.6), constrained_layout=True)
+    opt_specs = [
+        ("tcrsift_focal_opt", "TCRsift focal\n(default)", BLUE),
+        ("tcrsift_full_opt", "TCRsift full\nrecode", AQUA),
+        ("dnachisel_v3.2", "DNAChisel 3.2\n(CAI + constraints)", NEUTRAL),
+    ]
+    ys = np.arange(len(opt_specs))[::-1]
+    vals = []
+    notes = []
+    cols = []
+    for k, _, col in opt_specs:
+        r = opt[opt["tool"].eq(k)].iloc[0]
+        v = float(r["mean_donor_vdj_codon_preserved"])
+        vals.append(v)
+        cols.append(col)
+        notes.append(
+            f"{v:.1%} donor codons kept | {int(r['n_restriction_free'])}/{int(r['n_constructs'])} hazard-free | {float(r['elapsed_sec']):.2f}s"
+        )
+    ax2.barh(ys, vals, height=0.56, color=cols, edgecolor=SURFACE, linewidth=0.8)
+    for yv, vv, txt, col in zip(ys, vals, notes, cols):
+        ax2.text(
+            vv + 0.02,
+            yv,
+            txt,
+            va="center",
+            ha="left",
+            fontsize=8.0,
+            fontweight="bold" if col == BLUE else "normal",
+            color=BLUE if col == BLUE else INK,
+        )
+    percent_axis(ax2, "x", decimals=0)
+    ax2.set_yticks(ys, [lbl for _, lbl, _ in opt_specs])
+    ax2.set_xlim(0, 1.85)
+    ax2.set_xlabel("Fraction of donor VDJ codons preserved verbatim (46 Minervina constructs)")
+    ax2.set_title("Synthesis codon optimization (5 restriction sites + homopolymers + GC): TCRsift vs DNAChisel", fontsize=9.4)
+    ax2.grid(axis="x", lw=0.6)
+    ax2.set_axisbelow(True)
+    ax2.spines["left"].set_visible(False)
+    ax2.tick_params(axis="y", length=0)
+    save_tight(fig2, "h2h_codon_opt_dnachisel")
+
+
 def main() -> None:
     h2h_prioritize_figures()
     h2h_assembly_and_pgen_figures()
     h2h_multimer_figures()
-    print(f"Wrote 6 head-to-head SVGs to {OUT}")
+    h2h_db_and_codon_figures()
+    print(f"Wrote 8 head-to-head SVGs to {OUT}")
 
 
 if __name__ == "__main__":

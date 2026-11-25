@@ -366,9 +366,10 @@ DB_CATEGORY_DETAIL_CONTRADICTORY_DOMINANT = "contradictory_dominant"
 MATCH_STRICTNESS_MODES = ("strict_ab", "ab_with_partial", "b_only")
 
 # Valid match modes for match_clonotypes (#57). ``"exact"`` is the
-# pre-2.1 behaviour; ``"levenshtein"`` adds β-only neighbor search at
-# the given ``max_distance`` for clones that don't hit exactly. TCRdist
-# is intentionally out-of-scope here — it'd pull an optional dep tree.
+# pre-2.1 behaviour; ``"levenshtein"`` adds O(L) deletion-canonical neighbor
+# search at ``max_distance`` for clones that don't hit exactly (paired αβ
+# neighbor search ``ab_near`` under ``strict_ab`` and ``ab_with_partial``, plus
+# β-only neighbor search ``b_only_near`` when β-only fallback is enabled).
 MATCH_MODES = ("exact", "levenshtein")
 
 
@@ -2366,6 +2367,8 @@ def match_clonotypes(
             & (database["cdr3_beta"].astype(str) != "")
         )
         ab_to_pos: dict[tuple[str, str], np.ndarray] = {}
+        paired_alpha_neighbor_index: dict[str, set[str]] | None = None
+        paired_beta_neighbor_index: dict[str, set[str]] | None = None
         if valid_ab.any():
             ab_positions = np.flatnonzero(valid_ab.to_numpy())
             ab_sub = database.loc[valid_ab, ["cdr3_alpha", "cdr3_beta"]].astype(str)
@@ -2374,6 +2377,9 @@ def match_clonotypes(
             ).indices.items():
                 if len(rel_idx):
                     ab_to_pos[(str(a_key), str(b_key))] = ab_positions[rel_idx]
+            if match_mode == "levenshtein":
+                paired_alpha_neighbor_index = _build_cdr3_neighbor_index(ab_sub["cdr3_alpha"])
+                paired_beta_neighbor_index = _build_cdr3_neighbor_index(ab_sub["cdr3_beta"])
 
         row_iter = df.iterrows()
         if show_progress:
@@ -2400,19 +2406,69 @@ def match_clonotypes(
                     df, idx, matches, strength="b_only", partial=True, distance=0,
                     query_species=query_species,
                 )
-            elif allow_b_fallback and beta_neighbor_index is not None and beta:
-                neighbors = _find_lev_neighbors(beta, beta_neighbor_index, max_distance)
-                if neighbors:
-                    best_d = neighbors[0][1]
-                    pos_list = [b_to_pos[c] for c, d in neighbors if d == best_d and c in b_to_pos]
-                    if pos_list:
-                        pos = np.sort(np.concatenate(pos_list))
+            else:
+                matched_paired_near = False
+                if (
+                    alpha
+                    and beta
+                    and paired_alpha_neighbor_index is not None
+                    and paired_beta_neighbor_index is not None
+                ):
+                    a_cands = [(alpha, 0)] + _find_lev_neighbors(
+                        alpha, paired_alpha_neighbor_index, max_distance
+                    )
+                    b_cands = [(beta, 0)] + _find_lev_neighbors(
+                        beta, paired_beta_neighbor_index, max_distance
+                    )
+                    best_total_d: int | None = None
+                    pos_list_ab: list[np.ndarray] = []
+                    for ca, da in a_cands:
+                        for cb, db in b_cands:
+                            tot_d = da + db
+                            if tot_d == 0:
+                                continue
+                            if best_total_d is not None and tot_d > best_total_d:
+                                continue
+                            arr = ab_to_pos.get((ca, cb))
+                            if arr is None:
+                                continue
+                            if best_total_d is None or tot_d < best_total_d:
+                                best_total_d = tot_d
+                                pos_list_ab = [arr]
+                            else:
+                                pos_list_ab.append(arr)
+                    if pos_list_ab and best_total_d is not None:
+                        pos = np.sort(np.concatenate(pos_list_ab))
                         matches = database.iloc[pos]
                         _annotate_match(
-                            df, idx, matches,
-                            strength="b_only_near", partial=True, distance=best_d,
+                            df,
+                            idx,
+                            matches,
+                            strength="ab_near",
+                            partial=False,
+                            distance=best_total_d,
                             query_species=query_species,
                         )
+                        matched_paired_near = True
+
+                if (
+                    not matched_paired_near
+                    and allow_b_fallback
+                    and beta_neighbor_index is not None
+                    and beta
+                ):
+                    neighbors = _find_lev_neighbors(beta, beta_neighbor_index, max_distance)
+                    if neighbors:
+                        best_d = neighbors[0][1]
+                        pos_list = [b_to_pos[c] for c, d in neighbors if d == best_d and c in b_to_pos]
+                        if pos_list:
+                            pos = np.sort(np.concatenate(pos_list))
+                            matches = database.iloc[pos]
+                            _annotate_match(
+                                df, idx, matches,
+                                strength="b_only_near", partial=True, distance=best_d,
+                                query_species=query_species,
+                            )
 
     else:  # strictness == "b_only"
         row_iter = df.iterrows()

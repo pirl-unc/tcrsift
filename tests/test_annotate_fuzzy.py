@@ -280,6 +280,42 @@ class TestMatchClonotypesLevenshteinMode:
         assert not out["db_match"].iloc[0]
         assert pd.isna(out["db_match_distance"].iloc[0]) or out["db_match_distance"].iloc[0] is None
 
+    def test_strict_ab_levenshtein_matches_paired_neighbors_not_unpaired_beta(self):
+        """strict_ab + levenshtein matches paired αβ within edit distance ≤1 per chain (ab_near)."""
+        clones = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CAVSDGGSQGNLIF", "CAVSDGGSQGNLIA", "CAVWRONG"],
+                "CDR3_beta": ["CASSIRSSYEQYA", "CASSIRSSYEQYA", "CASSIRSSYEQYA"],
+            }
+        )
+        db = _db(
+            [
+                {
+                    "cdr3_alpha": "CAVSDGGSQGNLIF",
+                    "cdr3_beta": "CASSIRSSYEQYF",
+                    "epitope": "GILGFVFTL",
+                    "antigen_gene": "M1",
+                }
+            ]
+        )
+        out = match_clonotypes(
+            clones,
+            db,
+            match_strictness="strict_ab",
+            match_mode="levenshtein",
+            max_distance=1,
+            verbose=False,
+            show_progress=False,
+        )
+        assert bool(out["db_match"].iloc[0])
+        assert out["db_match_strength"].iloc[0] == "ab_near"
+        assert not bool(out["db_match_partial"].iloc[0])
+        assert out["db_match_distance"].iloc[0] == 1
+        assert bool(out["db_match"].iloc[1])
+        assert out["db_match_strength"].iloc[1] == "ab_near"
+        assert out["db_match_distance"].iloc[1] == 2
+        assert not bool(out["db_match"].iloc[2])
+
     def test_fuzzy_records_cross_species_suffix(self):
         """When a fuzzy match's host is non-human, the strength gets
         the ``_cross`` suffix on top of ``_near``."""

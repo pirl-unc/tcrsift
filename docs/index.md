@@ -23,8 +23,9 @@ Standard 10x Genomics Cell Ranger directories serve as input:
 
 For an overview of the data flow and selection algorithms, see
 [How TCRsift works](how-it-works.md). For evaluations across 13 public human and
-mouse datasets (15 cohort evaluations) and head-to-head comparisons against `Scanpy score_genes`,
-`stitchr`, `OLGA`, and per-cell/CLR/GMM multimer callers, see the
+mouse datasets (15 cohort evaluations) and head-to-head comparisons against `stitchr`,
+`DNAChisel`, `scirpy`, `muon` DSB, `OLGA`, `soNNia`, `Scanpy score_genes`, and
+`pyucell` UCell, see the
 [Benchmark overview](benchmarks-overview.md) and the cohort pages on
 [public CD8 TIL data](benchmarks.md),
 [infectious disease and blood](benchmarks-infectious.md),

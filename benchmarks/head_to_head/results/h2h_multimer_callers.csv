@@ -1,5 +1,6 @@
 caller,total_called_clones_ge2,sticky_KLGGALQAK_fp_clones,hiv_gag_fp_clones,canonical_flu_ebv_cmv_clones,vdjdb_strict_matched_clones,vdjdb_cognate_epitope_concordant,vdjdb_cognate_precision
 10x_per_cell_threshold,1540,837,8,667,110,109,0.9909
 clr_z3_per_cell,627,2,44,319,68,63,0.9265
+muon_dsb_per_cell,236,0,29,140,16,6,0.375
 gmm_bimodal_per_cell,729,0,0,729,106,106,1.0
 tcrsift_clonal_concordance,605,31,0,556,109,109,1.0
