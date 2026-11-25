@@ -8,6 +8,17 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.39.2
+
+Cleaned up benchmark and prioritization documentation:
+
+- Removed the out-of-place CLI cheatsheet wall from `docs/benchmarks-overview.md`
+  so the benchmark page leads straight into Stage 1 (Construct Assembly) →
+  Stage 2 (Identifying Expected TCRs) → Stage 3 (Expression Signatures).
+- Rewrote `docs/user-guide/til-signatures.md` examples and context-preset table
+  in plain, concise prose focused on the 5 primary contexts (`solid-tumor`,
+  `blood-tumor`, `peptide-stim`, `blood`, `generic`).
+
 ## 3.39.1
 
 Empirically tightened context presets, simplified mode guide, and regenerated
