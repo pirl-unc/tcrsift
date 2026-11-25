@@ -31,7 +31,6 @@ def test_context_ontology_covers_all_presets_and_species():
     assert tcrsift.ContextSpec is ContextSpec
     assert PRIMARY_CONTEXTS == (
         "solid-tumor",
-        "post-act",
         "blood-tumor",
         "blood",
         "peptide-stim",
@@ -45,17 +44,6 @@ def test_context_ontology_covers_all_presets_and_species():
     for name, spec in CONTEXT_ONTOLOGY.items():
         assert spec.name == name
         assert spec.category and spec.compartment and spec.antigen_exposure and spec.summary
-
-    # post-act drops chronic residency TumorReactive/MANAscore and puts experienced/cytolytic first
-    post_act_cd8 = resolve_signatures("post-act", "cd8")
-    assert "TumorReactive" not in post_act_cd8
-    assert "MANAscore" not in post_act_cd8
-    assert post_act_cd8[:3] == ["AntigenExperienced", "Cytolytic", "Differentiated"]
-    assert PRIORITY_CONTEXT_SIGNATURES["post-act"] == (
-        "AntigenExperienced",
-        "Cytolytic",
-        "Differentiated",
-    )
 
     # peptide-stim prioritizes acute activation/AIM without chronic tumor exhaustion
     stim_cd8 = resolve_signatures("peptide-stim", "cd8")
@@ -71,7 +59,7 @@ def test_context_ontology_covers_all_presets_and_species():
 
 def test_cli_accepts_new_contexts():
     parser = create_parser()
-    for ctx in ("post-act", "peptide-stim", "solid-tumor", "blood-tumor", "blood", "mpe", "heme", "generic"):
+    for ctx in ("peptide-stim", "solid-tumor", "blood-tumor", "blood", "mpe", "heme", "generic"):
         args = parser.parse_args(["prioritize", "samples.yaml", "-o", "out", "--context", ctx])
         assert args.context == ctx
 

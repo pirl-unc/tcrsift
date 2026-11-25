@@ -8,6 +8,28 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.39.1
+
+Empirically tightened context presets, simplified mode guide, and regenerated
+head-to-head benchmarks:
+
+- **Removed unvalidated `post-act` context**: Empirical inspection of Chiffelle
+  Day-30 post-ACT (`T30`) biopsies confirmed that `AntigenExperienced` (0.33),
+  `Differentiated` (0.45), and `Cytolytic` (0.48) are all below chance after
+  rapid TIL expansion and perform worse than `TumorReactive` (0.61). Removed
+  `post-act` so every primary context in `PRIMARY_CONTEXTS` (`solid-tumor`,
+  `blood-tumor`, `blood`, `peptide-stim`, `generic`) is empirically supported.
+- **Simplified mode-selection guide**: Replaced verbose multi-column taxonomy in
+  `docs/benchmarks-overview.md` and `docs/user-guide/til-signatures.md` with a
+  concise 4-step decision rule focused strictly on choices that change what
+  TCRsift computes.
+- **Updated head-to-head benchmark labels & outputs**: Renamed `tcrsift_default`
+  in `benchmarks/head_to_head/run.py`, `PROVENANCE.md`, and
+  `h2h_prioritize_baselines.csv` to explicit preset names
+  (`tcrsift_solid_tumor`, `tcrsift_blood_tumor`,
+  `tcrsift_solid_tumor_cd4_excl_treg`) and regenerated `benchmarks/head_to_head`
+  results and SVGs on `3.39.1`.
+
 ## 3.39.0
 
 Explicit biological-context & assay ontology, new `post-act` and `peptide-stim`

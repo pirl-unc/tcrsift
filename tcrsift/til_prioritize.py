@@ -962,12 +962,11 @@ def add_cli_args(parser: argparse.ArgumentParser, *, context="generic") -> None:
         choices=CONTEXT_SIGNATURES,
         default=context,
         help=(
-            f"Biological context / antigen-exposure preset (default: {context}). "
-            "TILs: solid-tumor (fresh TIL), post-act (post-ACT/infused TIL). "
-            "Circulating: blood-tumor (cancer blood), blood (infection/vaccine/healthy/heme). "
-            "Peptide stim: peptide-stim (6-24 h unpaired restim; use `tcrsift run --method stimulation` "
-            "with paired unstimulated controls or `tcrsift run --method threshold` for multi-day culture). "
-            "Fallback: generic (6 core state panels only). "
+            f"Signature preset (default: {context}). "
+            "Primary contexts: solid-tumor (fresh TIL), blood-tumor (unstimulated cancer blood), "
+            "blood (other blood/marrow), peptide-stim (unpaired 6-24 h restim; use "
+            "`tcrsift run --method stimulation` with paired unstimulated controls or "
+            "`tcrsift run` for multi-day expansion culture), generic (6 core state panels only). "
             "Compatibility variants: mpe (non-epithelial effusion), heme (alias for blood)."
         ),
     )
