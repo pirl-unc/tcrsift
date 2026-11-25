@@ -31,7 +31,7 @@ from tcrsift.embed import refine_cluster
 
 # Re-embedding needs the `atlas` extra (Leiden clustering).
 pytest.importorskip("igraph")
-pytest.importorskip("leidenalg")
+pytest.importorskip("igraph")
 
 logging.getLogger("harmonypy").setLevel(logging.WARNING)
 

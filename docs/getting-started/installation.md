@@ -38,7 +38,7 @@ Individual extras:
 | Extra | Packages added | Needed for |
 | --- | --- | --- |
 | `tcrpeg` | `tcrpeg`, `torch` | `TCRpegProbabilityModel` (`tcrsift pgen annotate ... --backend tcrpeg`) |
-| `atlas` | `harmonypy`, `igraph`, `leidenalg` | `tcrsift cells embed` and `embed_cells` |
+| `atlas` | `harmonypy`, `igraph` | `tcrsift cells embed` and `embed_cells` |
 | `plots` | `upsetplot`, `matplotlib-venn` | UpSet and Venn set-overlap plots (fall back to bar charts when absent) |
 | `docs` | `mkdocs`, `mkdocs-material`, `mkdocstrings[python]`, `pymdown-extensions` | Building the documentation site |
 | `dev` | `pytest`, `pytest-cov`, `pytest-xdist`, `ruff`, `pylint`, `tcrpeg`, `torch` | Running tests and linters |

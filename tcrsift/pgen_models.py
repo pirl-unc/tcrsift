@@ -212,9 +212,12 @@ def _bundled_observed_pbmc(chain: str) -> pd.DataFrame | None:
     return sub[cols].reset_index(drop=True) if not sub.empty else None
 
 
-def _bundled_observed_beta() -> list[str]:
+def _bundled_observed_beta() -> list[str] | None:
     """Healthy β CDR3s bundled with TCRpeg (external, non-circular)."""
-    import tcrpeg  # pylint: disable=import-error
+    try:
+        import tcrpeg  # pylint: disable=import-error
+    except ImportError:
+        return None
 
     path = Path(tcrpeg.__file__).parent / "data" / "TCRs_train.csv"
     try:
@@ -262,10 +265,13 @@ def fetch_repertoire(
                 return dest
             if chain == "beta":
                 seqs = _bundled_observed_beta()
-                logger.info("fetch_repertoire: using bundled healthy β (%d seqs)",
-                            len(seqs))
-                pd.DataFrame({"seq": seqs}).to_csv(dest, index=False)
-                return dest
+                if seqs:
+                    logger.info(
+                        "fetch_repertoire: using bundled healthy β (%d seqs)",
+                        len(seqs),
+                    )
+                    pd.DataFrame({"seq": seqs}).to_csv(dest, index=False)
+                    return dest
         raise FileNotFoundError(
             f"fetch_repertoire: no bundled observed {sp} {chain} repertoire — pass "
             f"url= a neutral {sp} repertoire CSV/TSV (e.g. OTS: {REPERTOIRE_SOURCES['ots']})"
@@ -356,7 +362,8 @@ def train_model(
     sp = normalize_species(species)
     if role == "ppost":
         rep_df = _observed_repertoire_df(chain, url=url, species=sp)
-        seqs = rep_df["seq"].dropna().astype(str).tolist()
+        rep_df = rep_df.dropna(subset=["seq"]).reset_index(drop=True)
+        seqs = rep_df["seq"].astype(str).tolist()
     elif role == "pgen":
         raise ValueError(
             "Pgen models are shipped pre-built and cannot be trained at "

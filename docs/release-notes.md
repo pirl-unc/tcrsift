@@ -8,6 +8,32 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.37.3
+
+Dependency hardening, Pandas 3 / `harmonypy 2.0` compatibility, and optional
+extra guards:
+
+- **Packaging (`pyproject.toml`)**: Declared direct core dependencies `scipy`
+  and `h5py`, added `<3.0.0` upper bound on `pandas`, removed unused `leidenalg`
+  from `[atlas]` and `[full]` (Leiden uses `flavor="igraph"`), and updated the
+  `openpyxl` rationale comment and installation docs.
+- **Pandas 3 / PyArrow `StringDtype` compatibility**: Rewrote
+  `annotate._match_viral_species_lower` with RE2-compatible word boundaries
+  (`\bflu\b`, `\binfluenza\b`) so PyArrow-backed string columns no longer raise
+  `ArrowInvalid`, and eliminated `combine_first` empty-series `FutureWarning`s
+  in `_load_iedb_receptor_export`.
+- **Atlas embedding & `harmonypy 2.0.0`**: Guarded `nclust >= 2` and
+  `verbose=False` in `embed_cells` so `harmonypy 2.0.0` no longer crashes when
+  `n_obs < 60`, added actionable `ImportError` hints pointing to
+  `pip install 'tcrsift[atlas]'` for `harmonypy` and `igraph` (including in
+  `tcrsift cells embed`), narrowed Pearson-residual warning suppression to
+  `RuntimeWarning`, and used `np.nanmean` in `gd_cd8_relabel` so `pd.NA` in
+  `ab_col` no longer mislabels γδ T sub-clusters as CD8.
+- **Pgen / plotting optional guards**: Guarded optional `tcrpeg` import in
+  `pgen_models._bundled_observed_beta`, filtered `NaN` CDR3 rows before reading
+  V/J genes in `pgen_models.train_model`, and corrected the `matplotlib-venn` /
+  `tcrsift[plots]` hint in `plots/selection.py`.
+
 ## 3.37.2
 
 Bug-fix release addressing 25 correctness, safety-control, CLI/config, plotting,
