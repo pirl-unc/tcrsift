@@ -8,6 +8,34 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.38.0
+
+Dead-code removal, internal helper deduplication, and `til-select` cleanup:
+
+- **Dead-code removal**: Removed unreferenced internal functions and unused
+  constants across `annotate.py` (`_pick_vdjdb_file`), `pgen_models.py`
+  (`_observed_seqs`), `til.py` (`_clean_cdr3_col`), `assemble/constants.py`
+  (`_count_trbc_overrides`), `assemble/vregion.py`
+  (`jregion_reference_is_available`), `validation.py`
+  (`validate_cellranger_vdj_dir`, `validate_cellranger_gex_dir`), `genes.py`
+  (`CD3_GENES`, `CD8_GENES`, `local_pyensembl_releases`), `mnemonic.py`
+  (unused vowel/cluster tables and unreachable type check), `pgen.py` (dead
+  `_MOUSE_TRAV_ALIASES` lookup inside `_j_usage_log`), and `unify.py` (unused
+  tracking lists).
+- **Helper deduplication**: Unified reverse-complement in `assemble/qc.py`
+  onto `assemble.codons._revcomp`; unified IMGT functionality ranking in
+  `assemble/germline.py` onto `assemble.vregion._func_rank_key`; replaced
+  duplicate boolean/mode wrappers in `til_select.py` with
+  `_schema.truthy_flag_series` and `validation.most_common`; simplified
+  `til_prioritize._ensure_clone_key` onto `_schema.paired_cdr3ab_key`; and
+  removed redundant `ImportError` guards for guaranteed core dependencies
+  (`reportlab`, `pyyaml`, `matplotlib`).
+- **`til-select` output & CLI cleanup**: Stopped emitting 14 empty placeholder
+  PNGs into `fig_dir` and `all_plots.pdf`, and hid legacy no-op compatibility
+  options (`--trend-increase-ratio-min`, `--trend-decrease-ratio-max`,
+  `--pyensembl-release`) from `tcrsift til-select --help` while preserving CLI
+  backward compatibility.
+
 ## 3.37.5
 
 Core I/O, QC, GEX, multimer, report, `til-select`, and plotting bugfixes:

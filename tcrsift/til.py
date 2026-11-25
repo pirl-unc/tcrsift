@@ -38,11 +38,6 @@ from .validation import TCRsiftValidationError, parse_til_sample_spec, safe_divi
 logger = logging.getLogger(__name__)
 
 
-def _clean_cdr3_col(df: pd.DataFrame, col: str) -> pd.Series:
-    """Return a clean object-dtype string Series with missing values normalized to ``""``."""
-    return clean_cdr3_series(df, col)
-
-
 def _build_til_cdr3_key(df: pd.DataFrame, match_by: str) -> tuple[pd.Series, pd.Series]:
     """Build ``(clone_key, valid_mask)`` excluding incomplete/single-chain rows."""
     if match_by == "CDR3ab":

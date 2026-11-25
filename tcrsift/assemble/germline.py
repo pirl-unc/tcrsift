@@ -49,6 +49,7 @@ from ..species import normalize_species
 from .codons import back_translate, translate_dna
 from .leaders import GERMLINE_MIN_IDENTITY, normalize_vgene
 from .vregion import (
+    _func_rank_key,
     germline_jregion_sequences,
     germline_vregion_sequences,
     normalize_jgene,
@@ -68,15 +69,7 @@ _FR4_TAIL_RE = re.compile(r"([FWC])([GA][ACDEFGHIKLMNPQRSTVWY]G[ACDEFGHIKLMNPQRS
 
 def _v_func_rank(func: object) -> int:
     """Rank unbracketed functional ``F`` above partial ``[F]``/``(F)`` above ``ORF`` above ``P``."""
-    raw = str(func).strip()
-    if raw == "F":
-        return 3
-    fc = raw.strip("[]() ")
-    if fc.startswith("F"):
-        return 2
-    if fc.startswith("ORF"):
-        return 1
-    return 0
+    return 3 - _func_rank_key(str(func))
 
 
 def _explicit_allele(gene_raw: object) -> str | None:

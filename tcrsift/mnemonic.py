@@ -30,27 +30,6 @@ from __future__ import annotations
 DEFAULT_PREFIXES = ["CASS", "CAS", "CAV", "CA"]
 DEFAULT_SUFFIXES = ["F"]
 
-# Vowels that exist as amino acids - these come from the sequence
-_AMINO_VOWELS = set("aeiy")
-
-# Single vowels safe to insert (O and U are NOT amino acid codes)
-_SAFE_SINGLES = ["o", "u"]
-
-# Diphthongs/double vowels for insertion (more varied, natural-sounding)
-# These are clearly distinguishable from single amino acid vowels
-_DIPHTHONGS = [
-    "ai",
-    "ei",
-    "oi",
-    "au",
-    "ou",  # Classic diphthongs
-    "oo",
-    "ee",  # Long vowels
-    "ao",
-    "eo",
-    "io",  # O-ending
-]
-
 # All vowels for pronunciation purposes
 _ALL_VOWELS = set("aeiouy")
 
@@ -138,64 +117,6 @@ _MID_CLUSTERS = _START_CLUSTERS | {
     "gn",
     "ks",
     "ps",
-}
-
-# Consonant clusters acceptable at WORD END
-_END_CLUSTERS = {
-    "ch",
-    "ck",
-    "ct",
-    "ft",
-    "fth",
-    "ld",
-    "lf",
-    "lk",
-    "lm",
-    "ln",
-    "lp",
-    "ls",
-    "lt",
-    "lth",
-    "lv",
-    "mb",
-    "mp",
-    "mph",
-    "nc",
-    "nch",
-    "nd",
-    "ng",
-    "ngth",
-    "nk",
-    "ns",
-    "nt",
-    "nth",
-    "nz",
-    "ph",
-    "ps",
-    "pt",
-    "rb",
-    "rc",
-    "rd",
-    "rf",
-    "rg",
-    "rk",
-    "rl",
-    "rm",
-    "rn",
-    "rp",
-    "rs",
-    "rt",
-    "rth",
-    "rv",
-    "rz",
-    "sh",
-    "sk",
-    "sp",
-    "st",
-    "sth",
-    "th",
-    "ts",
-    "xt",
 }
 
 # Consonant-to-vowel affinity: which vowels sound good after which consonants
@@ -414,9 +335,7 @@ def tcr_name(
         >>> tcr_name("CASSLAGAYEQYF")  # LAGA has original A
         'Lagaye Qy'
     """
-    if not isinstance(seq, str):
-        return "Anon"
-    if not seq.strip():
+    if not isinstance(seq, str) or not seq.strip():
         return "Anon"
 
     # Handle multiple sequences separated by semicolon
@@ -447,8 +366,6 @@ def tcr_name(
             seq = seq[: -len(suffix)]
             break
 
-    if not isinstance(seq, str):
-        return "Anon"
     if not seq.strip():
         return "Anon"
 

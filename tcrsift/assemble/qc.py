@@ -25,6 +25,7 @@ from ..validation import TCRsiftValidationError
 from .codons import (
     LINKERS,
     SYNTHESIS_RESTRICTION_SITES,
+    _revcomp,
     translate_dna,
 )
 from .constants import (
@@ -1028,7 +1029,7 @@ def _restriction_hits(nt: str) -> str:
     # A forward-only scan misses these; e.g. the P2A/F2A linker DNA carries a
     # reverse-strand BsmBI site that a Golden-Gate/Type IIS assembly would cut.
     s = str(nt).upper()
-    rc = s.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+    rc = _revcomp(s)
     return ";".join(
         nm for nm, site in SYNTHESIS_RESTRICTION_SITES.items()
         if site in s or site in rc

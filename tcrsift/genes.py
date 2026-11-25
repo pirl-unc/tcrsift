@@ -89,8 +89,6 @@ MOUSE_CD8B = Gene(
 # Grouped markers
 TCELL_MARKERS = [CD3D, CD3E, CD3G, CD4, CD8A, CD8B]
 TCELL_MARKERS_MOUSE = [MOUSE_CD3D, MOUSE_CD3E, MOUSE_CD3G, MOUSE_CD4, MOUSE_CD8A, MOUSE_CD8B]
-CD3_GENES = [CD3D, CD3E, CD3G]
-CD8_GENES = [CD8A, CD8B]
 
 
 def tcell_markers_for_species(species: str = "human") -> list[Gene]:
@@ -325,20 +323,6 @@ def _local_pyensembl_db_path(release: int, py_species: str) -> str | None:
     except Exception:
         return None
     return None
-
-
-def local_pyensembl_releases(species: str = "human") -> list[int]:
-    """Return locally indexed pyensembl release numbers for ``species`` without network IO."""
-    try:
-        import pyensembl  # noqa: F401  # pylint: disable=import-error,unused-import
-    except ImportError:
-        return []
-    py_sp = species_to_pyensembl(species)
-    found: list[int] = []
-    for rel in _CANDIDATE_ENSEMBL_RELEASES:
-        if _local_pyensembl_db_path(rel, py_sp) is not None:
-            found.append(rel)
-    return found
 
 
 def _ensembl_db_path(release: int | None = 110, *, species: str = "human") -> str | None:

@@ -477,13 +477,13 @@ or auto-discovered from --data-dir.
         "--trend-increase-ratio-min",
         type=float,
         default=1.5,
-        help="Compatibility option for trend reporting (default: 1.5).",
+        help=argparse.SUPPRESS,
     )
     p_til_select.add_argument(
         "--trend-decrease-ratio-max",
         type=float,
         default=0.5,
-        help="Compatibility option for trend reporting (default: 0.5).",
+        help=argparse.SUPPRESS,
     )
     p_til_select.add_argument(
         "--marker-genes",
@@ -539,7 +539,7 @@ or auto-discovered from --data-dir.
         "--pyensembl-release",
         type=int,
         default=110,
-        help="Compatibility option used in selected-clone PDF report metadata.",
+        help=argparse.SUPPRESS,
     )
     p_til_select.add_argument(
         "--rank-by",

@@ -359,11 +359,6 @@ def reference_is_available(data_dir=None, *, species: str = "human") -> bool:
     return bool(_load_reference(data_dir, species=species))
 
 
-def jregion_reference_is_available(data_dir=None, *, species: str = "human") -> bool:
-    """True when at least one locus of the J-REGION reference is cached."""
-    return bool(_load_jregion_reference(data_dir, species=species))
-
-
 def germline_vregion(
     v_gene: str | None, *, species: str = "human", data_dir=None
 ) -> list[tuple[str, str, str]]:

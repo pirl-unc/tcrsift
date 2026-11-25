@@ -448,28 +448,6 @@ def resolve_cellranger_gex_source(path: str | Path) -> tuple[str, Path]:
     )
 
 
-def validate_cellranger_vdj_dir(path: str | Path) -> Path:
-    """Validate a CellRanger VDJ output directory (or direct contig CSV/.csv.gz)."""
-    path = Path(path)
-    if path.exists() and path.is_file():
-        resolved, _ = resolve_cellranger_vdj_file(path)
-        return resolved
-    path = validate_directory_exists(path, "CellRanger VDJ directory")
-    resolve_cellranger_vdj_file(path)
-    return path
-
-
-def validate_cellranger_gex_dir(path: str | Path) -> Path:
-    """Validate a CellRanger GEX output directory (or direct 10x .h5 file)."""
-    path = Path(path)
-    if path.exists() and path.is_file():
-        _, resolved = resolve_cellranger_gex_source(path)
-        return resolved
-    path = validate_directory_exists(path, "CellRanger GEX directory")
-    resolve_cellranger_gex_source(path)
-    return path
-
-
 def validate_cdr3_sequence(
     seq: str,
     chain: str = "unknown",
