@@ -1,12 +1,19 @@
 {
-  "tcrsift_version": "3.40.1",
+  "tcrsift_version": "3.41.0",
   "stitchr_version": "1.3.1",
+  "dnachisel_version": "3.2.16",
+  "scirpy_version": "0.26.1",
+  "muon_version": "0.2.1",
   "olga_version": "1.3.0",
-  "scanpy_version": "1.12.3",
+  "sonnia_version": "0.4.0",
+  "scanpy_version": "1.12.6",
+  "pyucell_version": "0.8.0",
   "elapsed_seconds": 155.4,
   "tables": [
     "h2h_prioritize_baselines.csv",
     "h2h_assembly_vs_stitchr.csv",
+    "h2h_codon_opt_vs_dnachisel.csv",
+    "h2h_db_matching_vs_scirpy.csv",
     "h2h_pgen_vs_olga.csv",
     "h2h_multimer_callers.csv"
   ]

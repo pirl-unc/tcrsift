@@ -8,6 +8,29 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.41.0
+
+Added paired αβ Levenshtein-1 database matching (`ab_near`) and expanded the
+head-to-head benchmark suite with five additional open-source Python tools:
+
+- **Paired αβ Levenshtein-1 matching (`ab_near`)**: `match_clonotypes(...,
+  match_strictness="strict_ab", match_mode="levenshtein")` now performs O(L)
+  deletion-canonical paired αβ neighbor search (matching paired database
+  entries within edit distance ≤ 1 on each chain, `db_match_strength="ab_near"`),
+  rather than silently acting as an exact-only no-op under `strict_ab`. On
+  study-held-out VDJdb, `strict_ab` Levenshtein-1 matches the exact same 292
+  Minervina clones and 110 10x Donor 1 clones (99.1% cognate precision, 2x
+  recall over exact) as `scirpy 0.26.1` while running **31.7x faster** (10.2s vs
+  323.9s on 7,317 clones).
+- **Five new external open-source comparators in `benchmarks/head_to_head`**:
+  Added **`DNAChisel 3.2.16`** (Stage 1b synthesis codon optimization),
+  **`scirpy 0.26.1`** (Stage 2a held-out VDJdb matching), **`muon 0.2.1` DSB**
+  (Stage 2b pMHC multimer background denoising), **`soNNia 0.4.0`** (Stage 2c
+  pretrained `Sonia` post-selection `Ppost`), and **`pyucell 0.8.0`** (Stage 3
+  rank-based UCell signature scoring) alongside `stitchr`, `OLGA`, and `Scanpy`
+  with two new SVG figures (`h2h_db_matching_scirpy.svg` and
+  `h2h_codon_opt_dnachisel.svg`).
+
 ## 3.40.1
 
 Regenerated all five benchmark suites on `3.40.1` and restructured all five

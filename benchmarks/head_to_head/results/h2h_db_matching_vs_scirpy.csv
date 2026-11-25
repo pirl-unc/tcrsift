@@ -1,0 +1,13 @@
+cohort,method,n_query_clones,n_matched,n_cognate,cognate_precision,cognate_recall,elapsed_sec
+minervina_2022_sars_cov2_heldout,tcrsift_strict_ab_exact,7317,58,39,0.6724,0.0053,6.573
+minervina_2022_sars_cov2_heldout,tcrsift_ab_with_partial_exact,7317,698,269,0.3854,0.0368,8.404
+minervina_2022_sars_cov2_heldout,tcrsift_strict_ab_lev1,7317,292,231,0.7911,0.0316,10.224
+minervina_2022_sars_cov2_heldout,scirpy_v0.26_identity_paired,7317,58,40,0.6897,0.0055,6.456
+minervina_2022_sars_cov2_heldout,scirpy_v0.26_identity_trb_only,7317,698,338,0.4842,0.0462,4.325
+minervina_2022_sars_cov2_heldout,scirpy_v0.26_lev1_paired,7317,292,244,0.8356,0.0333,323.871
+tenx_donor1_canonical_viral_heldout,tcrsift_strict_ab_exact,246,56,56,1.0,0.2276,5.952
+tenx_donor1_canonical_viral_heldout,tcrsift_ab_with_partial_exact,246,138,129,0.9348,0.5244,6.462
+tenx_donor1_canonical_viral_heldout,tcrsift_strict_ab_lev1,246,110,109,0.9909,0.4431,8.594
+tenx_donor1_canonical_viral_heldout,scirpy_v0.26_identity_paired,246,56,56,1.0,0.2276,5.612
+tenx_donor1_canonical_viral_heldout,scirpy_v0.26_identity_trb_only,246,138,129,0.9348,0.5244,3.968
+tenx_donor1_canonical_viral_heldout,scirpy_v0.26_lev1_paired,246,110,109,0.9909,0.4431,13.106

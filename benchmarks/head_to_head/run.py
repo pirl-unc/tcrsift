@@ -1,25 +1,33 @@
 #!/usr/bin/env python3
-"""Run head-to-head comparisons of tcrsift against open-source baselines across 4 stages.
+"""Run head-to-head comparisons of tcrsift against open-source baselines across 6 stages.
 
-    PYTHONPATH=.:.venv/lib/python3.12/site-packages /tmp/h2h_venv/bin/python \\
+    KERAS_BACKEND=torch PYTHONPATH=. /tmp/h2h_ext_venv/bin/python \\
         benchmarks/head_to_head/run.py
 
-Writes four CSV tables and ``summary.json`` to ``benchmarks/head_to_head/results/``:
+Writes six CSV tables and ``summary.json`` to ``benchmarks/head_to_head/results/``:
 
 1. ``h2h_prioritize_baselines.csv`` — Ex vivo prioritization across 5 human TIL and
    cancer-blood cohorts: ``tcrsift`` vs ``clone_size``, single-gene ``raw_CXCL13``,
-   ``scanpy.tl.score_genes`` (``NeoTCR8`` / ``NeoTCR4`` / ``NeoTCR_PBL``), and
-   ``scanpy`` composite top-K.
+   ``scanpy.tl.score_genes`` (``NeoTCR8`` / ``NeoTCR4`` / ``NeoTCR_PBL``),
+   ``scanpy`` composite top-K, and ``pyucell`` (UCell rank-based Mann-Whitney U).
 2. ``h2h_assembly_vs_stitchr.csv`` — Full-length TCR construct assembly:
    ``tcrsift assemble`` vs ``stitchr`` / ``thimble v1.3.1`` across Cell Ranger 6
    donor-VDJ human shortlisted clones (Minervina 2022, n=46), 5'-truncated human clones
    (Fischer 2021, n=160), and murine Cell Ranger VDJ shortlists (MC38 + Khatun, n=101).
-3. ``h2h_pgen_vs_olga.csv`` — TCR generation probability & publicness:
+3. ``h2h_pgen_vs_olga.csv`` — TCR generation probability & post-selection publicness:
    ``tcrsift`` zero-dependency k-mer ``Pgen``/``Ppost`` vs ``OLGA v1.3.0`` exact
-   V(D)J dynamic programming across human (n=1,500) and murine (n=1,781) repertoires.
+   V(D)J dynamic programming and ``soNNia`` post-selection ``Ppost`` across human
+   (n=1,500) and murine (n=1,781) repertoires.
 4. ``h2h_multimer_callers.csv`` — Multiplexed pMHC dextramer calling on 10x Healthy
    Donors 1 & 2: ``tcrsift --call-multimers`` clonal concordance vs 10x per-cell
-   threshold, CLR ``z >= 3``, and bimodal GMM callers.
+   threshold, CLR ``z >= 3``, bimodal GMM, and ``muon`` DSB background denoising.
+5. ``h2h_db_matching_vs_scirpy.csv`` — Held-out public TCR database matching:
+   ``tcrsift annotate`` (``strict_ab``, ``ab_with_partial``, Levenshtein-1) vs
+   ``scirpy`` (``ir.tl.ir_query`` identity paired/TRB-only and Levenshtein-1) on
+   Minervina 2022 SARS-CoV-2 and 10x Donor 1 viral repertoires.
+6. ``h2h_codon_opt_vs_dnachisel.csv`` — Synthesis codon optimization & hazard clearance:
+   ``tcrsift`` focal and full codon optimization vs ``DNAChisel`` on the 46 Minervina
+   human single-chain constructs (5 restriction enzymes, 9-nt homopolymers, GC window).
 """
 
 from __future__ import annotations
@@ -108,6 +116,40 @@ def _scanpy_score_genes_harmonized(
             sc.tl.score_genes(tmp, gene_list=present_dn, score_name=f"{score_name}_dn", ctrl_size=ctrl_sz, n_bins=25)
             out = out - tmp.obs[f"{score_name}_dn"].to_numpy(dtype=float)
     return out
+
+
+def _pyucell_score_harmonized(
+    adata: ad.AnnData,
+    genes_up: list[str] | tuple[str, ...],
+    score_name: str,
+    genes_down: list[str] | tuple[str, ...] = (),
+) -> np.ndarray:
+    """Run ``pyucell.compute_ucell_scores`` after harmonizing HGNC/Ensembl/hg19 symbols."""
+    import pyucell
+
+    from tcrsift.genes import adata_symbol_array, harmonize_gene_symbols
+
+    all_genes = list(dict.fromkeys([*genes_up, *genes_down]))
+    sym_upper = harmonize_gene_symbols(adata_symbol_array(adata), all_genes)
+    tmp = adata.copy()
+    tmp.var_names = pd.Index([str(s) for s in sym_upper])
+    tmp.var_names_make_unique()
+    var_set = set(tmp.var_names)
+    present_up = [f"{g.upper()}+" for g in genes_up if g.upper() in var_set]
+    present_dn = [f"{g.upper()}-" for g in genes_down if g.upper() in var_set]
+    signed = present_up + present_dn
+    if not signed:
+        return np.zeros(adata.n_obs, dtype=float)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        pyucell.compute_ucell_scores(
+            tmp,
+            {score_name: signed},
+            max_rank=min(1500, tmp.n_vars),
+            w_neg=1.0,
+            n_jobs=1,
+        )
+    return tmp.obs[f"{score_name}_UCell"].to_numpy(dtype=float)
 
 
 def _extract_single_gene_log1p(adata: ad.AnnData, gene: str) -> np.ndarray:
@@ -221,6 +263,9 @@ def run_prioritize_baselines(
     adata_m.obs["sc_neotcr8"] = _scanpy_score_genes_harmonized(
         adata_m, REGISTRY["NeoTCR8"].genes_up, "sc_neotcr8", REGISTRY["NeoTCR8"].genes_down
     )
+    adata_m.obs["uc_neotcr8"] = _pyucell_score_harmonized(
+        adata_m, REGISTRY["NeoTCR8"].genes_up, "uc_neotcr8", REGISTRY["NeoTCR8"].genes_down
+    )
     sc_comp_cols = []
     for s in sigs_cd8:
         cname = f"sc_{s}"
@@ -233,7 +278,7 @@ def run_prioritize_baselines(
     m_scores = meng_scores(adata_m, sigs_cd8)
     extra_m = (
         adata_m.obs.groupby(["donor", "sample", "lineage", "CDR3ab"], observed=True)[
-            ["raw_cxcl13", "sc_neotcr8", "sc_composite"]
+            ["raw_cxcl13", "sc_neotcr8", "uc_neotcr8", "sc_composite"]
         ]
         .mean()
         .reset_index()
@@ -263,6 +308,7 @@ def run_prioritize_baselines(
         ("clone_size", "size_percentile", _topk_mask_among_expanded(m_scores, "size_percentile", k_m)),
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(m_scores, "raw_cxcl13", k_m)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr8", _topk_mask_among_expanded(m_scores, "sc_neotcr8", k_m)),
+        ("pyucell_NeoTCR", "uc_neotcr8", _topk_mask_among_expanded(m_scores, "uc_neotcr8", k_m)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(m_scores, "sc_composite", k_m)),
         ("tcrsift_solid_tumor", "signature_TumorReactive_percentile", sel_tcr_m),
     ):
@@ -286,6 +332,9 @@ def run_prioritize_baselines(
     adata_ch.obs["sc_neotcr8"] = _scanpy_score_genes_harmonized(
         adata_ch, REGISTRY["NeoTCR8"].genes_up, "sc_neotcr8", REGISTRY["NeoTCR8"].genes_down
     )
+    adata_ch.obs["uc_neotcr8"] = _pyucell_score_harmonized(
+        adata_ch, REGISTRY["NeoTCR8"].genes_up, "uc_neotcr8", REGISTRY["NeoTCR8"].genes_down
+    )
     ch_sc_cols = []
     for s in sigs_cd8:
         cn = f"sc_{s}"
@@ -296,7 +345,7 @@ def run_prioritize_baselines(
     adata_ch.obs["sc_composite"] = adata_ch.obs[ch_sc_cols].mean(axis=1)
 
     ch_cell_agg = (
-        adata_ch.obs.groupby(["donor", "CDR3ab"], observed=True)[["raw_cxcl13", "sc_neotcr8", "sc_composite"]]
+        adata_ch.obs.groupby(["donor", "CDR3ab"], observed=True)[["raw_cxcl13", "sc_neotcr8", "uc_neotcr8", "sc_composite"]]
         .mean()
         .reset_index()
     )
@@ -318,6 +367,7 @@ def run_prioritize_baselines(
                 "signature_TumorReactive_percentile_max",
                 "raw_cxcl13",
                 "sc_neotcr8",
+                "uc_neotcr8",
                 "sc_composite",
                 "selected_for_review",
                 "selection_rank",
@@ -334,6 +384,7 @@ def run_prioritize_baselines(
         ("clone_size", "size_percentile", _topk_mask_among_expanded(ch_tab, "size_percentile", k_ch)),
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(ch_tab, "raw_cxcl13", k_ch)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr8", _topk_mask_among_expanded(ch_tab, "sc_neotcr8", k_ch)),
+        ("pyucell_NeoTCR", "uc_neotcr8", _topk_mask_among_expanded(ch_tab, "uc_neotcr8", k_ch)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(ch_tab, "sc_composite", k_ch)),
         ("tcrsift_solid_tumor", "signature_TumorReactive_percentile_max", sel_tcr_ch),
     ):
@@ -362,6 +413,9 @@ def run_prioritize_baselines(
     adata_pul.obs["sc_neotcr_pbl"] = _scanpy_score_genes_harmonized(
         adata_pul, REGISTRY["NeoTCR_PBL"].genes_up, "sc_neotcr_pbl", REGISTRY["NeoTCR_PBL"].genes_down
     )
+    adata_pul.obs["uc_neotcr_pbl"] = _pyucell_score_harmonized(
+        adata_pul, REGISTRY["NeoTCR_PBL"].genes_up, "uc_neotcr_pbl", REGISTRY["NeoTCR_PBL"].genes_down
+    )
     bt_sc_cols = []
     for s in sigs_bt:
         cn = f"sc_{s}"
@@ -371,7 +425,7 @@ def run_prioritize_baselines(
         bt_sc_cols.append(cn)
     adata_pul.obs["sc_composite"] = adata_pul.obs[bt_sc_cols].mean(axis=1)
     pul_cell_agg = (
-        adata_pul.obs.groupby(["donor", "CDR3ab"], observed=True)[["raw_cxcl13", "sc_neotcr_pbl", "sc_composite"]]
+        adata_pul.obs.groupby(["donor", "CDR3ab"], observed=True)[["raw_cxcl13", "sc_neotcr_pbl", "uc_neotcr_pbl", "sc_composite"]]
         .mean()
         .reset_index()
     )
@@ -393,6 +447,7 @@ def run_prioritize_baselines(
                 "signature_NeoTCR_PBL_percentile_max",
                 "raw_cxcl13",
                 "sc_neotcr_pbl",
+                "uc_neotcr_pbl",
                 "sc_composite",
                 "selected_for_review",
                 "selection_rank",
@@ -409,6 +464,7 @@ def run_prioritize_baselines(
         ("clone_size", "size_percentile", _topk_mask_among_expanded(pul_tab, "size_percentile", k_pul)),
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(pul_tab, "raw_cxcl13", k_pul)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr_pbl", _topk_mask_among_expanded(pul_tab, "sc_neotcr_pbl", k_pul)),
+        ("pyucell_NeoTCR", "uc_neotcr_pbl", _topk_mask_among_expanded(pul_tab, "uc_neotcr_pbl", k_pul)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(pul_tab, "sc_composite", k_pul)),
         ("tcrsift_blood_tumor", "signature_NeoTCR_PBL_percentile_max", sel_tcr_pul),
     ):
@@ -492,6 +548,9 @@ def run_prioritize_baselines(
     v_full.obs["sc_neotcr4"] = _scanpy_score_genes_harmonized(
         v_full, REGISTRY["NeoTCR4"].genes_up, "sc_neotcr4", REGISTRY["NeoTCR4"].genes_down
     )
+    v_full.obs["uc_neotcr4"] = _pyucell_score_harmonized(
+        v_full, REGISTRY["NeoTCR4"].genes_up, "uc_neotcr4", REGISTRY["NeoTCR4"].genes_down
+    )
     v_sc_cols = []
     for s in sigs_cd4:
         cn = f"sc_{s}"
@@ -519,6 +578,7 @@ def run_prioritize_baselines(
         foxp3_pos_fraction=("foxp3_pos", "mean"),
         raw_cxcl13=("raw_cxcl13", "mean"),
         sc_neotcr4=("sc_neotcr4", "mean"),
+        uc_neotcr4=("uc_neotcr4", "mean"),
         sc_composite=("sc_composite", "mean"),
         label=(
             "cell_label",
@@ -564,6 +624,7 @@ def run_prioritize_baselines(
         ("clone_size", "size_percentile", _topk_mask_among_expanded(v_clones, "size_percentile", k_v)),
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(v_clones, "raw_cxcl13", k_v)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr4", _topk_mask_among_expanded(v_clones, "sc_neotcr4", k_v)),
+        ("pyucell_NeoTCR", "uc_neotcr4", _topk_mask_among_expanded(v_clones, "uc_neotcr4", k_v)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(v_clones, "sc_composite", k_v)),
         ("tcrsift_solid_tumor_cd4_excl_treg", "signature_TumorReactive_percentile_max", sel_tcr_v),
     ):
@@ -600,6 +661,9 @@ def run_prioritize_baselines(
     adata_oh.obs["sc_neotcr4"] = _scanpy_score_genes_harmonized(
         adata_oh, REGISTRY["NeoTCR4"].genes_up, "sc_neotcr4", REGISTRY["NeoTCR4"].genes_down
     )
+    adata_oh.obs["uc_neotcr4"] = _pyucell_score_harmonized(
+        adata_oh, REGISTRY["NeoTCR4"].genes_up, "uc_neotcr4", REGISTRY["NeoTCR4"].genes_down
+    )
     oh_sc_cols = []
     for s in sigs_cd4:
         cn = f"sc_{s}"
@@ -609,7 +673,7 @@ def run_prioritize_baselines(
         oh_sc_cols.append(cn)
     adata_oh.obs["sc_composite"] = adata_oh.obs[oh_sc_cols].mean(axis=1)
     oh_cell_agg = (
-        adata_oh.obs.groupby(["donor", "CDR3ab"], observed=True)[["raw_cxcl13", "sc_neotcr4", "sc_composite"]]
+        adata_oh.obs.groupby(["donor", "CDR3ab"], observed=True)[["raw_cxcl13", "sc_neotcr4", "uc_neotcr4", "sc_composite"]]
         .mean()
         .reset_index()
     )
@@ -655,6 +719,7 @@ def run_prioritize_baselines(
         ("clone_size", "size_percentile", _topk_mask_among_expanded(oh_clones, "size_percentile", k_oh)),
         ("raw_CXCL13", "raw_cxcl13", _topk_mask_among_expanded(oh_clones, "raw_cxcl13", k_oh)),
         ("scanpy_score_genes_NeoTCR", "sc_neotcr4", _topk_mask_among_expanded(oh_clones, "sc_neotcr4", k_oh)),
+        ("pyucell_NeoTCR", "uc_neotcr4", _topk_mask_among_expanded(oh_clones, "uc_neotcr4", k_oh)),
         ("scanpy_composite_topk", "sc_composite", _topk_mask_among_expanded(oh_clones, "sc_composite", k_oh)),
         ("tcrsift_solid_tumor_cd4_excl_treg", "signature_TumorReactive_percentile_max", sel_tcr_oh),
     ):
@@ -1084,11 +1149,27 @@ def run_pgen_vs_olga(inf_work_dir: Path, mouse_work_dir: Path) -> list[dict]:
     r_a_h, _ = pearsonr(tcr_h.loc[valid_a, "pgen_alpha"], log_olga_a_h[valid_a])
     rho_a_h, _ = spearmanr(tcr_h.loc[valid_a, "pgen_alpha"], log_olga_a_h[valid_a])
 
+    from sonnia.sonia import Sonia
+
+    sn_h = Sonia(ppost_model="human_T_beta")
+    _ = sn_h.evaluate_seqs([["CASSIRSSYEQYF", "", ""]], include_genes=False)
+    t0 = time.perf_counter()
+    _qh, _sn_pgen_h, sn_ppost_h = sn_h.evaluate_seqs(
+        [[str(s), "", ""] for s in sub_h["CDR3_beta"]], include_genes=False
+    )
+    t_sonnia_h = time.perf_counter() - t0
+    sn_ppost_h = np.asarray(sn_ppost_h, dtype=float)
+    log_sonnia_b_h = np.where(sn_ppost_h > 0, np.log(np.maximum(sn_ppost_h, 1e-300)), -35.0)
+    vs_h = (sn_ppost_h > 0) & valid_b
+    r_sn_h, _ = pearsonr(log_sonnia_b_h[vs_h], log_olga_b_h[vs_h])
+    rho_sn_h, _ = spearmanr(log_sonnia_b_h[vs_h], log_olga_b_h[vs_h])
+
     pub_mask_h = sub_h["is_public_beta"].to_numpy(dtype=bool)
     for model_name, vec, elapsed, r_val, rho_val in (
         ("tcrsift_kmer_pgen_beta", tcr_h["pgen_beta"].to_numpy(dtype=float), t_tcr_h, r_b_h, rho_b_h),
         ("tcrsift_kmer_ppost_beta", tcr_h["ppost_beta"].to_numpy(dtype=float), t_tcr_h, float("nan"), float("nan")),
         ("olga_exact_vdj_pgen_beta", log_olga_b_h, t_olga_h, 1.0, 1.0),
+        ("sonia_v0.4_ppost_beta", log_sonnia_b_h, t_sonnia_h, r_sn_h, rho_sn_h),
     ):
         auc = auroc(vec, pub_mask_h)
         lo, hi = auroc_ci(vec, pub_mask_h)
@@ -1138,11 +1219,25 @@ def run_pgen_vs_olga(inf_work_dir: Path, mouse_work_dir: Path) -> list[dict]:
     r_a_m, _ = pearsonr(tcr_m.loc[va_m, "pgen_alpha"], log_olga_a_m[va_m])
     rho_a_m, _ = spearmanr(tcr_m.loc[va_m, "pgen_alpha"], log_olga_a_m[va_m])
 
+    sn_m = Sonia(ppost_model="mouse_T_beta")
+    _ = sn_m.evaluate_seqs([["CASSDDRVNERLFF", "", ""]], include_genes=False)
+    t0 = time.perf_counter()
+    _qm, _sn_pgen_m, sn_ppost_m = sn_m.evaluate_seqs(
+        [[str(s), "", ""] for s in uniq_m["CDR3_beta"]], include_genes=False
+    )
+    t_sonnia_m = time.perf_counter() - t0
+    sn_ppost_m = np.asarray(sn_ppost_m, dtype=float)
+    log_sonnia_b_m = np.where(sn_ppost_m > 0, np.log(np.maximum(sn_ppost_m, 1e-300)), -35.0)
+    vs_m = (sn_ppost_m > 0) & vb_m
+    r_sn_m, _ = pearsonr(log_sonnia_b_m[vs_m], log_olga_b_m[vs_m])
+    rho_sn_m, _ = spearmanr(log_sonnia_b_m[vs_m], log_olga_b_m[vs_m])
+
     pub_mask_m = uniq_m["is_public_mouse"].to_numpy(dtype=bool)
     for model_name, vec, elapsed, r_val, rho_val in (
         ("tcrsift_kmer_pgen_beta", tcr_m["pgen_beta"].to_numpy(dtype=float), t_tcr_m, r_b_m, rho_b_m),
         ("tcrsift_kmer_ppost_beta", tcr_m["ppost_beta"].to_numpy(dtype=float), t_tcr_m, float("nan"), float("nan")),
         ("olga_exact_vdj_pgen_beta", log_olga_b_m, t_olga_m, 1.0, 1.0),
+        ("sonia_v0.4_ppost_beta", log_sonnia_b_m, t_sonnia_m, r_sn_m, rho_sn_m),
     ):
         auc = auroc(vec, pub_mask_m)
         lo, hi = auroc_ci(vec, pub_mask_m)
@@ -1226,6 +1321,7 @@ def run_multimer_callers(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
         for k in (
             "10x_per_cell_threshold",
             "clr_z3_per_cell",
+            "muon_dsb_per_cell",
             "gmm_bimodal_per_cell",
             "tcrsift_clonal_concordance",
         )
@@ -1283,6 +1379,50 @@ def run_multimer_callers(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
             .drop_duplicates("CDR3ab")
         )
 
+        # Caller 2b: muon DSB background denoising using non-T (TCR-negative) cells as background + 6 NC isotypes
+        import muon as mu
+
+        vdj_all_bcs = set(vdj["barcode"].astype(str))
+        bg_bcs = fb_df.index.difference(pd.Index(sorted(vdj_all_bcs)))
+        dsb_cols_all = list(pmhc_cols) + list(nc_cols)
+        bg_mat_all = fb_df.loc[bg_bcs, dsb_cols_all].to_numpy(dtype=float)
+        nonzero_var = np.nanstd(np.log(bg_mat_all + 10.0), axis=0) > 1e-8
+        dsb_cols = [c for c, ok in zip(dsb_cols_all, nonzero_var) if ok]
+        dsb_nc_cols = [c for c in nc_cols if c in dsb_cols]
+        a_cells_dsb = ad.AnnData(
+            X=fb_sub[dsb_cols].to_numpy(dtype=float),
+            obs=pd.DataFrame(index=fb_sub.index.astype(str)),
+            var=pd.DataFrame(index=dsb_cols),
+        )
+        a_bg_dsb = ad.AnnData(
+            X=fb_df.loc[bg_bcs, dsb_cols].to_numpy(dtype=float),
+            obs=pd.DataFrame(index=bg_bcs.astype(str)),
+            var=pd.DataFrame(index=dsb_cols),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            mu.prot.pp.dsb(a_cells_dsb, a_bg_dsb, isotype_controls=dsb_nc_cols or None, random_state=0)
+        dsb_df = pd.DataFrame(
+            np.asarray(a_cells_dsb.X, dtype=float),
+            index=fb_sub.index,
+            columns=dsb_cols,
+        )
+        dsb_pmhc = np.column_stack(
+            [dsb_df[c].to_numpy(dtype=float) if c in dsb_df.columns else np.zeros(len(fb_sub)) for c in pmhc_cols]
+        )
+        pos_dsb = (dsb_pmhc >= 8.0) & (pmhc_mat >= 10.0)
+        single_dsb = pos_dsb.sum(axis=1) == 1
+        c2b_calls = np.where(single_dsb, np.array(pmhc_cols, dtype=object)[pos_dsb.argmax(axis=1)], None)
+        c2b_raw = pd.DataFrame({"CDR3ab": clone_of_bc.to_numpy(), "call": c2b_calls})
+        c2b_df = (
+            c2b_raw[c2b_raw["call"].notna()]
+            .groupby(["CDR3ab", "call"])
+            .size()
+            .reset_index(name="n")
+            .sort_values("n", ascending=False)
+            .drop_duplicates("CDR3ab")
+        )
+
         # Caller 3: 2-component bimodal GMM per multimer (`P >= 0.95` & `> 5x NC`, `>=1` cell in clone)
         post_mat = np.column_stack([_fit_1d_two_gaussian_posterior(log_mat[:, j]) for j in range(len(pmhc_cols))])
         pos_gmm = (post_mat >= 0.95) & (pmhc_mat >= 10.0) & (pmhc_mat > 5.0 * np.maximum(nc_max[:, None], 1.0))
@@ -1321,6 +1461,7 @@ def run_multimer_callers(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
         for cname, cdf in (
             ("10x_per_cell_threshold", c1_df),
             ("clr_z3_per_cell", c2_df),
+            ("muon_dsb_per_cell", c2b_df),
             ("gmm_bimodal_per_cell", c3_df),
             ("tcrsift_clonal_concordance", c4_df),
         ):
@@ -1357,6 +1498,440 @@ def run_multimer_callers(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
     return out_rows
 
 
+# ---------------------------------------------------------------------------
+# 5. Held-out Public TCR Database Matching: tcrsift vs scirpy (ir.tl.ir_query)
+# ---------------------------------------------------------------------------
+
+
+def _build_scirpy_adata(
+    df: pd.DataFrame,
+    *,
+    alpha_col: str,
+    beta_col: str,
+    extra_cols: tuple[str, ...] = (),
+    db_name: str | None = None,
+) -> ad.AnnData:
+    import scirpy as ir
+
+    cells = []
+    for idx, row in enumerate(df.itertuples(index=False)):
+        cell = ir.io.AirrCell(cell_id=f"c{idx}")
+        for col in extra_cols:
+            cell[col] = str(getattr(row, col) or "")
+        a = getattr(row, alpha_col, None)
+        b = getattr(row, beta_col, None)
+        if isinstance(a, str) and a.strip() and a.strip().lower() not in ("nan", "none"):
+            ch = ir.io.AirrCell.empty_chain_dict()
+            ch.update({"locus": "TRA", "junction_aa": a.strip(), "productive": True})
+            cell.add_chain(ch)
+        if isinstance(b, str) and b.strip() and b.strip().lower() not in ("nan", "none"):
+            ch = ir.io.AirrCell.empty_chain_dict()
+            ch.update({"locus": "TRB", "junction_aa": b.strip(), "productive": True})
+            cell.add_chain(ch)
+        cells.append(cell)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        adata = ir.io.from_airr_cells(cells)
+        if db_name:
+            adata.uns["DB"] = {"name": db_name}
+        ir.pp.index_chains(adata)
+    return adata
+
+
+def run_db_matching_vs_scirpy(inf_data_dir: Path, inf_work_dir: Path) -> list[dict]:
+    import scirpy as ir
+
+    from tcrsift.annotate import load_vdjdb, match_clonotypes
+    from tcrsift.loader import load_cellranger_vdj
+
+    rows: list[dict] = []
+
+    # --- 5A. Minervina 2022 SARS-CoV-2 paired clones against PMID:35383307-held-out VDJdb ---
+    min_all = pd.read_csv(inf_work_dir / "minervina_blood_default" / "all_scored_clones.csv", low_memory=False)
+    min_q = (
+        min_all[["CDR3_alpha", "CDR3_beta", "CDR3ab"]]
+        .dropna(subset=["CDR3_alpha", "CDR3_beta"])
+        .drop_duplicates("CDR3ab")
+        .reset_index(drop=True)
+    )
+    vdjdb_no_min = load_vdjdb(inf_work_dir / "vdjdb_heldout_no_minervina.tsv", verbose=False)
+    ref_raw = pd.read_csv(inf_work_dir / "vdjdb_heldout_no_minervina.tsv", sep="\t", low_memory=False)
+    ref_hs = ref_raw[ref_raw["species"].astype(str).str.lower().isin(["homosapiens", "human"])].copy()
+    ref_hs["cdr3_a"] = ref_hs["cdr3.alpha"].fillna("").astype(str).str.strip()
+    ref_hs["cdr3_b"] = ref_hs["cdr3.beta"].fillna("").astype(str).str.strip()
+    ref_hs["antigen_species"] = ref_hs["antigen.species"].fillna("").astype(str).str.strip()
+    ref_hs["antigen_epitope"] = ref_hs["antigen.epitope"].fillna("").astype(str).str.strip()
+    ref_dedup = (
+        ref_hs.groupby(["cdr3_a", "cdr3_b"], as_index=False)
+        .agg(
+            antigen_species=("antigen_species", lambda s: ";".join(sorted(set(x for x in s if x)))),
+            antigen_epitope=("antigen_epitope", lambda s: ";".join(sorted(set(x for x in s if x)))),
+        )
+    )
+
+    for label, strictness, mode, max_dist in (
+        ("tcrsift_strict_ab_exact", "strict_ab", "exact", 1),
+        ("tcrsift_ab_with_partial_exact", "ab_with_partial", "exact", 1),
+        ("tcrsift_strict_ab_lev1", "strict_ab", "levenshtein", 1),
+    ):
+        t0 = time.perf_counter()
+        res = match_clonotypes(
+            min_q.copy(),
+            vdjdb_no_min,
+            match_strictness=strictness,
+            match_mode=mode,
+            max_distance=max_dist,
+            species="human",
+            host_species_filter="same",
+            verbose=False,
+            show_progress=False,
+        )
+        elapsed = time.perf_counter() - t0
+        matched = res["db_match"].fillna(False).astype(bool)
+        cognate = matched & res["db_species"].fillna("").astype(str).str.contains("SARS-CoV-2", case=False)
+        n_m = int(matched.sum())
+        n_c = int(cognate.sum())
+        rows.append(
+            {
+                "cohort": "minervina_2022_sars_cov2_heldout",
+                "method": label,
+                "n_query_clones": len(min_q),
+                "n_matched": n_m,
+                "n_cognate": n_c,
+                "cognate_precision": round(n_c / n_m, 4) if n_m else np.nan,
+                "cognate_recall": round(n_c / len(min_q), 4),
+                "elapsed_sec": round(elapsed, 3),
+            }
+        )
+
+    aq_min = _build_scirpy_adata(min_q, alpha_col="CDR3_alpha", beta_col="CDR3_beta")
+    ar_min = _build_scirpy_adata(
+        ref_dedup,
+        alpha_col="cdr3_a",
+        beta_col="cdr3_b",
+        extra_cols=("antigen_species", "antigen_epitope"),
+        db_name="vdjdb_min",
+    )
+    for label, metric, arms, cutoff in (
+        ("scirpy_v0.26_identity_paired", "identity", "all", None),
+        ("scirpy_v0.26_identity_trb_only", "identity", "VDJ", None),
+        ("scirpy_v0.26_lev1_paired", "levenshtein", "all", 1),
+    ):
+        qkey = f"q_{label}"
+        dkey = f"d_{label}"
+        t0 = time.perf_counter()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            dist_kw = {"cutoff": cutoff} if cutoff is not None else {}
+            ir.pp.ir_dist(aq_min, ar_min, sequence="aa", metric=metric, key_added=dkey, n_jobs=1, **dist_kw)
+            ir.tl.ir_query(
+                aq_min,
+                ar_min,
+                sequence="aa",
+                metric=metric,
+                receptor_arms=arms,
+                distance_key=dkey,
+                key_added=qkey,
+                n_jobs=1,
+            )
+            ann_df = ir.tl.ir_query_annotate_df(
+                aq_min,
+                ar_min,
+                include_ref_cols=["antigen_species"],
+                query_key=qkey,
+            )
+        elapsed = time.perf_counter() - t0
+        ann_df = ann_df.reset_index()
+        idx_col = ann_df.columns[0]
+        per_q = ann_df.dropna(subset=["antigen_species"]).groupby(idx_col)["antigen_species"].apply(
+            lambda s: ";".join(s.astype(str))
+        )
+        n_m = len(per_q)
+        n_c = int(per_q.str.contains("SARS-CoV-2", case=False).sum())
+        rows.append(
+            {
+                "cohort": "minervina_2022_sars_cov2_heldout",
+                "method": label,
+                "n_query_clones": len(min_q),
+                "n_matched": n_m,
+                "n_cognate": n_c,
+                "cognate_precision": round(n_c / n_m, 4) if n_m else np.nan,
+                "cognate_recall": round(n_c / len(min_q), 4),
+                "elapsed_sec": round(elapsed, 3),
+            }
+        )
+
+    # --- 5B. 10x Healthy Donor 1 canonical viral multimer clones against 10x-held-out VDJdb ---
+    d1_dir = inf_data_dir / "tenx_dextramer" / "donor1"
+    bmat = pd.read_csv(d1_dir / "vdj_v1_hs_aggregated_donor1_binarized_matrix.csv", low_memory=False)
+    binder_cols = [c for c in bmat.columns if c.endswith("_binder")]
+    canonical_peps = ("GILGFVFTL", "GLCTLVAML", "RAKFKQLL", "IVTDFSVIK", "AVFDRKSDAK", "NLVPMVATV", "TPRVTGGGAM")
+    b_arr = bmat[binder_cols].to_numpy(dtype=bool)
+    single_b = b_arr.sum(axis=1) == 1
+    calls = np.where(single_b, np.array([c.split("_")[1] for c in binder_cols], dtype=object)[b_arr.argmax(axis=1)], None)
+    bmap = pd.DataFrame({"barcode": bmat["barcode"].astype(str), "true_epitope": calls}).dropna()
+    bmap = bmap[bmap["true_epitope"].isin(canonical_peps)]
+
+    vdj1 = load_cellranger_vdj(d1_dir, "donor1", verbose=False)
+    tra1 = vdj1[vdj1["chain"].eq("TRA") & vdj1["cdr3"].notna()].sort_values("umis", ascending=False).drop_duplicates("barcode").set_index("barcode")["cdr3"]
+    trb1 = vdj1[vdj1["chain"].eq("TRB") & vdj1["cdr3"].notna()].sort_values("umis", ascending=False).drop_duplicates("barcode").set_index("barcode")["cdr3"]
+    bmap["CDR3_alpha"] = bmap["barcode"].map(tra1)
+    bmap["CDR3_beta"] = bmap["barcode"].map(trb1)
+    bmap = bmap.dropna(subset=["CDR3_alpha", "CDR3_beta"]).copy()
+    bmap["CDR3ab"] = bmap["CDR3_alpha"] + "_" + bmap["CDR3_beta"]
+    d1_q = (
+        bmap.groupby(["CDR3ab", "CDR3_alpha", "CDR3_beta", "true_epitope"])
+        .size()
+        .reset_index(name="n")
+        .query("n >= 2")
+        .sort_values("n", ascending=False)
+        .drop_duplicates("CDR3ab")
+        .reset_index(drop=True)
+    )
+    true_ep_map = dict(zip(d1_q["CDR3ab"], d1_q["true_epitope"]))
+
+    vdjdb_no_10x = load_vdjdb(inf_work_dir / "vdjdb_heldout_no_10x.tsv", verbose=False)
+    ref10_raw = pd.read_csv(inf_work_dir / "vdjdb_heldout_no_10x.tsv", sep="\t", low_memory=False)
+    ref10_hs = ref10_raw[ref10_raw["species"].astype(str).str.lower().isin(["homosapiens", "human"])].copy()
+    ref10_hs["cdr3_a"] = ref10_hs["cdr3.alpha"].fillna("").astype(str).str.strip()
+    ref10_hs["cdr3_b"] = ref10_hs["cdr3.beta"].fillna("").astype(str).str.strip()
+    ref10_hs["antigen_epitope"] = ref10_hs["antigen.epitope"].fillna("").astype(str).str.strip()
+    ref10_dedup = (
+        ref10_hs.groupby(["cdr3_a", "cdr3_b"], as_index=False)
+        .agg(antigen_epitope=("antigen_epitope", lambda s: ";".join(sorted(set(x for x in s if x)))))
+    )
+
+    for label, strictness, mode, max_dist in (
+        ("tcrsift_strict_ab_exact", "strict_ab", "exact", 1),
+        ("tcrsift_ab_with_partial_exact", "ab_with_partial", "exact", 1),
+        ("tcrsift_strict_ab_lev1", "strict_ab", "levenshtein", 1),
+    ):
+        t0 = time.perf_counter()
+        res = match_clonotypes(
+            d1_q[["CDR3_alpha", "CDR3_beta", "CDR3ab"]].copy(),
+            vdjdb_no_10x,
+            match_strictness=strictness,
+            match_mode=mode,
+            max_distance=max_dist,
+            species="human",
+            host_species_filter="same",
+            verbose=False,
+            show_progress=False,
+        )
+        elapsed = time.perf_counter() - t0
+        matched = res["db_match"].fillna(False).astype(bool)
+        n_m = int(matched.sum())
+        n_c = sum(
+            1
+            for _, r in res[matched].iterrows()
+            if true_ep_map.get(r["CDR3ab"], "") in str(r.get("db_epitope") or "").split(";")
+        )
+        rows.append(
+            {
+                "cohort": "tenx_donor1_canonical_viral_heldout",
+                "method": label,
+                "n_query_clones": len(d1_q),
+                "n_matched": n_m,
+                "n_cognate": n_c,
+                "cognate_precision": round(n_c / n_m, 4) if n_m else np.nan,
+                "cognate_recall": round(n_c / len(d1_q), 4),
+                "elapsed_sec": round(elapsed, 3),
+            }
+        )
+
+    aq_d1 = _build_scirpy_adata(d1_q, alpha_col="CDR3_alpha", beta_col="CDR3_beta", extra_cols=("CDR3ab",))
+    ar_d1 = _build_scirpy_adata(
+        ref10_dedup,
+        alpha_col="cdr3_a",
+        beta_col="cdr3_b",
+        extra_cols=("antigen_epitope",),
+        db_name="vdjdb_10x",
+    )
+    cid_to_cab = {f"c{i}": cab for i, cab in enumerate(d1_q["CDR3ab"])}
+    for label, metric, arms, cutoff in (
+        ("scirpy_v0.26_identity_paired", "identity", "all", None),
+        ("scirpy_v0.26_identity_trb_only", "identity", "VDJ", None),
+        ("scirpy_v0.26_lev1_paired", "levenshtein", "all", 1),
+    ):
+        qkey = f"q_{label}"
+        dkey = f"d_{label}"
+        t0 = time.perf_counter()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            dist_kw = {"cutoff": cutoff} if cutoff is not None else {}
+            ir.pp.ir_dist(aq_d1, ar_d1, sequence="aa", metric=metric, key_added=dkey, n_jobs=1, **dist_kw)
+            ir.tl.ir_query(
+                aq_d1,
+                ar_d1,
+                sequence="aa",
+                metric=metric,
+                receptor_arms=arms,
+                distance_key=dkey,
+                key_added=qkey,
+                n_jobs=1,
+            )
+            ann_df = ir.tl.ir_query_annotate_df(
+                aq_d1,
+                ar_d1,
+                include_ref_cols=["antigen_epitope"],
+                query_key=qkey,
+            )
+        elapsed = time.perf_counter() - t0
+        ann_df = ann_df.reset_index()
+        idx_col = ann_df.columns[0]
+        per_q = ann_df.dropna(subset=["antigen_epitope"]).groupby(idx_col)["antigen_epitope"].apply(
+            lambda s: ";".join(s.astype(str))
+        )
+        n_m = len(per_q)
+        n_c = sum(
+            1
+            for cid, eps in per_q.items()
+            if true_ep_map.get(cid_to_cab.get(str(cid), ""), "") in eps.split(";")
+        )
+        rows.append(
+            {
+                "cohort": "tenx_donor1_canonical_viral_heldout",
+                "method": label,
+                "n_query_clones": len(d1_q),
+                "n_matched": n_m,
+                "n_cognate": n_c,
+                "cognate_precision": round(n_c / n_m, 4) if n_m else np.nan,
+                "cognate_recall": round(n_c / len(d1_q), 4),
+                "elapsed_sec": round(elapsed, 3),
+            }
+        )
+
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# 6. Synthesis Codon Optimization & Hazard Clearance: tcrsift vs DNAChisel
+# ---------------------------------------------------------------------------
+
+
+def run_codon_opt_vs_dnachisel(inf_work_dir: Path, cache_dir: Path) -> list[dict]:
+    import dnachisel as dc
+
+    from tcrsift.assemble import assemble_full_sequences
+    from tcrsift.assemble.codons import translate_dna
+    from tcrsift.assemble.qc import add_synthesis_qc
+
+    enzymes = ("EcoRI", "BamHI", "XhoI", "BsaI", "BsmBI")
+    enzyme_motifs = ("GAATTC", "GGATCC", "CTCGAG", "GGTCTC", "GAGACC", "CGTCTC", "GAGACG")
+    min_cands = pd.read_csv(inf_work_dir / "minervina_blood_default" / "candidate_clones.csv", low_memory=False)
+
+    def _eval_opt_table(tool_name: str, seqs_nt: list[str], target_aas: list[str], donor_vdj_b: list[str], donor_vdj_a: list[str], elapsed: float) -> dict:
+        tmp = pd.DataFrame({"single_chain_nt_optimized": seqs_nt})
+        tmp = add_synthesis_qc(tmp)
+        n_inframe = 0
+        n_enz_free = 0
+        donor_codon_fracs = []
+        for nt, aa, vb_nt, va_nt in zip(seqs_nt, target_aas, donor_vdj_b, donor_vdj_a):
+            nt_u = str(nt).upper()
+            tr, _ = translate_dna(nt_u)
+            if tr.rstrip("*") == str(aa).rstrip("*"):
+                n_inframe += 1
+            if not any(m in nt_u for m in enzyme_motifs):
+                n_enz_free += 1
+            # Fraction of donor VDJ_beta + VDJ_alpha codons preserved verbatim in optimized ORF
+            for v_nt in (vb_nt, va_nt):
+                v_u = str(v_nt or "").upper()
+                if len(v_u) >= 30:
+                    v_u = v_u[: (len(v_u) // 3) * 3]
+                    v_aa, _ = translate_dna(v_u)
+                    tr_full = tr.rstrip("*")
+                    pos = tr_full.find(v_aa)
+                    if pos >= 0:
+                        seg = nt_u[3 * pos : 3 * pos + len(v_u)]
+                        n_cod = len(v_u) // 3
+                        same = sum(seg[3 * k : 3 * k + 3] == v_u[3 * k : 3 * k + 3] for k in range(n_cod))
+                        donor_codon_fracs.append(same / n_cod)
+        return {
+            "cohort": "minervina_2022_human_46_constructs",
+            "tool": tool_name,
+            "n_constructs": len(seqs_nt),
+            "n_inframe_exact_aa": n_inframe,
+            "n_restriction_free": n_enz_free,
+            "n_homopolymer_lt9": int((tmp["synth_max_homopolymer"] < 9).sum()),
+            "n_gc_window_ok": int(tmp["synth_gc_ok"].sum()),
+            "mean_donor_vdj_codon_preserved": round(float(np.mean(donor_codon_fracs)), 4) if donor_codon_fracs else np.nan,
+            "elapsed_sec": round(elapsed, 3),
+        }
+
+    # Baseline assembly (unoptimized blend) for DNAChisel input
+    base_asm = assemble_full_sequences(
+        min_cands.copy(),
+        species="human",
+        linker="T2A",
+        data_dir=cache_dir,
+        verbose=False,
+        show_progress=False,
+    )
+    target_aas = base_asm["single_chain_aa"].astype(str).tolist()
+    donor_vb = base_asm["VDJ_beta_nt"].fillna("").astype(str).tolist()
+    donor_va = base_asm["VDJ_alpha_nt"].fillna("").astype(str).tolist()
+    raw_nts = base_asm["single_chain_nt"].astype(str).str.upper().tolist()
+
+    rows: list[dict] = []
+
+    for mode, label in (("focal", "tcrsift_focal_opt"), ("full", "tcrsift_full_opt")):
+        t0 = time.perf_counter()
+        asm_opt = assemble_full_sequences(
+            min_cands.copy(),
+            species="human",
+            linker="T2A",
+            codon_optimization=mode,
+            max_codon_repeats=1,
+            avoid_enzymes=enzymes,
+            data_dir=cache_dir,
+            verbose=False,
+            show_progress=False,
+        )
+        t_el = time.perf_counter() - t0
+        rows.append(
+            _eval_opt_table(
+                label,
+                asm_opt["single_chain_nt_optimized"].astype(str).tolist(),
+                target_aas,
+                donor_vb,
+                donor_va,
+                t_el,
+            )
+        )
+
+    # DNAChisel with matching constraints: EnforceTranslation, 5 restriction enzymes, 9-nt homopolymers, 30-70% GC/50bp
+    t0 = time.perf_counter()
+    dc_seqs = []
+    for nt in raw_nts:
+        # Strip trailing second stop codon if present so EnforceTranslation sees 1 clean ORF
+        orf = nt
+        extra_stop = ""
+        if len(orf) >= 6 and orf[-6:-3] in ("TAA", "TAG", "TGA") and orf[-3:] in ("TAA", "TAG", "TGA"):
+            extra_stop = orf[-3:]
+            orf = orf[:-3]
+        constraints = [
+            dc.EnforceTranslation(location=(0, len(orf))),
+            *[dc.AvoidPattern(m) for m in ("GAATTC", "GGATCC", "CTCGAG", "GGTCTC", "CGTCTC")],
+            *[dc.AvoidPattern(b * 9) for b in "ACGT"],
+            dc.EnforceGCContent(mini=0.30, maxi=0.70, window=50),
+        ]
+        prob = dc.DnaOptimizationProblem(
+            sequence=orf,
+            constraints=constraints,
+            objectives=[dc.CodonOptimize(species="h_sapiens")],
+            logger=None,
+        )
+        try:
+            prob.resolve_constraints()
+            prob.optimize()
+            dc_seqs.append(prob.sequence + extra_stop)
+        except Exception:
+            dc_seqs.append(orf + extra_stop)
+    t_dc = time.perf_counter() - t0
+    rows.append(_eval_opt_table("dnachisel_v3.2", dc_seqs, target_aas, donor_vb, donor_va, t_dc))
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--til-data-dir", type=Path, default=Path("/tmp/tcrsift_bench_til"))
@@ -1369,11 +1944,13 @@ def main() -> None:
     parser.add_argument("--mouse-work-dir", type=Path, default=Path("/tmp/tcrsift_bench_mouse/runs"))
     parser.add_argument("--cache-dir", type=Path, default=Path("/tmp/tcrsift_cache_vdjdb_germline"))
     parser.add_argument("--thimble-bin", type=Path, default=Path("/tmp/h2h_venv/bin/thimble"))
-    parser.add_argument("--stage", choices=("all", "1", "2", "3", "4"), default="all")
+    parser.add_argument("--stage", choices=("all", "1", "2", "3", "4", "5", "6"), default="all")
     args = parser.parse_args()
 
     results_dir = HERE / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
+
+    import importlib.metadata
 
     import olga
     import Stitchr.stitchrfunctions as st_fxn
@@ -1382,45 +1959,66 @@ def main() -> None:
 
     t0 = time.perf_counter()
     if args.stage in ("all", "1"):
-        print("1/4 Running ex vivo prioritization head-to-head (tcrsift vs CXCL13 / Scanpy score_genes)...")
+        print("1/6 Running ex vivo prioritization head-to-head (tcrsift vs CXCL13 / Scanpy / pyucell)...")
         prio_rows = run_prioritize_baselines(
             args.til_data_dir, args.til_work_dir, args.blood_cd4_data_dir, args.blood_cd4_work_dir
         )
         pd.DataFrame(prio_rows).to_csv(results_dir / "h2h_prioritize_baselines.csv", index=False)
 
     if args.stage in ("all", "2"):
-        print("2/4 Running full-length TCR construct assembly head-to-head (tcrsift vs stitchr/thimble)...")
+        print("2/6 Running full-length TCR construct assembly head-to-head (tcrsift vs stitchr/thimble)...")
         asm_rows = run_assembly_vs_stitchr(
             args.inf_data_dir, args.inf_work_dir, args.mouse_work_dir, args.cache_dir, args.thimble_bin
         )
         pd.DataFrame(asm_rows).to_csv(results_dir / "h2h_assembly_vs_stitchr.csv", index=False)
 
     if args.stage in ("all", "3"):
-        print("3/4 Running TCR Pgen/publicness head-to-head (tcrsift k-mer vs OLGA exact VDJ DP)...")
+        print("3/6 Running TCR Pgen/Ppost publicness head-to-head (tcrsift k-mer vs OLGA & soNNia)...")
         pgen_rows = run_pgen_vs_olga(args.inf_work_dir, args.mouse_work_dir)
         pd.DataFrame(pgen_rows).to_csv(results_dir / "h2h_pgen_vs_olga.csv", index=False)
 
     if args.stage in ("all", "4"):
-        print("4/4 Running pMHC multimer caller head-to-head (tcrsift clonal concordance vs per-cell/CLR/GMM)...")
+        print("4/6 Running pMHC multimer caller head-to-head (tcrsift vs 10x / CLR / muon DSB / GMM)...")
         mult_rows = run_multimer_callers(args.inf_data_dir, args.inf_work_dir)
         pd.DataFrame(mult_rows).to_csv(results_dir / "h2h_multimer_callers.csv", index=False)
 
-    import importlib.metadata
+    if args.stage in ("all", "5"):
+        print("5/6 Running held-out TCR database matching head-to-head (tcrsift vs scirpy)...")
+        db_rows = run_db_matching_vs_scirpy(args.inf_data_dir, args.inf_work_dir)
+        pd.DataFrame(db_rows).to_csv(results_dir / "h2h_db_matching_vs_scirpy.csv", index=False)
+
+    if args.stage in ("all", "6"):
+        print("6/6 Running synthesis codon optimization head-to-head (tcrsift vs DNAChisel)...")
+        opt_rows = run_codon_opt_vs_dnachisel(args.inf_work_dir, args.cache_dir)
+        pd.DataFrame(opt_rows).to_csv(results_dir / "h2h_codon_opt_vs_dnachisel.csv", index=False)
 
     prev_elapsed = None
     summary_path = results_dir / "summary.json"
     if args.stage != "all" and summary_path.exists():
         prev_elapsed = json.loads(summary_path.read_text()).get("elapsed_seconds")
 
+    def _pkg_ver(name: str) -> str:
+        try:
+            return importlib.metadata.version(name)
+        except Exception:
+            return "unavailable"
+
     summary = {
         "tcrsift_version": __version__,
-        "stitchr_version": getattr(st_fxn, "__version__", "1.3.1"),
-        "olga_version": getattr(olga, "__version__", "1.3.0"),
-        "scanpy_version": importlib.metadata.version("scanpy"),
+        "stitchr_version": getattr(st_fxn, "__version__", _pkg_ver("stitchr")),
+        "dnachisel_version": _pkg_ver("dnachisel"),
+        "scirpy_version": _pkg_ver("scirpy"),
+        "muon_version": _pkg_ver("muon"),
+        "olga_version": getattr(olga, "__version__", _pkg_ver("olga")),
+        "sonnia_version": _pkg_ver("sonnia"),
+        "scanpy_version": _pkg_ver("scanpy"),
+        "pyucell_version": _pkg_ver("pyucell"),
         "elapsed_seconds": prev_elapsed if prev_elapsed is not None else round(time.perf_counter() - t0, 1),
         "tables": [
             "h2h_prioritize_baselines.csv",
             "h2h_assembly_vs_stitchr.csv",
+            "h2h_codon_opt_vs_dnachisel.csv",
+            "h2h_db_matching_vs_scirpy.csv",
             "h2h_pgen_vs_olga.csv",
             "h2h_multimer_callers.csv",
         ],
