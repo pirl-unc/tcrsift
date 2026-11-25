@@ -10,81 +10,24 @@ naive self-antigen (`MART-1`, encoded by *MLANA*) T cells across resting blood,
 longitudinal vaccination, and overnight peptide stimulation (see also the
 [Benchmark overview](benchmarks-overview.md)).
 
-## Summary
+## At-a-glance results
 
-- **In resting blood, differentiation signatures separate viral memory from
-  naive precursors, but not one expanded memory clone from another.** Across
-  all clones (≥1 cell) in 10x Genomics Donors 1 and 2, `Differentiated`
-  reaches an AUROC of 0.84 and 0.94 and `AntigenExperienced` reaches
-  0.83 and 0.92 when separating Influenza, EBV, and CMV memory clones
-  from naive `MART-1` (`ELAGIGILTV`) clones. Once restricted to expanded blood
-  clones (≥2 cells), unlabeled expanded clones are themselves memory T cells
-  against unpanelled antigens, so scores reflect memory subtype rather than
-  antigen specificity (`CirculatingMemory` 0.65 and 0.61 for cleared
-  Influenza M1 vs latent EBV; `AIM` and `Proliferation` 0.45 to 0.53 vs
-  unlabeled expanded clones).
-- **Default `--context blood` cutoffs select a compact effector and memory shortlist
-  and exclude naive `MART-1` clones.** Running `tcrsift prioritize --context
-  blood` (`--min-cells 2`) qualifies 55 of 743 expanded clones in Donor 1
-  (15 of 143 viral, 0 of 1 expanded `MART-1`, 39 of 495 unlabeled memory, plus
-  1 of 89 sticky `KLGGALQAK` clones) and 51 of 1,829 expanded clones in
-  Donor 2 (21 of 429 viral, 30 of 1,264 unlabeled).
-  Enabling `--exclude-known-viral` against study-held-out VDJdb removes 78% (7 of 9)
-  of shortlisted Influenza M1 clones in Donor 1 while preserving 100%
-  (39 of 39 and 30 of 30) of unlabeled expanded clones under `prioritize`'s
-  default `--database-match strict_ab`.
-- **Transient activation and tumor-reactivity modules rise during acute
-  vaccine recall in blood.** Across 10,484 paired-TCR SARS-CoV-2-specific CD8 T
-  cells profiled longitudinally by Minervina et al. 2022, `Proliferation`,
-  `AcuteActivation`, and `TumorReactive` sit near baseline in convalescent blood
-  (−0.09, −0.08, −0.02) and peak after the second mRNA vaccine
-  dose (+0.77, +0.59, +0.51; `TumorReactive` AUROC 0.74 for acute
-  post-dose-2 vs convalescent clones). In blood draws collected near vaccination
-  or acute infection, `TumorReactive` therefore captures recently restimulated
-  viral T cells alongside tumor-reactive clones.
-- **Overnight (16 h) peptide restimulation requires within-clone transcriptional
-  delta rather than clonal abundance fold-change.** Across 73 persistent
-  β-clonotypes sequenced in paired unstimulated and 16 h SARS-CoV-2
-  Spike-stimulated CD3-gated T cells (Fischer et al. 2021), 0 of 73 clones
-  pass Benjamini–Hochberg FDR < 0.05 by Fisher exact count enrichment because T
-  cells do not divide multiple times overnight. Comparing expression within the
-  same clone across paired wells (`score_stimulation_response`) identifies 11
-  persistent clones with effector-cytokine transcript (`IFNG`, `TNF`,
-  `IL2`, `CCL4`) induction (Δ > 0.5, with `ΔAIMBroad` up to +1.87) despite
-  small abundance changes (`log2FC` −0.89 to +1.17).
-- **Default `--database-match strict_ab` in `prioritize` prevents false-positive
-  β-chain collisions on private epitopes.** Both 10x Dextramer (28,040 records) and
-  Minervina 2022 (`PMID:35383307`, 891 records) are indexed in VDJdb
-  (`vdjdb-2026-11-06`: 280,894 `TRB` entries, 200,180 paired α/β), inflating
-  full-database recall. When each queried study is held out, `strict_ab`
-  achieves 100% exact-epitope precision (44 of 44 and 65 of 65) on canonical
-  Influenza/EBV/CMV clones and 92.1% SARS-CoV-2 species precision (35 of 38)
-  on Minervina 2022. Relaxing to `ab_with_partial` raises recall on
-  canonical epitopes (30.6% to 66.7% in Donor 1; 15.2% to 45.9% in Donor
-  2) at 92.1%–99.0% precision, but on mostly private SARS-CoV-2 clones
-  50.1% of `ab_with_partial` matches (237 of 473; 50.5% under `b_only`) are
-  false-positive collisions with public Yellow Fever, EBV, CMV, self-antigen,
-  or Influenza β chains (species precision 49.9%, dropping to 28.3% at
-  Levenshtein distance 1).
-- **IMGT germline V+J fallback rescues full-length constructs in 5'-truncated VDJ
-  deposits.** In Fischer et al. 2021 (`GSE171037`), where 98.7%–99.7% of
-  called TCR contigs terminate downstream of the V-leader start codon, 0 of
-  160 paired α/β clones (137 in `GT_6`, 23 in `GT_2`) assemble in strict
-  contig-only mode (`--no-germline-vdj-fallback`); default germline fallback
-  against cached IMGT human `V-REGION` and `J-REGION` references rescues 160 of
-  160 (100%) full-length single-chain constructs (32 rescued from 5'-partial
-  contigs on both chains preserving donor framework/CDR3/FR4 codons, and 23
-  with donor-contig-verified J→C junctions on both chains), setting
-  `construct_contig_verified = False`.
-- **Clonal concordance removes >96% of sticky pMHC multimer calls.** Single-cell
-  dextramer calling calibrated against negative-control multimers matches 10x
-  Genomics' published calls on 100% of jointly called single-binder cells in
-  both donors, yet the promiscuous `HLA-A*03:01 KLGGALQAK` (CMV IE-1) reagent
-  still tags cells inside 280 and 739 expanded clones (median within-clone
-  concordance 0.24 and 0.25). Requiring ≥50% clonal concordance
-  across ≥2 cells removes 96.4% and 96.1% of sticky `KLGGALQAK`
-  clones while preserving 88.4%–93.6% of Influenza M1 `GILGFVFTL` clones
-  (median concordance 1.00).
+| Capability / cohort | Headline result | Takeaway & limitation |
+| --- | --- | --- |
+| **Resting blood ranking** (10x Donors 1 & 2, `--context blood`) | `Differentiated` (**0.84 / 0.94**) and `AntigenExperienced` (**0.83 / 0.92**) separate viral memory from naive `MART-1`; default cutoffs select 55 / 51 expanded clones (0 naive `MART-1`). | Among expanded memory clones (≥2 cells), expression reflects memory subtype (`CirculatingMemory` 0.65 / 0.61 Flu vs EBV), not epitope specificity. |
+| **Acute vaccine recall** (Minervina 2022 SARS-CoV-2) | `Proliferation` (**+0.77**), `AcuteActivation` (**+0.59**), and `TumorReactive` (**+0.51**, AUROC **0.74** vs convalescent) spike after mRNA dose 2. | Recent vaccination or acute infection can trigger `TumorReactive` in peripheral blood — flag or exclude known viral clones (`--exclude-known-viral`). |
+| **Overnight (16 h) restimulation** (Fischer 2021 Spike) | Fisher abundance test detects **0 / 73** clones at FDR < 0.05; paired transcriptional delta (`--method stimulation`) detects **11 / 73** cytokine-induced clones (`Δ > 0.5`, `ΔAIMBroad` up to `+1.87`). | Overnight assays do not divide; a paired unstimulated control well is required for within-clone transcriptional delta. |
+| **Public DB matching** (`strict_ab` vs partial/β-only on held-out VDJdb) | `strict_ab` hits **100%** exact-epitope precision on 10x donors (44/44, 65/65) and **92.1%** SARS-CoV-2 precision on Minervina vs **49.9%** under `ab_with_partial` (237 off-target β hits; 28.3% at Levenshtein-1). | `strict_ab` prevents false-positive viral exclusions on private repertoires; holding out the evaluated study is mandatory to avoid VDJdb self-retrieval. |
+| **pMHC multimer calling** (`--call-multimers`, 10x Donors 1 & 2) | Matches 10x per-cell calls on **100%** of single-binder cells while clonal concordance (≥50%, ≥2 cells) removes **96.4% / 96.1%** of sticky `KLGGALQAK` clones and keeps **88.4%–93.6%** of Influenza M1 clones. | Singleton binders (e.g. naive `MART-1`) need per-cell UMI/NC or CITE-seq gating rather than clonal concordance. |
+| **5'-truncated construct assembly** (Fischer 2021, `GSE171037`) | Strict contig-only mode (`--no-germline-vdj-fallback`) builds **0 / 160** constructs; default germline VDJ fallback rescues **160 / 160 (100%)** (32 from 5'-partial contigs preserving donor codons). | Germline-imputed chains are audited via `{chain}_vdj_source`, `qc_warnings`, and `construct_contig_verified = False`. |
+
+## Why these three datasets were included
+
+| Cohort | Why included (what it tests) | Ground-truth labels |
+| --- | --- | --- |
+| **10x Healthy Donors 1 & 2** (resting PBMC) | **Steady-state blood + multiplexed pMHC multimer stress test** — includes 44 viral/self dextramers, 6 negative controls, a notoriously sticky reagent (`HLA-A*03:01 KLGGALQAK`), and CITE-seq-verified naive `MART-1` precursors. | Published 10x binarized dextramer binder matrix + TotalSeq-C CD45RO/RA |
+| **Minervina et al. 2022** (SARS-CoV-2 longitudinal blood) | **Acute vs convalescent kinetics + CR6 donor V-alleles + DB circularity** — tests whether acute vaccination activates tumor signatures, evaluates donor V-region allele preservation on Cell Ranger 6 contigs, and measures `strict_ab` vs β-only collisions on private viral TCRs. | Longitudinal clinical timepoints (convalescent vs acute post-dose-2) + SARS-CoV-2 dextramer/epitope annotations |
+| **Fischer et al. 2021** (16 h Spike PBMC restimulation) | **Two simultaneous edge cases**: (1) paired overnight restimulation where cells transcribe cytokines without dividing (`--method stimulation`), and (2) 98.7%–99.7% 5'-truncated TCR contigs testing automatic germline VDJ rescue. | Paired unstimulated vs 16 h SARS-CoV-2 Spike peptide-stimulated wells (`GT_6`, `GT_2`) |
 
 !!! warning "Public TCR databases contain these benchmark cohorts"
     VDJdb (`vdjdb-2026-11-06`; 280,894 `TRB` entries, 200,180 paired α/β)
@@ -96,7 +39,7 @@ longitudinal vaccination, and overnight peptide stimulation (see also the
     (circular, drawn hollow in orange). Only the held-out evaluations
     measure out-of-sample performance.
 
-Cohort evaluations are from TCRsift 3.38.1 and VDJdb `2026-11-06`, generated by
+Cohort evaluations are from TCRsift 3.40.1 and VDJdb `2026-11-06`, generated by
 `benchmarks/public_infectious/` ([how to reproduce](#reproducing); full
 ground-truth file and assay documentation in
 `benchmarks/public_infectious/PROVENANCE.md`).

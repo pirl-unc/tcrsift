@@ -8,6 +8,23 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.40.1
+
+Regenerated all five benchmark suites on `3.40.1` and restructured all five
+benchmark documentation pages:
+
+- **High-level results & dataset motivation on every benchmark page**: Added
+  scannable **High-level / At-a-glance results** scorecard tables and explicit
+  **Why these datasets were included** motivation tables to
+  `docs/benchmarks-overview.md`, `docs/benchmarks.md`,
+  `docs/benchmarks-infectious.md`, `docs/benchmarks-blood-cd4.md`, and
+  `docs/benchmarks-mouse.md`.
+- **Full 5-suite benchmark & figure regeneration**: Re-ran `public_til`,
+  `public_infectious`, `public_blood_cd4`, `public_mouse`, and `head_to_head`
+  (plus all 6 SVG figure generators) on `3.40.1` so every benchmark CSV,
+  `summary.json`, and documentation figure is synchronized on the current
+  release.
+
 ## 3.40.0
 
 Enabled automatic truncation detection and IMGT germline VDJ fallback by default

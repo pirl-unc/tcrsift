@@ -1,7 +1,7 @@
 cohort,model,n_clones,n_public_ge2_donors,pearson_r_vs_olga_beta,spearman_rho_vs_olga_beta,pearson_r_vs_olga_alpha,spearman_rho_vs_olga_alpha,public_sharing_auroc,auroc_low,auroc_high,elapsed_sec,clones_per_sec
-human_blood_donors_1500,tcrsift_kmer_pgen_beta,1500,420,0.9542,0.9569,0.7628,0.755,0.7348,0.7041,0.7655,0.0346,43373.3
-human_blood_donors_1500,tcrsift_kmer_ppost_beta,1500,420,,,,,0.7388,0.7081,0.7695,0.0346,43373.3
-human_blood_donors_1500,olga_exact_vdj_pgen_beta,1500,420,1.0,1.0,,,0.7435,0.7123,0.7739,16.0941,93.2
-mouse_khatun_gp66_1781,tcrsift_kmer_pgen_beta,1781,72,0.1979,0.2351,0.2241,0.2082,0.6195,0.555,0.6795,0.0426,41813.3
-mouse_khatun_gp66_1781,tcrsift_kmer_ppost_beta,1781,72,,,,,0.6129,0.5496,0.6736,0.0426,41813.3
-mouse_khatun_gp66_1781,olga_exact_vdj_pgen_beta,1781,72,1.0,1.0,,,0.6172,0.5415,0.6858,11.5534,154.2
+human_blood_donors_1500,tcrsift_kmer_pgen_beta,1500,420,0.9542,0.9569,0.7628,0.755,0.7348,0.7041,0.7655,0.0337,44510.7
+human_blood_donors_1500,tcrsift_kmer_ppost_beta,1500,420,,,,,0.7388,0.7081,0.7695,0.0337,44510.7
+human_blood_donors_1500,olga_exact_vdj_pgen_beta,1500,420,1.0,1.0,,,0.7435,0.7123,0.7739,13.9349,107.6
+mouse_khatun_gp66_1781,tcrsift_kmer_pgen_beta,1781,72,0.1979,0.2351,0.2241,0.2082,0.6195,0.555,0.6795,0.0329,54087.1
+mouse_khatun_gp66_1781,tcrsift_kmer_ppost_beta,1781,72,,,,,0.6129,0.5496,0.6736,0.0329,54087.1
+mouse_khatun_gp66_1781,olga_exact_vdj_pgen_beta,1781,72,1.0,1.0,,,0.6172,0.5415,0.6858,9.9412,179.2

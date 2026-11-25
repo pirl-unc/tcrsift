@@ -7,65 +7,17 @@ target-organ versus splenic MHC-I tetramer sorting, acute viral MHC-II
 tetramer+ CD4 T cells, `MusMusculus` VDJdb lookup, and mouse `Trac` / `Trbc1` /
 `Trbc2` construct assembly (see also the [Benchmark overview](benchmarks-overview.md)).
 
-## Summary
+## At-a-glance results
 
-- **Murine CD8+ TILs transcribe *Ccl3* and *Ccl4* rather than *Cxcl13*, and MGI
-  signatures separate intratumoral from lymphoid CD8+ clones.** Across
-  11,779 retained CD8+ TILs in syngeneic MC38 colon adenocarcinoma
-  (`GSE168944`), only 0.11% (0.0011) of mouse CD8+ TILs express *Cxcl13* >
-  0, whereas 38.8% (0.3876) express *Ccl3* and 73.6% (0.7356)
-  express *Ccl4*, consistent with `MOUSE_SIGNATURES["TumorReactive"]`
-  substituting *Ccl3*/*Ccl4* for human CD8-biased *CXCL13*. Comparing expanded
-  MC38 tumor clones (368) against expanded draining-lymph-node and splenic
-  clones (99), MGI `TumorReactive` reaches 0.99 (0.9939, 95% CI 0.99 to
-  1.00), `AIM` 0.99 (0.9892), `Differentiated` 0.99 (0.9867),
-  `AntigenExperienced` 0.98, `Cytolytic` 0.98, and `AcuteActivation`
-  0.97, compared with 0.78 for `clone_size`.
-- **Peripheral-blood effector signatures in tumor-bearing mice enrich
-  for tumor-infiltrating clones.** In matched MC38 peripheral blood (3,831
-  retained CD8+ cells; 20 clones with ≥5 matched tumor cells vs 21
-  blood-only expanded clones), `Differentiated` (0.88, 95% CI 0.75 to 0.99),
-  `Cytolytic` (0.86), `CirculatingMemory` (0.85), and
-  `AntigenExperienced` (0.84) distinguish circulating sisters of
-  intratumoral clones from blood-restricted clones, and default `tcrsift
-  prioritize --species mouse --context blood` captures 65.0% (13 of 20) of
-  tumor-infiltrating blood clones vs 14.3% (3 of 21) of blood-only clones.
-- **Target-organ engagement drives `TumorReactive`, `AIM`, and `AcuteActivation`
-  within identical antigen-specific murine TCR clonotypes.** Across NOD mouse
-  `H-2Kd IGRP206-214 / NRP-V7` (`KYNKANVFL`) tetramer+ CD8+ T cells (Kasmani et
-  al. 2022, `GSE200608`), `AIM` (0.97), `AcuteActivation` (0.97), and
-  MGI `TumorReactive` (0.97) separate pancreatic-islet `IGRP+` clones (59)
-  from splenic `IGRP+` clones (75) recognizing the same peptide-MHC,
-  whereas `CirculatingMemory` (0.15) and `clone_size` (0.13) peak in the
-  spleen. Across 51 identical sister `CDR3ab` clones sequenced in both
-  organs, 98.0% (50 of 51) score higher on `TumorReactive` in islets (mean Δ
-  = +0.56) and 94.1% (48 of 51) score higher on `AIM` (+1.01) and
-  `AcuteActivation` (+0.81). Within pancreatic islets (59 `Islet_TetPos` vs
-  684 `Islet_TetNeg`), `TumorReactive` reaches 0.71 (0.65 to 0.77),
-  moderated because `TetNeg` islet CD8+ cells include clones targeting non-IGRP
-  β-cell autoantigens.
-- **Default `strict_ab` database matching prevents β-only false positives
-  on murine `MusMusculus` VDJdb lookups.** Full VDJdb (14,008
-  `MusMusculus` `TRB` rows) contains 780 `TRB`-only rows ingested from Kasmani
-  et al. (`PMID:35667687`), producing an apparent 91.4% (498 of 545) circular
-  `IGRP` recall under `ab_with_partial`/`b_only` (0.0% under `strict_ab`).
-  Holding out `PMID:35667687` reduces `IGRP` recall to 0.0% (0 of 545) while
-  exposing 5.3% (29 of 545) false-positive viral matches under `b_only` and
-  51.4% (280 of 545) under `b_only + levenshtein-1` (0.0% under default
-  `strict_ab`). On independent Day-10 LCMV `GP66:I-Ab` CD4+ T cells (Khatun et
-  al. 2021, 0 VDJdb rows), `b_only` matches 139 of 2,285 clones with
-  17.3% (24 of 139) `LCMV` precision (6.6% at edit distance 1).
-- **IMGT mouse germline V+J fallback and J→C constant-region parity assemble
-  100% of 5'-partial murine CD8+ and CD4+ candidates (101 of 101) with zero
-  validation errors.** After normalizing Cell Ranger mouse Ensembl `-dv` gene
-  names (`TRAV13-4-dv7` → `TRAV13-4/DV7`), `assemble_full_sequences(...,
-  species="mouse", germline_vdj_fallback=True)` builds complete `Trac` and
-  `Trbc1`/`Trbc2` constructs for 41 of 41 MC38 CD8+ candidates and 60 of 60
-  Khatun `GP66` CD4+ candidates, correcting 52 Cell Ranger
-  murine `Trbc1`/`Trbc2` constant-gene miscalls (32 of 41 in MC38 and 20 of 60
-  in Khatun).
+| Capability / cohort | Headline result | Takeaway & limitation |
+| --- | --- | --- |
+| **Murine CD8 TIL biology** (MC38 multi-organ) | Only **0.11%** of mouse CD8 TILs express *Cxcl13* vs **38.8%** *Ccl3* and **73.6%** *Ccl4*. MGI `TumorReactive` separates tumor from dLN/spleen at **0.99** AUROC (`clone_size` **0.78**). | Validates replacing human *CXCL13* with *Ccl3*/*Ccl4* in `MOUSE_SIGNATURES["TumorReactive"]`. |
+| **Matched cancer-bearing blood** (MC38 blood) | `Differentiated` (**0.88**) and `Cytolytic` (**0.86**) separate tumor-infiltrating blood clones from blood-only clones; `--context blood` selects **65.0% (13/20)** vs **14.3% (3/21)**. | In mice without `NeoTCR_PBL`, effector/differentiation signatures enrich circulating sisters of TILs. |
+| **Within-clone target-organ engagement** (Kasmani NOD `IGRP`) | `AIM` (**0.97**), `AcuteActivation` (**0.97**), and MGI `TumorReactive` (**0.97**) separate islet from splenic `IGRP+` clones; **50 / 51** identical paired sister TCRs score higher in islets (mean Δ `+0.56`). | Directly proves local target-organ antigen engagement drives signature elevation independent of TCR sequence; within islets (`TetPos` vs `TetNeg`), AUROC is **0.71** because `TetNeg` includes other β-cell autoantigens. |
+| **Murine `strict_ab` VDJdb matching** (Kasmani + Khatun + MC38) | Holding out Kasmani drops circular β-only `IGRP` recall **91.4% → 0.0%** and exposes **5.3%** viral FPs under `b_only` (**51.4%** at Levenshtein-1) vs **0.0%** under `strict_ab`. On Khatun `GP66`, `b_only` has **17.3%** LCMV precision. | `strict_ab` eliminates false-positive β-only hits in `MusMusculus` VDJdb (where 4,361 of 14,008 records lack α chains). |
+| **Murine construct assembly** (MC38 CD8 + Khatun CD4) | Default `tcrsift assemble --species mouse` builds **101 / 101 (100%)** complete `Trac`/`Trbc1`/`Trbc2` constructs with **0** errors, normalizing Ensembl `-dv` genes and fixing **52** Cell Ranger `Trbc` miscalls. | Pre-CR6 deposits lack `fwr1_nt`–`fwr4_nt`, so chains are germline-reconstructed (`construct_contig_verified = False`). |
 
-All results are from TCRsift 3.38.1, VDJdb `2026-11-06`, and cached IMGT
+All results are from TCRsift 3.40.1, VDJdb `2026-11-06`, and cached IMGT
 `Mus_musculus` V-QUEST germline references, generated by
 `benchmarks/public_mouse/` ([how to reproduce](#reproducing); full ground-truth
 file and assay provenance in `benchmarks/public_mouse/PROVENANCE.md`). None of
@@ -73,17 +25,17 @@ TCRsift's gene signatures was trained on any cohort on this page.
 
 ---
 
-## Source studies and ground-truth provenance
+## Why these three murine datasets were included
+
+| Cohort | Why included (what it tests) | Deposit & citation | Strain, compartments & ground-truth assay |
+| --- | --- | --- | --- |
+| **MC38 multi-organ** | **Mouse tumor + blood + lymphoid biology + `-dv`/`Trbc` assembly** — proves mouse CD8 TILs use *Ccl3*/*Ccl4* rather than *Cxcl13*, evaluates blood-to-tumor clonal tracking across 4 organs, and serves as a zero-VDJdb specificity control. | [GSE168944](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE168944) (8 libraries; 11,779 tumor & 3,831 blood CD8 cells) | C57BL/6 subcutaneous MC38 (`Tumor`, `Blood`, `dLN`, `Spleen` in `Mouse01`/`Mouse02`); exact paired `CDR3ab` tracking |
+| **Kasmani 2022 (`IGRP`)** | **Same-TCR target-organ vs spleen causal control + VDJdb circularity** — 51 identical `IGRP`-specific sister TCRs sequenced in both pancreatic islets and spleen isolate local antigen engagement from TCR identity; also tests VDJdb `PMID:35667687` holdout. | [GSE200608](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE200608); `PMID:35667687` (6 libraries; 13,455 CD8 cells) | NOD/ShiLtJ autoimmune diabetes; FACS-sorted `H-2Kd IGRP206-214` MHC-I tetramer+ (`Islet_TetPos`, `Islet_TetNeg`, `Spleen_TetPos`) |
+| **Khatun 2021 (`GP66` CD4)** | **Mouse CD4 `pre_sorted: CD4` + cross-mouse publicness + independent DB test** — 5 inbred C57BL/6 mice provide an independent MHC-II viral CD4 test for `b_only` precision, mouse `Pgen` vs `OLGA`, and CD4 construct assembly. | [GSE158896](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE158896); `PMID:33201171` (5 libraries; 11,413 CD4 cells) | C57BL/6 Day-10 acute LCMV spleen (`M1`–`M5`); FACS-sorted `I-Ab GP66-77` MHC-II tetramer+ CD4 T cells |
 
 ![Murine benchmark cohorts](assets/figures/mouse_benchmark_datasets.svg)
 
 *Summary schematic of the three public murine single-cell cohorts evaluated on this page.*
-
-| Cohort | Deposit & citation | Strain & compartments | Libraries & retained cells | Ground-truth assay | VDJdb circularity |
-| --- | --- | --- | --- | --- | --- |
-| MC38 multi-organ | [GSE168944](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE168944) (`GSM5172668`–`675` GEX; `GSM5172684`–`691` VDJ) | C57BL/6 subcutaneous MC38 colon adenocarcinoma (`Mouse01` & `Mouse02`: `Tumor`, `Blood`, `dLN`, `Spleen`) | 8 paired GEX+VDJ libraries (11,779 tumor CD8+ cells / 1,763 clones; 3,831 blood CD8+ cells / 3,725 clones) | Exact paired `CDR3ab` clonal tracking across 4 organs within the same mouse | Absent from VDJdb; also serves as out-of-strain C57BL/6 specificity control |
-| Kasmani 2022 (`IGRP`) | [GSE200608](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE200608); [Kasmani et al., *Life Sci Alliance* 2022](https://doi.org/10.26508/lsa.202201503) (`PMID:35667687`) | NOD/ShiLtJ autoimmune diabetes pancreatic islets and spleen (`Round1` & `Round2`) | 6 paired GEX+VDJ libraries (13,455 retained CD8+ cells; 545 unique `IGRP` `TetPos` paired clones) | Physical FACS sorting with `H-2Kd IGRP206-214 / NRP-V7` (`KYNKANVFL`) MHC-I tetramers (`Islet_TetPos`, `Islet_TetNeg`, `Spleen_TetPos`) | Ingested into VDJdb (780 `TRB` rows for `PMID:35667687`). Reported both circular (full VDJdb) and independent (`PMID:35667687` held out) |
-| Khatun 2021 (`GP66` CD4) | [GSE158896](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE158896); [Khatun et al., *J Exp Med* 2021](https://doi.org/10.1084/jem.20200650) (`PMID:33201171`) | C57BL/6 Day-10 acute LCMV Armstrong spleen (`M1`–`M5`) | 5 paired GEX+VDJ libraries (11,413 retained CD4+ cells with `pre_sorted=CD4`; 2,316 paired clones) | Physical FACS sorting of `CD4+ CD44hi` `I-Ab GP66-77` (`DIYKGVYQFKSV`) MHC-II tetramer+ T cells across 5 inbred mice | Independent (0 VDJdb records for `PMID:33201171`) |
 
 All three GEO deposits distribute pre-Cell Ranger 6 18-column
 `filtered_contig_annotations.csv` files without `fwr1_nt`–`fwr4_nt` columns
