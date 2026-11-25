@@ -135,7 +135,10 @@ def augment_with_gex(
     # Load expression matrix
     from .genes import adata_mito_mask, resolve_adata_var_map
 
-    adata = sc.read_10x_h5(str(gex_path))
+    if gex_path.suffix.lower() == ".h5ad":
+        adata = sc.read_h5ad(str(gex_path))
+    else:
+        adata = sc.read_10x_h5(str(gex_path))
     gene_names = adata.var_names
 
     # Handle duplicated gene symbols for informational logging
@@ -163,20 +166,32 @@ def augment_with_gex(
     else:
         pct_mito = np.full(len(total_counts), np.nan)
 
-    # Map requested genes (with HGNC/MGI/Ensembl + duplicate resolution) to column indices
-    sym_upper, _ = resolve_adata_var_map(adata, gene_list)
+    # Map requested genes (with HGNC/MGI/Ensembl + duplicate & synonym resolution) to column indices
+    sym_upper, sym_to_var = resolve_adata_var_map(adata, gene_list)
+    var_to_idx = {str(vn): idx for idx, vn in enumerate(adata.var_names)}
     available_genes = []
     missing_genes = []
     gene_to_idx: dict[str, int] = {}
     for gene in gene_list:
-        locs = np.where(sym_upper == str(gene).upper())[0]
+        g_up = str(gene).upper()
+        mapped_var = sym_to_var.get(g_up)
+        if mapped_var is not None and mapped_var in var_to_idx:
+            gene_to_idx[gene] = var_to_idx[mapped_var]
+            available_genes.append(gene)
+            continue
+        locs = np.where(sym_upper == g_up)[0]
         if locs.size == 0:
             missing_genes.append(gene)
-        elif locs.size == 1:
+        elif locs.size == 1 or adata.n_obs == 0:
             gene_to_idx[gene] = int(locs[0])
             available_genes.append(gene)
         else:
-            means = np.asarray(adata.X[:, locs].mean(axis=0)).ravel()
+            sub_x = adata.X[:, locs]
+            if issparse(sub_x):
+                means = np.asarray(sub_x.mean(axis=0)).ravel()
+            else:
+                means = np.nanmean(np.asarray(sub_x, dtype=float), axis=0)
+            means = np.where(np.isfinite(means), means, -np.inf)
             gene_to_idx[gene] = int(locs[int(np.argmax(means))])
             available_genes.append(gene)
 
@@ -604,8 +619,14 @@ def compute_signature_scores_per_cell(
                 if not is_int_like and x_max <= 20.0:
                     do_log1p = False
                 else:
-                    # Raw counts: CP10K-normalize per cell using total counts before log1p
-                    if x_max > 25.0 or layer == "counts":
+                    # Raw counts: gate CP10K normalization on the full matrix (not
+                    # just the queried signature subset, which may be low-count TFs/checkpoints).
+                    mat_max = (
+                        float(src_mat.max())
+                        if (src_mat.shape[0] and src_mat.shape[1])
+                        else x_max
+                    )
+                    if mat_max > 25.0 or is_int_like or layer == "counts":
                         totals = np.asarray(src_mat.sum(axis=1)).ravel().astype(float)
                         scale = np.where(totals > 0, 1e4 / totals, 0.0)
                         expr = expr.mul(scale, axis=0)
@@ -732,7 +753,13 @@ def compute_cd4_cd8_counts(
             }
         )
 
-    result = pd.DataFrame(result_data)
+    result = (
+        pd.DataFrame(result_data)
+        if result_data
+        else pd.DataFrame(
+            columns=[group_col, "total_cells.count", "CD4_only.count", "CD8_only.count"]
+        )
+    )
 
     if verbose:
         logger.info(f"  {result['CD4_only.count'].sum():,} CD4-only cells")

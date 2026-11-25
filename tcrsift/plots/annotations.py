@@ -151,7 +151,11 @@ def plot_matched_clone_heatmap(
     if strip_cols:
         # Build a DataFrame the same height as freq_wide, indexed the
         # same way, with a colour per (clone, annotation field).
-        strip_indexed = top.set_index("CDR3ab")[strip_cols].reindex(freq_wide.index)
+        strip_indexed = (
+            top.drop_duplicates(subset=["CDR3ab"], keep="first")
+            .set_index("CDR3ab")[strip_cols]
+            .reindex(freq_wide.index)
+        )
         row_colors = pd.DataFrame(
             {col: _category_color_strip(strip_indexed[col]) for col in strip_cols},
             index=freq_wide.index,
@@ -220,7 +224,10 @@ def plot_category_composition_bar(
     # For each sample, pick the clones present (frequency > 0); take
     # top-N within that sample if requested.
     samples = list(freq_wide.columns)
-    annotation_by_cdr3ab = clonotypes.set_index("CDR3ab")[gran_col]
+    annotation_by_cdr3ab = (
+        clonotypes.drop_duplicates(subset=["CDR3ab"], keep="first")
+        .set_index("CDR3ab")[gran_col]
+    )
     annotation_by_cdr3ab = annotation_by_cdr3ab.fillna("unmatched").astype(str)
 
     rows: list[dict] = []

@@ -738,7 +738,13 @@ def _extract_zip(archive: Path, dest: Path, member: str | None) -> None:
     Zip Slip path-traversal entries.
     """
     dest_resolved = dest.resolve()
-    with zipfile.ZipFile(archive) as zf:
+    try:
+        zf_ctx = zipfile.ZipFile(archive)
+    except zipfile.BadZipFile as exc:
+        raise DownloadError(
+            f"Downloaded archive {archive} is not a valid zip file: {exc}"
+        ) from exc
+    with zf_ctx as zf:
         if member is None:
             for info in zf.infolist():
                 target = (dest_resolved / info.filename).resolve()

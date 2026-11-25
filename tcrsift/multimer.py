@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_NC_RE = re.compile(
     r"(?:"
     r"(?:^|[_.-])(?:neg(?:ative)?[-_]?ctrl|neg(?:ative)?[-_]?control|blank)(?:$|[_.-])"
-    r"|(?:^|[_.-])nc(?:$|[_.-](?!\d{5,})(?:total\w*|\d{0,3})?$)"
+    r"|(?:^|[_.-])nc(?:\d{1,3})?(?:$|[_.-](?!\d{5,}))"
     r")",
     re.IGNORECASE,
 )
@@ -531,13 +531,28 @@ def call_multimers_for_adata(
         sample_barcodes = adata.obs_names[mask].astype(str)
         n_direct = int(sample_barcodes.isin(fb.index).sum())
         if n_direct == 0 and len(sample_barcodes) > 0:
-            # Handle uniquified barcodes (e.g., ACGT-1-0 or sample_ACGT-1) by
-            # stripping trailing concat suffix when it yields a unique mapping.
+            # Handle uniquified barcodes (e.g., ACGT-1-0, sample_ACGT-1, or sample_ACGT-1-0)
+            # by stripping leading sample prefixes and/or trailing concat suffixes.
             fb_index_set = set(fb.index.astype(str))
-            stripped = [
-                bc.rsplit("-", 1)[0] if bc.rsplit("-", 1)[0] in fb_index_set else bc
-                for bc in sample_barcodes
-            ]
+            sample_prefix = f"{s_name}_"
+
+            def _normalize_bc(bc: str) -> str:
+                cands = [bc]
+                if bc.startswith(sample_prefix):
+                    cands.append(bc[len(sample_prefix) :])
+                elif "_" in bc:
+                    cands.append(bc.split("_", 1)[1])
+                expanded = []
+                for cand in cands:
+                    expanded.append(cand)
+                    if "-" in cand:
+                        expanded.append(cand.rsplit("-", 1)[0])
+                for cand in expanded:
+                    if cand in fb_index_set:
+                        return cand
+                return bc
+
+            stripped = [_normalize_bc(bc) for bc in sample_barcodes]
             if any(s in fb_index_set for s in stripped):
                 fb_aligned = fb.reindex(stripped).fillna(0.0)
                 fb_aligned.index = sample_barcodes

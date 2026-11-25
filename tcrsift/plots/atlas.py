@@ -736,7 +736,7 @@ def plot_provenance(
         raw = adata.obs[by].astype(str).to_numpy()
         sub_raw = raw[hi]
         sub_coords = coords[hi]
-        tokens = sorted(t for t in set(sub_raw) if t not in ("", "nan", "None"))
+        tokens = sorted(t for t in set(sub_raw) if t not in ("", "nan", "NaN", "None", "<NA>"))
         pretty = {t: pretty_antigen(t, labels=antigen_labels) for t in tokens}
         palette = sns.color_palette("tab10", n_colors=max(len(tokens), 1))
         default_color = {

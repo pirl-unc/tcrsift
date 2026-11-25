@@ -689,32 +689,37 @@ def plot_filter(clonotypes: pd.DataFrame, output_dir: str | Path):
     """Generate filtering analysis plots."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if clonotypes is None or clonotypes.empty:
+        return
 
     # Frequency vs condition scatter (the key plot)
     if "max_frequency" in clonotypes.columns and "n_samples" in clonotypes.columns:
         fig, ax = plt.subplots(figsize=(12, 8))
+        has_cell_count = "cell_count" in clonotypes.columns
 
         if "tier" in clonotypes.columns:
             tiers = sorted(clonotypes["tier"].dropna().unique())
-            colors = plt.cm.viridis(np.linspace(0, 1, len(tiers)))
+            colors = plt.cm.viridis(np.linspace(0, 1, max(len(tiers), 1)))
 
             for tier, color in zip(tiers, colors):
                 mask = clonotypes["tier"] == tier
+                sizes = clonotypes.loc[mask, "cell_count"] * 5 if has_cell_count else 30
                 ax.scatter(
                     clonotypes.loc[mask, "max_frequency"] * 100,
                     clonotypes.loc[mask, "n_samples"],
                     c=[color],
                     alpha=0.6,
-                    s=clonotypes.loc[mask, "cell_count"] * 5,
+                    s=sizes,
                     label=tier,
                 )
             ax.legend(title="Tier", bbox_to_anchor=(1.05, 1), loc="upper left")
         else:
+            sizes = clonotypes["cell_count"] * 5 if has_cell_count else 30
             ax.scatter(
                 clonotypes["max_frequency"] * 100,
                 clonotypes["n_samples"],
                 alpha=0.5,
-                s=clonotypes["cell_count"] * 5,
+                s=sizes,
             )
 
         ax.set_xlabel("Max Frequency (%)")
