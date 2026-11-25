@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
   "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="619.2pt" height="324pt" viewBox="0 0 619.2 324" xmlns="http://www.w3.org/2000/svg" version="1.1">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="624.71952pt" height="329.51952pt" viewBox="0 0 624.71952 329.51952" xmlns="http://www.w3.org/2000/svg" version="1.1">
  <metadata>
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
@@ -20,237 +20,237 @@
  </defs>
  <g id="figure_1">
   <g id="patch_1">
-   <path d="M 0 324 
-L 619.2 324 
-L 619.2 0 
+   <path d="M 0 329.51952 
+L 624.71952 329.51952 
+L 624.71952 0 
 L 0 0 
 z
 " style="fill: #fcfcfb"/>
   </g>
   <g id="axes_1">
    <g id="patch_2">
-    <path d="M 115.628723 118.440703 
-L 215.742931 118.440703 
-L 215.742931 84.043882 
-L 115.628723 84.043882 
+    <path d="M 118.388483 121.200463 
+L 218.502691 121.200463 
+L 218.502691 86.803642 
+L 118.388483 86.803642 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_3">
-    <path d="M 115.628723 166.214066 
-L 215.742931 166.214066 
-L 215.742931 131.817245 
-L 115.628723 131.817245 
+    <path d="M 118.388483 168.973826 
+L 218.502691 168.973826 
+L 218.502691 134.577005 
+L 118.388483 134.577005 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #fcfcfb; stroke-dasharray: 4.5,3; stroke-dashoffset: 0; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #fcfcfb; stroke-dasharray: 4.5,3; stroke-dashoffset: 0; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_4">
-    <path d="M 115.628723 213.987428 
-L 215.742931 213.987428 
-L 215.742931 179.590607 
-L 115.628723 179.590607 
+    <path d="M 118.388483 216.747188 
+L 218.502691 216.747188 
+L 218.502691 182.350367 
+L 118.388483 182.350367 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_5">
-    <path d="M 115.628723 261.76079 
-L 215.742931 261.76079 
-L 215.742931 227.363969 
-L 115.628723 227.363969 
+    <path d="M 118.388483 264.520551 
+L 218.502691 264.520551 
+L 218.502691 230.123729 
+L 118.388483 230.123729 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_6">
-    <path d="M 115.628723 309.534153 
-L 215.742931 309.534153 
-L 215.742931 275.137332 
-L 115.628723 275.137332 
+    <path d="M 118.388483 312.293913 
+L 218.502691 312.293913 
+L 218.502691 277.897092 
+L 118.388483 277.897092 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_7">
-    <path d="M 240.771482 118.440703 
-L 340.88569 118.440703 
-L 340.88569 84.043882 
-L 240.771482 84.043882 
+    <path d="M 243.531242 121.200463 
+L 343.64545 121.200463 
+L 343.64545 86.803642 
+L 243.531242 86.803642 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_8">
-    <path d="M 240.771482 166.214066 
-L 340.88569 166.214066 
-L 340.88569 131.817245 
-L 240.771482 131.817245 
+    <path d="M 243.531242 168.973826 
+L 343.64545 168.973826 
+L 343.64545 134.577005 
+L 243.531242 134.577005 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #fcfcfb; stroke-dasharray: 4.5,3; stroke-dashoffset: 0; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #fcfcfb; stroke-dasharray: 4.5,3; stroke-dashoffset: 0; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_9">
-    <path d="M 365.914242 118.440703 
-L 466.028449 118.440703 
-L 466.028449 84.043882 
-L 365.914242 84.043882 
+    <path d="M 368.674002 121.200463 
+L 468.788209 121.200463 
+L 468.788209 86.803642 
+L 368.674002 86.803642 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_10">
-    <path d="M 365.914242 166.214066 
-L 466.028449 166.214066 
-L 466.028449 131.817245 
-L 365.914242 131.817245 
+    <path d="M 368.674002 168.973826 
+L 468.788209 168.973826 
+L 468.788209 134.577005 
+L 368.674002 134.577005 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_11">
-    <path d="M 365.914242 213.987428 
-L 466.028449 213.987428 
-L 466.028449 179.590607 
-L 365.914242 179.590607 
+    <path d="M 368.674002 216.747188 
+L 468.788209 216.747188 
+L 468.788209 182.350367 
+L 368.674002 182.350367 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_12">
-    <path d="M 491.057001 118.440703 
-L 591.171208 118.440703 
-L 591.171208 84.043882 
-L 491.057001 84.043882 
+    <path d="M 493.816761 121.200463 
+L 593.930968 121.200463 
+L 593.930968 86.803642 
+L 493.816761 86.803642 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #4b6a88; stroke: #4b6a88; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #4b6a88; stroke: #4b6a88; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_13">
-    <path d="M 491.057001 166.214066 
-L 591.171208 166.214066 
-L 591.171208 131.817245 
-L 491.057001 131.817245 
+    <path d="M 493.816761 168.973826 
+L 593.930968 168.973826 
+L 593.930968 134.577005 
+L 493.816761 134.577005 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #fcfcfb; stroke-dasharray: 4.5,3; stroke-dashoffset: 0; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #fcfcfb; stroke-dasharray: 4.5,3; stroke-dashoffset: 0; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_14">
-    <path d="M 491.057001 213.987428 
-L 591.171208 213.987428 
-L 591.171208 179.590607 
-L 491.057001 179.590607 
+    <path d="M 493.816761 216.747188 
+L 593.930968 216.747188 
+L 593.930968 182.350367 
+L 493.816761 182.350367 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="patch_15">
-    <path d="M 491.057001 261.76079 
-L 591.171208 261.76079 
-L 591.171208 227.363969 
-L 491.057001 227.363969 
+    <path d="M 493.816761 264.520551 
+L 593.930968 264.520551 
+L 593.930968 230.123729 
+L 493.816761 230.123729 
 z
-" clip-path="url(#pa82cccd3bc)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
+" clip-path="url(#p500b3ed86b)" style="fill: #fcfcfb; stroke: #b9b8b2; stroke-width: 1.5; stroke-linejoin: miter"/>
    </g>
    <g id="line2d_1">
-    <path d="M 118.131578 38.181454 
-L 463.525594 38.181454 
-" clip-path="url(#pa82cccd3bc)" style="fill: none; stroke: #2a78d6; stroke-width: 1.2; stroke-linecap: square"/>
+    <path d="M 120.891338 40.941214 
+L 466.285354 40.941214 
+" clip-path="url(#p500b3ed86b)" style="fill: none; stroke: #2a78d6; stroke-width: 1.2; stroke-linecap: square"/>
    </g>
    <g id="line2d_2">
-    <path d="M 493.559856 38.181454 
-L 588.668353 38.181454 
-" clip-path="url(#pa82cccd3bc)" style="fill: none; stroke: #b9b8b2; stroke-width: 1.2; stroke-linecap: square"/>
+    <path d="M 496.319616 40.941214 
+L 591.428113 40.941214 
+" clip-path="url(#p500b3ed86b)" style="fill: none; stroke: #b9b8b2; stroke-width: 1.2; stroke-linecap: square"/>
    </g>
    <g id="text_1">
-    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #2a78d6" x="290.828586" y="33.484896" transform="rotate(-0 290.828586 33.484896)">Tier 1: context reactivity lists (exhausted first)</text>
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #2a78d6" x="293.588346" y="36.244656" transform="rotate(-0 293.588346 36.244656)">Tier 1: context reactivity lists (exhausted first)</text>
    </g>
    <g id="text_2">
-    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="541.114104" y="33.870716" transform="rotate(-0 541.114104 33.870716)">Tier 2: backfill</text>
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="543.873864" y="36.630476" transform="rotate(-0 543.873864 36.630476)">Tier 2: backfill</text>
    </g>
    <g id="text_3">
-    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(144.309343 56.067517)">NeoTCR8</text>
-    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(153.277936 65.089734)">mean</text>
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(147.069103 58.827277)">NeoTCR8</text>
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(156.037696 67.849494)">mean</text>
    </g>
    <g id="text_4">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(161.197429 99.507678)">c1</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(154.58403 107.580188)">pick 1</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(163.957189 102.267438)">c1</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(157.34379 110.339948)">pick 1</text>
    </g>
    <g id="text_5">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(161.197429 147.255806)">c2</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(138.282624 155.328316)">already picked</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(163.957189 150.015566)">c2</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(141.042384 158.088076)">already picked</text>
    </g>
    <g id="text_6">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(161.197429 195.054403)">c3</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(154.58403 203.126913)">pick 4</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(163.957189 197.814163)">c3</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(157.34379 205.886673)">pick 4</text>
    </g>
    <g id="text_7">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(161.197429 242.827766)">c4</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(154.58403 250.900276)">pick 6</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(163.957189 245.587526)">c4</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(157.34379 253.660036)">pick 6</text>
    </g>
    <g id="text_8">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(161.197429 290.601128)">c5</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(154.58403 298.673638)">pick 8</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(163.957189 293.360888)">c5</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(157.34379 301.433398)">pick 8</text>
    </g>
    <g id="text_9">
-    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(269.452102 56.067517)">NeoTCR8</text>
-    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(275.520227 65.089734)">subset</text>
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(272.211862 58.827277)">NeoTCR8</text>
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(278.279987 67.849494)">subset</text>
    </g>
    <g id="text_10">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(286.340188 99.507678)">c6</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(279.726789 107.580188)">pick 2</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(289.099948 102.267438)">c6</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(282.486549 110.339948)">pick 2</text>
    </g>
    <g id="text_11">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(286.340188 147.255806)">c1</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(263.425383 155.328316)">already picked</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(289.099948 150.015566)">c1</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(266.185143 158.088076)">already picked</text>
    </g>
    <g id="text_12">
-    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(389.049236 56.067517)">MANAscore</text>
-    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(403.563455 65.089734)">mean</text>
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(391.808996 58.827277)">MANAscore</text>
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(406.323215 67.849494)">mean</text>
    </g>
    <g id="text_13">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(411.482947 99.507678)">c2</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(404.869548 107.580188)">pick 3</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(414.242707 102.267438)">c2</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(407.629308 110.339948)">pick 3</text>
    </g>
    <g id="text_14">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(411.482947 147.281041)">c7</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(404.869548 155.353551)">pick 5</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(414.242707 150.040801)">c7</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(407.629308 158.113311)">pick 5</text>
    </g>
    <g id="text_15">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(411.482947 195.054403)">c8</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(404.869548 203.126913)">pick 7</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(414.242707 197.814163)">c8</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(407.629308 205.886673)">pick 7</text>
    </g>
    <g id="text_16">
-    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(513.139573 56.067517)">Proliferation</text>
-    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(528.706214 65.089734)">mean</text>
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(515.899333 58.827277)">Proliferation</text>
+    <text style="font-weight: 700; font-size: 9.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #0b0b0b" transform="translate(531.465974 67.849494)">mean</text>
    </g>
    <g id="text_17">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(536.625706 99.507678)">c9</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(530.012308 107.580188)">pick 9</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(539.385466 102.267438)">c9</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #fcfcfb" transform="translate(532.772068 110.339948)">pick 9</text>
    </g>
    <g id="text_18">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(536.625706 147.255806)">c3</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(513.710901 155.328316)">already picked</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(539.385466 150.015566)">c3</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(516.470661 158.088076)">already picked</text>
    </g>
    <g id="text_19">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(534.262308 194.99995)">c10</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(518.668792 203.07246)">over budget</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(537.022068 197.75971)">c10</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(521.428552 205.83222)">over budget</text>
    </g>
    <g id="text_20">
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(534.575745 242.773313)">c11</text>
-    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(518.668792 250.845822)">over budget</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(537.335505 245.533073)">c11</text>
+    <text style="font-size: 8.5px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(521.428552 253.605582)">over budget</text>
    </g>
    <g id="text_21">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="71.828758" y="103.852644" transform="rotate(-0 71.828758 103.852644)">best</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="74.588518" y="106.612404" transform="rotate(-0 74.588518 106.612404)">best</text>
    </g>
    <g id="patch_16">
-    <path d="M 53.057344 127.127573 
-Q 53.057344 213.510327 53.057344 298.775046 
+    <path d="M 55.817104 129.887333 
+Q 55.817104 216.270087 55.817104 301.534806 
 " style="fill: none; stroke: #52514e; stroke-linecap: round"/>
-    <path d="M 55.057344 294.775046 
-L 53.057344 298.775046 
-L 51.057344 294.775046 
+    <path d="M 57.817104 297.534806 
+L 55.817104 301.534806 
+L 53.817104 297.534806 
 " style="fill: none; stroke: #52514e; stroke-linecap: round"/>
    </g>
    <g id="text_22">
-    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(39.013771 241.767585) rotate(-90)">rank within list</text>
+    <text style="font-size: 9px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; fill: #52514e" transform="translate(41.773531 244.527345) rotate(-90)">rank within list</text>
    </g>
    <g id="text_23">
-    <text style="font-weight: 700; font-size: 11px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="3.00024" y="11.25024" transform="rotate(-0 3.00024 11.25024)">Priority-tiered round-robin over qualifying lists (budget = 9 clones)</text>
+    <text style="font-weight: 700; font-size: 11px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="5.76" y="14.01" transform="rotate(-0 5.76 14.01)">Priority-tiered round-robin over qualifying lists (budget = 9 clones)</text>
    </g>
   </g>
  </g>
  <defs>
-  <clipPath id="pa82cccd3bc">
-   <rect x="3.00024" y="15.25024" width="613.19952" height="305.74952"/>
+  <clipPath id="p500b3ed86b">
+   <rect x="5.76" y="18.01" width="613.19952" height="305.74952"/>
   </clipPath>
  </defs>
 </svg>

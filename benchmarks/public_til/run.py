@@ -765,6 +765,7 @@ def main():
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     from tcrsift import __version__
+    from tcrsift.annotate import load_vdjdb
     from tcrsift.datacache import cached_path
 
     vdjdb_release = "uncached"
@@ -783,19 +784,15 @@ def main():
                 if "/releases/download/" in url:
                     vdjdb_release = "vdjdb-" + url.split("/releases/download/")[1].split("/")[0]
                 break
-        if vdj_p.is_dir():
-            txt_hits = sorted(vdj_p.rglob("vdjdb.txt"))
-            txt_p = txt_hits[0] if txt_hits else vdj_p / "vdjdb.txt"
-            if vdjdb_release == "uncached" and txt_hits:
-                vdjdb_release = txt_hits[0].parent.name
-        else:
-            txt_p = vdj_p
-        if txt_p.exists():
-            vdf = pd.read_csv(txt_p, sep="\t", usecols=["gene", "complex.id"], low_memory=False)
-            trb = vdf[vdf["gene"] == "TRB"]
-            vdjdb_entries = int(len(trb))
-            tra_cids = set(vdf.loc[(vdf["gene"] == "TRA") & (vdf["complex.id"] > 0), "complex.id"])
-            vdjdb_paired_ab_entries = int(trb["complex.id"].isin(tra_cids).sum())
+        if vdjdb_release == "uncached" and vdj_p.is_dir():
+            subs = sorted(p.name for p in vdj_p.glob("vdjdb-*") if p.is_dir())
+            if subs:
+                vdjdb_release = subs[-1]
+        vdf = load_vdjdb(vdj_p, verbose=False)
+        vdjdb_entries = int(len(vdf))
+        vdjdb_paired_ab_entries = int(
+            (vdf["cdr3_alpha"].notna() & (vdf["cdr3_alpha"].astype(str) != "")).sum()
+        )
 
     meng_auroc, meng_table, meng_facts, meng_patients, meng_cutoffs, meng_selection = run_meng(args.data_dir)
     caushi_auroc, caushi_table, caushi_facts = run_caushi(args.data_dir, args.work_dir)
