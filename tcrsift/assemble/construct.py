@@ -27,11 +27,12 @@ from ..validation import (
 )
 from .alleles import allele_audit_report
 from .codons import (
-    DEFAULT_FORBIDDEN_MOTIFS,
+    DEFAULT_MAX_DIRECT_REPEAT,
     CodonOptimization,
     _add_single_chain,
+    _extract_kmers,
     optimize_codons,
-    recode_codons,
+    optimize_or_recode_prefix,
     stop_codons_nt,
 )
 from .constants import (
@@ -771,10 +772,12 @@ def _build_full_sequences(
       (``""`` when none / in full mode).
     """
     recode = recode or CodonOptimization()
-    sites = recode.restriction_sites()
     include_leader_map = {"alpha": include_alpha_leader, "beta": include_beta_leader}
+    beta_avoid_kmers: set[str] = set()
 
-    for chain in ["alpha", "beta"]:
+    # Process beta before alpha (matching β-2A-α single-chain order) so full-mode
+    # codon optimization on alpha avoids repeating ≥20 bp FR2/FR4 k-mers from beta.
+    for chain in ["beta", "alpha"]:
         parts_aa: list[str] = []
         parts_nt_blend: list[str] = []
         parts_nt_contig: list[str | None] = []
@@ -847,63 +850,34 @@ def _build_full_sequences(
                 const_aa = result.get(f"{chain}_constant_aa") or ""
                 full_aa = result[f"full_{chain}_aa"]
                 donor_aa = full_aa[: len(full_aa) - len(const_aa)] if const_aa else full_aa
-                if recode.mode == "full":
-                    full_forbidden = (
-                        tuple(dict.fromkeys((*DEFAULT_FORBIDDEN_MOTIFS, *sites)))
-                        if sites
-                        else DEFAULT_FORBIDDEN_MOTIFS
+                eff_leader_nt = opt_leader_nt or (
+                    optimize_codons(
+                        result[f"{chain}_leader_aa"], species=recode.codon_species
                     )
-                    donor_opt = optimize_codons(
-                        donor_aa,
-                        species=recode.codon_species,
-                        forbidden_motifs=full_forbidden,
+                    if include_leader and result.get(f"{chain}_leader_aa")
+                    else ""
+                )
+                eff_vdj_nt = opt_vdj_nt or (
+                    optimize_codons(
+                        result[f"vdj_{chain}_aa"], species=recode.codon_species
                     )
-                    if sites or (recode.max_codon_repeats and recode.max_codon_repeats >= 1):
-                        donor_opt, _ = recode_codons(
-                            donor_opt,
-                            max_codon_repeats=recode.max_codon_repeats,
-                            restriction_sites=sites,
-                            species=recode.codon_species,
-                            right_context=const_opt,
-                        )
-                    result[f"full_{chain}_nt_optimized"] = donor_opt + const_opt
-                else:
-                    eff_leader_nt = opt_leader_nt or (
-                        optimize_codons(
-                            result[f"{chain}_leader_aa"], species=recode.codon_species
-                        )
-                        if include_leader and result.get(f"{chain}_leader_aa")
-                        else ""
-                    )
-                    eff_vdj_nt = opt_vdj_nt or (
-                        optimize_codons(
-                            result[f"vdj_{chain}_aa"], species=recode.codon_species
-                        )
-                        if result.get(f"vdj_{chain}_aa")
-                        else ""
-                    )
-                    native_prefix = (eff_leader_nt + eff_vdj_nt).upper()
-                    recoded_prefix, changed = recode_codons(
-                        native_prefix,
-                        max_codon_repeats=recode.max_codon_repeats,
-                        restriction_sites=sites,
-                        species=recode.codon_species,
-                        right_context=const_opt,
-                    )
-                    result[f"full_{chain}_nt_optimized"] = recoded_prefix + const_opt
-                    # Record recodes by region — leader vs VDJ — so NONE are
-                    # silently dropped (review #294). Offsets are construct-relative.
-                    vdj_start = len(eff_leader_nt)
-
-                    def _fmt(o, _np=native_prefix, _rp=recoded_prefix):
-                        return f"{o}:{_np[o:o + 3]}>{_rp[o:o + 3]}"
-
-                    result[f"{chain}_leader_recoded_positions"] = ";".join(
-                        _fmt(o) for o in changed if o < vdj_start
-                    )
-                    result[f"{chain}_vdj_recoded_positions"] = ";".join(
-                        _fmt(o) for o in changed if o >= vdj_start
-                    )
+                    if result.get(f"vdj_{chain}_aa")
+                    else ""
+                )
+                prefix_opt, leader_tags, vdj_tags = optimize_or_recode_prefix(
+                    donor_aa=donor_aa,
+                    leader_nt=eff_leader_nt,
+                    vdj_nt=eff_vdj_nt,
+                    const_opt=const_opt,
+                    recode=recode,
+                    avoid_kmers=beta_avoid_kmers if chain == "alpha" else None,
+                )
+                full_opt = prefix_opt + const_opt
+                result[f"full_{chain}_nt_optimized"] = full_opt
+                result[f"{chain}_leader_recoded_positions"] = leader_tags
+                result[f"{chain}_vdj_recoded_positions"] = vdj_tags
+                if chain == "beta":
+                    beta_avoid_kmers = _extract_kmers(full_opt, DEFAULT_MAX_DIRECT_REPEAT)
 
 
 _GERMLINE_VARIANT_COLS = [

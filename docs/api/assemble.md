@@ -121,6 +121,21 @@ records how much donor sequence was kept, and `qc_warnings` flags any
 divergence. Without `contigs_dir`, codon-optimized canonical sequence is used
 across the entire constant region.
 
+## Synthesis codon optimization
+
+`full_{chain}_nt_optimized` and `single_chain_nt_optimized` support two modes
+configured via `codon_optimization` (`CodonOptimization`):
+
+- **`"focal"` (default):** preserves donor leader+VDJ codons verbatim and makes
+  only minimal synonymous swaps (`recode_codons`) to break adjacent identical
+  codons and clear requested `avoid_enzymes` restriction sites (including across
+  the VDJ→constant and 2A-linker seams).
+- **`"full"`:** back-translates the full leader+VDJ ORF (`optimize_codons`)
+  using human or mouse CAI-ordered codons while avoiding forbidden motifs
+  (restriction sites, ≥5-nt homopolymers, cryptic polyA sites, 5′ splice donors),
+  local GC extremes, and ≥20 bp direct repeats — including cross-chain FR2/FR4
+  repeats between β and α in single-chain (`β-2A-α`) constructs.
+
 ## API reference
 
 ::: tcrsift.assemble
@@ -128,6 +143,9 @@ across the entire constant region.
       members:
         - assemble_full_sequences
         - reconstruct_germline_vdj
+        - CodonOptimization
+        - optimize_codons
+        - recode_codons
         - translate_dna
         - find_longest_orf
         - parse_fasta

@@ -2452,6 +2452,7 @@ def match_clonotypes(
                         partial=False,
                         distance=best_d,
                         query_species=query_species,
+                        match_mode="tcrdist",
                     )
                 elif allow_b_fallback and beta_tcrdist_index is not None and beta:
                     b_hit = beta_tcrdist_index.query_nearest(
@@ -2469,6 +2470,7 @@ def match_clonotypes(
                             partial=True,
                             distance=best_d,
                             query_species=query_species,
+                            match_mode="tcrdist",
                         )
             else:
                 if beta_tcrdist_index is not None and beta:
@@ -2487,6 +2489,7 @@ def match_clonotypes(
                             partial=False,
                             distance=best_d,
                             query_species=query_species,
+                            match_mode="tcrdist",
                         )
 
         df.index = orig_index
@@ -2668,6 +2671,7 @@ def _annotate_match(
     distance: int | None = None,
     *,
     query_species: str = "human",
+    match_mode: str = "exact",
 ):
     """Annotate a single clonotype with match information."""
     from .species import species_to_binomial
@@ -2808,6 +2812,7 @@ def _annotate_match(
         distance=distance,
         n_studies=df.loc[idx].get("db_n_studies"),
         v_gene_agreement=df.loc[idx].get("db_v_gene_agreement"),
+        match_mode=match_mode,
     )
 
 
@@ -2817,8 +2822,12 @@ _BASE_STRENGTH_SCORE = {
     "ab": 1.0,
     "b_only": 0.7,
 }
-_NEAR_PENALTY = 0.7   # b_only_near = b_only * 0.7
+_NEAR_PENALTY = 0.7   # flat penalty for Levenshtein-1 *_near matches
 _CROSS_PENALTY = 0.5  # *_cross = base * 0.5
+_TCRDIST_SCORE_SCALE = {
+    "ab": 48.0,
+    "b_only": 24.0,
+}
 
 
 def _compute_match_score(
@@ -2826,6 +2835,8 @@ def _compute_match_score(
     distance: int | None,
     n_studies: object,
     v_gene_agreement: object,
+    *,
+    match_mode: str = "exact",
 ) -> float:
     """Combine the structured-confidence signals into a single
     ``db_match_score`` ∈ [0, 1] (#56).
@@ -2833,9 +2844,13 @@ def _compute_match_score(
     Formula:
 
     1. Start from ``base = _BASE_STRENGTH_SCORE[strength_stem]`` —
-       1.0 for αβ exact, 0.7 for β-only.
-    2. Apply ``_NEAR_PENALTY`` (0.7×) if the strength carries the
-       ``_near`` suffix (Lev-1 fuzzy β match, #57).
+       1.0 for αβ, 0.7 for β-only.
+    2. Apply a proximity factor when ``strength`` carries ``_near``:
+       - For ``match_mode == "tcrdist"`` with ``distance > 0``, decay smoothly
+         with TCRdist: ``max(0.4, 1 - 0.5 * (distance / scale))`` where
+         ``scale`` is 48 (paired αβ) or 24 (β-only), so a conservative swap
+         (``d = 3`` → 0.969×) outranks an edge-of-radius hit (``d = 48`` → 0.5×).
+       - Otherwise (Levenshtein-1), apply the flat ``_NEAR_PENALTY`` (0.7×).
     3. Apply ``_CROSS_PENALTY`` (0.5×) if the strength carries the
        ``_cross`` suffix (non-human host species, #83 / #54).
     4. Reduce by up to 30% for V-gene disagreement when measurable:
@@ -2863,7 +2878,11 @@ def _compute_match_score(
         stem = stem[: -len("_near")]
     base = _BASE_STRENGTH_SCORE.get(stem, 0.5)
     if has_near:
-        base *= _NEAR_PENALTY
+        if match_mode == "tcrdist" and distance is not None and distance > 0:
+            scale = _TCRDIST_SCORE_SCALE.get(stem, 48.0)
+            base *= max(0.4, 1.0 - 0.5 * (float(distance) / scale))
+        else:
+            base *= _NEAR_PENALTY
     if has_cross:
         base *= _CROSS_PENALTY
 

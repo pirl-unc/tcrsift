@@ -40,7 +40,7 @@ All primary commands share loading, species harmonization (`human` HGNC/GRCh38/h
 | Clonal abundance | Cell count and within-sample frequency | Strong evidence of response after in-vitro peptide stimulation; in fresh tissue, expansion reflects cumulative history rather than reactivity to a specific target. |
 | Lineage | Per-cell `CD4`, `CD8A`, and `CD8B` (human) or `Cd4`, `Cd8a`, and `Cd8b1` (mouse) counts | Restricts signature scoring and abundance ranking to the intended T-cell compartment. |
 | Expression state | Gene signatures scored per cell and summarized per clone | Captures transcriptional state (activated, cytolytic, exhausted, proliferating) using species-matched HGNC or MGI symbols. See the [reproducibility map](reproducibility_map.md) for cross-donor behavior in stimulated cultures. |
-| Database matches | VDJdb, IEDB, CEDAR | Flags receptors matching cataloged viral or MART-1 (`MLANA`/`Mlana`-encoded) specificities, recording both canonical protein labels (`db_protein_canonical`) and endogenous encoding gene symbols (`db_antigen_gene`). Absence of a match means uncataloged, not tumor-specific. |
+| Database matches | VDJdb, IEDB, CEDAR | Flags receptors matching cataloged viral or MART-1 (`MLANA`/`Mlana`-encoded) specificities via exact CDR3, Levenshtein-1, or native zero-dependency TCRdist (`--match-mode tcrdist`, V-gene CDR1/CDR2/CDR2.5 + BLOSUM62 CDR3), recording canonical protein labels (`db_protein_canonical`), endogenous encoding gene symbols (`db_antigen_gene`), and distance-aware match confidence (`db_match_score`). Absence of a match means uncataloged, not tumor-specific. |
 | Sequence publicness | Bundled NumPy k-mer (and optional `tcrsift[tcrpeg]`) probability models | Estimates how readily a CDR3 sequence is generated and shared across donors; useful for deprioritizing common bystander sequences, not for calling antigen specificity. |
 
 ## How `prioritize` selects clones
@@ -122,8 +122,9 @@ labeled training data. Six empirical evaluations are documented:
 
 - [Benchmark overview and head-to-head comparisons](benchmarks-overview.md):
   summary across 13 public human and mouse datasets (15 cohort evaluations) and direct comparisons
-  against `Scanpy score_genes`, single-gene `CXCL13`, `stitchr` (`thimble
-  1.3.1`), `OLGA 1.3.0`, and per-cell/CLR/GMM multimer callers.
+  against `stitchr` (`thimble 1.3.1`), `DNAChisel 3.2`, `scirpy 0.26`,
+  `tcrdist3 0.3`, `muon 0.2` DSB, `OLGA 1.3`, `soNNia 0.4`, `Scanpy score_genes`,
+  `pyucell` UCell, and single-gene `CXCL13`.
 - [Benchmark on public TIL data](benchmarks.md): evaluation of `tcrsift
   prioritize --context solid-tumor` across five public human CD8+ tumor cohorts
   (33 patients) with experimentally tested clones. TumorReactive separates

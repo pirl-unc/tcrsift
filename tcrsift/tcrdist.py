@@ -214,7 +214,7 @@ def _load_v_loop_table(species: str = "human") -> dict[tuple[str, str], tuple[st
     """Load ``{(chain, canonical_v_gene): (cdr1, cdr2, cdr25)}`` for ``species``."""
     sp = normalize_species(species)
     ref = _pkg_files("tcrsift.refseqs").joinpath("vgene_cdr_loops.csv.gz")
-    with gzip.open(str(ref), "rt") as fh:
+    with ref.open("rb") as raw, gzip.open(raw, "rt") as fh:
         df = pd.read_csv(fh, keep_default_na=False)
     sub = df[df["species"] == sp]
     out: dict[tuple[str, str], tuple[str, str, str]] = {}
@@ -336,11 +336,13 @@ class TCRDistIndex:
         )
 
         # Group reference rows by (va_key, vb_key) -> (len_a, len_b) -> vectorized arrays.
-        # Within each bucket, deduplicate identical (trimmed_a, trimmed_b) strings to
-        # avoid scoring duplicate DB rows repeatedly, storing their original db_positions.
+        # DB rows lacking a mapped V gene on a chain are kept in the "" bucket so
+        # mixed databases (e.g. VDJdb + V-less IEDB/CEDAR rows) never drop exact
+        # CDR3 matches, while fuzzy matches still require mapped V-gene loops.
         raw_buckets: dict[
             tuple[str, str], dict[tuple[int, int], dict[tuple[str, str], list[int]]]
         ] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        exact_trimmed: dict[tuple[str, str], list[int]] = defaultdict(list)
 
         for i, pos in enumerate(db_positions):
             b_raw = cdr3_beta[i]
@@ -348,8 +350,8 @@ class TCRDistIndex:
                 continue
             tb = trim_cdr3(b_raw)
             vb_c = canonicalize_gene(v_beta[i]) if (v_beta is not None and self.has_v_beta) else ""
-            if self.has_v_beta and vb_c not in self._v_pw_b:
-                continue
+            if not vb_c or vb_c not in self._v_pw_b:
+                vb_c = ""
 
             if paired:
                 a_raw = cdr3_alpha[i] if cdr3_alpha is not None else None
@@ -361,11 +363,13 @@ class TCRDistIndex:
                     if (v_alpha is not None and self.has_v_alpha)
                     else ""
                 )
-                if self.has_v_alpha and va_c not in self._v_pw_a:
-                    continue
-                raw_buckets[(va_c or "", vb_c or "")][(len(ta), len(tb))][(ta, tb)].append(int(pos))
+                if not va_c or va_c not in self._v_pw_a:
+                    va_c = ""
+                raw_buckets[(va_c, vb_c)][(len(ta), len(tb))][(ta, tb)].append(int(pos))
+                exact_trimmed[(ta, tb)].append(int(pos))
             else:
-                raw_buckets[("", vb_c or "")][(0, len(tb))][("", tb)].append(int(pos))
+                raw_buckets[("", vb_c)][(0, len(tb))][("", tb)].append(int(pos))
+                exact_trimmed[("", tb)].append(int(pos))
 
         # Freeze into compact NumPy matrices for fast vectorized query scoring.
         self._buckets: dict[
@@ -391,6 +395,65 @@ class TCRDistIndex:
             self._buckets[vkey] = blocks
 
         self._va_keys = list(self._v_keys_by_a.keys())
+        self._exact_trimmed_pos: dict[tuple[str, str], np.ndarray] = {
+            k: np.sort(np.asarray(v, dtype=np.int64)) for k, v in exact_trimmed.items()
+        }
+
+    def _candidate_v_buckets(
+        self,
+        v_alpha: str | None,
+        v_beta: str | None,
+        radius: int,
+    ) -> tuple[list[tuple[int, str, str, bool, bool]], bool]:
+        """Resolve admissible ``(v_dist, va_k, vb_k, exact_a_only, exact_b_only)`` buckets.
+
+        Returns ``(buckets, needs_exact_fallback)`` where ``needs_exact_fallback`` is
+        True if a V-annotated chain has a missing/unmapped query V gene (in which
+        case exact trimmed-CDR3 lookup preserves exact hits without fuzzy false
+        positives).
+        """
+        if self.has_v_alpha:
+            qva = canonicalize_gene(v_alpha)
+            va_row = self._v_pw_a.get(qva) if qva else None
+            if va_row is None:
+                return [], True
+            va_cands: list[tuple[str, int, bool]] = []
+            for va_k in self._va_keys:
+                if va_k == "":
+                    va_cands.append(("", 0, True))
+                else:
+                    d_va = va_row.get(va_k)
+                    if d_va is not None and d_va <= radius:
+                        va_cands.append((va_k, d_va, False))
+        else:
+            va_cands = [("", 0, False)] if "" in self._v_keys_by_a else []
+
+        if self.has_v_beta:
+            qvb = canonicalize_gene(v_beta)
+            vb_row = self._v_pw_b.get(qvb) if qvb else None
+            if vb_row is None:
+                return [], True
+        else:
+            vb_row = None
+
+        bucket_cands: list[tuple[int, str, str, bool, bool]] = []
+        for va_k, dva, exact_a in va_cands:
+            for vb_k in self._v_keys_by_a[va_k]:
+                if vb_row is not None:
+                    if vb_k == "":
+                        dvb, exact_b = 0, True
+                    else:
+                        d_vb = vb_row.get(vb_k)
+                        if d_vb is None:
+                            continue
+                        dvb, exact_b = d_vb, False
+                else:
+                    dvb, exact_b = 0, False
+                vd = dva + dvb
+                if vd <= radius:
+                    bucket_cands.append((vd, va_k, vb_k, exact_a, exact_b))
+        bucket_cands.sort(key=lambda t: t[0])
+        return bucket_cands, False
 
     def query_nearest(
         self,
@@ -422,87 +485,69 @@ class TCRDistIndex:
             qa = _encode_seq(ta)
             lqa = len(qa)
         else:
+            ta = ""
             qa = None
             lqa = 0
 
-        # Resolve candidate (va, vb) buckets satisfying v_dist_a + v_dist_b <= radius
-        if self.has_v_alpha:
-            qva = canonicalize_gene(v_alpha)
-            va_row = self._v_pw_a.get(qva) if qva else None
-            if va_row is None:
-                return None
-            va_cands = []
-            for va_k in self._va_keys:
-                d_va = va_row.get(va_k)
-                if d_va is not None and d_va <= radius:
-                    va_cands.append((va_k, d_va))
-        else:
-            va_cands = [("", 0)] if "" in self._v_keys_by_a else []
-
-        if self.has_v_beta:
-            qvb = canonicalize_gene(v_beta)
-            vb_row = self._v_pw_b.get(qvb) if qvb else None
-            if vb_row is None:
-                return None
-        else:
-            vb_row = None
+        bucket_cands, needs_exact_fallback = self._candidate_v_buckets(v_alpha, v_beta, radius)
+        if needs_exact_fallback:
+            exact_pos = self._exact_trimmed_pos.get((ta, tb))
+            return (0, exact_pos) if exact_pos is not None else None
 
         best_d = radius + 1
         best_pos: list[np.ndarray] = []
         gap_unit = DEFAULT_GAP_PENALTY * DEFAULT_CDR3_WEIGHT  # 12
 
-        # Process closer V-gene buckets first so best_d tightens early
-        bucket_cands: list[tuple[int, str, str]] = []
-        for va_k, dva in va_cands:
-            for vb_k in self._v_keys_by_a[va_k]:
-                if vb_row is not None:
-                    dvb = vb_row.get(vb_k)
-                    if dvb is None:
-                        continue
-                else:
-                    dvb = 0
-                vd = dva + dvb
-                if vd <= radius:
-                    bucket_cands.append((vd, va_k, vb_k))
-        bucket_cands.sort(key=lambda t: t[0])
-
-        for vd, va_k, vb_k in bucket_cands:
+        for vd, va_k, vb_k, exact_a, exact_b in bucket_cands:
             if vd > best_d:
                 break
             for la, lb, mat_a, mat_b, pos_groups in self._buckets[(va_k, vb_k)]:
+                if (exact_b and lb != lqb) or (self.paired and exact_a and la != lqa):
+                    continue
                 len_lb = (abs(lqb - lb) + (abs(lqa - la) if self.paired else 0)) * gap_unit
                 if vd + len_lb > best_d:
                     continue
                 rem_cdr3_unweighted = (best_d - vd) // DEFAULT_CDR3_WEIGHT
                 db_raw = _cdr3_dist_batch_diff_len(qb, mat_b)
                 if not self.paired:
-                    tot = vd + db_raw * DEFAULT_CDR3_WEIGHT
-                    min_block = int(tot.min())
-                    if min_block > best_d:
-                        continue
-                    hits = np.flatnonzero(tot == min_block)
-                    if min_block < best_d:
-                        best_d = min_block
-                        best_pos = [pos_groups[h] for h in hits]
+                    if exact_b:
+                        keep = np.flatnonzero(db_raw == 0)
+                        if len(keep) == 0:
+                            continue
+                        tot = np.full(len(keep), vd, dtype=np.int32)
+                        hits = keep
+                        min_block = vd
                     else:
-                        best_pos.extend(pos_groups[h] for h in hits)
+                        tot = vd + db_raw * DEFAULT_CDR3_WEIGHT
+                        min_block = int(tot.min())
+                        if min_block > best_d:
+                            continue
+                        hits = np.flatnonzero(tot == min_block)
                 else:
-                    # Prune rows where beta alone already exceeds remaining CDR3 budget
-                    keep = np.flatnonzero(db_raw <= rem_cdr3_unweighted)
+                    # Prune rows where beta alone already exceeds remaining budget
+                    b_limit = 0 if exact_b else rem_cdr3_unweighted
+                    keep = np.flatnonzero(db_raw <= b_limit)
                     if len(keep) == 0:
                         continue
                     assert qa is not None and mat_a is not None
                     da_raw = _cdr3_dist_batch_diff_len(qa, mat_a[keep])
+                    if exact_a:
+                        ok_a = np.flatnonzero(da_raw == 0)
+                        if len(ok_a) == 0:
+                            continue
+                        keep = keep[ok_a]
+                        da_raw = da_raw[ok_a]
                     tot = vd + (da_raw + db_raw[keep]) * DEFAULT_CDR3_WEIGHT
                     min_block = int(tot.min())
                     if min_block > best_d:
                         continue
                     hits = keep[np.flatnonzero(tot == min_block)]
-                    if min_block < best_d:
-                        best_d = min_block
-                        best_pos = [pos_groups[h] for h in hits]
-                    else:
-                        best_pos.extend(pos_groups[h] for h in hits)
+
+                if min_block < best_d:
+                    best_d = min_block
+                    best_pos = [pos_groups[h] for h in hits]
+                else:
+                    best_pos.extend(pos_groups[h] for h in hits)
 
         if not best_pos or best_d > radius:
             return None

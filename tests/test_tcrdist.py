@@ -362,3 +362,95 @@ class TestMatchClonotypesTCRDist:
             )
         assert DEFAULT_PAIRED_RADIUS == 48
         assert DEFAULT_BETA_RADIUS == 12
+
+    def test_mixed_v_gene_db_and_missing_query_v_gene_preserve_exact_hits(self):
+        # Mixed DB: row 0 has full VDJdb V genes, row 1 is an IEDB-style entry with
+        # missing v_alpha/v_beta. Exact CDR3 hits to row 1 must not be dropped, while
+        # fuzzy hits without V-gene evidence must NOT fire.
+        db = _make_db(
+            [
+                {
+                    "cdr3_alpha": "CAGPGGSQGNLIF",
+                    "v_alpha": "TRAV27",
+                    "cdr3_beta": "CASSIRSSYEQYF",
+                    "v_beta": "TRBV19",
+                    "epitope": "GILGFVFTL",
+                },
+                {
+                    "cdr3_alpha": "CAASDTNTGKLTF",
+                    "v_alpha": "",
+                    "cdr3_beta": "CASSLGQAYEQYF",
+                    "v_beta": "",
+                    "epitope": "NLVPMVATV",
+                    "antigen_gene": "pp65",
+                    "species": "CMV",
+                    "database": "IEDB",
+                },
+            ]
+        )
+        clones = pd.DataFrame(
+            {
+                "CDR3_alpha": [
+                    "CAASDTNTGKLTF",  # exact match to V-less IEDB row
+                    "CAASDTNTGKLTF",  # 1-aa near match to V-less IEDB row -> must NOT fuzzy-match
+                    "CAGPGGSQGNLIF",  # query missing alpha_v_gene, exact CDR3 match to row 0
+                    "CAGPGGSQGNLIF",  # query has mismatched known V (TRBV28 vs TRBV19), r=0 -> reject
+                ],
+                "CDR3_beta": [
+                    "CASSLGQAYEQYF",
+                    "CASSLGQVYEQYF",
+                    "CASSIRSSYEQYF",
+                    "CASSIRSSYEQYF",
+                ],
+                "alpha_v_gene": ["TRAV14/DV4", "TRAV14/DV4", None, "TRAV27"],
+                "beta_v_gene": ["TRBV7-9", "TRBV7-9", "TRBV19", "TRBV28"],
+            }
+        )
+
+        out24 = match_clonotypes(
+            clones,
+            db,
+            match_strictness="strict_ab",
+            match_mode="tcrdist",
+            max_distance=24,
+            verbose=False,
+            show_progress=False,
+        )
+        assert out24["db_match"].tolist() == [True, False, True, False]
+        assert out24["db_epitope"].iloc[0] == "NLVPMVATV"
+        assert out24["db_match_distance"].iloc[0] == 0
+        assert out24["db_epitope"].iloc[2] == "GILGFVFTL"
+        assert out24["db_match_distance"].iloc[2] == 0
+
+    def test_tcrdist_match_score_decays_monotonically_with_distance(self):
+        db = _make_db(
+            [
+                {
+                    "cdr3_alpha": "CAGPGGSQGNLIF",
+                    "v_alpha": "TRAV27",
+                    "cdr3_beta": "CASSIRSSYEQYF",
+                    "v_beta": "TRBV19",
+                }
+            ]
+        )
+        clones = pd.DataFrame(
+            {
+                "CDR3_alpha": ["CAGPGGSQGNLIF"] * 3,
+                "CDR3_beta": ["CASSIRSSYEQYF", "CASSVRSSYEQYF", "CASSIRSSYEQYF"],
+                "alpha_v_gene": ["TRAV27"] * 3,
+                "beta_v_gene": ["TRBV19", "TRBV19", "TRBV28"],
+            }
+        )
+        out = match_clonotypes(
+            clones,
+            db,
+            match_strictness="strict_ab",
+            match_mode="tcrdist",
+            max_distance=48,
+            verbose=False,
+            show_progress=False,
+        )
+        # Distances: 0 (exact) < 3 (I->V conservative) < 31 (TRBV19->TRBV28)
+        assert out["db_match_distance"].tolist() == [0, 3, 31]
+        s0, s3, s31 = out["db_match_score"].tolist()
+        assert s0 > s3 > s31 > 0.0

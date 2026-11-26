@@ -949,3 +949,48 @@ class TestRecodeProvenanceAndConsistency:
             assert f"{ch}_vdj_recoded_positions" in out.columns
             assert f"{ch}_leader_recoded_positions" in out.columns
             assert out[f"{ch}_vdj_recoded_positions"].iloc[0] == ""
+
+    def test_full_mode_avoids_cross_chain_20bp_fr2_fr4_repeats(self):
+        # Shared conserved TCR motifs (FR2 WYRQDPG and FR4 FGPGTRL) across beta and
+        # alpha previously produced 21–22 bp identical DNA repeats under greedy full
+        # recoding. optimize_codons now avoids repeating >=20 bp k-mers across chains.
+        from tcrsift.qc import find_repeated_kmers
+
+        shared_v = "EVQLQQSGAELVRSGASVKLSCTASGFNIKDYYMHWYRQDPGQGLEWIGWIDPENGDTEYAPKFQGKATMTADTSSNTAYLQLSSLTSEDTAVYYC"
+        shared_j = "FGPGTRLTVL"
+        vdj_a = shared_v + "CAGPGGSQGNLIF" + shared_j
+        vdj_b = shared_v + "CASSIRSSYEQYF" + shared_j
+        df = pd.DataFrame(
+            [
+                {
+                    "CDR3ab": "CAGPGGSQGNLIF_CASSIRSSYEQYF",
+                    "CDR3_alpha": "CAGPGGSQGNLIF",
+                    "CDR3_beta": "CASSIRSSYEQYF",
+                    "VDJ_alpha_aa": vdj_a,
+                    "VDJ_beta_aa": vdj_b,
+                    "VDJ_alpha_nt": back_translate(vdj_a),
+                    "VDJ_beta_nt": back_translate(vdj_b),
+                    "alpha_c_gene": "TRAC",
+                    "beta_c_gene": "TRBC1",
+                    "beta_j_gene": "TRBJ1-1",
+                    "samples": "S1",
+                }
+            ]
+        )
+        out = assemble_full_sequences(
+            df,
+            alpha_leader="CD28",
+            beta_leader="CD8A",
+            include_constant=True,
+            linker="T2A",
+            codon_optimization="full",
+            avoid_enzymes=("EcoRI", "BamHI", "XhoI", "BsaI", "BsmBI"),
+            verbose=False,
+            show_progress=False,
+        )
+        sc_nt = out["single_chain_nt_optimized"].iloc[0]
+        sc_aa = out["single_chain_aa"].iloc[0]
+        translated, ragged = translate_dna(sc_nt)
+        assert not ragged
+        assert translated == sc_aa.rstrip("*")
+        assert find_repeated_kmers(sc_nt, 20, 2) == []
