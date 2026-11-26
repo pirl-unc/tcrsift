@@ -1,3 +1,4 @@
+# PYTHON_ARGCOMPLETE_OK
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -34,7 +35,12 @@ import argparse
 import logging
 import sys
 
-from ..pipeline import _common_contig_root, run_pipeline  # noqa: F401
+from datacache.cli_help import (
+    HelpArgumentParser,
+    HelpFormatter,
+    enable_argcomplete,
+)
+
 from ..version import __version__
 from . import annotate, assemble, cells, data, filter, load, pipeline, report, til
 from .annotate import (  # noqa: F401
@@ -82,7 +88,7 @@ _PRIMARY_WORKFLOW_COMMANDS = ("prioritize", "run", "assemble", "data")
 _EXPLORE_ANNOTATE_COMMANDS = ("cells", "annotate", "report")
 
 
-class _TieredHelpFormatter(argparse.RawDescriptionHelpFormatter):
+class _TieredHelpFormatter(HelpFormatter):
     """Group top-level ``tcrsift --help`` subcommands by workflow role."""
 
     def _format_action(self, action):
@@ -117,7 +123,7 @@ class _TieredHelpFormatter(argparse.RawDescriptionHelpFormatter):
 
 def create_parser() -> argparse.ArgumentParser:
     """Create the top-level TCRsift argument parser."""
-    parser = argparse.ArgumentParser(
+    parser = HelpArgumentParser(
         prog="tcrsift",
         formatter_class=_TieredHelpFormatter,
         description=(
@@ -164,6 +170,7 @@ def create_parser() -> argparse.ArgumentParser:
 def main(args=None):
     """Main CLI entry point."""
     parser = create_parser()
+    enable_argcomplete(parser)
     args = parser.parse_args(args)
 
     if args.command is None:
@@ -179,6 +186,23 @@ def main(args=None):
         sys.exit(1)
     if isinstance(rc, int) and not isinstance(rc, bool) and rc != 0:
         sys.exit(rc)
+
+
+_LAZY_PIPELINE_EXPORTS = frozenset({"_common_contig_root", "run_pipeline"})
+
+
+def __getattr__(name: str):
+    if name in _LAZY_PIPELINE_EXPORTS:
+        from .. import pipeline as _pipeline_mod
+
+        value = getattr(_pipeline_mod, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__) | set(_LAZY_PIPELINE_EXPORTS))
 
 
 __all__ = [

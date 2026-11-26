@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import platform
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .version import __version__
@@ -43,9 +43,9 @@ def collect_provenance(*, now: datetime | None = None) -> dict:
 
     ``now`` is injectable so callers/tests can pin the timestamp.
     """
-    dt_val = now if now is not None else datetime.now(timezone.utc)
+    dt_val = now if now is not None else datetime.now(UTC)
     if dt_val.tzinfo is not None:
-        dt_val = dt_val.astimezone(timezone.utc)
+        dt_val = dt_val.astimezone(UTC)
     ts = dt_val.strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
         "tcrsift_version": __version__,

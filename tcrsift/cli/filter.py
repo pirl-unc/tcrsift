@@ -21,7 +21,6 @@ import logging
 import sys
 from pathlib import Path
 
-from ..validation import TCRsiftValidationError
 from .common import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -158,6 +157,7 @@ def cmd_select(args):
 
     from ..config import TCRsiftConfig
     from ..selection import attach_per_sample_tiers, select_from_clone_sample_long
+    from ..validation import TCRsiftValidationError
 
     setup_logging(args.verbose)
 

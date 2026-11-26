@@ -18,10 +18,8 @@ Commands: ``annotate``, ``annotate-gex``, ``mnemonic``, ``log-pgen``,
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
-from ..validation import validate_annotate_gex_args, validate_file_exists
 from .common import setup_logging
 
 
@@ -86,6 +84,7 @@ def cmd_annotate_gex(args):
         compute_cd4_cd8_counts,
         compute_signature_scores_per_clonotype,
     )
+    from ..validation import validate_annotate_gex_args, validate_file_exists
 
     setup_logging(args.verbose)
 
@@ -465,7 +464,6 @@ REQUIRED INPUTS:
   --output/-o    Output CSV path
   --gex-file     10x filtered_feature_bc_matrix.h5 file (always required)
 """,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     gex_required = p_gex.add_argument_group("required arguments")

@@ -3,6 +3,7 @@ site_description: T-cell receptor clonotype prioritization from antigen-enrichme
 site_url: https://pirl.unc.edu/tcrsift/
 repo_url: https://github.com/pirl-unc/tcrsift
 repo_name: pirl-unc/tcrsift
+strict: true
 
 theme:
   name: material

@@ -27,8 +27,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 logger = logging.getLogger(__name__)
 
 
@@ -551,6 +549,8 @@ class TCRsiftConfig:
         if not path.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
 
+        import yaml
+
         with open(path) as f:
             data = yaml.safe_load(f) or {}
 
@@ -633,6 +633,8 @@ class TCRsiftConfig:
         path : str or Path
             Path to save the configuration
         """
+        import yaml
+
         data = self.to_dict()
         with open(path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)

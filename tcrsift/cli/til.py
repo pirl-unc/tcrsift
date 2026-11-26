@@ -21,8 +21,322 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..validation import TCRsiftValidationError
 from .common import setup_logging
+
+_PRIORITIZE_CONTEXTS: tuple[str, ...] = (
+    "generic",
+    "blood",
+    "blood-tumor",
+    "solid-tumor",
+    "mpe",
+    "heme",
+    "peptide-stim",
+)
+_PRIORITIZE_QC_DEFAULTS: dict[str, int | float] = {
+    "min_genes": 250,
+    "max_genes": 15000,
+    "min_counts": 500,
+    "max_counts": 100000,
+    "min_mito_pct": 0.0,
+    "max_mito_pct": 8.0,
+}
+
+
+def add_til_prioritize_args(parser: argparse.ArgumentParser, *, context: str = "generic") -> None:
+    """Register the sample-sheet prioritization workflow options on a CLI parser."""
+    parser.add_argument(
+        "sample_sheet",
+        type=Path,
+        help="Paired CellRanger VDJ + GEX YAML/CSV (one or more samples)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Directory for the candidate, audit, and per-sample score CSVs",
+    )
+    parser.add_argument("--vdjdb", type=Path, help="Optional VDJdb annotation file (overrides cache)")
+    parser.add_argument("--iedb", type=Path, help="Optional IEDB annotation file (overrides cache)")
+    parser.add_argument(
+        "--iedb-epitope", type=Path, help="Optional IEDB epitope_full_v3.csv (overrides cache)"
+    )
+    parser.add_argument("--cedar", type=Path, help="Optional CEDAR annotation file (overrides cache)")
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Reference-database cache directory (default: $TCRSIFT_DATA_DIR or ~/.cache/tcrsift)",
+    )
+    parser.add_argument(
+        "--auto-download",
+        action="store_true",
+        default=False,
+        help="Automatically download missing annotation databases into --cache-dir",
+    )
+    parser.add_argument(
+        "--species",
+        choices=("human", "mouse", "auto"),
+        default="auto",
+        help="Organism for gene resolution, signatures, and DB host matching (default: auto)",
+    )
+    parser.add_argument(
+        "--database-match",
+        choices=("strict_ab", "ab_with_partial", "b_only"),
+        default="strict_ab",
+        help="Public-database chain-matching strictness (default: strict_ab for paired α/β clones)",
+    )
+    parser.add_argument(
+        "--round-robin-mode",
+        choices=("tiered", "flat"),
+        default="tiered",
+        help="Round-robin scheduling over signatures: 'tiered' (default) prioritizes "
+        "dedicated tumor/neoantigen reactivity signatures before broader state panels "
+        "when --signatures is not overridden; 'flat' gives equal turns from round 1.",
+    )
+    parser.add_argument(
+        "--call-multimers",
+        action="store_true",
+        default=False,
+        help="Extract 10x Feature Barcode pMHC multimers from each sample's GEX matrix "
+        "and attach per-clone multimer specificity + concordance QC.",
+    )
+    parser.add_argument(
+        "--multimer-min-umi",
+        type=float,
+        default=10.0,
+        help="Minimum top-multimer UMI count for --call-multimers (default: 10.0)",
+    )
+    parser.add_argument(
+        "--multimer-min-nc-ratio",
+        type=float,
+        default=5.0,
+        help="Minimum fold-change over negative-control multimers for --call-multimers (default: 5.0)",
+    )
+    parser.add_argument(
+        "--multimer-min-concordance",
+        type=float,
+        default=0.5,
+        help="Minimum clonal concordance for multimer_confident (default: 0.5)",
+    )
+    parser.add_argument(
+        "--multimer-min-specific-cells",
+        type=int,
+        default=2,
+        help="Minimum specific cells calling the modal multimer for multimer_confident (default: 2)",
+    )
+    parser.add_argument(
+        "--min-cells",
+        type=int,
+        default=2,
+        help="Minimum clone cell count across a patient's samples (default: 2)",
+    )
+    parser.add_argument(
+        "--min-frequency",
+        type=float,
+        default=0.001,
+        help="Minimum clone frequency in at least one sample (default: 0.001)",
+    )
+    parser.add_argument(
+        "--signature-quantile",
+        type=float,
+        default=0.9,
+        help="Within-sample/lineage percentile floor in [0, 1] (default: 0.9; 0 disables percentile gate)",
+    )
+    parser.add_argument(
+        "--signature-cutoff",
+        choices=("background", "legacy"),
+        default="background",
+        help="Size-matched empirical background floor (default), or legacy positive-score gate",
+    )
+    parser.add_argument(
+        "--signature-evidence",
+        choices=("mean", "subset", "either"),
+        help="Evidence used for selection (default: either for background; mean for legacy)",
+    )
+    parser.add_argument(
+        "--signature-high-quantile",
+        type=float,
+        default=0.9,
+        help="Cell-score quantile to exceed for the high-cell label (default: 0.9)",
+    )
+    parser.add_argument(
+        "--min-signature-high-cells",
+        type=int,
+        default=5,
+        help="Minimum high-scoring cells for subset evidence (default: 5)",
+    )
+    parser.add_argument(
+        "--min-signature-high-fraction",
+        type=float,
+        default=0.0,
+        help="Optional minimum within-clone high-cell fraction (default: 0; no majority required)",
+    )
+    parser.add_argument(
+        "--signature-subset-pvalue",
+        type=float,
+        default=0.01,
+        help="Maximum unadjusted hypergeometric tail for subset evidence (default: 0.01)",
+    )
+    parser.add_argument(
+        "--signature-background-quantile",
+        type=float,
+        default=0.99,
+        help="Random cell-group score quantile to exceed (default: 0.99)",
+    )
+    parser.add_argument(
+        "--signature-background-draws",
+        type=int,
+        default=2000,
+        help="Background draws per clone size (default: 2000; exact enumeration when smaller)",
+    )
+    parser.add_argument(
+        "--signature-background-seed",
+        type=int,
+        default=0,
+        help="Reproducible background sampling seed (default: 0)",
+    )
+    parser.add_argument(
+        "--min-signature-score",
+        type=float,
+        help="Optional additional strict score floor; legacy mode defaults to 0",
+    )
+    parser.add_argument(
+        "--min-signature-support",
+        type=int,
+        default=1,
+        help="Minimum signatures passing all score and percentile cutoffs (default: 1)",
+    )
+    parser.add_argument(
+        "--exclude-known-viral",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Exclude known viral database matches (default: disabled)",
+    )
+    parser.add_argument(
+        "--exclude-known-mart1",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Exclude known MART-1/Melan-A database matches (default: enabled)",
+    )
+    parser.add_argument(
+        "--exclude-trav12-2",
+        action="store_true",
+        help="Aggressive heuristic; TRAV12-2 alone does not establish MART-1 specificity",
+    )
+    parser.add_argument(
+        "--exclude-public-quantile",
+        type=float,
+        default=None,
+        metavar="Q",
+        help="Optionally remove the most public cohort fraction, e.g. 0.90",
+    )
+    parser.add_argument(
+        "--exclude-treg",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Optionally exclude FOXP3+ regulatory T-cell clones (default: disabled; always audited in risk_flags)",
+    )
+    parser.add_argument(
+        "--treg-foxp3-fraction",
+        type=float,
+        default=0.5,
+        help="Minimum fraction of clone cells with FOXP3/Foxp3 > 0 to flag is_treg_like (default: 0.5)",
+    )
+    parser.add_argument(
+        "--assemble",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Assemble validated full-length TCR constructs for shortlisted clones (writes candidate_constructs.csv/.fasta)",
+    )
+    parser.add_argument(
+        "--germline-vdj-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-detect and rescue 5'-truncated contigs or bare (v_gene, CDR3, j_gene) rows from cached IMGT V/J-REGION references when --assemble is enabled (default: enabled; pass --no-germline-vdj-fallback for strict contig-only assembly)",
+    )
+    parser.add_argument(
+        "--single-chain-linker",
+        type=lambda s: "none" if s.strip().lower() == "none" else s.strip().upper(),
+        choices=("T2A", "P2A", "E2A", "F2A", "none"),
+        default="T2A",
+        help="2A self-cleaving linker for --assemble single-chain constructs (default: T2A; 'none' omits linker)",
+    )
+    parser.add_argument(
+        "--allow-canonical-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Allow canonical constant fallback when --assemble has unverified contigs (pass --no-allow-canonical-fallback to fail closed)",
+    )
+    parser.add_argument("--verbose", action="store_true", help="Verbose logging and error tracebacks")
+    parser.add_argument(
+        "--context",
+        choices=_PRIORITIZE_CONTEXTS,
+        default=context,
+        help=(
+            f"Signature preset (default: {context}). "
+            "Primary contexts: solid-tumor (fresh TIL), blood-tumor (unstimulated cancer blood), "
+            "blood (other blood/marrow), peptide-stim (unpaired 6-24 h restim; use "
+            "`tcrsift run --method stimulation` with paired unstimulated controls or "
+            "`tcrsift run` for multi-day expansion culture), generic (6 core state panels only). "
+            "Compatibility variants: mpe (non-epithelial effusion), heme (alias for blood)."
+        ),
+    )
+    parser.add_argument(
+        "--tcell-type",
+        choices=("cd8", "cd4", "both"),
+        default="cd8",
+        help="Retain classified CD8, CD4, or both (default: cd8); unknown cells are excluded",
+    )
+    parser.add_argument(
+        "--signatures", nargs="+", help="Replace the preset with named signatures in this order"
+    )
+    parser.add_argument(
+        "--exclude-signatures", nargs="+", help="Remove named signatures from the selected set"
+    )
+    parser.add_argument(
+        "--max-clones",
+        type=int,
+        default=200,
+        help="Maximum candidate rows across the entire run (default: 200; 0 = unlimited); never pad below cutoffs",
+    )
+    for key, default in _PRIORITIZE_QC_DEFAULTS.items():
+        parser.add_argument(
+            f"--{key.replace('_', '-')}",
+            type=type(default),
+            default=default,
+            help=f"Per-cell GEX QC (default: {default})",
+        )
+    for option, default, help_text in (
+        ("min-vdj-umis", 2, "Minimum UMIs in EACH primary VDJ chain per cell"),
+        ("min-vdj-reads", 0, "Minimum reads in EACH primary VDJ chain per cell"),
+        ("min-cd3", 3, "Minimum summed CD3D/E/G raw GEX counts per cell; 0 disables"),
+        ("min-alpha-cdr3-length", 0, "Minimum alpha CDR3 amino-acid length, including anchors"),
+        ("min-beta-cdr3-length", 0, "Minimum beta CDR3 amino-acid length, including anchors"),
+    ):
+        parser.add_argument(
+            f"--{option}",
+            type=int,
+            default=default,
+            help=f"{help_text} (default: {default}; 0 = disabled)",
+        )
+    for direction in ("min", "max"):
+        parser.add_argument(
+            f"--{direction}-expression",
+            action="append",
+            default=[],
+            metavar="GENE=VALUE",
+            help="Per-cell log1p(CP10K) marker threshold; repeat for AND conditions",
+        )
+    for action in ("include", "exclude"):
+        for segment in ("v", "j"):
+            parser.add_argument(
+                f"--{action}-{segment}-gene",
+                action="append",
+                default=[],
+                metavar="GENE",
+                help=f"{action.capitalize()} exact {segment.upper()} genes in either chain; repeatable, allele-insensitive",
+            )
 
 
 def _parse_per_lineage_min(spec: str | None) -> dict | None:
@@ -52,6 +366,7 @@ def _load_til_source(args):
     """Load TIL data from whichever CLI source flag was provided."""
     from ..sample_sheet import load_sample_sheet
     from ..til import load_til_data, load_til_samples, load_til_specs
+    from ..validation import TCRsiftValidationError
 
     if args.til_sample:
         til_data = load_til_specs(args.til_sample)
@@ -187,7 +502,6 @@ def cmd_til_select(args):
 def register(subparsers) -> None:
     """Register ``match-til``, ``til-clonotype``, ``prioritize``, ``til-prioritize``, and ``til-select``."""
     from ..signatures import AIM_GENES_HGNC, EXHAUSTION_GENES_HGNC, MARKER_PANEL_HGNC
-    from ..til_prioritize import add_cli_args as add_til_prioritize_args
 
     # match-til
     p_til = subparsers.add_parser(
@@ -228,7 +542,6 @@ OUTPUT:
     til_cell_count.{sample}   - Cell count in specific TIL sample
     til_frequency.{sample}    - Frequency in specific TIL sample
 """,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     til_required = p_til.add_argument_group("required arguments")
@@ -296,7 +609,6 @@ TIL DATA SOURCE (provide ONE of the following):
   --til-sample     Repeatable direct TIL sample spec:
                    NAME=TYPE:PATH (TYPE is csv|h5ad|vdj)
 """,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_til_clono.add_argument("--output", "-o", required=True, help="Output CSV path")
     p_til_clono.add_argument("--sample-sheet", "-s", metavar="PATH", help="TIL sample sheet")
@@ -368,7 +680,6 @@ or through:
   --config config.yaml
 or auto-discovered from --data-dir.
 """,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_til_select.add_argument(
         "--config",

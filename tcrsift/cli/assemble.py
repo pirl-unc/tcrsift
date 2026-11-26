@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..validation import validate_assemble_args, validate_file_exists
 from .common import LEADER_CHOICES, setup_logging
 
 
@@ -37,6 +36,7 @@ def cmd_assemble(args):
         validate_sequences,
     )
     from ..plots import plot_assembly
+    from ..validation import validate_assemble_args, validate_file_exists
 
     setup_logging(args.verbose)
 
@@ -200,7 +200,6 @@ CONDITIONALLY REQUIRED:
                  --alpha-leader=from_contig or --beta-leader=from_contig
                  (for extracting native leader peptides from CellRanger FASTAs)
 """,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     asm_required = p_asm.add_argument_group("required arguments")
