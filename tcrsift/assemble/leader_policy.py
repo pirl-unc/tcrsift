@@ -21,12 +21,13 @@ import pandas as pd
 
 from ..validation import TCRsiftValidationError
 from .codons import (
-    DEFAULT_FORBIDDEN_MOTIFS,
+    DEFAULT_MAX_DIRECT_REPEAT,
     CodonOptimization,
     _add_single_chain,
+    _extract_kmers,
     find_longest_orf,
     optimize_codons,
-    recode_codons,
+    optimize_or_recode_prefix,
 )
 from .constants import (
     DEFAULT_LEADERS,
@@ -372,7 +373,6 @@ def _substitute_chain_leader(
             if (const_aa and full_aa_now.endswith(const_aa))
             else full_aa_now
         )
-        sites = eff_recode.restriction_sites()
         vdj_nt_raw = (
             _as_str(target.get(f"vdj_{chain}_nt"))
             or _as_str(orig.get(f"vdj_{chain}_nt"))
@@ -386,49 +386,27 @@ def _substitute_chain_leader(
             ).strip()
             if vdj_aa_raw:
                 vdj_nt_raw = vdj_nt_raw[: 3 * len(vdj_aa_raw)]
-        if eff_recode.mode == "full" or not vdj_nt_raw:
-            full_forbidden = (
-                tuple(dict.fromkeys((*DEFAULT_FORBIDDEN_MOTIFS, *sites)))
-                if sites
-                else DEFAULT_FORBIDDEN_MOTIFS
+        partner_chain = "beta" if chain == "alpha" else "alpha"
+        partner_opt = _as_str(target.get(f"full_{partner_chain}_nt_optimized")) or _as_str(
+            orig.get(f"full_{partner_chain}_nt_optimized")
+        )
+        partner_avoid = (
+            _extract_kmers(partner_opt, DEFAULT_MAX_DIRECT_REPEAT)
+            if (eff_recode.mode == "full" and partner_opt)
+            else None
+        )
+        if eff_new_nt or eff_recode.mode == "full" or not vdj_nt_raw:
+            prefix_opt, leader_tags, vdj_tags = optimize_or_recode_prefix(
+                donor_aa=donor_aa_now,
+                leader_nt=eff_new_nt,
+                vdj_nt=vdj_nt_raw,
+                const_opt=const_opt,
+                recode=eff_recode,
+                avoid_kmers=partner_avoid,
             )
-            donor_opt = optimize_codons(
-                donor_aa_now,
-                species=eff_recode.codon_species,
-                forbidden_motifs=full_forbidden,
-            )
-            if sites or (eff_recode.max_codon_repeats and eff_recode.max_codon_repeats >= 1):
-                donor_opt, _ = recode_codons(
-                    donor_opt,
-                    max_codon_repeats=eff_recode.max_codon_repeats,
-                    restriction_sites=sites,
-                    species=eff_recode.codon_species,
-                    right_context=const_opt,
-                )
-            target[f"full_{chain}_nt_optimized"] = (donor_opt + const_opt) if eff_new_nt else None
-            target[f"{chain}_leader_recoded_positions"] = ""
-            target[f"{chain}_vdj_recoded_positions"] = ""
-        elif eff_new_nt:
-            native_prefix = (eff_new_nt + vdj_nt_raw).upper()
-            recoded_prefix, changed = recode_codons(
-                native_prefix,
-                max_codon_repeats=eff_recode.max_codon_repeats,
-                restriction_sites=sites,
-                species=eff_recode.codon_species,
-                right_context=const_opt,
-            )
-            target[f"full_{chain}_nt_optimized"] = recoded_prefix + const_opt
-            vdj_start = len(eff_new_nt)
-
-            def _fmt(o, _np=native_prefix, _rp=recoded_prefix):
-                return f"{o}:{_np[o : o + 3]}>{_rp[o : o + 3]}"
-
-            target[f"{chain}_leader_recoded_positions"] = ";".join(
-                _fmt(o) for o in changed if o < vdj_start
-            )
-            target[f"{chain}_vdj_recoded_positions"] = ";".join(
-                _fmt(o) for o in changed if o >= vdj_start
-            )
+            target[f"full_{chain}_nt_optimized"] = (prefix_opt + const_opt) if eff_new_nt else None
+            target[f"{chain}_leader_recoded_positions"] = leader_tags
+            target[f"{chain}_vdj_recoded_positions"] = vdj_tags
         else:
             target[f"full_{chain}_nt_optimized"] = None
 

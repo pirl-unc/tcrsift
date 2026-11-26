@@ -214,16 +214,16 @@ z
    </g>
    <g id="patch_4">
     <path d="M 92.338125 144.849944 
-L 171.85179 144.849944 
-L 171.85179 102.985982 
+L 171.793524 144.849944 
+L 171.793524 102.985982 
 L 92.338125 102.985982 
 z
 " clip-path="url(#p6328ef3efa)" style="fill: #1baf7a; stroke: #fcfcfb; stroke-width: 0.8; stroke-linejoin: miter"/>
    </g>
    <g id="patch_5">
     <path d="M 92.338125 219.607021 
-L 182.048339 219.607021 
-L 182.048339 177.743058 
+L 182.009495 219.607021 
+L 182.009495 177.743058 
 L 92.338125 177.743058 
 z
 " clip-path="url(#p6328ef3efa)" style="fill: #b9b8b2; stroke: #fcfcfb; stroke-width: 0.8; stroke-linejoin: miter"/>
@@ -237,10 +237,10 @@ L 490.489108 229.175926
     <text style="font-weight: 700; font-size: 7.8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #2a78d6" x="286.169677" y="51.268715" transform="rotate(-0 286.169677 51.268715)">97.8% donor codons | 46/46 RE-free | 46/46 repeat&lt;20bp | 1.27s</text>
    </g>
    <g id="text_15">
-    <text style="font-size: 7.8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="175.736189" y="126.030057" transform="rotate(-0 175.736189 126.030057)">40.9% donor codons | 46/46 RE-free | 44/46 repeat&lt;20bp | 1.62s</text>
+    <text style="font-size: 7.8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="175.677923" y="126.030057" transform="rotate(-0 175.677923 126.030057)">40.9% donor codons | 46/46 RE-free | 46/46 repeat&lt;20bp | 1.74s</text>
    </g>
    <g id="text_16">
-    <text style="font-size: 7.8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="185.932739" y="200.787133" transform="rotate(-0 185.932739 200.787133)">46.2% donor codons | 46/46 RE-free | 46/46 repeat&lt;20bp | 2.84s</text>
+    <text style="font-size: 7.8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="185.893895" y="200.787133" transform="rotate(-0 185.893895 200.787133)">46.2% donor codons | 46/46 RE-free | 46/46 repeat&lt;20bp | 2.05s</text>
    </g>
    <g id="text_17">
     <text style="font-weight: 700; font-size: 9.2px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="92.338125" y="12.66" transform="rotate(-0 92.338125 12.66)">Synthesis codon optimization (5 enzymes + homopolymers + repeats + GC): TCRsift vs DNAChisel</text>

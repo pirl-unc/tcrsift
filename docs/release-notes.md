@@ -8,6 +8,34 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.43.1
+
+Refined native TCRdist matching, repeat-free full-ORF codon optimization, code
+simplification, and API/methods documentation:
+
+- **Mixed V-gene database support & zip-safe resource loading (`tcrsift.tcrdist`)**:
+  `TCRDistIndex` now retains V-gene-less database rows (common in combined
+  VDJdb + IEDB + CEDAR tables) and queries with a missing/unmapped V gene via
+  exact trimmed-CDR3 matching rather than dropping exact hits, while continuing
+  to require mapped V-gene loops for all fuzzy (`d > 0`) matches. Switched
+  packaged `vgene_cdr_loops.csv.gz` loading to zip-safe `ref.open("rb")`.
+- **Distance-aware `db_match_score` for `match_mode="tcrdist"`**:
+  `_compute_match_score` now decays smoothly with TCRdist (`max(0.4, 1 - 0.5 *
+  distance / scale)`, `scale = 48` paired / `24` β-only) instead of applying a
+  flat `0.7x` penalty across all `*_near` hits, while keeping `exact` and
+  `levenshtein` scores unchanged.
+- **Repeat-free `codon_optimization="full"` & shared prefix optimizer**:
+  Added direct-repeat avoidance (`max_direct_repeat=20`, `avoid_kmers`,
+  `max_codon_repeats`) to `optimize_codons` and unified the duplicated
+  `focal`/`full` prefix optimization logic in `construct.py` and
+  `leader_policy.py` into `optimize_or_recode_prefix`. Optimizing β before α
+  and passing β k-mers into α eliminates cross-chain ≥20 bp FR2/FR4 repeats
+  (`46/46 = 100%` repeat-free, max `17 bp` vs `19 bp` in `DNAChisel`).
+- **Documentation updates**: Added `tcrsift.tcrdist` API docs to
+  `docs/api/annotate.md`, codon-optimization docs to `docs/api/assemble.md`,
+  and refreshed `docs/how-it-works.md`, `docs/methods-section.md`, and
+  `docs/benchmarks-overview.md`.
+
 ## 3.43.0
 
 Added native, zero-dependency **TCRdist** (`--match-mode tcrdist`) similarity

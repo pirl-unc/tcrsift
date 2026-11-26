@@ -270,6 +270,15 @@ DEFAULT_FORBIDDEN_MOTIFS: tuple[str, ...] = (
 # break ties when alternatives are otherwise equivalent.
 DEFAULT_GC_TARGET_WINDOW: int = 60
 DEFAULT_GC_TARGET_RANGE: tuple[float, float] = (0.40, 0.65)
+DEFAULT_MAX_DIRECT_REPEAT: int = 20
+
+
+def _extract_kmers(seq: str, k: int) -> set[str]:
+    """Return all uppercase ``k``-mers in ``seq`` (empty set if ``k <= 0``)."""
+    if k <= 0 or not seq or len(seq) < k:
+        return set()
+    s = seq.upper()
+    return {s[i : i + k] for i in range(len(s) - k + 1)}
 
 
 def back_translate(aa: str, *, species: str = "human") -> str:
@@ -288,10 +297,21 @@ def optimize_codons(
     context_window: int = 8,
     gc_target_window: int = DEFAULT_GC_TARGET_WINDOW,
     gc_target_range: tuple[float, float] = DEFAULT_GC_TARGET_RANGE,
+    max_direct_repeat: int = DEFAULT_MAX_DIRECT_REPEAT,
+    avoid_kmers: set[str] | frozenset[str] | None = None,
+    max_codon_repeats: int = 0,
     species: str = "human",
 ) -> str:
-    """Back-translate ``aa_sequence`` to DNA with motif avoidance and
-    GC-content balancing for ``species`` ('human' or 'mouse')."""
+    """Back-translate ``aa_sequence`` to DNA with motif, GC, and direct-repeat avoidance.
+
+    Codon selection applies four filters in priority order before CAI tie-breaking:
+    (1) avoid ``forbidden_motifs`` across the trailing boundary, (2) bounded
+    lookahead so upcoming codons stay motif-free, (3) keep the sliding
+    ``gc_target_window`` within ``gc_target_range``, and (4) avoid repeating any
+    ``max_direct_repeat``-bp DNA k-mer already emitted (or supplied in
+    ``avoid_kmers``, e.g. from the partner TCR chain in a single-chain β-2A-α
+    construct so shared FR2/FR4 motifs do not create recombination-prone repeats).
+    """
     if gc_target_range[0] > gc_target_range[1]:
         raise ValueError(
             f"gc_target_range must be (low, high); got {gc_target_range}"
@@ -302,6 +322,26 @@ def optimize_codons(
     prefix_up = str(prefix_nt).upper() if prefix_nt else ""
     motifs_up = tuple(str(m).upper() for m in forbidden_motifs if m)
     eff_window = max(context_window, max((len(m) for m in motifs_up), default=0))
+    # Check repeats slightly below max_direct_repeat so repeats are broken BEFORE
+    # trailing single-codon (M/W) or 2-base-locked (G=GGN, P=CCN, I=ATN) codons
+    # lock every synonymous candidate into completing a >=max_direct_repeat hit
+    # (15 bp when cross-chain avoid_kmers are active; 18 bp intra-chain).
+    if max_direct_repeat and max_direct_repeat > 0:
+        margin = 5 if avoid_kmers else 2
+        rep_k = max(12, int(max_direct_repeat) - margin)
+    else:
+        rep_k = 0
+    seen_kmers: set[str] = set()
+    if rep_k > 0:
+        if avoid_kmers:
+            for km in avoid_kmers:
+                s = str(km).upper()
+                if len(s) == rep_k:
+                    seen_kmers.add(s)
+                elif len(s) > rep_k:
+                    seen_kmers.update(_extract_kmers(s, rep_k))
+        seen_kmers.update(_extract_kmers(prefix_up, rep_k))
+    rep_buf = prefix_up[-(rep_k - 1) :] if (rep_k > 1 and prefix_up) else ""
 
     def _creates_motif(buf: str, codon: str) -> bool:
         for motif in motifs_up:
@@ -384,16 +424,48 @@ def optimize_codons(
                 ] or motif_free
             else:
                 lookahead_valid = motif_free
-            # Filter 3 (soft): GC-in-range. Refine; fall back to
-            # lookahead_valid if every option is out of range.
+            # Filter 2b (optional): avoid exceeding max_codon_repeats consecutive
+            # identical codons so downstream recode_codons does not need to
+            # mutate codons and inadvertently re-introduce a direct repeat.
+            if max_codon_repeats and max_codon_repeats >= 1 and len(nt_parts) >= max_codon_repeats:
+                tail_run = nt_parts[-max_codon_repeats:]
+                if len(set(tail_run)) == 1:
+                    no_adj = [c for c in lookahead_valid if c != tail_run[0]]
+                    if no_adj:
+                        lookahead_valid = no_adj
+            # Filter 3 (synthesis hazard): avoid repeating any rep_k-bp k-mer
+            # already seen in this CDS or in avoid_kmers (e.g. partner chain).
+            # Runs ahead of soft GC balancing so repeats are never forced by a
+            # narrow GC tiebreak.
+            if rep_k > 0 and len(rep_buf) + 3 >= rep_k:
+                def _repeat_hits(cand: str) -> int:
+                    seg = rep_buf + cand
+                    return sum(
+                        1
+                        for j in range(len(seg) - rep_k + 1)
+                        if seg[j : j + rep_k] in seen_kmers
+                    )
+
+                min_hits = min(_repeat_hits(c) for c in lookahead_valid)
+                non_repeat = [c for c in lookahead_valid if _repeat_hits(c) == min_hits]
+            else:
+                non_repeat = lookahead_valid
+            # Filter 4 (soft): GC-in-range. Refine; fall back to
+            # non_repeat if every option is out of range.
             gc_balanced = [
-                c for c in lookahead_valid if _gc_in_range(c, gc_buffer)
-            ] or lookahead_valid
+                c for c in non_repeat if _gc_in_range(c, gc_buffer)
+            ] or non_repeat
             # CAI tiebreak: first remaining candidate is highest-CAI.
             chosen = gc_balanced[0]
         nt_parts.append(chosen)
         buffer = (buffer + chosen)[-eff_window:]
         gc_buffer = (gc_buffer + chosen)[-gc_target_window:]
+        if rep_k > 0:
+            seg = rep_buf + chosen
+            if len(seg) >= rep_k:
+                for j in range(len(seg) - rep_k + 1):
+                    seen_kmers.add(seg[j : j + rep_k])
+            rep_buf = seg[-(rep_k - 1) :] if rep_k > 1 else ""
     return "".join(nt_parts)
 
 
@@ -556,6 +628,78 @@ class CodonOptimization:
             elif s:
                 logger.warning("avoid_enzymes: %r is not a known enzyme or ACGT site; skipping", s)
         return tuple(sites)
+
+
+def optimize_or_recode_prefix(
+    *,
+    donor_aa: str,
+    leader_nt: str,
+    vdj_nt: str,
+    const_opt: str,
+    recode: CodonOptimization,
+    avoid_kmers: set[str] | frozenset[str] | None = None,
+) -> tuple[str, str, str]:
+    """Optimize or focally recode a leader+VDJ coding prefix against ``const_opt``.
+
+    Single source of truth shared by construct assembly and leader-policy rebuilds:
+
+    * ``recode.mode == "full"`` (or absent native ``vdj_nt``) — back-translates
+      ``donor_aa`` via :func:`optimize_codons` (avoiding forbidden motifs, GC
+      extremes, and ≥20 bp direct repeats including ``avoid_kmers``), then runs
+      :func:`recode_codons` to clear adjacent codon repeats and restriction sites
+      across the VDJ→constant seam.
+    * ``recode.mode == "focal"`` — preserves native ``leader_nt + vdj_nt`` with
+      only the minimal synonymous swaps required by :func:`recode_codons`.
+
+    Returns ``(prefix_nt_optimized, leader_recoded_positions, vdj_recoded_positions)``.
+    """
+    sites = recode.restriction_sites()
+    if recode.mode == "full" or not vdj_nt:
+        full_forbidden = (
+            tuple(dict.fromkeys((*DEFAULT_FORBIDDEN_MOTIFS, *sites)))
+            if sites
+            else DEFAULT_FORBIDDEN_MOTIFS
+        )
+        all_avoid = _extract_kmers(const_opt, DEFAULT_MAX_DIRECT_REPEAT)
+        if avoid_kmers:
+            all_avoid |= set(avoid_kmers)
+        prefix_opt = optimize_codons(
+            donor_aa,
+            species=recode.codon_species,
+            forbidden_motifs=full_forbidden,
+            avoid_kmers=all_avoid,
+            max_codon_repeats=recode.max_codon_repeats,
+        )
+        if sites or (recode.max_codon_repeats and recode.max_codon_repeats >= 1):
+            prefix_opt, _ = recode_codons(
+                prefix_opt,
+                max_codon_repeats=recode.max_codon_repeats,
+                restriction_sites=sites,
+                species=recode.codon_species,
+                right_context=const_opt,
+            )
+        return prefix_opt, "", ""
+
+    native_prefix = (leader_nt + vdj_nt).upper()
+    recoded_prefix, changed = recode_codons(
+        native_prefix,
+        max_codon_repeats=recode.max_codon_repeats,
+        restriction_sites=sites,
+        species=recode.codon_species,
+        right_context=const_opt,
+    )
+    vdj_start = len(leader_nt)
+    leader_tags = ";".join(
+        f"{o}:{native_prefix[o : o + 3]}>{recoded_prefix[o : o + 3]}"
+        for o in changed
+        if o < vdj_start
+    )
+    vdj_tags = ";".join(
+        f"{o}:{native_prefix[o : o + 3]}>{recoded_prefix[o : o + 3]}"
+        for o in changed
+        if o >= vdj_start
+    )
+    return recoded_prefix, leader_tags, vdj_tags
 
 
 def stop_codons_nt(stop_codons: tuple[str, ...]) -> str:
