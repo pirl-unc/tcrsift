@@ -42,9 +42,9 @@ import shutil
 import tempfile
 import threading
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -695,7 +695,7 @@ def download_database(
         _write_metadata(
             staging_dir,
             url=url,
-            downloaded_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+            downloaded_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
             size=size,
             sha256=sha256,
         )

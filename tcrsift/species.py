@@ -19,9 +19,12 @@ Supports ``"human"`` (*Homo sapiens*) and ``"mouse"`` (*Mus musculus*), plus
 from __future__ import annotations
 
 import logging
+import math
 import re
+from typing import TYPE_CHECKING
 
-import pandas as pd
+if TYPE_CHECKING:
+    import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +98,7 @@ def normalize_species(
     """Normalize a user/config species token to ``'human'`` or ``'mouse'``
     (or ``'auto'`` when ``allow_auto=True``).
     """
-    if value is None or (isinstance(value, float) and pd.isna(value)):
+    if value is None or (isinstance(value, float) and math.isnan(value)):
         return default
     raw = str(value).strip()
     if not raw:
@@ -181,6 +184,8 @@ def detect_adata_species(adata) -> str | None:
     """Sniff ``'human'`` or ``'mouse'`` from an AnnData's gene axis and obs."""
     if adata is None or getattr(adata, "n_vars", 0) == 0:
         return None
+
+    import pandas as pd
 
     var_names = pd.Series(adata.var_names.astype(str))
     if (var_names.str.startswith("ENSMUSG")).mean() > 0.2:

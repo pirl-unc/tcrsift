@@ -1,7 +1,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 """Provenance capture (#provenance): tcrsift + dep versions stamped into outputs."""
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from tcrsift.provenance import (
     collect_provenance,
@@ -13,7 +13,7 @@ from tcrsift.version import __version__
 
 
 def test_collect_provenance_structure():
-    p = collect_provenance(now=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc))
+    p = collect_provenance(now=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC))
     assert p["tcrsift_version"] == __version__
     assert p["generated_utc"] == "2026-01-02T03:04:05Z"
     assert p["python_version"] and p["platform"]

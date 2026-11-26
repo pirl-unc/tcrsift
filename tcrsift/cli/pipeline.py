@@ -21,14 +21,16 @@ import argparse
 import sys
 from pathlib import Path
 
-from ..config import TCRsiftConfig, add_config_args, generate_example_config, load_config_with_args
-from ..pipeline import run_pipeline
-from ..validation import validate_run_args
+from ..config import add_config_args
 from .common import LEADER_CHOICES, setup_logging
 
 
 def cmd_run(args):
     """Run the complete TCRsift pipeline."""
+    from ..config import load_config_with_args
+    from ..pipeline import run_pipeline
+    from ..validation import validate_run_args
+
     setup_logging(bool(getattr(args, "verbose", False)))
     config = load_config_with_args(args)
     validate_run_args(args, config=config)
@@ -49,6 +51,8 @@ def cmd_run(args):
 
 def cmd_generate_config(args):
     """Generate an example configuration file (prints to stdout when -o is omitted)."""
+    from ..config import TCRsiftConfig, generate_example_config
+
     if args.output is None:
         import yaml
 

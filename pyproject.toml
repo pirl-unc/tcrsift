@@ -4,15 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tcrsift"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [ {name="Alex Rubinsteyn", email="alex.rubinsteyn@unc.edu" } ]
 description = "T-cell receptor clonotype prioritization from antigen-enrichment cultures and single-cell VDJ and gene-expression data"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -24,14 +22,20 @@ classifiers = [
 readme = "README.md"
 dynamic = ["version"]
 dependencies = [
+    "argcomplete>=3",
+    "datacache>=1.38.0,<2.0.0; python_version >= '3.12'",
+    "datacache>=1.12.0,<2.0.0; python_version < '3.12'",
     "numpy>=2.0.0,<3.0.0",
-    "pandas>=2.1.4,<3.0.0",
+    "pandas>=3.0.0,<4.0.0; python_version >= '3.12'",
+    "pandas>=2.1.4,<3.0.0; python_version < '3.12'",
     "scipy>=1.10.0,<2.0.0",
     "h5py>=3.8.0,<4.0.0",
     "scanpy>=1.10.2,<2.0.0",
     # concat_on_disk remains experimental; validate each new AnnData minor.
-    # The 0.13 series is covered by our concatenation and expression tests.
-    "anndata>=0.10.0,<0.14.0",
+    # anndata>=0.13 (Python>=3.12) adds native pandas 3 ArrowStringArray support;
+    # Python 3.11 stays on pandas 2.x + anndata 0.12.x.
+    "anndata>=0.13.0,<0.14.0; python_version >= '3.12'",
+    "anndata>=0.10.0,<0.14.0; python_version < '3.12'",
     "matplotlib>=3.7.0,<4.0.0",
     "seaborn>=0.13,<1.0.0",
     "pyyaml>=6.0,<7.0",
@@ -40,9 +44,7 @@ dependencies = [
     # core dep (previously optional, which left the PDF silently skipped
     # when not installed — including on CI). pypdf concatenates the per-run
     # vector figure PDFs into the `tcrsift report bundle` cohort PDF (#123).
-    "reportlab>=4.0.0,<6.0.0; python_version >= '3.10'",
-    # reportlab 5.1 raises at import on Python 3.9 despite declaring support.
-    "reportlab>=4.0.0,<5.1.0; python_version < '3.10'",
+    "reportlab>=4.0.0,<6.0.0",
     "pypdf>=4.0.0,<7.0.0",
     # Core, not extras (one library, shared deps): pyensembl is the shared
     # Ensembl↔HGNC mapping behind tcrsift.genes (used by all expression
@@ -149,7 +151,7 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP"]

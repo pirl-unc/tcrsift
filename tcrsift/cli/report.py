@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..validation import TCRsiftValidationError
 from .common import setup_logging
 
 
@@ -210,6 +209,7 @@ def cmd_report_sequence(args):
 def cmd_report_cohort(args):
     """Cross-donor overlap report (Jaccard / cell-weighted / beta-only) (#123)."""
     from ..cohort import run_cohort_analysis
+    from ..validation import TCRsiftValidationError
 
     setup_logging(args.verbose)
     donor_dirs: dict[str, str] = {}
