@@ -21,14 +21,23 @@ import sys
 from pathlib import Path
 
 import pytest
-from datacache.cli_help import (
-    ANSI_BOLD,
-    ANSI_BOLD_CYAN,
-    ANSI_CYAN,
-    ANSI_RESET,
-    HelpArgumentParser,
-    HelpFormatter,
-)
+
+try:
+    from datacache.cli_help import (
+        ANSI_BOLD,
+        ANSI_BOLD_CYAN,
+        ANSI_CYAN,
+        ANSI_RESET,
+        HelpArgumentParser,
+        HelpFormatter,
+    )
+
+    _HAS_DATACACHE_CLI_HELP = True
+except ImportError:
+    ANSI_BOLD = ANSI_BOLD_CYAN = ANSI_CYAN = ANSI_RESET = ""
+    HelpArgumentParser = None
+    HelpFormatter = None
+    _HAS_DATACACHE_CLI_HELP = False
 
 import tcrsift.cli as cli_pkg
 from tcrsift.cli import create_parser, main
@@ -44,6 +53,7 @@ class _Stream(io.StringIO):
         return self._tty
 
 
+@pytest.mark.skipif(not _HAS_DATACACHE_CLI_HELP, reason="datacache<1.38 on Python 3.11")
 def test_create_parser_uses_shared_help_argument_parser():
     parser = create_parser()
     assert isinstance(parser, HelpArgumentParser)
@@ -55,6 +65,7 @@ def test_create_parser_uses_shared_help_argument_parser():
         assert issubclass(sub.formatter_class, HelpFormatter)
 
 
+@pytest.mark.skipif(not _HAS_DATACACHE_CLI_HELP, reason="datacache<1.38 on Python 3.11")
 def test_help_plain_vs_tty_and_no_color(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
@@ -93,7 +104,7 @@ def test_argcomplete_marker_and_registration(monkeypatch):
         main(["--help"])
     assert exc.value.code == 0
     assert len(called) == 1
-    assert isinstance(called[0], HelpArgumentParser)
+    assert isinstance(called[0], cli_pkg.HelpArgumentParser)
 
 
 def test_cli_help_stays_import_light():

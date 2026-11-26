@@ -35,11 +35,23 @@ import argparse
 import logging
 import sys
 
-from datacache.cli_help import (
-    HelpArgumentParser,
-    HelpFormatter,
-    enable_argcomplete,
-)
+try:
+    from datacache.cli_help import (
+        HelpArgumentParser,
+        HelpFormatter,
+        enable_argcomplete,
+    )
+except ImportError:
+    HelpArgumentParser = argparse.ArgumentParser
+    HelpFormatter = argparse.RawDescriptionHelpFormatter
+
+    def enable_argcomplete(parser, **_kwargs):
+        try:
+            import argcomplete
+        except ImportError:
+            return False
+        argcomplete.autocomplete(parser)
+        return True
 
 from ..version import __version__
 from . import annotate, assemble, cells, data, filter, load, pipeline, report, til
@@ -246,6 +258,6 @@ __all__ = [
     "cmd_unify",
     "create_parser",
     "main",
-    "run_pipeline",
+    "run_pipeline",  # pylint: disable=undefined-all-variable
     "setup_logging",
 ]

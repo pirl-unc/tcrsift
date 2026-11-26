@@ -194,9 +194,9 @@ def test_unspliced_intron_and_traj37_overextended_seam_and_1nt_stub(tmp_path):
     assert "LQVKPDIQNPDPAV" in out["full_alpha_aa"].iloc[1]
     assert out["alpha_junction_residue_source"].iloc[1] == "contig"
 
-    # Row 2: 1-2 nt stubs stored as None rather than flagged as out-of-frame
-    assert out["alpha_constant_nt_contig"].iloc[2] is None
-    assert out["beta_constant_nt_contig"].iloc[2] is None
+    # Row 2: 1-2 nt stubs stored as missing (None / NaN) rather than flagged as out-of-frame
+    assert pd.isna(out["alpha_constant_nt_contig"].iloc[2])
+    assert pd.isna(out["beta_constant_nt_contig"].iloc[2])
 
     lb = [m for m in validate_sequences(out, species="human") if m.severity == "load_bearing"]
     assert lb == [], f"Unexpected load-bearing errors: {lb}"
