@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draw the murine (`--species mouse`) benchmark figures from ``benchmarks/public_mouse/results``.
 
-    python docs/figures/make_mouse_benchmark_figures.py
+    python scripts/figures/make_mouse_benchmark_figures.py
 """
 
 from __future__ import annotations

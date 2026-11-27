@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draw the infectious-disease and blood benchmark figures from ``benchmarks/public_infectious/results``.
 
-    python docs/figures/make_infectious_benchmark_figures.py
+    python scripts/figures/make_infectious_benchmark_figures.py
 
 Every data panel plots empirical measurements written by
 ``benchmarks/public_infectious/run.py`` on public single-cell VDJ + GEX cohorts.

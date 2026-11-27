@@ -8,6 +8,17 @@ release. Full release history is on
 [GitHub](https://github.com/pirl-unc/tcrsift/releases) and
 [PyPI](https://pypi.org/project/tcrsift/#history).
 
+## 3.44.1
+
+Documentation and repository housekeeping (#410):
+
+- Moved the six Python figure-generation scripts (`make_*.py`) out of
+  `docs/figures/` into `scripts/figures/`, preserving their output target
+  (`docs/assets/figures/`) and updating documentation, benchmark READMEs, and
+  lint paths.
+- Removed the obsolete root `FUTURE.md` file whose still-relevant species and
+  benchmark notes are covered in `docs/`.
+
 ## 3.43.1
 
 Refined native TCRdist matching, repeat-free full-ORF codon optimization, code

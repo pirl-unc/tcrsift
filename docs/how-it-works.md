@@ -48,7 +48,7 @@ All primary commands share loading, species harmonization (`human` HGNC/GRCh38/h
 Unlike culture experiments with unstimulated controls, fresh tissue or blood
 cohorts must rank clones within each sample and lineage without pooling raw
 scores across samples. The five figures below use simulated cell scores
-(`docs/figures/make_figures.py`) to illustrate the resampling and
+(`scripts/figures/make_figures.py`) to illustrate the resampling and
 enrichment rules implemented in `tcrsift prioritize`.
 
 ### 1. Mean route: a clone's mean must beat size-matched random cell groups

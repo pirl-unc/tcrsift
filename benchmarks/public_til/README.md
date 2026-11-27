@@ -16,7 +16,7 @@ See [`PROVENANCE.md`](PROVENANCE.md) for complete ground-truth assay description
 tcrsift data download --db vdjdb
 python benchmarks/public_til/download.py --data-dir bench_til_data
 python benchmarks/public_til/run.py --data-dir bench_til_data --work-dir bench_til_data/runs
-python docs/figures/make_benchmark_figures.py
+python scripts/figures/make_benchmark_figures.py
 ```
 
 `run.py` writes compact CSV tables and `summary.json` (including `tcrsift_version` and `ground_truth_provenance`) to `benchmarks/public_til/results/`.

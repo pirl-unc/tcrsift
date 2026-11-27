@@ -18,5 +18,5 @@ pip install stitchr==1.3.1 olga==1.3.0
 stitchrdl -s HUMAN && stitchrdl -s MOUSE
 
 python benchmarks/head_to_head/run.py
-python docs/figures/make_overview_benchmark_figures.py
+python scripts/figures/make_overview_benchmark_figures.py
 ```

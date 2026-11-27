@@ -443,7 +443,7 @@ tcrsift data download --group germline
 
 python benchmarks/public_infectious/download.py --data-dir bench_infectious   # ~750 MB download
 python benchmarks/public_infectious/run.py --data-dir bench_infectious --work-dir bench_infectious/runs
-python docs/figures/make_infectious_benchmark_figures.py
+python scripts/figures/make_infectious_benchmark_figures.py
 ```
 
 `run.py` writes the CSV tables and `summary.json` (including

@@ -304,7 +304,7 @@ tcrsift data download --group germline_mouse
 
 python benchmarks/public_mouse/download.py --data-dir bench_mouse_data
 python benchmarks/public_mouse/run.py --data-dir bench_mouse_data --work-dir bench_mouse_data/runs
-python docs/figures/make_mouse_benchmark_figures.py
+python scripts/figures/make_mouse_benchmark_figures.py
 ```
 
 `run.py` writes the CSV tables (`auroc_mouse.csv`, `vdjdb_mouse_recovery.csv`,

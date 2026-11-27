@@ -70,7 +70,7 @@ jobs:
           pip install "ruff>=0.1.0" "pylint>=3.0.0,<4.0.0"
 
       - name: Run ruff
-        run: ruff check tcrsift/ tests/ benchmarks/ docs/figures/
+        run: ruff check tcrsift/ tests/ benchmarks/ scripts/figures/
 
       - name: Run pylint
         run: |

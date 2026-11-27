@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the explanatory figures used in the documentation.
 
-    python docs/figures/make_figures.py
+    python scripts/figures/make_figures.py
 
 Every panel here is drawn from SIMULATED per-cell scores (fixed seed). The
 figures illustrate how the selection rule works; they are not measurements of
@@ -25,7 +25,7 @@ from scipy.stats import hypergeom
 
 from tcrsift.signature_background import _background_means
 
-OUT = Path(__file__).resolve().parent.parent / "assets" / "figures"
+OUT = Path(__file__).resolve().parents[2] / "docs" / "assets" / "figures"
 
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
