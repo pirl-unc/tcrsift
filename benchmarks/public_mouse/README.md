@@ -17,7 +17,7 @@ python benchmarks/public_mouse/download.py --data-dir bench_mouse_data
 python benchmarks/public_mouse/run.py \
     --data-dir bench_mouse_data \
     --work-dir bench_mouse_data/runs
-python docs/figures/make_mouse_benchmark_figures.py
+python scripts/figures/make_mouse_benchmark_figures.py
 ```
 
 `run.py` writes compact CSV result tables and `summary.json` to `benchmarks/public_mouse/results/`:

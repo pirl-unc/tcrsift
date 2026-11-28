@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draw the benchmark figures from ``benchmarks/public_til/results``.
 
-    python docs/figures/make_benchmark_figures.py
+    python scripts/figures/make_benchmark_figures.py
 
 Unlike ``make_figures.py`` these are measurements: every number comes from the
 result tables written by ``benchmarks/public_til/run.py`` on public data.

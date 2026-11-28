@@ -227,7 +227,7 @@ python benchmarks/public_blood_cd4/download.py --data-dir /tmp/tcrsift_bench_blo
 python benchmarks/public_blood_cd4/run.py \
     --data-dir /tmp/tcrsift_bench_blood_cd4 \
     --work-dir /tmp/tcrsift_bench_blood_cd4/runs
-python docs/figures/make_blood_cd4_benchmark_figures.py
+python scripts/figures/make_blood_cd4_benchmark_figures.py
 ```
 
 ## Sources

@@ -263,7 +263,7 @@ micromamba create -y -p /tmp/tcrdist_env -c conda-forge -c bioconda \
 
 KERAS_BACKEND=torch python benchmarks/head_to_head/run.py \
     --tcrdist-python /tmp/tcrdist_env/bin/python
-python docs/figures/make_overview_benchmark_figures.py
+python scripts/figures/make_overview_benchmark_figures.py
 ```
 
 Cohort-specific methods, downloads, and patient-level tables are documented on each benchmark page:

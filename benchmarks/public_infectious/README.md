@@ -17,7 +17,7 @@ python benchmarks/public_infectious/download.py --data-dir bench_infectious_data
 python benchmarks/public_infectious/run.py \
     --data-dir bench_infectious_data \
     --work-dir bench_infectious_data/runs
-python docs/figures/make_infectious_benchmark_figures.py
+python scripts/figures/make_infectious_benchmark_figures.py
 ```
 
 `run.py` writes compact summary tables and `summary.json` (including `tcrsift_version`, `vdjdb_release`, and `ground_truth_provenance`) to `benchmarks/public_infectious/results/`:

@@ -17,7 +17,7 @@ python benchmarks/public_blood_cd4/download.py --data-dir bench_blood_cd4_data
 python benchmarks/public_blood_cd4/run.py \
     --data-dir bench_blood_cd4_data \
     --work-dir bench_blood_cd4_data/runs
-python docs/figures/make_blood_cd4_benchmark_figures.py
+python scripts/figures/make_blood_cd4_benchmark_figures.py
 ```
 
 `run.py` writes compact CSV result tables and `summary.json` to `benchmarks/public_blood_cd4/results/`:

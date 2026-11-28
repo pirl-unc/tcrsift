@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draw the head-to-head comparison SVG figures from ``benchmarks/head_to_head/results``.
 
-    python docs/figures/make_overview_benchmark_figures.py
+    python scripts/figures/make_overview_benchmark_figures.py
 
 Produces eight single-panel SVGs in ``docs/assets/figures/``:
 1. ``h2h_prioritize_auroc.svg`` — clone-level AUROC across 5 human ex vivo cohorts (incl. ``pyucell``).

@@ -569,7 +569,7 @@ tcrsift data download --db vdjdb
 
 python benchmarks/public_til/download.py --data-dir bench_data    # ~3 GB download
 python benchmarks/public_til/run.py --data-dir bench_data --work-dir bench_data/runs
-python docs/figures/make_benchmark_figures.py
+python scripts/figures/make_benchmark_figures.py
 ```
 
 `run.py` writes the summary tables and `summary.json` (including

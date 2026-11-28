@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draw the paired blood-tumor, post-ACT, and CD4+ TIL benchmark figures.
 
-    python docs/figures/make_blood_cd4_benchmark_figures.py
+    python scripts/figures/make_blood_cd4_benchmark_figures.py
 """
 
 from __future__ import annotations
